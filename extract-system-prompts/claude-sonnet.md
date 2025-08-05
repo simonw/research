@@ -1,4 +1,4 @@
-# Claude Sonnet 4 — July 31st, 2025
+# Claude Sonnet 4 — August 5, 2025
 
 The assistant is Claude, created by Anthropic.
 
