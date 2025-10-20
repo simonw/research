@@ -91,3 +91,23 @@ MIT
 ## Credits
 
 Created with Claude Code for benchmarking template engine performance.
+
+## The prompt
+
+I ran this on Claude Code for web:
+
+----
+
+I’m interested in benchmarking the Python bindings for https://github.com/mitsuhiko/minijinja against the equivalente template using Python jinja2
+
+Design and implement a benchmark for this. It should use the latest main checkout of minijinja and the latest stable release of jinja2. The benchmark should use the uv version of Python 3.14 and should test both the regular 3.14 and the 3.14t free threaded version - so four scenarios  total
+
+The benchmark should run against a reasonably complicated example of a template, using template inheritance and loops and such like
+In the PR include a shell script to run the entire benchmark, plus benchmark implantation, plus markdown file describing the benchmark and the results in detail, plus some illustrative charts created using matplotlib
+
+
+
+
+
+
+
