@@ -109,6 +109,50 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
+### [datasette-plugin-alpha-versions](https://github.com/simonw/research/tree/main/datasette-plugin-alpha-versions) (2025-10-20)
+
+A complete audit of 44 Datasette plugins (from 213 repos cloned across the datasette org and simonw) evaluated version constraints, hook usage, and release tags to identify which plugins need updating for a stable Datasette 1.0. The analysis shows 39 of the 44 plugins depend on Datasette ALPHA releases, 16 use register_permissions(), and only 8 plugins have at least one stable release while the rest are alpha-only or unreleased. Results and per-plugin metadata are available in datasette_plugins_analysis.json and were produced by the analyze_with_releases.py script; key references: https://datasette.io and https://github.com/simonw. Use the JSON and scripts to prioritize plugin updates and track permission-hook compatibility.
+
+- Total repositories cloned: 213; plugins analyzed in depth: 44  
+- ALPHA-dependent plugins: 39 (34 alpha-only)  
+- register_permissions() usage: 16 (5 without ALPHA dependency)  
+- Plugins with stable releases: 8
+
+### [deepseek-ocr-nvidia-spark](https://github.com/simonw/research/tree/main/deepseek-ocr-nvidia-spark) (2025-10-20)
+
+Successfully deployed DeepSeek-OCR on an NVIDIA GB10 (ARM64, sm_121) by upgrading to PyTorch 2.9.0+cu130 so CUDA 13.0 wheels could be used instead of building from source. The repo includes automated scripts (setup.sh, run_ocr.py) that load the 6.3GB safetensors model (~34s) and run GPU inference (~58s for a 3503×1668 image), producing annotated images, markdown/text outputs and bounding boxes with validated multi-column accuracy. Flash-attn failed to compile on ARM64 and the pipeline falls back to eager attention, but overall accuracy and production readiness were confirmed. Reproducible instructions, logs and scripts are provided in the DeepSeek-OCR repo and the PyTorch cu130 wheel index linked below.  
+
+- Key findings: PyTorch 2.9.0+cu130 provides forward compatibility for sm_121 (no source build needed).  
+- Performance: model load ≈34s, inference ≈58s; detected 2257 text tokens / 921 vision tokens.  
+- Artifacts & links: DeepSeek-OCR code/model (https://github.com/deepseek-ai/DeepSeek-OCR) and PyTorch cu130 wheel index (https://download.pytorch.org/whl/cu130).
+
+### [sqlite-permissions-poc](https://github.com/simonw/research/tree/main/sqlite-permissions-poc) (2025-10-20)
+
+A proof-of-concept implements a fully SQLite-based hierarchical permission system that computes allowed database/table pairs by cascading rules across child (table), parent (database), and global levels with DENY-over-ALLOW semantics; it uses only plain SQL (CTEs + SQLite JSON functions) and is built on SQLite (https://sqlite.org). Actor and token inputs are JSON-parsed inside the query so a single CTE-based SQL statement resolves per-resource decisions (child → parent → global) and then intersects results with optional token scope, ensuring tokens can only restrict, not grant, access; behavior is validated with a pytest test suite (https://pytest.org). The demo includes a minimal schema, multiple simulated “hook” rule sources, example data, and 11 test scenarios that show child-level ALLOW overriding parent DENY, child-level DENY blocking parent ALLOW, default-deny behavior, and token intersection semantics.
+
+Key findings:
+- Pure-SQL implementation (no UDFs/extensions) using CTEs and sqlite JSON helpers.
+- Cascading precedence: child > parent > global; at the same level DENY beats ALLOW.
+- Token scoping applied via INTERSECT; tokens cannot elevate permissions.
+- Single-query engine returns final db/table pairs; schema and tests are compact and extensible.
+- 11 pytest scenarios confirm intended conflict-resolution rules and edge cases.
+
+### [minijinja-vs-jinja2](https://github.com/simonw/research/tree/main/minijinja-vs-jinja2) (2025-10-19)
+
+Benchmarking the Python bindings for minijinja (https://github.com/mitsuhiko/minijinja) against Jinja2 (https://palletsprojects.com/p/jinja/) on Python 3.14 and 3.14t measured template render performance using a realistic e-commerce template with inheritance, loops, and ~65KB HTML output. The suite runs 200 iterations per scenario, captures mean/median/std/min/max, and provides reproducible scripts (run_benchmark.sh, benchmark.py) plus matplotlib charts to visualize results. Jinja2 is faster on stock Python 3.14, while minijinja gains more from the free-threaded 3.14t build, indicating minijinja may be better positioned for free-threaded Python even though it’s currently slower in absolute terms. Everything needed to reproduce the 15–20 minute benchmark and view detailed analysis is included in the repository.
+
+- Jinja2 (3.14): 0.990 ms mean vs Minijinja: 1.528 ms mean — Jinja2 ≈ 1.54× faster on 3.14  
+- Jinja2 slows ~14% on 3.14t (1.127 ms); Minijinja speeds up ~13% on 3.14t (1.336 ms)  
+- Artifacts: JSON results, comparison/distribution/speedup/timeline charts, and BENCHMARK_RESULTS.md with full analysis
+
+### [node-pyodide](https://github.com/simonw/research/tree/main/node-pyodide) (2025-10-19)
+
+A compact demo shows how to run Python scripts inside a WebAssembly sandbox from Node.js using Pyodide: after npm install, launching node server-simple.js executes example-simple.py and writes generated files to the output/ directory. The project demonstrates a minimal server-side integration pattern for Pyodide (https://pyodide.org/) under Node.js (https://nodejs.org/) and is aimed at quick experimentation with sandboxed Python execution. It requires Node.js v16 or later and provides a simple starting point for extending Python-in-WASM workflows in Node applications.
+
+- Executes Python in WebAssembly via Pyodide and writes outputs to output/
+- Minimal commands: npm install; node server-simple.js
+- Recommended Node.js v16+ for best compatibility
+
 <!--[[[end]]]-->
 
 ---
