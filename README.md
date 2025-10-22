@@ -88,7 +88,7 @@ for dirname, commit_date in subdirs_with_dates:
             stdin=open(readme_path),
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=60
         )
         if result.returncode != 0:
             error_msg = f"LLM command failed for {dirname} with return code {result.returncode}"
