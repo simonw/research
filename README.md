@@ -109,14 +109,24 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
+### [python-markdown-comparison](https://github.com/simonw/research/tree/main/python-markdown-comparison) (2025-10-22)
+
+Comparing seven prominent Python markdown libraries, cmarkgfm—bindings to GitHub’s C-based CommonMark/GFM parser—proved dramatically faster (10-50x) than pure Python options such as mistune, Python-Markdown, and marko. The benchmark, spanning small to large markdown documents, consistently found cmarkgfm excels in both speed and stability, making it ideal for high-volume or performance-critical applications. However, cmarkgfm trades extensibility and custom output formats for speed, so libraries like mistune (for fast pure Python and custom rendering) or Python-Markdown (for extension-rich configurability) may be preferable for projects prioritizing flexibility or ease of customization. See [cmarkgfm's repository](https://github.com/theacodes/cmarkgfm) and [mistune](https://github.com/lepture/mistune) for details.
+
+**Key findings:**
+- cmarkgfm is 10-50x faster than pure Python markdown libraries, especially for large documents.
+- Pure Python options offer greater extensibility, custom output formats, and API access, but at the cost of speed.
+- Best library choice depends on project needs: cmarkgfm for raw speed/GFM compatibility, mistune for pure Python speed/customization, Python-Markdown for plugins/extensions.
+
 ### [datasette-plugin-alpha-versions](https://github.com/simonw/research/tree/main/datasette-plugin-alpha-versions) (2025-10-20)
 
-A complete audit of 44 Datasette plugins (from 213 repos cloned across the datasette org and simonw) evaluated version constraints, hook usage, and release tags to identify which plugins need updating for a stable Datasette 1.0. The analysis shows 39 of the 44 plugins depend on Datasette ALPHA releases, 16 use register_permissions(), and only 8 plugins have at least one stable release while the rest are alpha-only or unreleased. Results and per-plugin metadata are available in datasette_plugins_analysis.json and were produced by the analyze_with_releases.py script; key references: https://datasette.io and https://github.com/simonw. Use the JSON and scripts to prioritize plugin updates and track permission-hook compatibility.
+Datasette Plugins Analysis presents a systematic evaluation of 44 key plugins from the Datasette ecosystem, focusing on dependencies, permissions hooks, and release patterns as of October 2025. The study finds that 89% of these plugins rely on ALPHA versions of Datasette, with only 8 plugins having stable releases and just 5 supporting stable Datasette while using advanced hooks like `register_permissions()`. The open datasets, such as [`datasette_plugins_analysis.json`](https://github.com/simonw/datasette-plugins-analysis/blob/main/datasette_plugins_analysis.json) and analysis scripts, support deeper inspection and maintenance planning as Datasette nears its 1.0 milestone. This enables maintainers to prioritize updates for plugins with alpha dependencies and track release maturity across the ecosystem.
 
-- Total repositories cloned: 213; plugins analyzed in depth: 44  
-- ALPHA-dependent plugins: 39 (34 alpha-only)  
-- register_permissions() usage: 16 (5 without ALPHA dependency)  
-- Plugins with stable releases: 8
+**Key Findings:**
+- 39 plugins depend on Datasette ALPHA versions; 34 of these have no stable releases.
+- Only 5 plugins use `register_permissions()` without requiring ALPHA Datasette.
+- 8 of the analyzed plugins currently offer at least one stable release.  
+- Main analysis and scripts are available [here](https://github.com/simonw/datasette-plugins-analysis) for further plugin and dependency tracking.
 
 ### [deepseek-ocr-nvidia-spark](https://github.com/simonw/research/tree/main/deepseek-ocr-nvidia-spark) (2025-10-20)
 
