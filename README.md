@@ -84,7 +84,7 @@ for dirname, commit_date in subdirs_with_dates:
         # Generate new summary using llm command
         prompt = """Summarize this research project concisely. Write just 1 paragraph (3-5 sentences) followed by an optional short bullet list if there are key findings. Vary your opening - don't start with "This report" or "This research". Include 1-2 links to key tools/projects. Be specific but brief. No emoji."""
         result = subprocess.run(
-            ['llm', '-m', 'github/gpt-5-mini', '-s', prompt],
+            ['llm', '-m', 'github/gpt-4.1', '-s', prompt],
             stdin=open(readme_path),
             capture_output=True,
             text=True,
