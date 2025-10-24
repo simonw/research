@@ -109,6 +109,16 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
+### [blog-tags-scikit-learn](https://github.com/simonw/research/tree/main/blog-tags-scikit-learn) (2025-10-24)
+
+Automatically assigning meaningful tags to historic, untagged blog posts, this project leverages the [Simon Willison blog database](https://datasette.simonwillison.net/simonwillisonblog.db) and scikit-learn to train and compare multi-label text classification models. Four approaches—TF-IDF + Logistic Regression, Multinomial Naive Bayes, Random Forest, and LinearSVC—were tested on posts’ title and body text using the 158 most frequently used tags. LinearSVC, with probability calibration, yielded the best overall performance, striking a balance between precision (85%) and recall (56%) with an F1 score of 68%, proving especially effective for assigning multiple tags to each entry. This [open-source toolkit](https://scikit-learn.org/) not only automates metadata enrichment but facilitates rapid quality assessment and scalable tag prediction for content libraries.
+
+**Key findings:**
+- LinearSVC outperformed other models, delivering the highest F1 score (0.6791) and recall.
+- Logistic Regression and Random Forest prioritized precision but were more conservative—missing more actual tags.
+- Naive Bayes offered a fast, simple solution with a solid balance of metrics.
+- TF-IDF features and OneVsRest multi-label strategies proved robust for text classification in high-dimensional spaces.
+
 ### [cmarkgfm-in-pyodide](https://github.com/simonw/research/tree/main/cmarkgfm-in-pyodide) (2025-10-22)
 
 By rewriting cmarkgfm's bindings from CFFI to the Python C API, the project successfully ported GitHub's cmark-gfm Markdown parser to Pyodide. The resulting wheel is fully functional, requires no further building, and supports all GitHub Flavored Markdown features with high performance, thanks to direct C code execution via WebAssembly. Users can integrate the package into Pyodide (see [Pyodide documentation](https://pyodide.org/)) and render robust Markdown—including tables, strikethrough, and task lists—directly in the browser. This port demonstrates a practical technique for bringing other CFFI-based packages to WebAssembly/Pyodide environments.
