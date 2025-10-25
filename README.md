@@ -114,6 +114,19 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
+### [datasette-plugin-skill](https://github.com/simonw/research/tree/main/datasette-plugin-skill) (2025-10-24)
+
+Covering every aspect of Datasette plugin development, this project creates a comprehensive skill set for authors—from bootstrapping with cookiecutter to deploying on GitHub and PyPI. It provides precise guides and working code samples for essential plugin hooks like custom SQL functions, authentication, custom views, and output formats. The resource includes an extensive API reference, best practices for configuration, static assets, and templates, plus testing and publishing workflows to ensure reliable plugins. Developers can use this to rapidly build a variety of plugins—custom SQL, visualizations, authentication handlers, data exporters, and more.
+
+Key tools/projects:
+- [Datasette documentation](https://docs.datasette.io/)
+- [cookiecutter plugin template](https://github.com/simonw/datasette-plugin)
+
+Key findings:
+- Covers both sync and async hook design for performance.
+- Explains complete request/response and database APIs.
+- Provides tested patterns for authentication, authorization, routing, and output customization.
+
 ### [blog-tags-scikit-learn](https://github.com/simonw/research/tree/main/blog-tags-scikit-learn) (2025-10-24)
 
 Automatically assigning meaningful tags to historic, untagged blog posts, this project leverages the [Simon Willison blog database](https://datasette.simonwillison.net/simonwillisonblog.db) and scikit-learn to train and compare multi-label text classification models. Four approaches—TF-IDF + Logistic Regression, Multinomial Naive Bayes, Random Forest, and LinearSVC—were tested on posts’ title and body text using the 158 most frequently used tags. LinearSVC, with probability calibration, yielded the best overall performance, striking a balance between precision (85%) and recall (56%) with an F1 score of 68%, proving especially effective for assigning multiple tags to each entry. This [open-source toolkit](https://scikit-learn.org/) not only automates metadata enrichment but facilitates rapid quality assessment and scalable tag prediction for content libraries.
