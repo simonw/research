@@ -1,6 +1,8 @@
-# Research projects carried out for me by AI tools
+# Research projects carried out by AI tools
 
 Each directory in this repo is a separate research project carried out by an LLM tool - usually [Claude Code](https://www.claude.com/product/claude-code). Every single line of text and code was written by an LLM.
+
+I try to include prompts and links to transcripts in [the PRs](https://github.com/simonw/research/pulls?q=is%3Apr+is%3Aclosed) that added each report, or in [the commits](https://github.com/simonw/research/commits/main/).
 
 ## Research projects
 
