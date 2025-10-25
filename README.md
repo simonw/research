@@ -219,7 +219,6 @@ The script automatically:
 MODEL = "github/gpt-4.1"
 cog.out(MODEL)
 ]]]-->
-github/gpt-4.1
 <!--[[[end]]]-->` with a prompt that creates engaging descriptions with bullets and links
 - Creates markdown links to each project folder on GitHub
 - New summaries are saved to `_summary.md` to avoid regenerating them on every run
