@@ -12,6 +12,9 @@ import subprocess
 import pathlib
 from datetime import datetime
 
+# Model to use for generating summaries
+MODEL = "github/gpt-4.1"
+
 # Get all subdirectories with their first commit dates
 research_dir = pathlib.Path.cwd()
 subdirs_with_dates = []
@@ -86,7 +89,7 @@ for dirname, commit_date in subdirs_with_dates:
         # Generate new summary using llm command
         prompt = """Summarize this research project concisely. Write just 1 paragraph (3-5 sentences) followed by an optional short bullet list if there are key findings. Vary your opening - don't start with "This report" or "This research". Include 1-2 links to key tools/projects. Be specific but brief. No emoji."""
         result = subprocess.run(
-            ['llm', '-m', 'github/gpt-4.1', '-s', prompt],
+            ['llm', '-m', MODEL, '-s', prompt],
             stdin=open(readme_path),
             capture_output=True,
             text=True,
@@ -211,7 +214,13 @@ The script automatically:
 - Gets the first commit date for each folder and sorts by most recent first
 - For each folder, checks if a `_summary.md` file exists
 - If the summary exists, it uses the cached version
-- If not, it generates a new summary using `llm -m github/gpt-4.1` with a prompt that creates engaging descriptions with bullets and links
+- If not, it generates a new summary using `llm -m 
+<!--[[[cog
+MODEL = "github/gpt-4.1"
+cog.out(MODEL)
+]]]-->
+github/gpt-4.1
+<!--[[[end]]]-->` with a prompt that creates engaging descriptions with bullets and links
 - Creates markdown links to each project folder on GitHub
 - New summaries are saved to `_summary.md` to avoid regenerating them on every run
 
