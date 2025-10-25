@@ -227,11 +227,10 @@ The script automatically:
 - Gets the first commit date for each folder and sorts by most recent first
 - For each folder, checks if a `_summary.md` file exists
 - If the summary exists, it uses the cached version
-- If not, it generates a new summary using `llm -m 
-<!--[[[cog
-MODEL = "github/gpt-4.1"
-cog.out(MODEL)
+- If not, it generates a new summary using `llm -m <!--[[[cog
+print(MODEL, end='')
 ]]]-->
+github/gpt-4.1
 <!--[[[end]]]-->` with a prompt that creates engaging descriptions with bullets and links
 - Creates markdown links to each project folder on GitHub
 - New summaries are saved to `_summary.md` to avoid regenerating them on every run
