@@ -6,6 +6,7 @@ This module provides Python bindings to the wazero Go library via ctypes.
 
 import ctypes
 import os
+import sys
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -23,13 +24,24 @@ class _WazeroLib:
         self._load_library()
         self._setup_functions()
 
+    def _get_library_name(self) -> str:
+        """Get the platform-appropriate library name"""
+        if sys.platform == "darwin":
+            return "libwazero.dylib"
+        elif sys.platform == "win32":
+            return "libwazero.dll"
+        else:
+            return "libwazero.so"
+
     def _find_library(self) -> Path:
         """Find the libwazero shared library"""
+        lib_name = self._get_library_name()
+
         # Try common locations
         search_paths = [
-            Path(__file__).parent.parent / "libwazero.so",  # Package dir
-            Path(__file__).parent / "libwazero.so",
-            Path("libwazero.so"),  # Current dir
+            Path(__file__).parent / lib_name,  # Package dir (most common)
+            Path(__file__).parent.parent / lib_name,  # Parent dir
+            Path(lib_name),  # Current dir
         ]
 
         for path in search_paths:
@@ -37,7 +49,7 @@ class _WazeroLib:
                 return path
 
         raise WazeroError(
-            f"Could not find libwazero.so. Searched: {search_paths}"
+            f"Could not find {lib_name}. Searched: {search_paths}"
         )
 
     def _load_library(self):
