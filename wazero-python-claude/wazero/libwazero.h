@@ -80,11 +80,11 @@ typedef struct { void *data; GoInt len; GoInt cap; } GoSlice;
 extern "C" {
 #endif
 
-extern long long int wazero_new_runtime();
-extern void wazero_runtime_close(long long int runtimeID);
-extern long long int wazero_instantiate(long long int runtimeID, uint8_t* wasmBytes, int length);
-extern void wazero_module_close(long long int moduleID);
-extern int wazero_call_function(long long int moduleID, char* funcName, uint64_t* args, int nargs, uint64_t* results, int maxResults);
+extern long long wazero_new_runtime();
+extern void wazero_runtime_close(long long runtimeID);
+extern long long wazero_instantiate(long long runtimeID, uint8_t* wasmBytes, int length);
+extern void wazero_module_close(long long moduleID);
+extern int wazero_call_function(long long moduleID, char* funcName, uint64_t* args, int nargs, uint64_t* results, int maxResults);
 extern char* wazero_get_error();
 extern void wazero_free_string(char* str);
 extern char* wazero_version();

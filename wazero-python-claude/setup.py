@@ -55,6 +55,21 @@ class GoBuildExt(build_ext):
         # Ensure output directory exists
         lib_output.parent.mkdir(parents=True, exist_ok=True)
 
+        # Clean up old library files from other platforms
+        # This prevents packaging the wrong binary
+        old_libs = [
+            source_dir / "wazero" / "libwazero.so",
+            source_dir / "wazero" / "libwazero.dylib",
+            source_dir / "wazero" / "libwazero.dll",
+            source_dir / "libwazero.so",
+            source_dir / "libwazero.dylib",
+            source_dir / "libwazero.dll",
+        ]
+        for old_lib in old_libs:
+            if old_lib.exists() and old_lib != lib_output:
+                print(f"Removing old library: {old_lib}")
+                old_lib.unlink()
+
         # Build command
         cmd = [
             "go", "build",
@@ -74,6 +89,18 @@ class GoBuildExt(build_ext):
 
         # Continue with normal build_ext
         super().run()
+
+        # Copy the library to the build directory
+        # This ensures it gets included in the wheel
+        if self.build_lib:
+            build_wazero_dir = Path(self.build_lib) / "wazero"
+            build_wazero_dir.mkdir(parents=True, exist_ok=True)
+
+            dest_lib = build_wazero_dir / lib_name
+            print(f"Copying {lib_output} to {dest_lib}")
+
+            import shutil
+            shutil.copy2(lib_output, dest_lib)
 
 
 class GoExtension(Extension):
