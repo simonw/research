@@ -114,6 +114,16 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
+### [h3o-python](https://github.com/simonw/research/tree/main/h3o-python) (2025-11-03)
+
+h3o-python delivers efficient Python bindings for the [h3o](https://github.com/HydroniumLabs/h3o) Rust library, enabling fast and convenient access to H3 geospatial indexing from Python. Utilizing [PyO3](https://pyo3.rs/) and packaged with maturin, it allows encoding geographic coordinates into 64-bit H3 cell indexes, decoding indexes, performing neighborhood queries, calculating great-circle distances, and retrieving surface area metrics—all without requiring a separate H3 installation. The module bundles its Rust extension in the distributable wheel for seamless deployment, and the API mirrors the upstream Rust crate for high performance and compatibility.
+
+**Key capabilities:**
+- Simple conversion between latitude/longitude and H3 cell indexes
+- Neighborhood and adjacency checks, and disk queries
+- Accurate area and distance calculations using H3 algorithms
+- Lossless string/integer conversions of H3 indexes
+
 ### [wazero-python-claude](https://github.com/simonw/research/tree/main/wazero-python-claude) (2025-11-02)
 
 Wazero Python Bindings enable seamless integration of the [wazero](https://wazero.io/) WebAssembly runtime—written in Go—with Python applications, delivering a zero-dependency solution for running WASM modules natively from Python. The project exposes a clean, Pythonic API for instantiating modules, calling exported WASM functions, and managing resources efficiently with context managers. Performance benchmarks demonstrate rapid execution and minimal overhead between Python and WASM. While the library excels at speed and ease of use, current limitations include support only for integer argument and return types, restricted WASI features, and lack of direct memory access.
