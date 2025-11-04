@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Datasette - Loading</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+        }
+
+        .container {
+            text-align: center;
+            max-width: 600px;
+            padding: 40px;
+        }
+
+        h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+            font-weight: 300;
+        }
+
+        .logo {
+            font-size: 72px;
+            margin-bottom: 30px;
+        }
+
+        .status {
+            font-size: 18px;
+            margin-bottom: 30px;
+            opacity: 0.9;
+        }
+
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 4px solid white;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 30px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: rgba(255, 0, 0, 0.2);
+            border: 2px solid rgba(255, 0, 0, 0.5);
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+        }
+
+        .buttons {
+            margin-top: 20px;
+        }
+
+        button {
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid white;
+            color: white;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 0 10px;
+            transition: all 0.3s ease;
+        }
+
+        button:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .info {
+            font-size: 14px;
+            opacity: 0.8;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">🗄️</div>
+        <h1>Datasette</h1>
+        <div class="spinner"></div>
+        <div class="status" id="status">Starting Datasette server...</div>
+
+        <div class="error" id="error">
+            <strong>Error:</strong>
+            <p id="error-message"></p>
+        </div>
+
+        <div class="buttons">
+            <button onclick="openDatabase()">Open Database</button>
+            <button onclick="retryStart()">Retry</button>
+        </div>
+
+        <div class="info">
+            Powered by Tauri 🦀
+        </div>
+    </div>
+
+    <script>
+        const { invoke } = window.__TAURI__.core;
+        const { open } = window.__TAURI__.dialog;
+
+        let starting = false;
+
+        async function startDatasette() {
+            if (starting) return;
+            starting = true;
+
+            try {
+                document.getElementById('status').textContent = 'Checking for Datasette...';
+
+                // Check if datasette is available
+                const available = await invoke('check_datasette_available');
+
+                if (!available) {
+                    throw new Error('Datasette is not installed. Please install it with: pip install datasette');
+                }
+
+                document.getElementById('status').textContent = 'Starting Datasette server...';
+
+                const config = await invoke('start_datasette');
+
+                document.getElementById('status').textContent = 'Server started! Redirecting...';
+
+                // Wait a moment then redirect to Datasette
+                setTimeout(() => {
+                    window.location.href = config.url;
+                }, 500);
+
+            } catch (error) {
+                console.error('Failed to start Datasette:', error);
+                document.getElementById('error-message').textContent = error;
+                document.getElementById('error').classList.add('show');
+                document.getElementById('status').textContent = 'Failed to start server';
+                starting = false;
+            }
+        }
+
+        async function openDatabase() {
+            try {
+                const selected = await open({
+                    multiple: false,
+                    filters: [{
+                        name: 'Database',
+                        extensions: ['db', 'sqlite', 'sqlite3']
+                    }]
+                });
+
+                if (selected) {
+                    document.getElementById('status').textContent = 'Opening database...';
+                    await invoke('open_database_file', { path: selected });
+                }
+            } catch (error) {
+                console.error('Failed to open database:', error);
+                document.getElementById('error-message').textContent = error;
+                document.getElementById('error').classList.add('show');
+            }
+        }
+
+        function retryStart() {
+            document.getElementById('error').classList.remove('show');
+            starting = false;
+            startDatasette();
+        }
+
+        // Start on load
+        window.addEventListener('DOMContentLoaded', () => {
+            startDatasette();
+        });
+    </script>
+</body>
+</html>
