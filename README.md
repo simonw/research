@@ -114,6 +114,16 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
+### [h3-library-benchmark](https://github.com/simonw/research/tree/main/h3-library-benchmark) (2025-11-04)
+
+A systematic performance benchmark was conducted on two prominent Python libraries implementing Uber's H3 geospatial indexing system: [h3-py](https://github.com/uber/h3-py) (official, C-based) and [h3o-python](https://github.com/HydroniumLabs/h3o) (Rust-based). Results show h3o-python consistently outperforms h3-py on core operations, achieving over 2x speedup for coordinate conversions and up to 13x faster neighbor queries, while area calculations remain comparable. The performance advantage holds steady across varied dataset sizes and H3 resolutions, suggesting h3o-python's Rust backend is highly optimized for geospatial workloads. Differences in API coverage and cell representation (string vs. integer) should inform choice based on project requirements.
+
+**Key Findings:**
+- h3o-python is 2.2x faster for coordinate-to-cell and 1.8–2x for cell-to-coordinate conversions.
+- Neighbor queries with grid_disk are 10–13x faster in h3o-python.
+- Both libraries perform similarly for cell area calculations.
+- h3-py offers more features and broader API support; h3o-python excels in raw speed for core operations.
+
 ### [h3o-python](https://github.com/simonw/research/tree/main/h3o-python) (2025-11-03)
 
 h3o-python delivers efficient Python bindings for the [h3o](https://github.com/HydroniumLabs/h3o) Rust library, enabling fast and convenient access to H3 geospatial indexing from Python. Utilizing [PyO3](https://pyo3.rs/) and packaged with maturin, it allows encoding geographic coordinates into 64-bit H3 cell indexes, decoding indexes, performing neighborhood queries, calculating great-circle distances, and retrieving surface area metrics—all without requiring a separate H3 installation. The module bundles its Rust extension in the distributable wheel for seamless deployment, and the API mirrors the upstream Rust crate for high performance and compatibility.
