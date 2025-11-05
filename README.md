@@ -114,6 +114,16 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
+### [sqlite-query-linter](https://github.com/simonw/research/tree/main/sqlite-query-linter) (2025-11-04)
+
+The SQLite Query Linter is a lightweight Python library that wraps the standard `sqlite3` module to provide configurable linting and rule-based analysis of SQL queries before execution. Acting as a drop-in replacement, it helps catch common syntax errors and platform incompatibilities—such as invalid types in `CAST`, use of unsupported functions, `SELECT *`, missing `WHERE` clauses, and string quoting mistakes—helping developers avoid runtime errors and improve code quality. Users can choose built-in rules, set severity levels, and easily define custom rules via an extensible API. Designed for flexibility, it can block execution on critical issues or run in permissive/audit-only modes, with zero dependencies other than Python's standard library. Explore code and integration options at [GitHub](https://github.com/yourusername/sqlite-query-linter) or view usage in the included [`demo.py`](demo.py) script.
+
+Key Features & Findings:
+- Detects SQL mistakes commonly encountered when migrating between databases or writing raw SQLite queries
+- Flexible configuration: Enable/disable rules, set strictness, and use audit-only monitoring
+- Easy to extend for custom organizational or project rules
+- Applicable to development, automated testing, database migrations, and production monitoring
+
 ### [h3-library-benchmark](https://github.com/simonw/research/tree/main/h3-library-benchmark) (2025-11-04)
 
 A systematic performance benchmark was conducted on two prominent Python libraries implementing Uber's H3 geospatial indexing system: [h3-py](https://github.com/uber/h3-py) (official, C-based) and [h3o-python](https://github.com/HydroniumLabs/h3o) (Rust-based). Results show h3o-python consistently outperforms h3-py on core operations, achieving over 2x speedup for coordinate conversions and up to 13x faster neighbor queries, while area calculations remain comparable. The performance advantage holds steady across varied dataset sizes and H3 resolutions, suggesting h3o-python's Rust backend is highly optimized for geospatial workloads. Differences in API coverage and cell representation (string vs. integer) should inform choice based on project requirements.
