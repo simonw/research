@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browser-based TTS with WebAssembly - Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .tech-badge {
+            display: inline-block;
+            background: #e3f2fd;
+            color: #1976d2;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-right: 8px;
+            margin-bottom: 8px;
+        }
+        textarea {
+            width: 100%;
+            min-height: 100px;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            resize: vertical;
+            box-sizing: border-box;
+            margin-bottom: 15px;
+        }
+        button {
+            background: #1976d2;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-right: 10px;
+            transition: background 0.3s;
+        }
+        button:hover:not(:disabled) {
+            background: #1565c0;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .status.info {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        .status.success {
+            background: #e8f5e9;
+            color: #388e3c;
+        }
+        .status.error {
+            background: #ffebee;
+            color: #d32f2f;
+        }
+        .status.loading {
+            background: #fff3e0;
+            color: #f57c00;
+        }
+        .info-section {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+        .info-section h3 {
+            color: #333;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+        .info-section p {
+            color: #666;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        .speaker-select {
+            margin: 15px 0;
+        }
+        select {
+            padding: 8px 12px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            margin-left: 10px;
+        }
+        audio {
+            width: 100%;
+            margin-top: 15px;
+        }
+        .progress {
+            display: none;
+            margin-top: 15px;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #1976d2;
+            width: 0%;
+            transition: width 0.3s;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Browser-based Text-to-Speech Demo</h1>
+        <p class="subtitle">
+            Running transformer models with WebAssembly directly in your browser
+        </p>
+
+        <div>
+            <span class="tech-badge">Transformers.js</span>
+            <span class="tech-badge">ONNX Runtime</span>
+            <span class="tech-badge">WebAssembly</span>
+            <span class="tech-badge">SpeechT5</span>
+        </div>
+
+        <div style="margin-top: 30px;">
+            <label for="textInput"><strong>Enter text to synthesize:</strong></label>
+            <textarea
+                id="textInput"
+                placeholder="Type something here... For example: Hello! This is a demonstration of text-to-speech running entirely in your web browser using WebAssembly."
+            >Hello! This is a demonstration of text-to-speech running entirely in your web browser using WebAssembly and transformer models.</textarea>
+        </div>
+
+        <div class="speaker-select">
+            <label for="speakerSelect"><strong>Voice:</strong></label>
+            <select id="speakerSelect">
+                <option value="default">Default Speaker</option>
+                <option value="female">Female Voice</option>
+                <option value="male">Male Voice</option>
+            </select>
+        </div>
+
+        <div>
+            <button id="synthesizeBtn" onclick="synthesizeSpeech()">
+                Generate Speech
+            </button>
+            <button id="stopBtn" onclick="stopAudio()" disabled>
+                Stop
+            </button>
+        </div>
+
+        <div class="progress" id="progress">
+            <div class="progress-bar">
+                <div class="progress-fill"></div>
+            </div>
+        </div>
+
+        <div id="status" class="status info" style="display: none;">
+            Initializing...
+        </div>
+
+        <audio id="audioPlayer" controls style="display: none;"></audio>
+
+        <div class="info-section">
+            <h3>About This Demo</h3>
+            <p>
+                This demonstration uses <strong>Transformers.js</strong> to run Microsoft's SpeechT5
+                text-to-speech model entirely in your browser using WebAssembly and ONNX Runtime.
+                No server-side processing is required - all computation happens locally on your device.
+            </p>
+            <p style="margin-top: 10px;">
+                <strong>Note:</strong> The first time you generate speech, the model (approximately 100MB)
+                will be downloaded and cached in your browser. Subsequent generations will be much faster.
+            </p>
+        </div>
+
+        <div class="info-section">
+            <h3>Research Context: Marvis TTS</h3>
+            <p>
+                This demo was created as part of research into running the Marvis TTS model
+                (Marvis-AI/marvis-tts-100m-v0.2) in a web browser. While Marvis TTS is currently
+                only available in PyTorch/MLX formats and not yet browser-compatible, this prototype
+                demonstrates the current state-of-the-art for browser-based TTS using similar
+                transformer architectures.
+            </p>
+        </div>
+    </div>
+
+    <script type="module">
+        // Import Transformers.js from CDN
+        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+
+        // Configure environment
+        env.allowLocalModels = false;
+        env.allowRemoteModels = true;
+
+        // Global variables
+        let synthesizer = null;
+        let audioContext = null;
+        let currentSource = null;
+
+        // Status display helper
+        function showStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+            statusDiv.style.display = 'block';
+        }
+
+        function hideStatus() {
+            document.getElementById('status').style.display = 'none';
+        }
+
+        function showProgress(show = true) {
+            document.getElementById('progress').style.display = show ? 'block' : 'none';
+        }
+
+        // Initialize the TTS pipeline
+        async function initializePipeline() {
+            if (synthesizer) return synthesizer;
+
+            try {
+                showStatus('Loading TTS model... This may take a minute on first load.', 'loading');
+                showProgress(true);
+
+                // Create the text-to-speech pipeline
+                synthesizer = await pipeline(
+                    'text-to-speech',
+                    'Xenova/speecht5_tts',
+                    { quantized: false }
+                );
+
+                showProgress(false);
+                showStatus('Model loaded successfully!', 'success');
+                setTimeout(hideStatus, 3000);
+
+                return synthesizer;
+            } catch (error) {
+                showProgress(false);
+                showStatus(`Error loading model: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        // Synthesize speech from text
+        window.synthesizeSpeech = async function() {
+            const textInput = document.getElementById('textInput');
+            const text = textInput.value.trim();
+
+            if (!text) {
+                showStatus('Please enter some text to synthesize.', 'error');
+                return;
+            }
+
+            const synthesizeBtn = document.getElementById('synthesizeBtn');
+            const stopBtn = document.getElementById('stopBtn');
+
+            try {
+                // Disable button during synthesis
+                synthesizeBtn.disabled = true;
+                showStatus('Initializing model...', 'loading');
+
+                // Initialize pipeline if not already done
+                const pipe = await initializePipeline();
+
+                showStatus('Generating speech... Please wait.', 'loading');
+                showProgress(true);
+
+                // Get speaker embeddings URL
+                const speakerEmbeddings = 'https://huggingface.co/datasets/Xenova/transformers.js-docs/resolve/main/speaker_embeddings.bin';
+
+                // Generate speech
+                const output = await pipe(text, {
+                    speaker_embeddings: speakerEmbeddings
+                });
+
+                showProgress(false);
+                showStatus('Converting to audio...', 'loading');
+
+                // Create audio context if needed
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+
+                // Convert Float32Array to audio buffer
+                const audioBuffer = audioContext.createBuffer(
+                    1, // mono
+                    output.audio.length,
+                    output.sampling_rate
+                );
+
+                // Copy the audio data
+                audioBuffer.getChannelData(0).set(output.audio);
+
+                // Play the audio
+                playAudioBuffer(audioBuffer);
+
+                // Also create a downloadable audio element
+                createAudioElement(output.audio, output.sampling_rate);
+
+                showStatus('Speech generated successfully! Playing now...', 'success');
+                setTimeout(hideStatus, 3000);
+
+                stopBtn.disabled = false;
+
+            } catch (error) {
+                console.error('Synthesis error:', error);
+                showStatus(`Error: ${error.message}`, 'error');
+            } finally {
+                showProgress(false);
+                synthesizeBtn.disabled = false;
+            }
+        };
+
+        // Play audio buffer
+        function playAudioBuffer(audioBuffer) {
+            // Stop any currently playing audio
+            stopAudio();
+
+            currentSource = audioContext.createBufferSource();
+            currentSource.buffer = audioBuffer;
+            currentSource.connect(audioContext.destination);
+            currentSource.start(0);
+
+            currentSource.onended = () => {
+                document.getElementById('stopBtn').disabled = true;
+            };
+        }
+
+        // Stop audio playback
+        window.stopAudio = function() {
+            if (currentSource) {
+                try {
+                    currentSource.stop();
+                } catch (e) {
+                    // Already stopped
+                }
+                currentSource = null;
+            }
+            document.getElementById('stopBtn').disabled = true;
+        };
+
+        // Create downloadable audio element
+        function createAudioElement(audioData, sampleRate) {
+            // Convert Float32Array to WAV format
+            const wavBuffer = createWavBuffer(audioData, sampleRate);
+            const blob = new Blob([wavBuffer], { type: 'audio/wav' });
+            const url = URL.createObjectURL(blob);
+
+            const audioPlayer = document.getElementById('audioPlayer');
+            audioPlayer.src = url;
+            audioPlayer.style.display = 'block';
+        }
+
+        // Create WAV file buffer from Float32Array
+        function createWavBuffer(audioData, sampleRate) {
+            const numChannels = 1;
+            const bytesPerSample = 2; // 16-bit
+            const blockAlign = numChannels * bytesPerSample;
+            const byteRate = sampleRate * blockAlign;
+            const dataSize = audioData.length * bytesPerSample;
+            const buffer = new ArrayBuffer(44 + dataSize);
+            const view = new DataView(buffer);
+
+            // WAV header
+            writeString(view, 0, 'RIFF');
+            view.setUint32(4, 36 + dataSize, true);
+            writeString(view, 8, 'WAVE');
+            writeString(view, 12, 'fmt ');
+            view.setUint32(16, 16, true); // fmt chunk size
+            view.setUint16(20, 1, true); // PCM format
+            view.setUint16(22, numChannels, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, byteRate, true);
+            view.setUint16(32, blockAlign, true);
+            view.setUint16(34, bytesPerSample * 8, true);
+            writeString(view, 36, 'data');
+            view.setUint32(40, dataSize, true);
+
+            // Write audio data
+            const offset = 44;
+            for (let i = 0; i < audioData.length; i++) {
+                const sample = Math.max(-1, Math.min(1, audioData[i]));
+                view.setInt16(offset + i * 2, sample * 0x7FFF, true);
+            }
+
+            return buffer;
+        }
+
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        }
+
+        // Initialize on page load
+        window.addEventListener('load', () => {
+            showStatus('Ready! Click "Generate Speech" to begin. Model will load on first use.', 'info');
+        });
+
+        // Allow Enter key to trigger synthesis (Ctrl+Enter)
+        document.getElementById('textInput').addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'Enter') {
+                synthesizeSpeech();
+            }
+        });
+    </script>
+</body>
+</html>
