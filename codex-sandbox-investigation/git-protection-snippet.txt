@@ -1,0 +1,49 @@
+// From codex-rs/protocol/src/protocol.rs
+// .git folder protection mechanism
+
+/// A writable root path accompanied by a list of subpaths that should remain
+/// read‑only even when the root is writable. This is primarily used to ensure
+/// top‑level VCS metadata directories (e.g. `.git`) under a writable root are
+/// not modified by the agent.
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema)]
+pub struct WritableRoot {
+    /// Absolute path, by construction.
+    pub root: PathBuf,
+
+    /// Also absolute paths, by construction.
+    pub read_only_subpaths: Vec<PathBuf>,
+}
+
+impl WritableRoot {
+    pub fn is_path_writable(&self, path: &Path) -> bool {
+        // Check if the path is under the root.
+        if !path.starts_with(&self.root) {
+            return false;
+        }
+
+        // Check if the path is under any of the read-only subpaths.
+        for subpath in &self.read_only_subpaths {
+            if path.starts_with(subpath) {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+// When building writable roots, automatically add .git as read-only subpath:
+roots
+    .into_iter()
+    .map(|writable_root| {
+        let mut subpaths = Vec::new();
+        let top_level_git = writable_root.join(".git");
+        if top_level_git.is_dir() {
+            subpaths.push(top_level_git);
+        }
+        WritableRoot {
+            root: writable_root,
+            read_only_subpaths: subpaths,
+        }
+    })
+    .collect()
