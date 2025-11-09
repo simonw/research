@@ -1,0 +1,17 @@
+# Downloaded JSLinux files (large binaries)
+jslinux/
+jslinux-2019-12-21.tar.gz
+
+# Server logs
+server.log
+
+# Screenshots
+*.png
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Playwright artifacts
+playwright-report/
+test-results/

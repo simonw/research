@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JSLinux Notebook</title>
+  <style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 20px;
+  font-family: Helvetica, Arial, sans-serif;
+  background: #f5f5f5;
+  color: #333;
+}
+
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  overflow: hidden;
+}
+
+.header {
+  background: #2c3e50;
+  color: white;
+  padding: 20px;
+  border-bottom: 3px solid #34495e;
+}
+
+.header h1 {
+  margin: 0 0 10px 0;
+  font-size: 24px;
+  font-weight: normal;
+}
+
+.status {
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+.status.loading {
+  color: #f39c12;
+}
+
+.status.ready {
+  color: #2ecc71;
+}
+
+.content {
+  padding: 20px;
+}
+
+.cell {
+  margin-bottom: 20px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.cell-input {
+  background: #fafafa;
+  border-bottom: 1px solid #e0e0e0;
+  padding: 12px;
+}
+
+.cell-input textarea {
+  width: 100%;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 10px;
+  font-family: 'Courier New', monospace;
+  font-size: 16px;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.cell-input textarea:focus {
+  outline: none;
+  border-color: #3498db;
+}
+
+.cell-controls {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-family: Helvetica, Arial, sans-serif;
+  transition: background 0.2s;
+}
+
+.btn-run {
+  background: #3498db;
+  color: white;
+}
+
+.btn-run:hover {
+  background: #2980b9;
+}
+
+.btn-run:disabled {
+  background: #bdc3c7;
+  cursor: not-allowed;
+}
+
+.btn-clear {
+  background: #e74c3c;
+  color: white;
+}
+
+.btn-clear:hover {
+  background: #c0392b;
+}
+
+.cell-output {
+  padding: 12px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 400px;
+  overflow-y: auto;
+  display: none;
+}
+
+.cell-output.visible {
+  display: block;
+}
+
+.cell-output.executing {
+  color: #f39c12;
+}
+
+.add-cell {
+  text-align: center;
+  padding: 20px;
+}
+
+.btn-add {
+  background: #95a5a6;
+  color: white;
+  font-size: 16px;
+  padding: 10px 24px;
+}
+
+.btn-add:hover {
+  background: #7f8c8d;
+}
+
+/* Hide the actual terminal */
+#term_wrap {
+  display: none;
+}
+
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>JSLinux Notebook</h1>
+      <div class="status loading" id="status">Loading Linux kernel...</div>
+    </div>
+    <div class="content" id="content">
+      <div class="cell">
+        <div class="cell-input">
+          <textarea placeholder="Enter a command (e.g., ls, cat /etc/issue, uname -a)" data-cell-id="0">ls</textarea>
+          <div class="cell-controls">
+            <button class="btn btn-run" onclick="runCell(0)" disabled>Run</button>
+            <button class="btn btn-clear" onclick="clearOutput(0)">Clear output</button>
+          </div>
+        </div>
+        <div class="cell-output" id="output-0"></div>
+      </div>
+    </div>
+    <div class="add-cell">
+      <button class="btn btn-add" onclick="addCell()">+ Add command cell</button>
+    </div>
+  </div>
+
+  <!-- Hidden terminal for JSLinux -->
+  <div id="term_wrap">
+    <div id="term_container"></div>
+    <div>
+      <textarea id="term_paste" cols="10" rows="1" autocorrect="off">Paste Here</textarea>
+    </div>
+  </div>
+
+  <script type="text/javascript" src="jslinux/jslinux-2019-12-21/term.js"></script>
+  <script type="text/javascript" src="jslinux/jslinux-2019-12-21/jslinux.js"></script>
+
+  <script type="module">
+let cellCounter = 1;
+let ready = false;
+let terminalOutput = "";
+let outputCallback = null;
+
+// Override the terminal's write function to capture output
+window.addEventListener('load', () => {
+  // Wait for JSLinux to initialize
+  setTimeout(() => {
+    if (window.term) {
+      console.log("JSLinux terminal initialized");
+
+      // Save original write function
+      const originalWrite = window.term.write.bind(window.term);
+
+      // Override write to capture output
+      window.term.write = function(str) {
+        terminalOutput += str;
+        if (outputCallback) {
+          outputCallback(str);
+        }
+        originalWrite(str);
+      };
+
+      // Wait a bit more for boot sequence
+      setTimeout(() => {
+        ready = true;
+        document.getElementById('status').textContent = 'Linux ready - Enter commands below';
+        document.getElementById('status').className = 'status ready';
+        enableAllButtons();
+      }, 3000);
+    } else {
+      console.log("Terminal not available, checking again...");
+      setTimeout(arguments.callee, 1000);
+    }
+  }, 2000);
+});
+
+function enableAllButtons() {
+  document.querySelectorAll('.btn-run').forEach(btn => {
+    btn.disabled = false;
+  });
+}
+
+window.runCell = async function(cellId) {
+  if (!ready || !window.term) {
+    alert("Terminal not ready yet!");
+    return;
+  }
+
+  const textarea = document.querySelector(`textarea[data-cell-id="${cellId}"]`);
+  const output = document.getElementById(`output-${cellId}`);
+  const command = textarea.value.trim();
+
+  if (!command) return;
+
+  output.classList.add('visible', 'executing');
+  output.textContent = `$ ${command}\nExecuting...`;
+
+  // Clear previous output
+  terminalOutput = "";
+  let capturedOutput = "";
+
+  // Set up callback to capture output
+  outputCallback = (str) => {
+    capturedOutput += str;
+  };
+
+  // Send command to terminal
+  window.term.send_chars(command + "\n");
+
+  // Wait for output (with timeout)
+  let attempts = 0;
+  const maxAttempts = 20;
+
+  const checkOutput = () => {
+    attempts++;
+
+    // Clean up ANSI codes and control characters
+    const cleanOutput = capturedOutput
+      .replace(/\x1b\[[0-9;]*m/g, '') // Remove ANSI color codes
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n');
+
+    if (cleanOutput.length > 0 || attempts >= maxAttempts) {
+      output.classList.remove('executing');
+      if (cleanOutput.length > 0) {
+        output.textContent = `$ ${command}\n${cleanOutput}`;
+      } else {
+        output.textContent = `$ ${command}\n(no output)`;
+      }
+      outputCallback = null;
+    } else {
+      setTimeout(checkOutput, 200);
+    }
+  };
+
+  setTimeout(checkOutput, 500);
+};
+
+window.clearOutput = function(cellId) {
+  const output = document.getElementById(`output-${cellId}`);
+  output.classList.remove('visible', 'executing');
+  output.textContent = '';
+};
+
+window.addCell = function() {
+  const content = document.getElementById('content');
+  const cellId = cellCounter++;
+
+  const cell = document.createElement('div');
+  cell.className = 'cell';
+  cell.innerHTML = `
+    <div class="cell-input">
+      <textarea placeholder="Enter a command" data-cell-id="${cellId}"></textarea>
+      <div class="cell-controls">
+        <button class="btn btn-run" onclick="runCell(${cellId})" ${!ready ? 'disabled' : ''}>Run</button>
+        <button class="btn btn-clear" onclick="clearOutput(${cellId})">Clear output</button>
+      </div>
+    </div>
+    <div class="cell-output" id="output-${cellId}"></div>
+  `;
+
+  content.appendChild(cell);
+
+  // Focus the new textarea
+  const textarea = cell.querySelector('textarea');
+  textarea.focus();
+
+  // Add Enter key handler
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      runCell(cellId);
+    }
+  });
+};
+
+// Add keyboard shortcuts to initial cell
+document.querySelector('textarea[data-cell-id="0"]').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    runCell(0);
+  }
+});
+</script>
+</body>
+</html>
