@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JSLinux Notebook - Enhanced</title>
+  <style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 20px;
+  font-family: Helvetica, Arial, sans-serif;
+  background: #f5f5f5;
+  color: #333;
+}
+
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  overflow: hidden;
+}
+
+.header {
+  background: #2c3e50;
+  color: white;
+  padding: 20px;
+  border-bottom: 3px solid #34495e;
+}
+
+.header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header h1 {
+  margin: 0 0 10px 0;
+  font-size: 24px;
+  font-weight: normal;
+}
+
+.header-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.header-buttons button {
+  padding: 6px 12px;
+  font-size: 12px;
+  border: 1px solid rgba(255,255,255,0.3);
+  background: rgba(255,255,255,0.1);
+  color: white;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.header-buttons button:hover {
+  background: rgba(255,255,255,0.2);
+}
+
+.status {
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+.status.loading {
+  color: #f39c12;
+}
+
+.status.ready {
+  color: #2ecc71;
+}
+
+.shortcuts-panel {
+  background: #ecf0f1;
+  padding: 12px 20px;
+  border-bottom: 1px solid #ddd;
+  display: none;
+}
+
+.shortcuts-panel.visible {
+  display: block;
+}
+
+.shortcuts-panel h3 {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+  color: #555;
+}
+
+.shortcuts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.shortcut-btn {
+  padding: 6px 12px;
+  background: #3498db;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.shortcut-btn:hover {
+  background: #2980b9;
+}
+
+.content {
+  padding: 20px;
+}
+
+.cell {
+  margin-bottom: 20px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.cell-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e0e0e0;
+  font-size: 12px;
+  color: #666;
+}
+
+.cell-number {
+  font-weight: bold;
+}
+
+.cell-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.cell-action-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  background: #95a5a6;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.cell-action-btn:hover {
+  background: #7f8c8d;
+}
+
+.cell-action-btn.danger {
+  background: #e74c3c;
+}
+
+.cell-action-btn.danger:hover {
+  background: #c0392b;
+}
+
+.cell-input {
+  background: #fafafa;
+  border-bottom: 1px solid #e0e0e0;
+  padding: 12px;
+}
+
+.cell-input textarea {
+  width: 100%;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 10px;
+  font-family: 'Courier New', monospace;
+  font-size: 16px;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.cell-input textarea:focus {
+  outline: none;
+  border-color: #3498db;
+}
+
+.cell-controls {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-family: Helvetica, Arial, sans-serif;
+  transition: background 0.2s;
+}
+
+.btn-run {
+  background: #3498db;
+  color: white;
+}
+
+.btn-run:hover {
+  background: #2980b9;
+}
+
+.btn-run:disabled {
+  background: #bdc3c7;
+  cursor: not-allowed;
+}
+
+.btn-clear {
+  background: #e74c3c;
+  color: white;
+}
+
+.btn-clear:hover {
+  background: #c0392b;
+}
+
+.cell-output {
+  padding: 12px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 400px;
+  overflow-y: auto;
+  display: none;
+}
+
+.cell-output.visible {
+  display: block;
+}
+
+.cell-output.executing {
+  color: #f39c12;
+}
+
+.cell-output.collapsed {
+  max-height: 100px;
+}
+
+.output-toggle {
+  text-align: center;
+  padding: 4px;
+  background: #2c3e50;
+  color: #fff;
+  cursor: pointer;
+  font-size: 11px;
+  display: none;
+}
+
+.cell-output.visible + .output-toggle {
+  display: block;
+}
+
+.output-toggle:hover {
+  background: #34495e;
+}
+
+.add-cell {
+  text-align: center;
+  padding: 20px;
+}
+
+.btn-add {
+  background: #95a5a6;
+  color: white;
+  font-size: 16px;
+  padding: 10px 24px;
+}
+
+.btn-add:hover {
+  background: #7f8c8d;
+}
+
+#term_wrap {
+  display: none;
+}
+
+.toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: #2ecc71;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  display: none;
+  z-index: 1000;
+}
+
+.toast.visible {
+  display: block;
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateY(100px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-top">
+        <div>
+          <h1>JSLinux Notebook Enhanced</h1>
+          <div class="status loading" id="status">Loading Linux kernel...</div>
+        </div>
+        <div class="header-buttons">
+          <button onclick="toggleShortcuts()">📋 Shortcuts</button>
+          <button onclick="saveNotebook()">💾 Save</button>
+          <button onclick="loadNotebook()">📂 Load</button>
+          <button onclick="exportNotebook()">📄 Export</button>
+          <button onclick="clearAllCells()">🗑️ Clear All</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="shortcuts-panel" id="shortcuts-panel">
+      <h3>Quick Commands:</h3>
+      <div class="shortcuts">
+        <button class="shortcut-btn" onclick="insertCommand('ls -la')">ls -la</button>
+        <button class="shortcut-btn" onclick="insertCommand('cat /etc/issue')">Show Issue</button>
+        <button class="shortcut-btn" onclick="insertCommand('uname -a')">System Info</button>
+        <button class="shortcut-btn" onclick="insertCommand('free -m')">Memory</button>
+        <button class="shortcut-btn" onclick="insertCommand('df -h')">Disk Space</button>
+        <button class="shortcut-btn" onclick="insertCommand('ps aux')">Processes</button>
+        <button class="shortcut-btn" onclick="insertCommand('cat /proc/cpuinfo')">CPU Info</button>
+        <button class="shortcut-btn" onclick="insertCommand('pwd')">pwd</button>
+      </div>
+    </div>
+
+    <div class="content" id="content">
+      <div class="cell" data-cell-index="0">
+        <div class="cell-header">
+          <span class="cell-number">Cell [1]</span>
+          <div class="cell-actions">
+            <button class="cell-action-btn" onclick="moveCell(0, -1)">↑</button>
+            <button class="cell-action-btn" onclick="moveCell(0, 1)">↓</button>
+            <button class="cell-action-btn danger" onclick="deleteCell(0)">Delete</button>
+          </div>
+        </div>
+        <div class="cell-input">
+          <textarea placeholder="Enter a command (e.g., ls, cat /etc/issue, uname -a)" data-cell-id="0">ls</textarea>
+          <div class="cell-controls">
+            <button class="btn btn-run" onclick="runCell(0)" disabled>Run</button>
+            <button class="btn btn-clear" onclick="clearOutput(0)">Clear output</button>
+          </div>
+        </div>
+        <div class="cell-output" id="output-0"></div>
+        <div class="output-toggle" onclick="toggleOutput(0)">▼ Collapse Output</div>
+      </div>
+    </div>
+
+    <div class="add-cell">
+      <button class="btn btn-add" onclick="addCell()">+ Add command cell</button>
+    </div>
+  </div>
+
+  <div id="term_wrap">
+    <div id="term_container"></div>
+    <div>
+      <textarea id="term_paste" cols="10" rows="1" autocorrect="off">Paste Here</textarea>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script type="text/javascript" src="jslinux/jslinux-2019-12-21/term.js"></script>
+  <script type="text/javascript" src="jslinux/jslinux-2019-12-21/jslinux.js"></script>
+
+  <script type="module">
+let cellCounter = 1;
+let executionCounter = 1;
+let ready = false;
+let terminalOutput = "";
+let outputCallback = null;
+
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    if (window.term) {
+      console.log("JSLinux terminal initialized");
+
+      const originalWrite = window.term.write.bind(window.term);
+      window.term.write = function(str) {
+        terminalOutput += str;
+        if (outputCallback) {
+          outputCallback(str);
+        }
+        originalWrite(str);
+      };
+
+      setTimeout(() => {
+        ready = true;
+        document.getElementById('status').textContent = 'Linux ready - Enter commands below';
+        document.getElementById('status').className = 'status ready';
+        enableAllButtons();
+        loadNotebookAuto();
+      }, 3000);
+    } else {
+      console.log("Terminal not available, checking again...");
+      setTimeout(arguments.callee, 1000);
+    }
+  }, 2000);
+});
+
+function enableAllButtons() {
+  document.querySelectorAll('.btn-run').forEach(btn => {
+    btn.disabled = false;
+  });
+}
+
+window.runCell = async function(cellId) {
+  if (!ready || !window.term) {
+    showToast("Terminal not ready yet!", "error");
+    return;
+  }
+
+  const textarea = document.querySelector(`textarea[data-cell-id="${cellId}"]`);
+  const output = document.getElementById(`output-${cellId}`);
+  const command = textarea.value.trim();
+
+  if (!command) return;
+
+  // Update cell number with execution counter
+  const cell = textarea.closest('.cell');
+  const cellNumber = cell.querySelector('.cell-number');
+  cellNumber.textContent = `Cell [${executionCounter++}]`;
+
+  output.classList.add('visible', 'executing');
+  output.textContent = `$ ${command}\nExecuting...`;
+
+  terminalOutput = "";
+  let capturedOutput = "";
+
+  outputCallback = (str) => {
+    capturedOutput += str;
+  };
+
+  window.term.send_chars(command + "\n");
+
+  let attempts = 0;
+  const maxAttempts = 20;
+
+  const checkOutput = () => {
+    attempts++;
+
+    const cleanOutput = capturedOutput
+      .replace(/\x1b\[[0-9;]*m/g, '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n');
+
+    if (cleanOutput.length > 0 || attempts >= maxAttempts) {
+      output.classList.remove('executing');
+      if (cleanOutput.length > 0) {
+        output.textContent = `$ ${command}\n${cleanOutput}`;
+      } else {
+        output.textContent = `$ ${command}\n(no output)`;
+      }
+      outputCallback = null;
+      saveNotebookAuto();
+    } else {
+      setTimeout(checkOutput, 200);
+    }
+  };
+
+  setTimeout(checkOutput, 500);
+};
+
+window.clearOutput = function(cellId) {
+  const output = document.getElementById(`output-${cellId}`);
+  output.classList.remove('visible', 'executing');
+  output.textContent = '';
+  saveNotebookAuto();
+};
+
+window.addCell = function() {
+  const content = document.getElementById('content');
+  const cellId = cellCounter++;
+
+  const cell = document.createElement('div');
+  cell.className = 'cell';
+  cell.setAttribute('data-cell-index', cellId);
+  cell.innerHTML = `
+    <div class="cell-header">
+      <span class="cell-number">Cell [*]</span>
+      <div class="cell-actions">
+        <button class="cell-action-btn" onclick="moveCell(${cellId}, -1)">↑</button>
+        <button class="cell-action-btn" onclick="moveCell(${cellId}, 1)">↓</button>
+        <button class="cell-action-btn danger" onclick="deleteCell(${cellId})">Delete</button>
+      </div>
+    </div>
+    <div class="cell-input">
+      <textarea placeholder="Enter a command" data-cell-id="${cellId}"></textarea>
+      <div class="cell-controls">
+        <button class="btn btn-run" onclick="runCell(${cellId})" ${!ready ? 'disabled' : ''}>Run</button>
+        <button class="btn btn-clear" onclick="clearOutput(${cellId})">Clear output</button>
+      </div>
+    </div>
+    <div class="cell-output" id="output-${cellId}"></div>
+    <div class="output-toggle" onclick="toggleOutput(${cellId})">▼ Collapse Output</div>
+  `;
+
+  content.appendChild(cell);
+
+  const textarea = cell.querySelector('textarea');
+  textarea.focus();
+
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      runCell(cellId);
+    }
+  });
+
+  saveNotebookAuto();
+};
+
+window.deleteCell = function(cellId) {
+  const cell = document.querySelector(`[data-cell-index="${cellId}"]`);
+  if (cell) {
+    if (confirm('Delete this cell?')) {
+      cell.remove();
+      saveNotebookAuto();
+      showToast("Cell deleted");
+    }
+  }
+};
+
+window.moveCell = function(cellId, direction) {
+  const cell = document.querySelector(`[data-cell-index="${cellId}"]`);
+  if (!cell) return;
+
+  const parent = cell.parentElement;
+  const cells = Array.from(parent.querySelectorAll('.cell'));
+  const index = cells.indexOf(cell);
+  const newIndex = index + direction;
+
+  if (newIndex < 0 || newIndex >= cells.length) return;
+
+  if (direction < 0) {
+    parent.insertBefore(cell, cells[newIndex]);
+  } else {
+    parent.insertBefore(cell, cells[newIndex].nextSibling);
+  }
+
+  saveNotebookAuto();
+  showToast("Cell moved");
+};
+
+window.toggleOutput = function(cellId) {
+  const output = document.getElementById(`output-${cellId}`);
+  const toggle = output.nextElementSibling;
+
+  if (output.classList.contains('collapsed')) {
+    output.classList.remove('collapsed');
+    toggle.textContent = '▼ Collapse Output';
+  } else {
+    output.classList.add('collapsed');
+    toggle.textContent = '▲ Expand Output';
+  }
+};
+
+window.toggleShortcuts = function() {
+  const panel = document.getElementById('shortcuts-panel');
+  panel.classList.toggle('visible');
+};
+
+window.insertCommand = function(command) {
+  const cells = document.querySelectorAll('.cell');
+  const lastCell = cells[cells.length - 1];
+  const textarea = lastCell.querySelector('textarea');
+  textarea.value = command;
+  textarea.focus();
+};
+
+window.saveNotebook = function() {
+  const notebookData = {
+    cells: [],
+    timestamp: new Date().toISOString()
+  };
+
+  document.querySelectorAll('.cell').forEach(cell => {
+    const textarea = cell.querySelector('textarea');
+    const output = cell.querySelector('.cell-output');
+    const cellNumber = cell.querySelector('.cell-number').textContent;
+
+    notebookData.cells.push({
+      command: textarea.value,
+      output: output.textContent,
+      outputVisible: output.classList.contains('visible'),
+      cellNumber: cellNumber
+    });
+  });
+
+  const dataStr = JSON.stringify(notebookData, null, 2);
+  const blob = new Blob([dataStr], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `jslinux-notebook-${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  showToast("Notebook saved to file!");
+};
+
+function saveNotebookAuto() {
+  const notebookData = {
+    cells: [],
+    timestamp: new Date().toISOString()
+  };
+
+  document.querySelectorAll('.cell').forEach(cell => {
+    const textarea = cell.querySelector('textarea');
+    const output = cell.querySelector('.cell-output');
+
+    notebookData.cells.push({
+      command: textarea.value,
+      output: output.textContent,
+      outputVisible: output.classList.contains('visible')
+    });
+  });
+
+  localStorage.setItem('jslinux-notebook', JSON.stringify(notebookData));
+}
+
+function loadNotebookAuto() {
+  const saved = localStorage.getItem('jslinux-notebook');
+  if (saved) {
+    const notebookData = JSON.parse(saved);
+    if (notebookData.cells && notebookData.cells.length > 1) {
+      // Clear existing cells except first
+      const content = document.getElementById('content');
+      while (content.children.length > 1) {
+        content.removeChild(content.lastChild);
+      }
+
+      // Load cells
+      notebookData.cells.forEach((cellData, index) => {
+        if (index === 0) {
+          // Update first cell
+          const textarea = document.querySelector('textarea[data-cell-id="0"]');
+          const output = document.getElementById('output-0');
+          textarea.value = cellData.command;
+          output.textContent = cellData.output;
+          if (cellData.outputVisible) {
+            output.classList.add('visible');
+          }
+        } else {
+          // Add new cells
+          addCell();
+          setTimeout(() => {
+            const newTextarea = document.querySelector(`textarea[data-cell-id="${cellCounter - 1}"]`);
+            const newOutput = document.getElementById(`output-${cellCounter - 1}`);
+            if (newTextarea) {
+              newTextarea.value = cellData.command;
+              newOutput.textContent = cellData.output;
+              if (cellData.outputVisible) {
+                newOutput.classList.add('visible');
+              }
+            }
+          }, 10);
+        }
+      });
+    }
+  }
+}
+
+window.loadNotebook = function() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json';
+  input.onchange = (e) => {
+    const file = e.target.files[0];
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const notebookData = JSON.parse(event.target.result);
+        localStorage.setItem('jslinux-notebook', event.target.result);
+        location.reload();
+      } catch (error) {
+        showToast("Error loading notebook: " + error.message, "error");
+      }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+};
+
+window.exportNotebook = function() {
+  let html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>JSLinux Notebook Export</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; }
+    .cell { margin: 20px 0; border: 1px solid #ddd; border-radius: 4px; }
+    .cell-header { background: #f5f5f5; padding: 8px 12px; font-size: 12px; color: #666; }
+    .command { background: #fafafa; padding: 12px; border-bottom: 1px solid #ddd; }
+    .command pre { margin: 0; font-family: monospace; }
+    .output { background: #1e1e1e; color: #d4d4d4; padding: 12px; font-family: monospace; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>JSLinux Notebook</h1>
+  <p>Exported: ${new Date().toLocaleString()}</p>
+`;
+
+  document.querySelectorAll('.cell').forEach((cell, index) => {
+    const textarea = cell.querySelector('textarea');
+    const output = cell.querySelector('.cell-output');
+    const cellNumber = cell.querySelector('.cell-number').textContent;
+
+    html += `
+  <div class="cell">
+    <div class="cell-header">${cellNumber}</div>
+    <div class="command"><pre>${textarea.value}</pre></div>`;
+
+    if (output.classList.contains('visible') && output.textContent) {
+      html += `
+    <div class="output">${output.textContent}</div>`;
+    }
+
+    html += `
+  </div>`;
+  });
+
+  html += `
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `jslinux-notebook-export-${Date.now()}.html`;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  showToast("Notebook exported!");
+};
+
+window.clearAllCells = function() {
+  if (confirm('Clear all cells and outputs?')) {
+    document.querySelectorAll('textarea').forEach(t => t.value = '');
+    document.querySelectorAll('.cell-output').forEach(o => {
+      o.textContent = '';
+      o.classList.remove('visible');
+    });
+    saveNotebookAuto();
+    showToast("All cells cleared");
+  }
+};
+
+function showToast(message, type = "success") {
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.style.background = type === "error" ? "#e74c3c" : "#2ecc71";
+  toast.classList.add('visible');
+  setTimeout(() => {
+    toast.classList.remove('visible');
+  }, 3000);
+}
+
+// Add keyboard shortcuts to initial cell
+document.querySelector('textarea[data-cell-id="0"]').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    runCell(0);
+  }
+});
+</script>
+</body>
+</html>
