@@ -1,0 +1,11 @@
+# Ignore downloaded assets (too large for git)
+assets/
+
+# Python test artifacts
+__pycache__/
+*.pyc
+playwright-report/
+test-results/
+
+# OS files
+.DS_Store

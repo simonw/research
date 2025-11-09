@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Linux VM JS Library Demo</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            max-width: 900px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+
+        h1 {
+            color: #4ec9b0;
+        }
+
+        .container {
+            background: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 5px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 3px;
+            background: #1a1a1a;
+            border-left: 4px solid #007acc;
+        }
+
+        .output {
+            background: #1a1a1a;
+            border: 1px solid #3e3e42;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 3px;
+            white-space: pre-wrap;
+            font-size: 14px;
+            color: #ce9178;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+
+        button:hover {
+            background: #1177bb;
+        }
+
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+
+        .command {
+            background: #264f78;
+            padding: 8px 12px;
+            margin: 5px 0;
+            border-radius: 3px;
+            font-size: 13px;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <h1>🐧 Linux VM JS Library Demo</h1>
+
+    <div class="container">
+        <h2>Library Usage Example</h2>
+        <div class="command">
+            const vm = new LinuxVM();<br>
+            await vm.startup();<br>
+            const {stdout, stderr} = await vm.execute('echo "hello" > hello.txt && ls -lah');
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>Test Controls</h2>
+        <button id="startBtn" onclick="startVM()">Start VM</button>
+        <button id="testBtn" onclick="runTest()" disabled>Run Test Command</button>
+        <button id="shutdownBtn" onclick="shutdownVM()" disabled>Shutdown</button>
+    </div>
+
+    <div class="container">
+        <h2>Status</h2>
+        <div id="status" class="status">Ready to start...</div>
+    </div>
+
+    <div class="container">
+        <h2>Output</h2>
+        <div id="output" class="output">No output yet...</div>
+    </div>
+
+    <!-- Load v86 library -->
+    <script src="assets/libv86.js"></script>
+
+    <!-- Load our LinuxVM library -->
+    <script src="linux-vm.js"></script>
+
+    <script>
+        // Add global error handler
+        window.addEventListener('error', function(e) {
+            console.error('Global error:', e.error);
+            const statusDiv = document.getElementById('status');
+            if (statusDiv) {
+                statusDiv.textContent = 'Error: ' + (e.error ? e.error.message : e.message);
+            }
+        });
+
+        window.addEventListener('unhandledrejection', function(e) {
+            console.error('Unhandled promise rejection:', e.reason);
+            const statusDiv = document.getElementById('status');
+            if (statusDiv) {
+                statusDiv.textContent = 'Promise error: ' + (e.reason ? e.reason.message : e.reason);
+            }
+        });
+    </script>
+
+    <script>
+        let vm = null;
+
+        function updateStatus(message, isLoading = false) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = isLoading
+                ? `<span class="loading"></span> ${message}`
+                : message;
+        }
+
+        function appendOutput(text) {
+            const outputDiv = document.getElementById('output');
+            if (outputDiv.textContent === 'No output yet...') {
+                outputDiv.textContent = '';
+            }
+            outputDiv.textContent += text + '\n\n';
+            outputDiv.scrollTop = outputDiv.scrollHeight;
+        }
+
+        async function startVM() {
+            try {
+                document.getElementById('startBtn').disabled = true;
+                updateStatus('Creating VM instance...', true);
+
+                vm = new LinuxVM();
+
+                updateStatus('Starting VM (this may take 10-30 seconds)...', true);
+                appendOutput('>>> Booting Linux VM...');
+
+                await vm.startup();
+
+                updateStatus('✓ VM is ready!');
+                appendOutput('>>> VM boot complete!');
+
+                document.getElementById('testBtn').disabled = false;
+                document.getElementById('shutdownBtn').disabled = false;
+
+            } catch (error) {
+                updateStatus('✗ Error: ' + error.message);
+                appendOutput('ERROR: ' + error.message);
+                document.getElementById('startBtn').disabled = false;
+            }
+        }
+
+        async function runTest() {
+            try {
+                document.getElementById('testBtn').disabled = true;
+                updateStatus('Executing test command...', true);
+
+                const command = 'echo "hello" > hello.txt && ls -lah';
+                appendOutput(`$ ${command}`);
+
+                const result = await vm.execute(command);
+
+                appendOutput('STDOUT:\n' + result.stdout);
+                if (result.stderr) {
+                    appendOutput('STDERR:\n' + result.stderr);
+                }
+
+                updateStatus('✓ Command executed successfully!');
+                document.getElementById('testBtn').disabled = false;
+
+                // Run a follow-up command to verify
+                setTimeout(async () => {
+                    updateStatus('Running follow-up command...', true);
+                    appendOutput('\n$ cat hello.txt');
+
+                    const result2 = await vm.execute('cat hello.txt');
+                    appendOutput('STDOUT:\n' + result2.stdout);
+
+                    updateStatus('✓ All tests complete!');
+                }, 1000);
+
+            } catch (error) {
+                updateStatus('✗ Error: ' + error.message);
+                appendOutput('ERROR: ' + error.message);
+                document.getElementById('testBtn').disabled = false;
+            }
+        }
+
+        function shutdownVM() {
+            if (vm) {
+                vm.shutdown();
+                updateStatus('VM shut down');
+                appendOutput('>>> VM terminated');
+
+                document.getElementById('testBtn').disabled = true;
+                document.getElementById('shutdownBtn').disabled = true;
+                document.getElementById('startBtn').disabled = false;
+
+                vm = null;
+            }
+        }
+    </script>
+</body>
+</html>
