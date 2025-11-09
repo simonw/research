@@ -2,6 +2,9 @@
 jslinux/
 jslinux-2019-12-21.tar.gz
 
+# Original downloaded file (not our work)
+jslinux-notebook.html
+
 # Server logs
 server.log
 
