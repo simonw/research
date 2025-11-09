@@ -114,6 +114,17 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
+### [llm-pyodide-openai-plugin](https://github.com/simonw/research/tree/main/llm-pyodide-openai-plugin) (2025-11-09)
+
+Leveraging the [LLM Python package](https://llm.datasette.io/) and pyodide, this project successfully adapts LLM’s OpenAI model interface for direct use in browser environments by bypassing the standard openai library (which fails in browsers due to its httpx dependency) and instead using the browser-native fetch API for CORS-compliant API calls. The plugin implements the LLM `KeyModel` interface and registers new models with OpenAI support through custom hooks, allowing prompt execution and chat completions entirely within pyodide’s async event loop, without server-side Python. No changes to LLM’s core were required; all adaptations reside in the plugin, which integrates cleanly with the browser’s JS-Python bridge and achieves dynamic model registration, API calls, and response parsing directly in the browser. For reference, the core plugin implementation is contained in `llm_pyodide_openai.py` while [pyodide](https://pyodide.org/en/stable/) provides the Python-in-browser runtime.
+
+**Key findings:**
+- The openai package installs in pyodide but is incompatible with browser HTTP requests, necessitating direct fetch API integration.
+- All plugin logic, including API calls and response parsing, operates in Python via pyodide, using JavaScript interop for networking.
+- No modifications to the LLM core package are required; plugin flexibility is sufficient for adapting to browser constraints.
+- Streaming (partial responses) is not yet implemented, but could be achieved with ReadableStream and async generators.
+- CORS restrictions are resolved naturally by using fetch, making production-grade browser-based AI agents feasible.
+
 ### [codex-sandbox-investigation](https://github.com/simonw/research/tree/main/codex-sandbox-investigation) (2025-11-09)
 
 OpenAI Codex CLI's sandbox employs strong, platform-specific isolation to securely constrain the behavior of AI-driven code agents. On macOS, it uses Apple's Seatbelt sandbox with finely tuned dynamic policies, while on Linux, it combines Landlock for strict filesystem controls and seccomp for syscall-based network blocking—ensuring that agents can only write to user-approved directories and have no outgoing network by default. Both platforms feature special protection for `.git` repositories, path canonicalization to thwart symlink attacks, and enforce least-privilege principles, all integrated with user-configurable approval policies for flexibility. Key tools include the [OpenAI Codex CLI](https://github.com/openai/codex) and related [sandbox documentation](https://github.com/openai/codex/blob/main/docs/sandbox.md).
