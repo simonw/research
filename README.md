@@ -114,6 +114,17 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
+### [uv-run-flow-analysis](https://github.com/simonw/research/tree/main/uv-run-flow-analysis) (2025-11-10)
+
+Running `uv run myscript.py` in a directory with a `pyproject.toml` launches a multi-phase workflow that automates Python script execution within an isolated, dependency-managed environment. uv scans for project metadata, resolves and validates interpreter and package requirements, manages virtual environments, locks dependencies with a TOML-based `uv.lock` file using the PubGrub algorithm, efficiently syncs the environment with parallel downloads and caching, and finally executes the desired command with robust error handling. This process is orchestrated via performant Rust crates, resulting in fast, reliable, and reproducible Python executions superior to traditional tools like pip or poetry. For more details on the tool, see [uv documentation](https://github.com/astral-sh/uv) or the PubGrub [resolution algorithm](https://docs.rs/pubgrub/latest/pubgrub/).
+
+Key findings:
+- uv automatically discovers and parses project dependencies from `pyproject.toml`, supporting PEP standards and custom configurations.
+- Dependency resolution is lock-file-driven (universal, reproducible) and faster than pip/poetry due to Rust implementation, PubGrub, and aggressive caching.
+- Python interpreter management is integrated, with automatic downloads and validation against project constraints.
+- Installation of packages occurs in a virtual environment, with fine-grained error handling and atomic operations.
+- The architecture enables cross-platform consistency, incremental sync, and seamless user experience with zero configuration required.
+
 ### [env86-analysis](https://github.com/simonw/research/tree/main/env86-analysis) (2025-11-09)
 
 env86 is a Go-based management tool that enables users to run x86 Linux virtual machines within browser contexts via the v86 WebAssembly emulator. By combining a native desktop application (embedding a browser), a robust CLI, and an integrated virtual networking stack, env86 provides an easily distributable and reproducible Linux environment that can boot instantly from snapshots, support host-guest communication, and mount host filesystems. Images are efficiently distributed through GitHub releases, and the system can be used interactively or in headless/automation contexts, making it especially suitable for development, education, sandboxing, legacy software execution, and rapid demonstration scenarios. While performance is limited by browser-based emulation, env86 uniquely excels in cross-platform portability and accessibility, allowing VMs to run anywhere a browser or desktop is available.
