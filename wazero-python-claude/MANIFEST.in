@@ -1,8 +1,0 @@
-include README.md
-include LICENSE
-include pyproject.toml
-include setup.py
-include libwazero.go
-include go.mod
-include go.sum
-recursive-include wazero *.so *.dylib *.dll *.h

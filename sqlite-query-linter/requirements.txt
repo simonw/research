@@ -1,4 +1,0 @@
-# No runtime dependencies - uses only Python standard library
-
-# Development dependencies
-pytest>=7.0.0
