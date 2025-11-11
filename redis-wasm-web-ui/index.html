@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redis JS - Interactive Browser Redis</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #DC382D 0%, #A82822 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 0;
+            min-height: 600px;
+        }
+
+        .sidebar {
+            background: #f7f7f7;
+            border-right: 1px solid #ddd;
+            padding: 20px;
+            overflow-y: auto;
+            max-height: 80vh;
+        }
+
+        .sidebar h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .command-group {
+            margin-bottom: 20px;
+        }
+
+        .command-group h3 {
+            color: #667eea;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            padding-bottom: 5px;
+            border-bottom: 2px solid #667eea;
+        }
+
+        .command-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 10px;
+        }
+
+        .command-btn {
+            background: #fff;
+            border: 1px solid #ddd;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.2s;
+            color: #333;
+        }
+
+        .command-btn:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+        }
+
+        .main-area {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .command-input-area {
+            padding: 20px;
+            background: white;
+            border-bottom: 2px solid #eee;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .command-input {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 1em;
+            font-family: 'Courier New', monospace;
+        }
+
+        .command-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .execute-btn {
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 1em;
+            transition: transform 0.2s;
+        }
+
+        .execute-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .execute-btn:active {
+            transform: scale(0.98);
+        }
+
+        .clear-btn {
+            padding: 8px 16px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.2s;
+        }
+
+        .clear-btn:hover {
+            background: #c82333;
+        }
+
+        .notebook {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: #fafafa;
+        }
+
+        .cell {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .cell-header {
+            background: #f8f9fa;
+            padding: 10px 15px;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .cell-number {
+            font-weight: bold;
+            color: #667eea;
+            font-family: 'Courier New', monospace;
+        }
+
+        .cell-timestamp {
+            font-size: 0.85em;
+            color: #666;
+        }
+
+        .cell-input {
+            padding: 12px 15px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #eee;
+            font-family: 'Courier New', monospace;
+            color: #333;
+            font-size: 0.95em;
+        }
+
+        .cell-input::before {
+            content: '> ';
+            color: #667eea;
+            font-weight: bold;
+        }
+
+        .cell-output {
+            padding: 12px 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .cell-output.success {
+            color: #28a745;
+        }
+
+        .cell-output.error {
+            color: #dc3545;
+            background: #fff5f5;
+        }
+
+        .cell-output pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .stats {
+            padding: 10px 20px;
+            background: #f8f9fa;
+            border-top: 1px solid #ddd;
+            font-size: 0.9em;
+            color: #666;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .quick-commands {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #ddd;
+        }
+
+        .quick-commands h4 {
+            font-size: 0.85em;
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .example-btn {
+            display: block;
+            width: 100%;
+            text-align: left;
+            background: #fff;
+            border: 1px solid #ddd;
+            padding: 8px 12px;
+            margin-bottom: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            transition: all 0.2s;
+        }
+
+        .example-btn:hover {
+            background: #f0f0f0;
+            border-color: #667eea;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Redis JS</h1>
+            <p>Interactive Redis in Your Browser - Notebook Style</p>
+        </div>
+
+        <div class="content">
+            <div class="sidebar">
+                <h2>Commands</h2>
+
+                <div class="command-group">
+                    <h3>String</h3>
+                    <div class="command-list">
+                        <button class="command-btn" onclick="insertCommand('SET')">SET</button>
+                        <button class="command-btn" onclick="insertCommand('GET')">GET</button>
+                        <button class="command-btn" onclick="insertCommand('INCR')">INCR</button>
+                        <button class="command-btn" onclick="insertCommand('DECR')">DECR</button>
+                        <button class="command-btn" onclick="insertCommand('INCRBY')">INCRBY</button>
+                        <button class="command-btn" onclick="insertCommand('APPEND')">APPEND</button>
+                        <button class="command-btn" onclick="insertCommand('STRLEN')">STRLEN</button>
+                    </div>
+                </div>
+
+                <div class="command-group">
+                    <h3>List</h3>
+                    <div class="command-list">
+                        <button class="command-btn" onclick="insertCommand('LPUSH')">LPUSH</button>
+                        <button class="command-btn" onclick="insertCommand('RPUSH')">RPUSH</button>
+                        <button class="command-btn" onclick="insertCommand('LPOP')">LPOP</button>
+                        <button class="command-btn" onclick="insertCommand('RPOP')">RPOP</button>
+                        <button class="command-btn" onclick="insertCommand('LLEN')">LLEN</button>
+                        <button class="command-btn" onclick="insertCommand('LRANGE')">LRANGE</button>
+                    </div>
+                </div>
+
+                <div class="command-group">
+                    <h3>Set</h3>
+                    <div class="command-list">
+                        <button class="command-btn" onclick="insertCommand('SADD')">SADD</button>
+                        <button class="command-btn" onclick="insertCommand('SREM')">SREM</button>
+                        <button class="command-btn" onclick="insertCommand('SMEMBERS')">SMEMBERS</button>
+                        <button class="command-btn" onclick="insertCommand('SISMEMBER')">SISMEMBER</button>
+                        <button class="command-btn" onclick="insertCommand('SCARD')">SCARD</button>
+                    </div>
+                </div>
+
+                <div class="command-group">
+                    <h3>Hash</h3>
+                    <div class="command-list">
+                        <button class="command-btn" onclick="insertCommand('HSET')">HSET</button>
+                        <button class="command-btn" onclick="insertCommand('HGET')">HGET</button>
+                        <button class="command-btn" onclick="insertCommand('HGETALL')">HGETALL</button>
+                        <button class="command-btn" onclick="insertCommand('HDEL')">HDEL</button>
+                        <button class="command-btn" onclick="insertCommand('HEXISTS')">HEXISTS</button>
+                        <button class="command-btn" onclick="insertCommand('HKEYS')">HKEYS</button>
+                        <button class="command-btn" onclick="insertCommand('HVALS')">HVALS</button>
+                        <button class="command-btn" onclick="insertCommand('HLEN')">HLEN</button>
+                    </div>
+                </div>
+
+                <div class="command-group">
+                    <h3>Sorted Set</h3>
+                    <div class="command-list">
+                        <button class="command-btn" onclick="insertCommand('ZADD')">ZADD</button>
+                        <button class="command-btn" onclick="insertCommand('ZSCORE')">ZSCORE</button>
+                        <button class="command-btn" onclick="insertCommand('ZCARD')">ZCARD</button>
+                        <button class="command-btn" onclick="insertCommand('ZRANGE')">ZRANGE</button>
+                    </div>
+                </div>
+
+                <div class="command-group">
+                    <h3>Generic</h3>
+                    <div class="command-list">
+                        <button class="command-btn" onclick="insertCommand('KEYS')">KEYS</button>
+                        <button class="command-btn" onclick="insertCommand('DEL')">DEL</button>
+                        <button class="command-btn" onclick="insertCommand('EXISTS')">EXISTS</button>
+                        <button class="command-btn" onclick="insertCommand('TYPE')">TYPE</button>
+                        <button class="command-btn" onclick="insertCommand('EXPIRE')">EXPIRE</button>
+                        <button class="command-btn" onclick="insertCommand('TTL')">TTL</button>
+                        <button class="command-btn" onclick="insertCommand('DBSIZE')">DBSIZE</button>
+                        <button class="command-btn" onclick="insertCommand('FLUSHDB')">FLUSHDB</button>
+                    </div>
+                </div>
+
+                <div class="command-group">
+                    <h3>Connection</h3>
+                    <div class="command-list">
+                        <button class="command-btn" onclick="insertCommand('PING')">PING</button>
+                        <button class="command-btn" onclick="insertCommand('ECHO')">ECHO</button>
+                        <button class="command-btn" onclick="insertCommand('INFO')">INFO</button>
+                    </div>
+                </div>
+
+                <div class="quick-commands">
+                    <h4>Quick Examples</h4>
+                    <button class="example-btn" onclick="runExample('SET mykey hello')">SET mykey hello</button>
+                    <button class="example-btn" onclick="runExample('GET mykey')">GET mykey</button>
+                    <button class="example-btn" onclick="runExample('LPUSH mylist item1 item2')">LPUSH mylist item1 item2</button>
+                    <button class="example-btn" onclick="runExample('LRANGE mylist 0 -1')">LRANGE mylist 0 -1</button>
+                    <button class="example-btn" onclick="runExample('HSET user:1 name John age 30')">HSET user:1 name John age 30</button>
+                    <button class="example-btn" onclick="runExample('HGETALL user:1')">HGETALL user:1</button>
+                </div>
+            </div>
+
+            <div class="main-area">
+                <div class="command-input-area">
+                    <div class="input-group">
+                        <input type="text"
+                               class="command-input"
+                               id="commandInput"
+                               placeholder="Enter Redis command (e.g., SET key value)"
+                               autofocus>
+                        <button class="execute-btn" onclick="executeCommand()">Execute</button>
+                        <button class="clear-btn" onclick="clearNotebook()">Clear All</button>
+                    </div>
+                </div>
+
+                <div class="notebook" id="notebook">
+                    <div style="text-align: center; color: #999; padding: 40px;">
+                        <h3>Welcome to Redis JS!</h3>
+                        <p style="margin-top: 10px;">Start by typing a Redis command or click on the commands in the sidebar.</p>
+                        <p style="margin-top: 5px;">Try: <code>SET mykey hello</code> then <code>GET mykey</code></p>
+                    </div>
+                </div>
+
+                <div class="stats">
+                    <div>Total Keys: <strong id="totalKeys">0</strong></div>
+                    <div>Commands Executed: <strong id="commandCount">0</strong></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="redis-js.js"></script>
+    <script>
+        const redis = new RedisJS();
+        let commandCount = 0;
+        let cellCount = 0;
+
+        // Handle Enter key
+        document.getElementById('commandInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                executeCommand();
+            }
+        });
+
+        function insertCommand(cmd) {
+            const input = document.getElementById('commandInput');
+            input.value = cmd + ' ';
+            input.focus();
+        }
+
+        function runExample(cmd) {
+            document.getElementById('commandInput').value = cmd;
+            executeCommand();
+        }
+
+        function parseCommand(cmdString) {
+            const args = [];
+            let current = '';
+            let inQuotes = false;
+            let quoteChar = '';
+
+            for (let i = 0; i < cmdString.length; i++) {
+                const char = cmdString[i];
+
+                if ((char === '"' || char === "'") && !inQuotes) {
+                    inQuotes = true;
+                    quoteChar = char;
+                } else if (char === quoteChar && inQuotes) {
+                    inQuotes = false;
+                    quoteChar = '';
+                } else if (char === ' ' && !inQuotes) {
+                    if (current) {
+                        args.push(current);
+                        current = '';
+                    }
+                } else {
+                    current += char;
+                }
+            }
+
+            if (current) {
+                args.push(current);
+            }
+
+            return args;
+        }
+
+        function executeCommand() {
+            const input = document.getElementById('commandInput');
+            const cmdString = input.value.trim();
+
+            if (!cmdString) return;
+
+            const args = parseCommand(cmdString);
+            const command = args[0].toLowerCase();
+            const params = args.slice(1);
+
+            cellCount++;
+            commandCount++;
+
+            let result;
+            let isError = false;
+
+            try {
+                // Execute command
+                if (typeof redis[command] === 'function') {
+                    result = redis[command](...params);
+                } else {
+                    throw new Error(`ERR unknown command '${command}'`);
+                }
+            } catch (error) {
+                result = error.message;
+                isError = true;
+            }
+
+            // Display result
+            displayCell(cellCount, cmdString, result, isError);
+
+            // Update stats
+            updateStats();
+
+            // Clear input
+            input.value = '';
+            input.focus();
+
+            // Scroll to bottom
+            const notebook = document.getElementById('notebook');
+            notebook.scrollTop = notebook.scrollHeight;
+        }
+
+        function displayCell(number, command, output, isError = false) {
+            const notebook = document.getElementById('notebook');
+
+            // Remove welcome message if present
+            if (number === 1) {
+                notebook.innerHTML = '';
+            }
+
+            const cell = document.createElement('div');
+            cell.className = 'cell';
+
+            const timestamp = new Date().toLocaleTimeString();
+
+            let formattedOutput = output;
+            if (typeof output === 'object' && output !== null) {
+                formattedOutput = JSON.stringify(output, null, 2);
+            } else if (Array.isArray(output)) {
+                formattedOutput = output.join('\n');
+            }
+
+            cell.innerHTML = `
+                <div class="cell-header">
+                    <span class="cell-number">Cell [${number}]</span>
+                    <span class="cell-timestamp">${timestamp}</span>
+                </div>
+                <div class="cell-input">${escapeHtml(command)}</div>
+                <div class="cell-output ${isError ? 'error' : 'success'}">
+                    <pre>${escapeHtml(String(formattedOutput))}</pre>
+                </div>
+            `;
+
+            notebook.appendChild(cell);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function clearNotebook() {
+            if (confirm('Clear all command history?')) {
+                document.getElementById('notebook').innerHTML = `
+                    <div style="text-align: center; color: #999; padding: 40px;">
+                        <h3>Notebook Cleared</h3>
+                        <p style="margin-top: 10px;">Start by typing a Redis command or click on the commands in the sidebar.</p>
+                    </div>
+                `;
+                cellCount = 0;
+                commandCount = 0;
+                updateStats();
+            }
+        }
+
+        function updateStats() {
+            document.getElementById('totalKeys').textContent = redis.dbsize();
+            document.getElementById('commandCount').textContent = commandCount;
+        }
+
+        // Initialize
+        updateStats();
+    </script>
+</body>
+</html>
