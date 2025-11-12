@@ -113,7 +113,11 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
-## 0 research projects
+## 1 research projects
+
+### [data-ingestion](https://github.com/Kahtaf/research/tree/main/data-ingestion) (2025-11-12)
+
+Researchers evaluated strategies for ingesting data from multiple sources while ensuring cryptographic provenance guarantees
 
 <!--[[[end]]]-->
 
