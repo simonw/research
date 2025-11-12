@@ -8,7 +8,7 @@ I try to include prompts and links to transcripts in [the PRs](https://github.co
 import os
 import subprocess
 import pathlib
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Model to use for generating summaries
 MODEL = "github/gpt-4.1"
@@ -34,10 +34,10 @@ for d in research_dir.iterdir():
                 subdirs_with_dates.append((d.name, commit_date))
             else:
                 # No git history, use directory modification time
-                subdirs_with_dates.append((d.name, datetime.fromtimestamp(d.stat().st_mtime)))
+                subdirs_with_dates.append((d.name, datetime.fromtimestamp(d.stat().st_mtime, tz=timezone.utc)))
         except Exception:
             # Fallback to directory modification time
-            subdirs_with_dates.append((d.name, datetime.fromtimestamp(d.stat().st_mtime)))
+            subdirs_with_dates.append((d.name, datetime.fromtimestamp(d.stat().st_mtime, tz=timezone.utc)))
 
 # Print the heading with count
 print(f"## {len(subdirs_with_dates)} research projects\n")
