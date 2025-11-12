@@ -11,7 +11,7 @@ import pathlib
 from datetime import datetime, timezone
 
 # Model to use for generating summaries
-MODEL = "github/gpt-4.1"
+MODEL = "github/Llama-3.3-70B-Instruct"
 
 # Get all subdirectories with their first commit dates
 research_dir = pathlib.Path.cwd()
