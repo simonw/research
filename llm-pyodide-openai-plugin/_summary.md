@@ -1,8 +1,0 @@
-Leveraging the [LLM Python package](https://llm.datasette.io/) and pyodide, this project successfully adapts LLM’s OpenAI model interface for direct use in browser environments by bypassing the standard openai library (which fails in browsers due to its httpx dependency) and instead using the browser-native fetch API for CORS-compliant API calls. The plugin implements the LLM `KeyModel` interface and registers new models with OpenAI support through custom hooks, allowing prompt execution and chat completions entirely within pyodide’s async event loop, without server-side Python. No changes to LLM’s core were required; all adaptations reside in the plugin, which integrates cleanly with the browser’s JS-Python bridge and achieves dynamic model registration, API calls, and response parsing directly in the browser. For reference, the core plugin implementation is contained in `llm_pyodide_openai.py` while [pyodide](https://pyodide.org/en/stable/) provides the Python-in-browser runtime.
-
-**Key findings:**
-- The openai package installs in pyodide but is incompatible with browser HTTP requests, necessitating direct fetch API integration.
-- All plugin logic, including API calls and response parsing, operates in Python via pyodide, using JavaScript interop for networking.
-- No modifications to the LLM core package are required; plugin flexibility is sufficient for adapting to browser constraints.
-- Streaming (partial responses) is not yet implemented, but could be achieved with ReadableStream and async generators.
-- CORS restrictions are resolved naturally by using fetch, making production-grade browser-based AI agents feasible.
