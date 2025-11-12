@@ -114,6 +114,17 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
+### [yt-dlp-install-report](https://github.com/simonw/research/tree/main/yt-dlp-install-report) (2025-11-12)
+
+A detailed analysis of installing `yt-dlp[default]` via pip on Linux with Python 3.11 reveals that the process brings in six new packages totaling about 39 MB and over 3,000 files, including 44 binary libraries (mainly for cryptography and compression) consuming 8.55 MB. The main package, yt-dlp, is a feature-rich video downloader whose full capabilities rely on its optional dependencies, enabled by the `[default]` extra: Brotli (compression), pycryptodomex (cryptography), websockets (live streaming), mutagen (metadata), and yt-dlp-ejs (JavaScript extractors). The installation is dominated by Python source and bytecode files, with binaries used for performance-critical tasks; all binaries are standard Linux ELF shared objects with typical system dependencies. For downloading encrypted content, handling compression, live streams, or audio metadata, installing with `[default]` is recommended.  
+Key tools: [yt-dlp](https://github.com/yt-dlp/yt-dlp), [pycryptodomex](https://www.pycryptodome.org/)
+
+**Key findings:**
+- 6 packages installed, major size contributor is yt-dlp itself (~22 MB).
+- 44 compiled .so binaries (mostly for crypto/compression, not full executables).
+- `[default]` extra adds significant functionality for encrypted, compressed, live, and tagged media.
+- Binaries built for standard x86-64 Linux, depending only on common system libraries.
+
 ### [uv-run-flow-analysis](https://github.com/simonw/research/tree/main/uv-run-flow-analysis) (2025-11-10)
 
 Running `uv run myscript.py` in a directory with a `pyproject.toml` launches a multi-phase workflow that automates Python script execution within an isolated, dependency-managed environment. uv scans for project metadata, resolves and validates interpreter and package requirements, manages virtual environments, locks dependencies with a TOML-based `uv.lock` file using the PubGrub algorithm, efficiently syncs the environment with parallel downloads and caching, and finally executes the desired command with robust error handling. This process is orchestrated via performant Rust crates, resulting in fast, reliable, and reproducible Python executions superior to traditional tools like pip or poetry. For more details on the tool, see [uv documentation](https://github.com/astral-sh/uv) or the PubGrub [resolution algorithm](https://docs.rs/pubgrub/latest/pubgrub/).
