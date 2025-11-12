@@ -4,8 +4,6 @@ Each directory in this repo is a separate research project carried out by an LLM
 
 I try to include prompts and links to transcripts in [the PRs](https://github.com/simonw/research/pulls?q=is%3Apr+is%3Aclosed) that added each report, or in [the commits](https://github.com/simonw/research/commits/main/).
 
-## Research projects
-
 <!--[[[cog
 import os
 import subprocess
@@ -40,6 +38,9 @@ for d in research_dir.iterdir():
         except Exception:
             # Fallback to directory modification time
             subdirs_with_dates.append((d.name, datetime.fromtimestamp(d.stat().st_mtime)))
+
+# Print the heading with count
+print(f"## {len(subdirs_with_dates)} research projects\n")
 
 # Sort by date, most recent first
 subdirs_with_dates.sort(key=lambda x: x[1], reverse=True)
