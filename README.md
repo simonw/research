@@ -115,7 +115,11 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
-## 18 research projects
+## 19 research projects
+
+### [absurd-in-sqlite](https://github.com/simonw/research/tree/main/absurd-in-sqlite) (2025-11-12)
+
+The Absurd-in-SQLite project implements durable execution workflows using SQLite, inspired
 
 ### [yt-dlp-install-report](https://github.com/simonw/research/tree/main/yt-dlp-install-report) (2025-11-12)
 
@@ -331,7 +335,7 @@ The script automatically:
 - If not, it generates a new summary using `llm -m <!--[[[cog
 print(MODEL, end='')
 ]]]-->
-github/gpt-4.1
+github/Llama-3.3-70B-Instruct
 <!--[[[end]]]-->` with a prompt that creates engaging descriptions with bullets and links
 - Creates markdown links to each project folder on GitHub
 - New summaries are saved to `_summary.md` to avoid regenerating them on every run
