@@ -17,6 +17,7 @@ RUN_SCRIPT=${RUN_SCRIPT:-"${APP_PATH:-/home/androidusr/docker-android}/mixins/sc
 
 mkdir -p "${LOG_DIR}"
 
+if [ ! -e /dev/kvm ]; then
 python3 - <<'PY'
 from pathlib import Path
 
@@ -33,6 +34,10 @@ if missing_kvm_msg in text:
 
 emulator_path.write_text(text)
 PY
+    echo "⚠️  /dev/kvm not found; forcing software acceleration."
+else
+    echo "✓ /dev/kvm detected; keeping hardware acceleration enabled."
+fi
 
 cat <<'BANNER'
 ==========================================
@@ -51,7 +56,7 @@ mitmweb \
     --listen-port 8080 \
     --ssl-insecure \
     --set block_global=false \
-    --set web_password='' \
+    --set web_password='mitmproxy' \
     --no-web-open-browser \
     > "${MITM_LOG}" 2>&1 &
 MITM_PROXY_PID=$!
@@ -195,6 +200,13 @@ adb shell input keyevent 3 >/dev/null 2>&1 || true     # Home to ensure we're on
 sleep 1
 adb shell input swipe 500 1600 500 400 200 >/dev/null 2>&1 || true  # Swipe up to dismiss any overlays
 echo "✓ Device unlocked and setup wizard dismissed"
+
+# Reduce UI animation overhead for responsiveness
+echo "[2c/8] Disabling system animations for performance..."
+adb shell settings put global window_animation_scale 0 >/dev/null 2>&1 || true
+adb shell settings put global transition_animation_scale 0 >/dev/null 2>&1 || true
+adb shell settings put global animator_duration_scale 0 >/dev/null 2>&1 || true
+echo "✓ System animations disabled"
 
 # 3. Install system CA certificate
 echo "[3/8] Installing mitmproxy CA as system certificate..."
@@ -344,6 +356,8 @@ echo ""
 echo "Open these URLs in your browser:"
 echo "  📱 Android Screen (noVNC): http://localhost:6080"
 echo "  🔍 Traffic Inspector (mitmproxy): http://localhost:8081"
+echo "     Username: (leave blank)"
+echo "     Password: mitmproxy"
 echo ""
 echo "Traffic Capture Status:"
 echo "  - App: ${APP_PACKAGE}"
