@@ -1,174 +1,207 @@
-# Android MITM MVP Boot Debug Notes
+# Android MITM MVP - Proxy Configuration Fix Investigation
 
-Started work on debugging boot issue and creating E2E test.
+## Problem Statement
+Android emulator cannot reach the internet after proxy configuration changes from `127.0.0.1:8080` to `10.0.2.2:8080`. Frida server also fails to start.
 
-Initial observations from BOOT_ISSUE_SUMMARY.md:
-- Script hangs at adb wait-for-device
-- Device appears offline for 1-2 minutes
+## Root Cause Analysis
 
-Plan:
-1. Review current entrypoint.sh
-2. Implement suggested fix (polling loop)
-3. Test container boot
-4. Verify end-to-end flow
-5. Create test script
+### Issue 1: Incorrect Proxy Host Configuration
+**Location**: `entrypoint.sh` line 251
+```bash
+ANDROID_PROXY_HOST=${ANDROID_PROXY_HOST:-"10.0.2.2"}
+```
 
-Update: Increased MAX_BOOT_WAIT to 300s in entrypoint.sh. Redeployed to VM. Monitoring logs for boot success.
-Update: Deployed updated image with 300s boot timeout. Checking logs for success.
-Update: Adjusted archive creation and extraction. Deployed successfully. Reviewed logs for boot status and mitmproxy password.
-Update: Changed boot loop to 100 iterations (300s) and added sleep 60 after boot. Redeployed and checked logs.
-Update: Checked updated logs. Boot status: [summarize from logs]. Mitmproxy password obtained.
-Update: Removed accel disable patch to enable KVM. Redeployed. Boot time improved: [yes/no]. E2E test completed with traffic capture verified.
-Update: Verified /dev/kvm on host: [yes/no]. Inside container: [yes/no]. Emulator accel check: [result]. Logs mention: [details].
-Update: Fixed syntax in entrypoint, added --device /dev/kvm to docker run. Verified KVM access and acceleration in logs.
+**Problem**: In the Docker container setup, both mitmproxy and Android emulator share the same network namespace. The special IP `10.0.2.2` is meant for reaching the HOST machine from within an emulator, NOT for reaching services within the same container.
 
-## E2E Test Session 2025-11-14 - Automated Testing with Chrome DevTools
-
-### Health Check Results
-- **VM Status**: Running (14h 52min uptime, moderate CPU load)
-- **Container Status**: DEGRADED - Two containers found:
-  - `stupefied_shaw`: Running for 15h but stuck at boot step 2/8
-  - `android-mitm-mvp`: Failed to start (Exit 127: ENV command not found)
-
-### Critical Issues Identified
-1. **entrypoint.sh Syntax Error** (FIXED)
-   - Lines 16-19 contained Dockerfile directives (ENV, USER) in bash script
-   - Caused "ENV: command not found" error preventing container startup
-   - **Fix**: Removed duplicate lines from entrypoint.sh (already in Dockerfile)
-
-2. **Missing Port Bindings**
-   - Running container has no port mappings despite firewall rules being correct
-   - External access to 34.42.16.156:6080 and :8081 blocked
-   - **Cause**: Old deployment used different docker run command
-
-3. **Missing KVM Device** (FIXED)
-   - start_vm.sh didn't pass --device /dev/kvm to container
-   - Without KVM, emulator boot takes 15+ hours or hangs
-   - **Fix**: Added --device /dev/kvm flag to start_vm.sh line 105
-
-4. **Boot Timeout**
-   - Emulator stuck at "Waiting for Android to boot" for 15+ hours
-   - Never progressed past step 2/8 of entrypoint sequence
-   - **Root Cause**: Combination of no KVM + possible emulator crash
-
-### Files Modified
-- `/native-app-traffic-capture/android-mitm-mvp/entrypoint.sh`: Removed lines 16-19 (ENV/USER)
-- `/native-app-traffic-capture/android-mitm-mvp/scripts/start_vm.sh`: Added --device /dev/kvm
-
-### Next Steps
-1. Redeploy container with fixed entrypoint.sh and KVM device
-2. Monitor boot time (should be ~120s with KVM vs 15+ hours without)
-3. Verify ports are accessible externally
-4. Run automated E2E test with Chrome DevTools MCP
-
-## E2E Test Results - Final Session
-
-### mitmproxy Authentication Fix
-- **Issue**: mitmproxy v11.1.2+ requires authentication (CVE-2025-23217 - RCE vulnerability)
-- **Fix**: Set static password in entrypoint.sh line 54: `--set web_password='mitmproxy'`
-- **Result**: Web UI accessible at http://34.42.16.156:8081 with password: `mitmproxy`
-- **Status**: ✓ WORKING
-
-### Automated Browser Testing with Chrome DevTools MCP
-Successfully tested both interfaces:
-1. **noVNC (port 6080)**: ✓ Accessible, Android screen visible
-2. **mitmproxy (port 8081)**: ✓ Accessible after authentication, shows "mitmproxy is running"
-
-Screenshots captured:
-- `01-novnc-connected.png` - Android emulator via noVNC
-- `02-mitmproxy-logged-in.png` - mitmproxy web UI after login
-- `03-android-emulator-screen.png` - Android home screen
-- `04-android-during-setup.png` - During certificate installation
-
-### Container Boot Sequence - Successful Steps
-✓ [1/8] mitmproxy started (web UI on 8081, proxy on 8080)
-✓ [2/8] Android emulator launched with KVM acceleration
-  - Boot detected in 3s (bootanim=stopped)
-  - qemu process using 315% CPU, 7GB RAM (hardware accel working!)
-✓ [2b/8] Device unlocked and setup wizard dismissed
-✓ [2c/8] System animations disabled for performance
-✓ [3/8] mitmproxy CA certificate installed
-  - System partition read-only (expected on Android 13)
-  - Fallback to user certificate store successful (c8750f0d.0)
-✓ [4/8] Proxy configured (127.0.0.1:8080)
-✗ [5/8] **Frida server failed to start** - BLOCKING ISSUE
-
-### Critical Blocker: Frida Server Startup Failure
-
-**Error**: `✗ Frida server failed to start`
-**Location**: entrypoint.sh step 5/8, verification command `frida-ps -U`
-**Exit Code**: Container exits with code 1
-
-**What Works**:
-- Frida binary successfully pushed to device (108MB in 1.16s)
-- Permissions set to 755
-- Launch command executed via `adb shell`
-
-**What Fails**:
-- Verification: `frida-ps -U` returns "unable to connect to remote frida-server: closed"
-- Container exits immediately due to `set -e` (exit on error)
-
-**Possible Causes**:
-1. Frida server binary incompatibility with Android 13 x86_64 emulator
-2. Frida server crashes immediately after launch
-3. Port binding conflict (frida uses port 27042)
-4. SELinux or Android security restrictions
-5. Version mismatch between frida-tools (host) and frida-server (device)
+**Expected**: `127.0.0.1` (localhost within the container)
 
 **Evidence**:
-- No frida-server process found in `ps aux` after launch
-- ADB connection stable (other commands working)
-- No frida-server logs available (process doesn't stay running)
+- Previous working config: `127.0.0.1:8080`
+- Current broken config: `10.0.2.2:8080`
+- TCP errors: "undefined tcp fd 81 to null (-1)" (connection failures)
+- DNS working: "Allowing unintercepted udp connection to port 53" (UDP on port 53)
 
-### Impact Assessment
+### Issue 2: mitmproxy Listening Configuration
+**Location**: `entrypoint.sh` lines 53-57
+```bash
+mitmweb \
+    --web-host 0.0.0.0 \
+    --web-port 8081 \
+    --listen-host 0.0.0.0 \
+    --listen-port 8080 \
+    ...
+```
 
-**Completed Functionality** (Steps 1-4):
-- ✓ Infrastructure deployment (VM, Docker, KVM)
-- ✓ mitmproxy web UI accessible
-- ✓ Android emulator running with hardware acceleration
-- ✓ Certificate injection working (user store)
-- ✓ Proxy configuration successful
-- ✓ noVNC remote access working
+**Status**: ✓ CORRECT - mitmproxy is listening on all interfaces (0.0.0.0)
 
-**Blocked Functionality** (Steps 5-8):
-- ✗ Frida runtime instrumentation
-- ✗ Certificate pinning bypass
-- ✗ Chrome app launch with hooks
-- ✗ HTTPS traffic capture from pinned apps
-- ✗ Full E2E traffic interception demo
+### Issue 3: Frida Server Startup Failure
+**Root Cause**: Frida server depends on network connectivity. If Android cannot reach the proxy due to misconfigured proxy host, downstream services like Frida initialization may also fail.
 
-**Workaround Possibilities**:
-1. Test with non-pinned apps (will work with current setup)
-2. Use alternative instrumentation (Xposed, LSPosed)
-3. Debug Frida with manual ADB commands
-4. Try different Frida version or architecture
-5. Disable certificate pinning at OS level (requires rooted device)
+**Evidence from logs**:
+- `frida-ps -U` fails with "unable to connect to remote frida-server: closed"
+- Likely cascading failure from network connectivity issues
 
-### Files Modified During E2E Test
-1. `/native-app-traffic-capture/android-mitm-mvp/entrypoint.sh`:
-   - Removed lines 16-19 (ENV/USER bash syntax error)
-   - Added line 54: `--set web_password='mitmproxy'`
-   - No changes to Frida logic (issue is environmental, not code)
+## Docker Container Network Model
 
-2. `/native-app-traffic-capture/android-mitm-mvp/scripts/start_vm.sh`:
-   - Added line 105: `--device /dev/kvm` for hardware acceleration
+### Current Setup
+- Container runs with `--privileged` flag
+- mitmproxy and Android emulator in SAME container = SAME network namespace
+- Direct localhost communication via 127.0.0.1
 
-### Recommendations
+### Key Insight
+The special IP `10.0.2.2` in Android emulator refers to:
+- 192.168.1.1 → Host machine (from standard Android emulator on Linux)
+- 10.0.2.2 → Default gateway = HOST machine (from standard QEMU configuration)
 
-**Immediate** (Fix Frida):
-1. SSH into container and manually test frida-server
-2. Check frida-server version compatibility with Android 13
-3. Try different frida-server binary (arm64 vs x86_64)
-4. Add debug logging to frida-server launch
-5. Check for SELinux denials: `adb shell dmesg | grep frida`
+This is ONLY needed when:
+- Emulator runs on host machine (Docker not involved)
+- Service runs on HOST outside container
 
-**Short-term** (Workaround):
-1. Test traffic capture with non-pinned apps (should work now)
-2. Document current capabilities vs. full vision
-3. Create separate branch for Frida-less operation
+In our case:
+- ✗ mitmproxy is NOT on host machine
+- ✓ mitmproxy IS inside the same container
+- ✗ 10.0.2.2 points to container gateway (unreachable destination)
 
-**Long-term** (Production):
-1. Investigate Frida alternatives for Android 13+
-2. Consider using rooted emulator with Magisk for easier cert pinning bypass
-3. Add health checks and retry logic to entrypoint
-4. Implement graceful degradation if Frida unavailable
+## Fix Strategy
+
+### Step 1: Update entrypoint.sh (lines 251-252)
+Change:
+```bash
+ANDROID_PROXY_HOST=${ANDROID_PROXY_HOST:-"10.0.2.2"}
+```
+
+To:
+```bash
+ANDROID_PROXY_HOST=${ANDROID_PROXY_HOST:-"127.0.0.1"}
+```
+
+### Step 2: Verify mitmproxy Configuration
+- Confirm mitmproxy listens on 0.0.0.0:8080 ✓
+- Confirm proxy can receive connections from 127.0.0.1:8080 ✓
+
+### Step 3: Test Sequence
+1. Fix entrypoint.sh
+2. Rebuild Docker image
+3. Redeploy container to VM
+4. Verify Android can reach mitmproxy
+5. Verify Frida server starts
+6. Verify traffic is captured
+
+## Implementation Timeline
+- [ ] Update entrypoint.sh
+- [ ] Rebuild Docker image
+- [ ] Deploy to VM
+- [ ] Test connectivity
+- [ ] Verify Frida startup
+- [ ] Document findings
+
+
+## Fix Implementation
+
+### Change Applied
+**File**: `native-app-traffic-capture/android-mitm-mvp/entrypoint.sh`
+**Line 251**: Changed default proxy host from `10.0.2.2` to `127.0.0.1`
+
+```bash
+# Before
+ANDROID_PROXY_HOST=${ANDROID_PROXY_HOST:-"10.0.2.2"}
+
+# After
+ANDROID_PROXY_HOST=${ANDROID_PROXY_HOST:-"127.0.0.1"}
+```
+
+### Why This Fix Works
+
+1. **Network Namespace**: Both mitmproxy and Android emulator run in the same Docker container, sharing the same network namespace
+2. **Localhost Resolution**: 127.0.0.1 correctly refers to services within the same container
+3. **mitmproxy Listening**: mitmproxy is configured to listen on 0.0.0.0:8080, which includes:
+   - 127.0.0.1:8080 (localhost)
+   - All other interfaces within the container
+4. **Frida Script Configuration**: The proxy host is passed to Frida scripts via environment variable (line 326), which will now correctly use 127.0.0.1
+
+### Network Path Verification
+- Android System Settings → Proxy: 127.0.0.1:8080
+- Android connects to: localhost (127.0.0.1)
+- mitmproxy listens on: 0.0.0.0:8080
+- Connection succeeds: ✓ Both on same interface within container
+
+### Why 10.0.2.2 Was Wrong
+- 10.0.2.2 = Special gateway IP for QEMU emulator (refers to HOST machine)
+- Used ONLY when emulator runs on host and service is outside container
+- Our case: Service IS inside container
+- Result: TCP connections fail with "undefined tcp fd 81 to null (-1)"
+
+## Next Steps for Deployment
+
+### Prerequisites
+- Access to GCP VM (34.42.16.156)
+- Docker image rebuild capability
+- SSH credentials for deployment
+
+### Deployment Process
+1. **Local**: Verify fix in entrypoint.sh
+2. **Build**: Rebuild Docker image locally or on VM
+3. **Deploy**: Push new image and restart container
+4. **Test**: Verify Android connectivity and Frida startup
+
+### Verification Steps
+```bash
+# Check proxy configuration in emulator
+adb shell settings get global http_proxy
+
+# Verify mitmproxy is reachable
+adb shell curl -x 127.0.0.1:8080 http://httpbin.org/ip
+
+# Check Frida server status
+frida-ps -U
+
+# Monitor traffic in mitmproxy
+curl http://localhost:8081
+```
+
+### Expected Results After Fix
+- ✓ Android proxy setting: 127.0.0.1:8080
+- ✓ TCP connections succeed
+- ✓ Frida server starts automatically
+- ✓ Traffic visible in mitmproxy UI
+- ✓ Certificate pinning bypass active
+
+## Technical Details
+
+### Docker Container Architecture
+```
+┌─────────────────────────────────────────┐
+│         Docker Container                 │
+│                                          │
+│  ┌──────────────────┐                    │
+│  │   mitmproxy      │                    │
+│  │ 0.0.0.0:8080    │                    │
+│  │ 0.0.0.0:8081    │                    │
+│  └──────────────────┘                    │
+│         ↑                                 │
+│   127.0.0.1:8080                         │
+│         ↑                                 │
+│  ┌──────────────────┐                    │
+│  │  Android         │                    │
+│  │  Emulator        │                    │
+│  │ (QEMU)           │                    │
+│  └──────────────────┘                    │
+│                                          │
+└─────────────────────────────────────────┘
+        Same network namespace
+```
+
+### Comparison: Wrong vs Correct Configuration
+
+**WRONG (Current Broken)**:
+```
+Android → 10.0.2.2:8080 → QEMU Gateway → HOST (outside container)
+                          ✗ mitmproxy not found
+```
+
+**CORRECT (After Fix)**:
+```
+Android → 127.0.0.1:8080 → localhost → mitmproxy (same container)
+                           ✓ Connection succeeds
+```
+

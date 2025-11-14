@@ -215,6 +215,10 @@ adb root >/dev/null 2>&1 || true
 adb wait-for-device >/dev/null 2>&1
 sleep 2
 adb remount >/dev/null 2>&1 || true
+adb shell su -c 'mount -o rw,remount /system' >/dev/null 2>&1 || true
+
+echo "[3b/8] Relaxing SELinux (setenforce 0)..."
+adb shell setenforce 0 >/dev/null 2>&1 || true
 
 CERT_PATH=/root/.mitmproxy/mitmproxy-ca-cert.pem
 if [ ! -f "${CERT_PATH}" ]; then
@@ -230,8 +234,9 @@ fi
 
 CERT_REMOTE_TMP=/data/local/tmp/mitmproxy-ca-cert.pem
 adb push "${CERT_PATH}" "${CERT_REMOTE_TMP}" >/dev/null
-if adb shell "cp ${CERT_REMOTE_TMP} /system/etc/security/cacerts/${CERT_HASH}.0" >/dev/null 2>&1; then
-    adb shell "chmod 644 /system/etc/security/cacerts/${CERT_HASH}.0" >/dev/null
+if adb shell su -c "cp ${CERT_REMOTE_TMP} /system/etc/security/cacerts/${CERT_HASH}.0" >/dev/null 2>&1; then
+    adb shell su -c "chmod 644 /system/etc/security/cacerts/${CERT_HASH}.0" >/dev/null 2>&1 || true
+    adb shell su -c "chown root:root /system/etc/security/cacerts/${CERT_HASH}.0" >/dev/null 2>&1 || true
     echo "✓ System CA installed (hash: ${CERT_HASH}.0)"
 else
     echo "⚠️ Unable to write to /system; falling back to user certificate store"
@@ -243,7 +248,7 @@ else
 fi
 
 # 4. Configure proxy
-ANDROID_PROXY_HOST=${ANDROID_PROXY_HOST:-"10.0.2.2"}
+ANDROID_PROXY_HOST=${ANDROID_PROXY_HOST:-"127.0.0.1"}
 ANDROID_PROXY_PORT=${ANDROID_PROXY_PORT:-"8080"}
 
 echo "[4/8] Configuring proxy (host=${ANDROID_PROXY_HOST}, port=${ANDROID_PROXY_PORT})..."
@@ -260,19 +265,35 @@ if [ "${SKIP_FRIDA}" = "true" ]; then
     FRIDA_ENABLED=false
 else
     echo "[5/8] Starting Frida server..."
-    adb push /frida-server /data/local/tmp/frida-server >/dev/null
-    adb shell chmod 755 /data/local/tmp/frida-server >/dev/null
-    adb shell /data/local/tmp/frida-server > "${FRIDA_SERVER_LOG}" 2>&1 &
+    FRIDA_REMOTE_BIN=/data/local/tmp/frida-server
+    FRIDA_REMOTE_LOG=/data/local/tmp/frida-server.log
+    adb push /frida-server "${FRIDA_REMOTE_BIN}" >/dev/null
+    adb shell chmod 755 "${FRIDA_REMOTE_BIN}" >/dev/null
+    adb shell rm -f "${FRIDA_REMOTE_LOG}" >/dev/null 2>&1 || true
+    if ! adb shell "nohup ${FRIDA_REMOTE_BIN} >/data/local/tmp/frida-server.log 2>&1 &" >/dev/null 2>&1; then
+        adb shell "nohup su -c ${FRIDA_REMOTE_BIN} >/data/local/tmp/frida-server.log 2>&1 &" >/dev/null 2>&1 || true
+    fi
+    adb forward tcp:27042 tcp:27042 >/dev/null 2>&1 || true
+    adb forward tcp:27043 tcp:27043 >/dev/null 2>&1 || true
     FRIDA_SERVER_PID=$!
 
-    sleep 5
-    if frida-ps -U >/dev/null 2>&1; then
-        echo "✓ Frida server running"
-        FRIDA_ENABLED=true
-    else
+    FRIDA_ENABLED=false
+    for attempt in 1 2 3 4 5; do
+        sleep 3
+        if frida-ps -U >/dev/null 2>&1; then
+            echo "✓ Frida server running (after ${attempt} check)"
+            FRIDA_ENABLED=true
+            break
+        fi
+        echo " [Frida] Attempt ${attempt} failed, retrying..."
+    done
+
+    if [ "${FRIDA_ENABLED}" != "true" ]; then
         echo "⚠️  Frida server failed to start - continuing without certificate pinning bypass"
         echo "    Only non-pinned apps will work for HTTPS traffic capture"
-        FRIDA_ENABLED=false
+        echo "─── frida-server log (tail) ───"
+        adb shell "tail -n 40 ${FRIDA_REMOTE_LOG}" 2>/dev/null || echo "(log unavailable)"
+        echo "──────────────────────────────"
     fi
 fi
 
@@ -286,6 +307,7 @@ fi
 if [ "${FRIDA_ENABLED}" = "true" ]; then
 python3 - <<'PY'
 from pathlib import Path
+import os
 import re
 
 config_path = Path("/frida-scripts/config.js")
@@ -301,8 +323,10 @@ config = re.sub(
     config,
     flags=re.S
 )
-config = re.sub(r"const PROXY_HOST = '.*?';", f\"const PROXY_HOST = '{ANDROID_PROXY_HOST}';\", config)
-config = re.sub(r"const PROXY_PORT = \\d+;", f\"const PROXY_PORT = {ANDROID_PROXY_PORT};\", config)
+proxy_host = os.environ.get("ANDROID_PROXY_HOST", "10.0.2.2")
+proxy_port = os.environ.get("ANDROID_PROXY_PORT", "8080")
+config = re.sub(r"const PROXY_HOST = '.*?';", f"const PROXY_HOST = '{proxy_host}';", config)
+config = re.sub(r"const PROXY_PORT = \\d+;", f"const PROXY_PORT = {proxy_port};", config)
 config = re.sub(r"const DEBUG_MODE = (true|false);", "const DEBUG_MODE = true;", config)
 config = re.sub(r"const IGNORED_NON_HTTP_PORTS = \[.*?\];", "const IGNORED_NON_HTTP_PORTS = [];", config, flags=re.S)
 config = re.sub(r"const BLOCK_HTTP3 = (true|false);", "const BLOCK_HTTP3 = true;", config)
@@ -326,13 +350,17 @@ if [ "${FRIDA_ENABLED}" = "true" ]; then
         -l "${FRIDA_SCRIPTS_DIR}/android/android-certificate-unpinning.js" \
         -l "${FRIDA_SCRIPTS_DIR}/android/android-certificate-unpinning-fallback.js" \
         -l "${FRIDA_SCRIPTS_DIR}/android/android-disable-root-detection.js" \
-    -f "${APP_PACKAGE}" \
-    --no-pause \
+        -f "${APP_PACKAGE}" \
     > "${FRIDA_APP_LOG}" 2>&1 &
     FRIDA_APP_PID=$!
 
     sleep 3
-    echo "✓ App launched with Frida"
+    if kill -0 "${FRIDA_APP_PID}" >/dev/null 2>&1; then
+        echo "✓ App launched with Frida"
+    else
+        echo "⚠️  Frida CLI exited unexpectedly (see ${FRIDA_APP_LOG})"
+        FRIDA_ENABLED=false
+    fi
 else
     echo "[7/8] Launching ${APP_PACKAGE} without Frida (no certificate pinning bypass)..."
     # Launch app normally via activity manager

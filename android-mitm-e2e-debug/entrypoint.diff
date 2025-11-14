@@ -1,0 +1,11 @@
+--- a/android-mitm-mvp/entrypoint.sh
++++ b/android-mitm-mvp/entrypoint.sh
+@@ -248,7 +248,7 @@ fi
+ fi
+ 
+ # 4. Configure proxy
+-ANDROID_PROXY_HOST=${ANDROID_PROXY_HOST:-"10.0.2.2"}
++ANDROID_PROXY_HOST=${ANDROID_PROXY_HOST:-"127.0.0.1"}
+ ANDROID_PROXY_PORT=${ANDROID_PROXY_PORT:-"8080"}
+ 
+ echo "[4/8] Configuring proxy (host=${ANDROID_PROXY_HOST}, port=${ANDROID_PROXY_PORT})..."
