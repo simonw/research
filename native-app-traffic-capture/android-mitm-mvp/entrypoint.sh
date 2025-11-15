@@ -248,8 +248,10 @@ else
 fi
 
 # 4. Configure proxy
-ANDROID_PROXY_HOST=${ANDROID_PROXY_HOST:-"127.0.0.1"}
-ANDROID_PROXY_PORT=${ANDROID_PROXY_PORT:-"8080"}
+# Note: Use 10.0.2.2 as default (Android's special alias for the host/container gateway)
+# This is the correct address for emulator-to-host communication
+export ANDROID_PROXY_HOST=${ANDROID_PROXY_HOST:-"10.0.2.2"}
+export ANDROID_PROXY_PORT=${ANDROID_PROXY_PORT:-"8080"}
 
 echo "[4/8] Configuring proxy (host=${ANDROID_PROXY_HOST}, port=${ANDROID_PROXY_PORT})..."
 adb shell settings put global http_proxy "${ANDROID_PROXY_HOST}:${ANDROID_PROXY_PORT}" >/dev/null
@@ -315,6 +317,18 @@ cert_path = Path("/root/.mitmproxy/mitmproxy-ca-cert.pem")
 cert = cert_path.read_text()
 config = config_path.read_text()
 
+# Clean certificate: strip whitespace and normalize line endings
+cert = cert.strip()
+cert = cert.replace('\r\n', '\n')
+cert = cert.replace('\r', '\n')
+
+# Validate the certificate format before injection
+if not cert.startswith('-----BEGIN CERTIFICATE-----'):
+    raise ValueError("Certificate missing BEGIN CERTIFICATE header")
+if not cert.endswith('-----END CERTIFICATE-----'):
+    raise ValueError("Certificate missing END CERTIFICATE footer")
+
+# Escape backticks (for template literal syntax)
 escaped_cert = cert.replace('`', '\\`')
 
 config = re.sub(
@@ -323,6 +337,11 @@ config = re.sub(
     config,
     flags=re.S
 )
+
+# Verify substitution succeeded
+if f"const CERT_PEM = `{escaped_cert}`;" not in config:
+    raise ValueError("Failed to substitute CERT_PEM in config.js")
+
 proxy_host = os.environ.get("ANDROID_PROXY_HOST", "10.0.2.2")
 proxy_port = os.environ.get("ANDROID_PROXY_PORT", "8080")
 config = re.sub(r"const PROXY_HOST = '.*?';", f"const PROXY_HOST = '{proxy_host}';", config)
@@ -427,7 +446,7 @@ echo "     Password: mitmproxy"
 echo ""
 echo "Traffic Capture Status:"
 echo "  - App: ${APP_PACKAGE}"
-echo "  - Proxy: 127.0.0.1:8080"
+echo "  - Proxy: ${ANDROID_PROXY_HOST}:${ANDROID_PROXY_PORT}"
 if [ "${FRIDA_ENABLED}" = "true" ]; then
     echo "  - Frida: ✓ Active with certificate unpinning"
     echo "  - Capabilities: Can capture pinned apps (Chrome, Twitter, etc.)"
