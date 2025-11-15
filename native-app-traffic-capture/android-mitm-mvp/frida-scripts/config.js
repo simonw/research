@@ -19,7 +19,7 @@ const CERT_PEM = `-----BEGIN CERTIFICATE-----
 
 // Put your intercepting proxy's address here:
 const PROXY_HOST = '127.0.0.1';
-const PROXY_PORT = 8000;
+const PROXY_PORT = 8080;
 
 // If you like, set to to true to enable extra logging:
 const DEBUG_MODE = false;

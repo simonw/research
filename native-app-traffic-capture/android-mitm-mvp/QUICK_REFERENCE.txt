@@ -1,0 +1,57 @@
+╔════════════════════════════════════════════════════════════════╗
+║           ANDROID MITM MVP - QUICK REFERENCE                  ║
+║              Deployed: 2025-11-14 17:00 UTC                   ║
+╚════════════════════════════════════════════════════════════════╝
+
+ACCESS POINTS:
+  noVNC:     http://34.42.16.156:6080/
+  mitmproxy: http://34.42.16.156:8081/
+
+CONTAINER:
+  ID:     ded01fc21f66
+  Status: RUNNING ✓
+  Image:  android-mitm-mvp:latest
+  Uptime: 3+ min
+
+BOOT STATUS:
+  Started: 16:57 UTC
+  mitmproxy: Ready (< 1s)
+  Device Online: ~120s
+  Full Boot: ~120-180s (in progress)
+
+PORTS LISTENING:
+  ✓ 6080   (noVNC)
+  ✓ 8081   (mitmproxy web)
+  ✓ 8080   (mitmproxy listen)
+  ✓ 5554   (ADB console)
+  ✓ 5555   (ADB daemon)
+  ✓ 5900   (VNC raw)
+  ✓ 4723   (Appium)
+  ✓ 9000   (Web log)
+
+ERRORS: NONE ✓
+
+RESOURCES:
+  Memory: 4.0GB/15.6GB (26%)
+  CPU: 156% (normal during boot)
+  Disk: Boot activity normal
+
+DETAILED REPORT:
+  /Users/kahtaf/Documents/workspace_kahtaf/research/
+  native-app-traffic-capture/android-mitm-mvp/
+  DEPLOYMENT_REPORT_2025-11-14.md
+
+DEPLOYMENT STEPS COMPLETED:
+  ✓ SSH to VM
+  ✓ Remove all old containers & images
+  ✓ Upload fixed files
+  ✓ Rebuild Docker image
+  ✓ Start container with --device /dev/kvm
+  ✓ Monitor startup (3-5 min)
+  ✓ Verify no errors
+  ✓ Confirm ports accessible
+
+READY FOR: E2E TESTING
+
+NEXT: Wait 2-3 more minutes for device boot completion,
+      then access noVNC to verify desktop is responsive.

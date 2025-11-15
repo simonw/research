@@ -1,0 +1,22 @@
+diff --git a/native-app-traffic-capture/android-mitm-mvp/entrypoint.sh b/native-app-traffic-capture/android-mitm-mvp/entrypoint.sh
+index 6eb7116..817918b 100644
+--- a/native-app-traffic-capture/android-mitm-mvp/entrypoint.sh
++++ b/native-app-traffic-capture/android-mitm-mvp/entrypoint.sh
+@@ -51,7 +51,7 @@ mitmweb \
+     --listen-port 8080 \
+     --ssl-insecure \
+     --set block_global=false \
+-    --set web_password='' \
++    --set web_password='mitmproxy' \
+     --no-web-open-browser \
+     > "${MITM_LOG}" 2>&1 &
+ MITM_PROXY_PID=$!
+@@ -344,6 +344,8 @@ echo ""
+ echo "Open these URLs in your browser:"
+ echo "  📱 Android Screen (noVNC): http://localhost:6080"
+ echo "  🔍 Traffic Inspector (mitmproxy): http://localhost:8081"
++echo "     Username: (leave blank)"
++echo "     Password: mitmproxy"
+ echo ""
+ echo "Traffic Capture Status:"
+ echo "  - App: ${APP_PACKAGE}"

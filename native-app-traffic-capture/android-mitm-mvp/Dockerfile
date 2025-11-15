@@ -1,8 +1,10 @@
 # Android MITM MVP Dockerfile
 FROM budtmo/docker-android:emulator_13.0
 
+ARG FRIDA_VERSION=17.5.1
 ENV DEBIAN_FRONTEND=noninteractive \
-    LANG=C.UTF-8
+    LANG=C.UTF-8 \
+    FRIDA_VERSION=${FRIDA_VERSION}
 
 # Elevate for package installation
 USER root
@@ -21,10 +23,9 @@ RUN mkdir -p /var/lib/apt/lists/partial \
     && rm -rf /var/lib/apt/lists/*
 
 # Python tooling
-RUN PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install --no-cache-dir mitmproxy frida-tools
+RUN PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install --no-cache-dir mitmproxy "frida==${FRIDA_VERSION}" frida-tools
 
 # Download Frida server
-ARG FRIDA_VERSION=16.1.10
 RUN wget https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-x86_64.xz \
     && unxz frida-server-${FRIDA_VERSION}-android-x86_64.xz \
     && mv frida-server-${FRIDA_VERSION}-android-x86_64 /frida-server \

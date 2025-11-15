@@ -1,0 +1,199 @@
+================================================================================
+EXACT CHANGES APPLIED
+================================================================================
+
+FILE MODIFIED:
+  /Users/kahtaf/Documents/workspace_kahtaf/research/native-app-traffic-capture/android-mitm-mvp/entrypoint.sh
+
+CHANGE 1 - Line 54 (Password Setting)
+================================================================================
+
+BEFORE:
+  mitmweb \
+      --web-host 0.0.0.0 \
+      --web-port 8081 \
+      --listen-host 0.0.0.0 \
+      --listen-port 8080 \
+      --ssl-insecure \
+      --set block_global=false \
+      --set web_password='' \              <--- CHANGED THIS
+      --no-web-open-browser \
+      > "${MITM_LOG}" 2>&1 &
+
+AFTER:
+  mitmweb \
+      --web-host 0.0.0.0 \
+      --web-port 8081 \
+      --listen-host 0.0.0.0 \
+      --listen-port 8080 \
+      --ssl-insecure \
+      --set block_global=false \
+      --set web_password='mitmproxy' \    <--- CHANGED TO THIS
+      --no-web-open-browser \
+      > "${MITM_LOG}" 2>&1 &
+
+DIFF:
+  -    --set web_password='' \
+  +    --set web_password='mitmproxy' \
+
+================================================================================
+CHANGE 2 - Lines 347-348 (Documentation)
+================================================================================
+
+BEFORE:
+  echo "=========================================="
+  echo "Open these URLs in your browser:"
+  echo "  📱 Android Screen (noVNC): http://localhost:6080"
+  echo "  🔍 Traffic Inspector (mitmproxy): http://localhost:8081"
+  echo ""
+
+AFTER:
+  echo "=========================================="
+  echo "Open these URLs in your browser:"
+  echo "  📱 Android Screen (noVNC): http://localhost:6080"
+  echo "  🔍 Traffic Inspector (mitmproxy): http://localhost:8081"
+  echo "     Username: (leave blank)"        <--- ADDED THIS
+  echo "     Password: mitmproxy"            <--- ADDED THIS
+  echo ""
+
+DIFF:
+  echo "  🔍 Traffic Inspector (mitmproxy): http://localhost:8081"
+  +echo "     Username: (leave blank)"
+  +echo "     Password: mitmproxy"
+  echo ""
+
+================================================================================
+SUMMARY OF CHANGES
+================================================================================
+
+Total Changes: 2
+Total Lines Modified: 2
+Total Lines Added: 2
+Total Lines Removed: 0
+Total Files Modified: 1
+
+Impact: Minimal - only changes string values
+Compatibility: Fully backward compatible
+Breaking Changes: None
+Security Impact: None - still enforces authentication
+
+================================================================================
+VERIFICATION
+================================================================================
+
+Original Line 54:
+  grep -n "web_password=" entrypoint.sh
+  Output: 54:    --set web_password='' \
+
+Modified Line 54:
+  grep -n "web_password=" entrypoint.sh
+  Output: 54:    --set web_password='mitmproxy' \
+
+Original Lines 347-348:
+  sed -n '346,348p' entrypoint.sh
+  Output:
+    echo "  🔍 Traffic Inspector (mitmproxy): http://localhost:8081"
+    echo ""
+
+Modified Lines 347-348:
+  sed -n '346,350p' entrypoint.sh
+  Output:
+    echo "  🔍 Traffic Inspector (mitmproxy): http://localhost:8081"
+    echo "     Username: (leave blank)"
+    echo "     Password: mitmproxy"
+    echo ""
+
+================================================================================
+HOW TO APPLY THESE CHANGES
+================================================================================
+
+METHOD 1: Using Git Patch
+  cd /path/to/repo
+  patch -p1 < mitmproxy-auth-debug/entrypoint.sh.diff
+
+METHOD 2: Manual Edit
+  1. Open: native-app-traffic-capture/android-mitm-mvp/entrypoint.sh
+  2. Find line 54: --set web_password=''
+  3. Replace with: --set web_password='mitmproxy'
+  4. After line 346, add 2 new lines:
+     echo "     Username: (leave blank)"
+     echo "     Password: mitmproxy"
+  5. Save file
+
+METHOD 3: Using sed (Linux/Mac)
+  sed -i "" "54s/web_password=''/web_password='mitmproxy'/" entrypoint.sh
+  sed -i "" "347i\\
+echo \"     Username: (leave blank)\"\\
+echo \"     Password: mitmproxy\"" entrypoint.sh
+
+METHOD 4: Copy from Diff
+  See: entrypoint.sh.diff (git-compatible unified diff format)
+
+================================================================================
+REVERTING THE CHANGES
+================================================================================
+
+To revert to the original state:
+
+  # Using git
+  git checkout -- native-app-traffic-capture/android-mitm-mvp/entrypoint.sh
+
+  # Or manually:
+  # 1. Change line 54 back to: --set web_password=''
+  # 2. Remove lines 347-348 added for documentation
+
+================================================================================
+TESTING THE CHANGES
+================================================================================
+
+After applying changes:
+
+1. Rebuild the container:
+   docker build -t android-mitm-mvp:fixed android-mitm-mvp/
+
+2. Run the container:
+   docker run -d --name test-mitm android-mitm-mvp:fixed
+
+3. Test without password (should fail):
+   curl -i http://localhost:8081
+   Expected: 401 Unauthorized
+
+4. Test with password (should succeed):
+   curl -i -u ":mitmproxy" http://localhost:8081
+   Expected: 200 OK
+
+5. Check startup output:
+   docker logs test-mitm | grep -A 5 "Open these URLs"
+   Should show password information
+
+================================================================================
+COMPLETION CHECKLIST
+================================================================================
+
+Apply the Fix:
+  [ ] Review entrypoint.sh.diff
+  [ ] Choose application method (patch, manual, sed)
+  [ ] Apply changes to entrypoint.sh
+  [ ] Verify line 54 shows: --set web_password='mitmproxy'
+  [ ] Verify lines 347-348 show password info
+
+Test the Changes:
+  [ ] Rebuild: docker build -t android-mitm-mvp:fixed android-mitm-mvp/
+  [ ] Run: docker run -d --name test android-mitm-mvp:fixed
+  [ ] Test without auth: curl -i http://localhost:8081 (expect 401)
+  [ ] Test with auth: curl -u ":mitmproxy" http://localhost:8081 (expect 200)
+
+Deploy the Changes:
+  [ ] Commit changes to git
+  [ ] Push to repository
+  [ ] Redeploy container in production
+
+Document for Team:
+  [ ] Share 00_START_HERE.md with team
+  [ ] Share QUICK_REFERENCE.md for developers
+  [ ] Update project documentation
+  [ ] Notify team of password requirement
+
+Complete!
+
+================================================================================

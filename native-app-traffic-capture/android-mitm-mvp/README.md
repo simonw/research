@@ -53,6 +53,7 @@ docker run -it --rm \
 - `DEVICE`: Emulator profile name understood by the base image supervisor (default `Samsung Galaxy S23`).
 - `EMULATOR_ADDITIONAL_ARGS`: Extra flags passed to the Android emulator. Defaults to `-cores 4 -memory 8192 -no-snapshot -no-boot-anim -noaudio -gpu swiftshader_indirect` for faster boot and reduced resource usage on nested virtualization hosts.
 - `ANDROID_PROXY_HOST` / `ANDROID_PROXY_PORT`: Proxy host/port pushed into the emulator settings (default `10.0.2.2:8080`). The entrypoint re-applies these values during verification to avoid the base image resetting them to `127.0.0.1:8080`.
+- `SKIP_FRIDA`: Set to `true` to skip loading Frida (useful for debugging proxy/cert only flows).
 
 ## Verification Checklist
 1. Wait for `🎉 Setup complete!` message in container logs.
