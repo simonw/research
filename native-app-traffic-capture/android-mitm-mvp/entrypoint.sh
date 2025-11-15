@@ -260,6 +260,27 @@ adb shell settings put global global_http_proxy_port "${ANDROID_PROXY_PORT}" >/d
 
 echo "✓ Proxy configured"
 
+# 4b. Configure iptables for system-wide traffic redirection
+echo "[4b/8] Configuring iptables for system-wide traffic redirection..."
+# Enable IP forwarding in the emulator
+adb shell "echo 1 > /proc/sys/net/ipv4/ip_forward" 2>/dev/null || true
+
+# Redirect all HTTP and HTTPS traffic to mitmproxy
+# Using DNAT to redirect to the host proxy address
+adb shell "iptables -t nat -F OUTPUT" 2>/dev/null || true  # Clear existing OUTPUT rules
+adb shell "iptables -t nat -A OUTPUT -p tcp --dport 80 -j DNAT --to-destination ${ANDROID_PROXY_HOST}:${ANDROID_PROXY_PORT}" 2>/dev/null || \
+    echo "⚠️  Failed to add HTTP redirect rule (this is optional)"
+adb shell "iptables -t nat -A OUTPUT -p tcp --dport 443 -j DNAT --to-destination ${ANDROID_PROXY_HOST}:${ANDROID_PROXY_PORT}" 2>/dev/null || \
+    echo "⚠️  Failed to add HTTPS redirect rule (this is optional)"
+
+# Verify iptables rules
+IPTABLES_RULES=$(adb shell "iptables -t nat -L OUTPUT -n" 2>/dev/null || echo "")
+if echo "$IPTABLES_RULES" | grep -q "DNAT.*${ANDROID_PROXY_HOST}"; then
+    echo "✓ iptables rules configured (system-wide redirection enabled)"
+else
+    echo "⚠️  iptables rules not applied - falling back to proxy settings only"
+fi
+
 # 5. Start Frida server (optional - skip if SKIP_FRIDA is set)
 if [ "${SKIP_FRIDA}" = "true" ]; then
     echo "[5/8] Skipping Frida server (SKIP_FRIDA=true)"
