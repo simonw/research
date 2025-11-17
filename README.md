@@ -115,7 +115,7 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
-## 20 research projects
+## 21 research projects
 
 ### [svg-to-png-renderer](https://github.com/simonw/research/tree/main/svg-to-png-renderer) (2025-11-17)
 
@@ -126,6 +126,10 @@ A lightweight SVG to PNG renderer has been developed using Python, leveraging th
   * Support for colors, styling, and transforms
   * Can be used as a command-line tool or imported as a library
   * Tested with complex SVG files, including the "Ghostscript Tiger" SVG
+
+### [svg-to-png-comparison](https://github.com/simonw/research/tree/main/svg-to-png-comparison) (2025-11-17)
+
+The conversion of SVG files to PNG format in Python can be achieved through various methods
 
 ### [absurd-in-sqlite](https://github.com/simonw/research/tree/main/absurd-in-sqlite) (2025-11-12)
 
