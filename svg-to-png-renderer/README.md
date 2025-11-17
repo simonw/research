@@ -90,6 +90,12 @@ python svg_renderer.py tiger.svg tiger.png
 
 This successfully renders a complex 900x900 SVG with 838+ path elements to a 40KB PNG file.
 
+**Rendered Output:**
+
+![Tiger SVG rendered to PNG](tiger.png)
+
+The image above shows the rendered output from the [Ghostscript Tiger SVG](https://gist.githubusercontent.com/simonw/aedecb93564af13ac1596810d40cac3c/raw/83e7f3be5b65bba61124684700fa7925d37c36c3/tiger.svg).
+
 ## Implementation Details
 
 ### Path Rendering
