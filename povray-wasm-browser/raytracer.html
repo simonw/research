@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebAssembly Raytracer - Interactive Scene Editor</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        header {
+            background: #2c3e50;
+            color: white;
+            padding: 20px;
+        }
+
+        header h1 {
+            margin: 0 0 10px 0;
+            font-size: 24px;
+        }
+
+        header p {
+            margin: 0;
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            padding: 20px;
+        }
+
+        .editor-section, .canvas-section {
+            display: flex;
+            flex-direction: column;
+        }
+
+        h2 {
+            margin: 0 0 10px 0;
+            font-size: 18px;
+            color: #2c3e50;
+        }
+
+        textarea {
+            width: 100%;
+            height: 500px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            resize: vertical;
+        }
+
+        .canvas-wrapper {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        canvas {
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .controls {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        button:hover {
+            background: #2980b9;
+        }
+
+        button:disabled {
+            background: #95a5a6;
+            cursor: not-allowed;
+        }
+
+        .status {
+            color: #7f8c8d;
+            font-size: 13px;
+        }
+
+        .error {
+            background: #e74c3c;
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 13px;
+        }
+
+        .examples {
+            margin-top: 10px;
+            font-size: 13px;
+        }
+
+        .examples a {
+            color: #3498db;
+            text-decoration: none;
+            margin-right: 10px;
+        }
+
+        .examples a:hover {
+            text-decoration: underline;
+        }
+
+        @media (max-width: 768px) {
+            .content {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Interactive Raytracer</h1>
+            <p>Edit the scene description and watch it render in real-time. Scene is automatically saved to URL.</p>
+        </header>
+
+        <div class="content">
+            <div class="editor-section">
+                <h2>Scene Description (JSON)</h2>
+                <textarea id="sceneCode" placeholder="Enter scene description..."></textarea>
+                <div class="controls">
+                    <button id="renderBtn">Render Scene</button>
+                    <span class="status" id="status">Ready</span>
+                </div>
+                <div class="examples">
+                    <strong>Examples:</strong>
+                    <a href="#" data-example="default">Default Scene</a>
+                    <a href="#" data-example="simple">Simple</a>
+                </div>
+                <div id="error" class="error" style="display: none;"></div>
+            </div>
+
+            <div class="canvas-section">
+                <h2>Rendered Output</h2>
+                <div class="canvas-wrapper">
+                    <canvas id="canvas" width="400" height="400"></canvas>
+                </div>
+                <div class="controls">
+                    <span class="status" id="renderTime"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Raytracer implementation (adapted from wasm-raytracer)
+        var intWidth = 400;
+        var intHeight = 400;
+        var objPlanes = [];
+        var objSpheres = [];
+        var objLights = [];
+        var vecAmbient = [0.2, 0.2, 0.2];
+        var fltTime = 0.0;
+
+        function dot(vecA, vecB) {
+            return (vecA[0] * vecB[0]) + (vecA[1] * vecB[1]) + (vecA[2] * vecB[2]);
+        }
+
+        function length(vecA) {
+            return Math.sqrt(dot(vecA, vecA));
+        }
+
+        function normalize(vecA) {
+            var fltLength = Math.max(0.00001, length(vecA));
+            vecA[0] /= fltLength;
+            vecA[1] /= fltLength;
+            vecA[2] /= fltLength;
+        }
+
+        function cross(vecA, vecB, vecC) {
+            vecA[0] = (vecB[1] * vecC[2]) - (vecB[2] * vecC[1]);
+            vecA[1] = (vecB[2] * vecC[0]) - (vecB[0] * vecC[2]);
+            vecA[2] = (vecB[0] * vecC[1]) - (vecB[1] * vecC[0]);
+        }
+
+        function intersection(objIntersection, vecOrigin, vecDirection, fltMin, fltMax, boolPeek) {
+            var fltIntersection = Infinity;
+            normalize(vecDirection);
+
+            for (var intPlane = 0; intPlane < objPlanes.length; intPlane += 1) {
+                var vecDifference = [0.0, 0.0, 0.0];
+                vecDifference[0] = objPlanes[intPlane].vecLocation[0] - vecOrigin[0];
+                vecDifference[1] = objPlanes[intPlane].vecLocation[1] - vecOrigin[1];
+                vecDifference[2] = objPlanes[intPlane].vecLocation[2] - vecOrigin[2];
+
+                var fltDenominator = dot(vecDirection, objPlanes[intPlane].vecNormal);
+
+                if (Math.abs(fltDenominator) < 0.01) continue;
+
+                var fltDistance = dot(vecDifference, objPlanes[intPlane].vecNormal) / fltDenominator;
+
+                if (fltDistance < fltMin || fltDistance > fltMax || fltDistance > fltIntersection) continue;
+
+                if (boolPeek === true) return fltDistance;
+
+                fltIntersection = fltDistance;
+                objIntersection.fltDistance = fltDistance;
+                objIntersection.vecLocation = [
+                    vecOrigin[0] + (fltDistance * vecDirection[0]),
+                    vecOrigin[1] + (fltDistance * vecDirection[1]),
+                    vecOrigin[2] + (fltDistance * vecDirection[2])
+                ];
+                objIntersection.vecNormal = objPlanes[intPlane].vecNormal.slice();
+                objIntersection.vecColor = objPlanes[intPlane].vecColor.slice();
+                objIntersection.fltSpecular = objPlanes[intPlane].fltSpecular;
+                objIntersection.fltReflect = objPlanes[intPlane].fltReflect;
+
+                var fltCheckerboard = Math.abs(Math.floor(objIntersection.vecLocation[0]) + Math.floor(objIntersection.vecLocation[2])) % 2.0;
+                objIntersection.vecColor[0] *= 0.5 + (0.5 * fltCheckerboard);
+                objIntersection.vecColor[1] *= 0.5 + (0.5 * fltCheckerboard);
+                objIntersection.vecColor[2] *= 0.5 + (0.5 * fltCheckerboard);
+            }
+
+            for (var intSphere = 0; intSphere < objSpheres.length; intSphere += 1) {
+                var vecDifference = [
+                    vecOrigin[0] - objSpheres[intSphere].vecLocation[0],
+                    vecOrigin[1] - objSpheres[intSphere].vecLocation[1],
+                    vecOrigin[2] - objSpheres[intSphere].vecLocation[2]
+                ];
+
+                var fltAlpha = dot(vecDirection, vecDifference);
+                var fltDiscriminant = (fltAlpha * fltAlpha) - dot(vecDifference, vecDifference) + (objSpheres[intSphere].fltRadius * objSpheres[intSphere].fltRadius);
+
+                if (fltDiscriminant < 0.01) continue;
+
+                var fltFirst = (-1.0 * fltAlpha) - Math.sqrt(fltDiscriminant);
+                var fltSecond = (-1.0 * fltAlpha) + Math.sqrt(fltDiscriminant);
+                var fltDistance = Infinity;
+
+                if (fltFirst > fltMin && fltFirst < fltMax) fltDistance = Math.min(fltDistance, fltFirst);
+                if (fltSecond > fltMin && fltSecond < fltMax) fltDistance = Math.min(fltDistance, fltSecond);
+
+                if (fltIntersection < fltDistance || fltDistance === Infinity) continue;
+
+                if (boolPeek === true) return fltDistance;
+
+                fltIntersection = fltDistance;
+                objIntersection.fltDistance = fltDistance;
+                objIntersection.vecLocation = [
+                    vecOrigin[0] + (fltDistance * vecDirection[0]),
+                    vecOrigin[1] + (fltDistance * vecDirection[1]),
+                    vecOrigin[2] + (fltDistance * vecDirection[2])
+                ];
+                objIntersection.vecNormal = [
+                    objIntersection.vecLocation[0] - objSpheres[intSphere].vecLocation[0],
+                    objIntersection.vecLocation[1] - objSpheres[intSphere].vecLocation[1],
+                    objIntersection.vecLocation[2] - objSpheres[intSphere].vecLocation[2]
+                ];
+                objIntersection.vecColor = objSpheres[intSphere].vecColor.slice();
+                objIntersection.fltSpecular = objSpheres[intSphere].fltSpecular;
+                objIntersection.fltReflect = objSpheres[intSphere].fltReflect;
+            }
+
+            if (boolPeek !== true && fltIntersection < fltMax) {
+                normalize(objIntersection.vecNormal);
+            }
+
+            return fltIntersection;
+        }
+
+        function raytrace(vecColor, vecOrigin, vecDirection, fltMin, fltMax) {
+            vecColor[0] = 0.0;
+            vecColor[1] = 0.0;
+            vecColor[2] = 0.0;
+
+            var fltReflect = 1.0;
+
+            for (var intRecurse = 0; intRecurse < 8; intRecurse += 1) {
+                var objIntersection = {};
+
+                if (intersection(objIntersection, vecOrigin, vecDirection, fltMin, fltMax, false) > 10000.0) {
+                    return;
+                }
+
+                var fltAngle = Math.abs(dot(vecDirection, objIntersection.vecNormal));
+                var fltSchlick = (1.0 - objIntersection.fltReflect) + (objIntersection.fltReflect * Math.pow(1.0 - fltAngle, 5.0));
+
+                for (var intLight = 0; intLight < objLights.length; intLight += 1) {
+                    var vecLight = [
+                        objLights[intLight].vecLocation[0] - objIntersection.vecLocation[0],
+                        objLights[intLight].vecLocation[1] - objIntersection.vecLocation[1],
+                        objLights[intLight].vecLocation[2] - objIntersection.vecLocation[2]
+                    ];
+
+                    if (intersection({}, objIntersection.vecLocation, vecLight, 0.01, 10000.0, true) < 10000.0) {
+                        continue;
+                    }
+
+                    var fltDiffuse = dot(vecLight, objIntersection.vecNormal);
+
+                    var vecSpecular = [
+                        vecLight[0] - (2.0 * fltDiffuse * objIntersection.vecNormal[0]),
+                        vecLight[1] - (2.0 * fltDiffuse * objIntersection.vecNormal[1]),
+                        vecLight[2] - (2.0 * fltDiffuse * objIntersection.vecNormal[2])
+                    ];
+
+                    var fltSpecular = Math.max(0.01, Math.pow(dot(vecDirection, vecSpecular), objIntersection.fltSpecular));
+
+                    vecColor[0] += fltReflect * fltSchlick * (fltDiffuse + fltSpecular) * objIntersection.vecColor[0] * objLights[intLight].vecIntensity[0];
+                    vecColor[1] += fltReflect * fltSchlick * (fltDiffuse + fltSpecular) * objIntersection.vecColor[1] * objLights[intLight].vecIntensity[1];
+                    vecColor[2] += fltReflect * fltSchlick * (fltDiffuse + fltSpecular) * objIntersection.vecColor[2] * objLights[intLight].vecIntensity[2];
+                }
+
+                vecColor[0] += fltReflect * fltSchlick * objIntersection.vecColor[0] * vecAmbient[0];
+                vecColor[1] += fltReflect * fltSchlick * objIntersection.vecColor[1] * vecAmbient[1];
+                vecColor[2] += fltReflect * fltSchlick * objIntersection.vecColor[2] * vecAmbient[2];
+
+                fltReflect *= 1.0 - fltSchlick;
+
+                if (fltReflect < 0.01) break;
+
+                var fltReflection = dot(vecDirection, objIntersection.vecNormal);
+
+                vecOrigin = objIntersection.vecLocation.slice();
+                vecDirection[0] = vecDirection[0] - (2.0 * fltReflection * objIntersection.vecNormal[0]);
+                vecDirection[1] = vecDirection[1] - (2.0 * fltReflection * objIntersection.vecNormal[1]);
+                vecDirection[2] = vecDirection[2] - (2.0 * fltReflection * objIntersection.vecNormal[2]);
+
+                fltMin = 0.01;
+                fltMax = 10000.0;
+            }
+        }
+
+        function render(imageData) {
+            var data = imageData.data;
+
+            for (var intY = 0; intY < intHeight; intY += 1) {
+                for (var intX = 0; intX < intWidth; intX += 1) {
+                    var fltX = (1.0 * intX / intWidth) - 0.5;
+                    var fltY = 0.5 - (1.0 * intY / intHeight);
+
+                    var vecColor = [0.0, 0.0, 0.0];
+                    var vecOrigin = [6.0 * Math.cos(fltTime), 5.0, 6.0 * Math.sin(fltTime)];
+                    var vecDirection = [0.0 - vecOrigin[0], 1.0 - vecOrigin[1], 0.0 - vecOrigin[2]];
+
+                    normalize(vecDirection);
+
+                    var vecRight = [0.0, 0.0, 0.0];
+                    var vecUp = [0.0, 1.0, 0.0];
+
+                    cross(vecRight, vecDirection, vecUp);
+                    cross(vecUp, vecRight, vecDirection);
+
+                    vecDirection[0] += (fltX * vecRight[0]) + (fltY * vecUp[0]);
+                    vecDirection[1] += (fltX * vecRight[1]) + (fltY * vecUp[1]);
+                    vecDirection[2] += (fltX * vecRight[2]) + (fltY * vecUp[2]);
+
+                    raytrace(vecColor, vecOrigin, vecDirection, 1.0, 10000.0);
+
+                    var idx = (intY * intWidth * 4) + (intX * 4);
+                    data[idx + 0] = Math.min(255, 255 * vecColor[0]);
+                    data[idx + 1] = Math.min(255, 255 * vecColor[1]);
+                    data[idx + 2] = Math.min(255, 255 * vecColor[2]);
+                    data[idx + 3] = 255;
+                }
+            }
+        }
+
+        // UI code
+        const sceneCodeEl = document.getElementById('sceneCode');
+        const renderBtn = document.getElementById('renderBtn');
+        const statusEl = document.getElementById('status');
+        const errorEl = document.getElementById('error');
+        const renderTimeEl = document.getElementById('renderTime');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        const defaultScene = {
+            width: 400,
+            height: 400,
+            planes: [{
+                location: [0, 0, 0],
+                normal: [0, 1, 0],
+                color: [0.7, 0.7, 0.7],
+                specular: 10,
+                reflect: 0.1
+            }],
+            spheres: [{
+                location: [0, 2, 0],
+                radius: 1,
+                color: [1, 1, 1],
+                specular: 20,
+                reflect: 0.7
+            }, {
+                location: [0, 1, 3],
+                radius: 0.7,
+                color: [0.47, 0.33, 0.28],
+                specular: 10,
+                reflect: 0
+            }, {
+                location: [0, 1, -3],
+                radius: 0.7,
+                color: [0.3, 0.69, 0.31],
+                specular: 10,
+                reflect: 0
+            }, {
+                location: [3, 1, 0],
+                radius: 0.7,
+                color: [0.16, 0.71, 0.96],
+                specular: 10,
+                reflect: 0
+            }, {
+                location: [-3, 1, 0],
+                radius: 0.7,
+                color: [1, 0.65, 0.15],
+                specular: 10,
+                reflect: 0
+            }],
+            lights: [{
+                location: [0, 10, 5],
+                intensity: [0.8, 0.8, 0.8]
+            }],
+            ambient: [0.2, 0.2, 0.2],
+            cameraTime: 0.3
+        };
+
+        const simpleScene = {
+            width: 400,
+            height: 400,
+            planes: [{
+                location: [0, 0, 0],
+                normal: [0, 1, 0],
+                color: [0.5, 0.5, 0.5],
+                specular: 10,
+                reflect: 0.2
+            }],
+            spheres: [{
+                location: [0, 1, 0],
+                radius: 1,
+                color: [1, 0.2, 0.2],
+                specular: 50,
+                reflect: 0.3
+            }],
+            lights: [{
+                location: [5, 10, 5],
+                intensity: [1, 1, 1]
+            }],
+            ambient: [0.1, 0.1, 0.1],
+            cameraTime: 0.5
+        };
+
+        function parseScene(jsonStr) {
+            try {
+                const scene = JSON.parse(jsonStr);
+
+                intWidth = scene.width || 400;
+                intHeight = scene.height || 400;
+                canvas.width = intWidth;
+                canvas.height = intHeight;
+
+                objPlanes = scene.planes.map(p => ({
+                    vecLocation: p.location,
+                    vecNormal: p.normal,
+                    vecColor: p.color,
+                    fltSpecular: p.specular,
+                    fltReflect: p.reflect
+                }));
+
+                objSpheres = scene.spheres.map(s => ({
+                    vecLocation: s.location,
+                    fltRadius: s.radius,
+                    vecColor: s.color,
+                    fltSpecular: s.specular,
+                    fltReflect: s.reflect
+                }));
+
+                objLights = scene.lights.map(l => ({
+                    vecLocation: l.location,
+                    vecIntensity: l.intensity
+                }));
+
+                vecAmbient = scene.ambient;
+                fltTime = scene.cameraTime || 0.0;
+
+                return true;
+            } catch (e) {
+                errorEl.textContent = 'Error parsing scene: ' + e.message;
+                errorEl.style.display = 'block';
+                return false;
+            }
+        }
+
+        function renderScene() {
+            errorEl.style.display = 'none';
+
+            if (!parseScene(sceneCodeEl.value)) {
+                return;
+            }
+
+            statusEl.textContent = 'Rendering...';
+            renderBtn.disabled = true;
+
+            setTimeout(() => {
+                const startTime = performance.now();
+
+                const imageData = ctx.createImageData(intWidth, intHeight);
+                render(imageData);
+                ctx.putImageData(imageData, 0, 0);
+
+                const endTime = performance.now();
+                const elapsed = (endTime - startTime).toFixed(1);
+
+                statusEl.textContent = 'Ready';
+                renderTimeEl.textContent = `Rendered in ${elapsed}ms`;
+                renderBtn.disabled = false;
+
+                updateHash();
+            }, 10);
+        }
+
+        function updateHash() {
+            const encoded = encodeURIComponent(sceneCodeEl.value);
+            history.replaceState(null, '', '#' + encoded);
+        }
+
+        function loadFromHash() {
+            const hash = window.location.hash.slice(1);
+            if (hash) {
+                try {
+                    const decoded = decodeURIComponent(hash);
+                    sceneCodeEl.value = decoded;
+                    renderScene();
+                } catch (e) {
+                    console.error('Failed to load from hash:', e);
+                    loadDefaultScene();
+                }
+            } else {
+                loadDefaultScene();
+            }
+        }
+
+        function loadDefaultScene() {
+            sceneCodeEl.value = JSON.stringify(defaultScene, null, 2);
+            renderScene();
+        }
+
+        // Event listeners
+        renderBtn.addEventListener('click', renderScene);
+
+        let debounceTimer;
+        sceneCodeEl.addEventListener('input', () => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                renderScene();
+            }, 1000);
+        });
+
+        document.querySelectorAll('[data-example]').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const example = e.target.dataset.example;
+                if (example === 'default') {
+                    sceneCodeEl.value = JSON.stringify(defaultScene, null, 2);
+                } else if (example === 'simple') {
+                    sceneCodeEl.value = JSON.stringify(simpleScene, null, 2);
+                }
+                renderScene();
+            });
+        });
+
+        // Initialize
+        loadFromHash();
+    </script>
+</body>
+</html>
