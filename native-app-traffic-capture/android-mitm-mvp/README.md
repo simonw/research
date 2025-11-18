@@ -38,6 +38,8 @@ docker build -t android-mitm-mvp .
 ```
 
 ## Run
+
+### Local Development
 ```
 docker run -it --rm \
   --privileged \
@@ -47,6 +49,24 @@ docker run -it --rm \
   -e DEVICE="Samsung Galaxy S23" \
   android-mitm-mvp
 ```
+
+### GCP/Cloud Deployment
+For optimal performance on cloud VMs with nested virtualization support:
+```
+docker run -d \
+  --name android-mitm-mvp \
+  --privileged \
+  --device /dev/kvm \
+  -e WEB_VNC=true \
+  -e APP_PACKAGE=com.android.chrome \
+  -e EMULATOR_ADDITIONAL_ARGS='-cores 4 -memory 8192' \
+  -e EMULATOR_DATA_PARTITION='2048m' \
+  -p 0.0.0.0:6080:6080 \
+  -p 0.0.0.0:8081:8081 \
+  android-mitm-mvp:latest
+```
+
+**Note**: The `--device /dev/kvm` flag enables hardware acceleration on Linux hosts. The entrypoint gracefully handles missing KVM by falling back to software acceleration.
 
 ### Environment Overrides
 - `APP_PACKAGE`: Android package to spawn with Frida (default `com.android.chrome`).
@@ -74,6 +94,9 @@ docker run -it --rm \
 - View combined logs live within the container (`tail -F`).
 
 ## Troubleshooting
+
+### Common Issues
+
 - **Frida not running**: `docker exec -it <container> cat /var/log/frida-server.log`
 - **App spawn issues**: `docker exec -it <container> cat /var/log/frida-app.log`
 - **No traffic captured**:
@@ -83,6 +106,29 @@ docker run -it --rm \
   - `docker exec -it <container> adb shell ls /system/etc/security/cacerts/ | grep '.0'`
   - Inspect `frida-app.log` for injection messages
 - **Emulator exits with `/dev/kvm` or Rosetta errors**: the stock `budtmo/docker-android` image expects hardware virtualization. Run the container on a Linux host with `/dev/kvm` available, or swap in an arm64-friendly base image to avoid Rosetta emulation limits on Apple Silicon.
+
+### Boot Issues
+
+- **Device boot hangs beyond 300s**:
+  - Check `/var/log/mitmproxy.log` inside container
+  - Verify emulator CPU usage (should be > 50% during boot)
+  - Check noVNC display (port 6080) for visual feedback
+  - May need to increase timeout or verify nested virtualization support on host
+- **Boot animation stuck**: The entrypoint injects wake events at 30s and 45s to help progression. If still stuck, check emulator logs via `docker logs <container>`.
+
+### Port & Service Issues
+
+- **Ports become unresponsive**:
+  - Verify container running: `docker ps | grep android-mitm-mvp`
+  - Check process: `docker top android-mitm-mvp | grep mitmproxy`
+  - Review logs: `docker logs android-mitm-mvp`
+- **mitmproxy Web UI returns 403**: Expected without proper HTTP headers. Use a browser (which sends proper headers) instead of curl.
+
+### Build Issues
+
+- **Platform mismatch errors** (Apple Silicon): Use `docker build --platform linux/amd64` to force x86_64 build
+- **Permission denied during build**: Base image requires `USER root` for package installation steps
+- **PEP 668 managed environment**: Dockerfile sets `PIP_BREAK_SYSTEM_PACKAGES=1` to allow pip installs
 
 ## Cloud Deployment (GCP)
 The `scripts/` directory contains helper scripts for Google Cloud:
@@ -95,6 +141,63 @@ The `scripts/` directory contains helper scripts for Google Cloud:
 - `scripts/stop_vm.sh` deletes the instance and optionally the firewall rule (`DELETE_FIREWALL=true`).
 
 Requirements: authenticated `gcloud` CLI with project access. The scripts print the public IP for noVNC and mitmproxy after deployment.
+
+### Deployment Status & Access Points
+**Last Successful Deployment**: 2025-11-14 17:00 UTC
+
+**Access Points** (when deployed):
+- **noVNC**: `http://<vm-ip>:6080/` - Web-based VNC client for Android emulator control
+- **mitmproxy Web UI**: `http://<vm-ip>:8081/` - Traffic inspection interface
+
+**Ports Exposed**:
+- `6080` - noVNC web interface
+- `8081` - mitmproxy web UI
+- `8080` - mitmproxy proxy listener
+- `5554-5555` - ADB (emulator console/daemon)
+- `5900` - VNC raw protocol
+- `4723` - Appium server
+- `9000` - Web log viewer
+
+### Boot Timeline
+Typical startup sequence on GCP (n2-standard-4 VM with nested virtualization):
+- **0s**: mitmproxy initialization completes (< 1s)
+- **0-1s**: Android emulator launch begins
+- **0s**: ADB device detection (immediate)
+- **15s**: Boot animation active (`bootanim=running`)
+- **30s**: Wake event injection (helps boot progression)
+- **~120s**: Device online (`device` state in `adb devices`)
+- **120-180s**: Full boot completion (`boot_completed=1`)
+
+**Resource Usage** (during boot):
+- Memory: ~4GB / 15.6GB (26%)
+- CPU: ~150% (multi-core, normal during boot)
+- Disk I/O: Active during boot sequence
+
+### Key Fixes & Improvements
+
+**KVM Handling** (2025-11-14):
+- Entrypoint patches `emulator.py` to replace `-accel on` with `-accel off` (disables hardware acceleration)
+- Changes RuntimeError to warning if `/dev/kvm` is missing, allowing graceful degradation
+- Container must be launched with `--device /dev/kvm` for optimal performance on GCP
+
+**Boot Optimization**:
+- Reduced boot timeout from 240s to 90s (further optimized to 300s for reliability)
+- Wake event injection at 30s and 45s to help boot progression
+- Enhanced setup wizard dismissal with multi-strategy approach (back button, tap "Skip"/"Next", home button, swipe gestures)
+- Automated unlock/home navigation so emulator lands on launcher after boot
+
+**Traffic Validation**:
+- Added automated traffic validation step that verifies:
+  - App is running (via `pidof`)
+  - Proxy configuration is set correctly
+  - mitmproxy web UI is accessible
+- For Chrome: automatically triggers test navigation to `https://www.google.com` to generate initial traffic
+- Improved completion message with traffic capture status summary
+
+**Default Configuration**:
+- Changed default app from `com.whatsapp` to `com.android.chrome` for easier traffic validation
+- Default emulator args: `-cores 4 -memory 8192` with larger data partition (2048m)
+- Default machine type for GCP: `n2-standard-4` for better CPU/RAM allocation
 
 ## Extending the MVP
 - Pre-bundle APKs by copying them into the image and installing during build.
