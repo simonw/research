@@ -4,6 +4,7 @@ set -euo pipefail
 
 APP_PACKAGE=${APP_PACKAGE:-"com.android.chrome"}
 DEVICE=${DEVICE:-"Samsung Galaxy S23"}
+SKIP_FRIDA=${SKIP_FRIDA:-"false"}
 FRIDA_SCRIPTS_DIR=/frida-scripts
 LOG_DIR=/var/log
 MITM_LOG=${LOG_DIR}/mitmproxy.log
@@ -214,6 +215,10 @@ adb root >/dev/null 2>&1 || true
 adb wait-for-device >/dev/null 2>&1
 sleep 2
 adb remount >/dev/null 2>&1 || true
+adb shell su -c 'mount -o rw,remount /system' >/dev/null 2>&1 || true
+
+echo "[3b/8] Relaxing SELinux (setenforce 0)..."
+adb shell setenforce 0 >/dev/null 2>&1 || true
 
 CERT_PATH=/root/.mitmproxy/mitmproxy-ca-cert.pem
 if [ ! -f "${CERT_PATH}" ]; then
@@ -229,8 +234,9 @@ fi
 
 CERT_REMOTE_TMP=/data/local/tmp/mitmproxy-ca-cert.pem
 adb push "${CERT_PATH}" "${CERT_REMOTE_TMP}" >/dev/null
-if adb shell "cp ${CERT_REMOTE_TMP} /system/etc/security/cacerts/${CERT_HASH}.0" >/dev/null 2>&1; then
-    adb shell "chmod 644 /system/etc/security/cacerts/${CERT_HASH}.0" >/dev/null
+if adb shell su -c "cp ${CERT_REMOTE_TMP} /system/etc/security/cacerts/${CERT_HASH}.0" >/dev/null 2>&1; then
+    adb shell su -c "chmod 644 /system/etc/security/cacerts/${CERT_HASH}.0" >/dev/null 2>&1 || true
+    adb shell su -c "chown root:root /system/etc/security/cacerts/${CERT_HASH}.0" >/dev/null 2>&1 || true
     echo "✓ System CA installed (hash: ${CERT_HASH}.0)"
 else
     echo "⚠️ Unable to write to /system; falling back to user certificate store"
@@ -242,32 +248,89 @@ else
 fi
 
 # 4. Configure proxy
-echo "[4/8] Configuring proxy..."
-adb shell settings put global http_proxy 127.0.0.1:8080 >/dev/null
-adb shell settings put global global_http_proxy_host 127.0.0.1 >/dev/null
-adb shell settings put global global_http_proxy_port 8080 >/dev/null
+# Note: Use 10.0.2.2 as default (Android's special alias for the host/container gateway)
+# This is the correct address for emulator-to-host communication
+export ANDROID_PROXY_HOST=${ANDROID_PROXY_HOST:-"10.0.2.2"}
+export ANDROID_PROXY_PORT=${ANDROID_PROXY_PORT:-"8080"}
+
+echo "[4/8] Configuring proxy (host=${ANDROID_PROXY_HOST}, port=${ANDROID_PROXY_PORT})..."
+adb shell settings put global http_proxy "${ANDROID_PROXY_HOST}:${ANDROID_PROXY_PORT}" >/dev/null
+adb shell settings put global global_http_proxy_host "${ANDROID_PROXY_HOST}" >/dev/null
+adb shell settings put global global_http_proxy_port "${ANDROID_PROXY_PORT}" >/dev/null
 
 echo "✓ Proxy configured"
 
-# 5. Start Frida server
-echo "[5/8] Starting Frida server..."
-adb push /frida-server /data/local/tmp/frida-server >/dev/null
-adb shell chmod 755 /data/local/tmp/frida-server >/dev/null
-adb shell /data/local/tmp/frida-server > "${FRIDA_SERVER_LOG}" 2>&1 &
-FRIDA_SERVER_PID=$!
+# 4b. Configure iptables for system-wide traffic redirection
+echo "[4b/8] Configuring iptables for system-wide traffic redirection..."
+# Enable IP forwarding in the emulator
+adb shell "echo 1 > /proc/sys/net/ipv4/ip_forward" 2>/dev/null || true
 
-sleep 5
-if frida-ps -U >/dev/null 2>&1; then
-    echo "✓ Frida server running"
+# Redirect all HTTP and HTTPS traffic to mitmproxy
+# Using DNAT to redirect to the host proxy address
+adb shell "iptables -t nat -F OUTPUT" 2>/dev/null || true  # Clear existing OUTPUT rules
+adb shell "iptables -t nat -A OUTPUT -p tcp --dport 80 -j DNAT --to-destination ${ANDROID_PROXY_HOST}:${ANDROID_PROXY_PORT}" 2>/dev/null || \
+    echo "⚠️  Failed to add HTTP redirect rule (this is optional)"
+adb shell "iptables -t nat -A OUTPUT -p tcp --dport 443 -j DNAT --to-destination ${ANDROID_PROXY_HOST}:${ANDROID_PROXY_PORT}" 2>/dev/null || \
+    echo "⚠️  Failed to add HTTPS redirect rule (this is optional)"
+
+# Verify iptables rules
+IPTABLES_RULES=$(adb shell "iptables -t nat -L OUTPUT -n" 2>/dev/null || echo "")
+if echo "$IPTABLES_RULES" | grep -q "DNAT.*${ANDROID_PROXY_HOST}"; then
+    echo "✓ iptables rules configured (system-wide redirection enabled)"
 else
-    echo "✗ Frida server failed to start"
-    exit 1
+    echo "⚠️  iptables rules not applied - falling back to proxy settings only"
 fi
 
-# 6. Configure Frida scripts with mitmproxy CA
-echo "[6/8] Configuring Frida scripts..."
+# 5. Start Frida server (optional - skip if SKIP_FRIDA is set)
+if [ "${SKIP_FRIDA}" = "true" ]; then
+    echo "[5/8] Skipping Frida server (SKIP_FRIDA=true)"
+    echo "⚠️  Certificate pinning bypass disabled - only non-pinned apps will work"
+    FRIDA_ENABLED=false
+else
+    echo "[5/8] Starting Frida server..."
+    FRIDA_REMOTE_BIN=/data/local/tmp/frida-server
+    FRIDA_REMOTE_LOG=/data/local/tmp/frida-server.log
+    adb push /frida-server "${FRIDA_REMOTE_BIN}" >/dev/null
+    adb shell chmod 755 "${FRIDA_REMOTE_BIN}" >/dev/null
+    adb shell rm -f "${FRIDA_REMOTE_LOG}" >/dev/null 2>&1 || true
+    if ! adb shell "nohup ${FRIDA_REMOTE_BIN} >/data/local/tmp/frida-server.log 2>&1 &" >/dev/null 2>&1; then
+        adb shell "nohup su -c ${FRIDA_REMOTE_BIN} >/data/local/tmp/frida-server.log 2>&1 &" >/dev/null 2>&1 || true
+    fi
+    adb forward tcp:27042 tcp:27042 >/dev/null 2>&1 || true
+    adb forward tcp:27043 tcp:27043 >/dev/null 2>&1 || true
+    FRIDA_SERVER_PID=$!
+
+    FRIDA_ENABLED=false
+    for attempt in 1 2 3 4 5; do
+        sleep 3
+        if frida-ps -U >/dev/null 2>&1; then
+            echo "✓ Frida server running (after ${attempt} check)"
+            FRIDA_ENABLED=true
+            break
+        fi
+        echo " [Frida] Attempt ${attempt} failed, retrying..."
+    done
+
+    if [ "${FRIDA_ENABLED}" != "true" ]; then
+        echo "⚠️  Frida server failed to start - continuing without certificate pinning bypass"
+        echo "    Only non-pinned apps will work for HTTPS traffic capture"
+        echo "─── frida-server log (tail) ───"
+        adb shell "tail -n 40 ${FRIDA_REMOTE_LOG}" 2>/dev/null || echo "(log unavailable)"
+        echo "──────────────────────────────"
+    fi
+fi
+
+# 6. Configure Frida scripts with mitmproxy CA (skip if Frida not running)
+if [ "${FRIDA_ENABLED}" = "true" ]; then
+    echo "[6/8] Configuring Frida scripts..."
+else
+    echo "[6/8] Skipping Frida script configuration (Frida not available)"
+fi
+
+if [ "${FRIDA_ENABLED}" = "true" ]; then
 python3 - <<'PY'
 from pathlib import Path
+import os
 import re
 
 config_path = Path("/frida-scripts/config.js")
@@ -275,6 +338,18 @@ cert_path = Path("/root/.mitmproxy/mitmproxy-ca-cert.pem")
 cert = cert_path.read_text()
 config = config_path.read_text()
 
+# Clean certificate: strip whitespace and normalize line endings
+cert = cert.strip()
+cert = cert.replace('\r\n', '\n')
+cert = cert.replace('\r', '\n')
+
+# Validate the certificate format before injection
+if not cert.startswith('-----BEGIN CERTIFICATE-----'):
+    raise ValueError("Certificate missing BEGIN CERTIFICATE header")
+if not cert.endswith('-----END CERTIFICATE-----'):
+    raise ValueError("Certificate missing END CERTIFICATE footer")
+
+# Escape backticks (for template literal syntax)
 escaped_cert = cert.replace('`', '\\`')
 
 config = re.sub(
@@ -283,8 +358,15 @@ config = re.sub(
     config,
     flags=re.S
 )
-config = re.sub(r"const PROXY_HOST = '.*?';", "const PROXY_HOST = '127.0.0.1';", config)
-config = re.sub(r"const PROXY_PORT = \d+;", "const PROXY_PORT = 8080;", config)
+
+# Verify substitution succeeded
+if f"const CERT_PEM = `{escaped_cert}`;" not in config:
+    raise ValueError("Failed to substitute CERT_PEM in config.js")
+
+proxy_host = os.environ.get("ANDROID_PROXY_HOST", "10.0.2.2")
+proxy_port = os.environ.get("ANDROID_PROXY_PORT", "8080")
+config = re.sub(r"const PROXY_HOST = '.*?';", f"const PROXY_HOST = '{proxy_host}';", config)
+config = re.sub(r"const PROXY_PORT = \\d+;", f"const PROXY_PORT = {proxy_port};", config)
 config = re.sub(r"const DEBUG_MODE = (true|false);", "const DEBUG_MODE = true;", config)
 config = re.sub(r"const IGNORED_NON_HTTP_PORTS = \[.*?\];", "const IGNORED_NON_HTTP_PORTS = [];", config, flags=re.S)
 config = re.sub(r"const BLOCK_HTTP3 = (true|false);", "const BLOCK_HTTP3 = true;", config)
@@ -293,26 +375,42 @@ config = re.sub(r"const PROXY_SUPPORTS_SOCKS5 = (true|false);", "const PROXY_SUP
 config_path.write_text(config)
 PY
 
-echo "✓ Frida scripts configured"
+    echo "✓ Frida scripts configured"
+fi
 
-# 7. Launch app with Frida
-echo "[7/8] Launching ${APP_PACKAGE} with Frida unpinning..."
-frida -U \
-    -l "${FRIDA_SCRIPTS_DIR}/config.js" \
-    -l "${FRIDA_SCRIPTS_DIR}/native-connect-hook.js" \
-    -l "${FRIDA_SCRIPTS_DIR}/native-tls-hook.js" \
-    -l "${FRIDA_SCRIPTS_DIR}/android/android-proxy-override.js" \
-    -l "${FRIDA_SCRIPTS_DIR}/android/android-system-certificate-injection.js" \
-    -l "${FRIDA_SCRIPTS_DIR}/android/android-certificate-unpinning.js" \
-    -l "${FRIDA_SCRIPTS_DIR}/android/android-certificate-unpinning-fallback.js" \
-    -l "${FRIDA_SCRIPTS_DIR}/android/android-disable-root-detection.js" \
-    -f "${APP_PACKAGE}" \
-    --no-pause \
+# 7. Launch app (with or without Frida)
+if [ "${FRIDA_ENABLED}" = "true" ]; then
+    echo "[7/8] Launching ${APP_PACKAGE} with Frida unpinning..."
+    frida -U \
+        -l "${FRIDA_SCRIPTS_DIR}/config.js" \
+        -l "${FRIDA_SCRIPTS_DIR}/native-connect-hook.js" \
+        -l "${FRIDA_SCRIPTS_DIR}/native-tls-hook.js" \
+        -l "${FRIDA_SCRIPTS_DIR}/android/android-proxy-override.js" \
+        -l "${FRIDA_SCRIPTS_DIR}/android/android-system-certificate-injection.js" \
+        -l "${FRIDA_SCRIPTS_DIR}/android/android-certificate-unpinning.js" \
+        -l "${FRIDA_SCRIPTS_DIR}/android/android-certificate-unpinning-fallback.js" \
+        -l "${FRIDA_SCRIPTS_DIR}/android/android-disable-root-detection.js" \
+        -f "${APP_PACKAGE}" \
     > "${FRIDA_APP_LOG}" 2>&1 &
-FRIDA_APP_PID=$!
+    FRIDA_APP_PID=$!
 
-sleep 3
-echo "✓ App launched with Frida"
+    sleep 3
+    if kill -0 "${FRIDA_APP_PID}" >/dev/null 2>&1; then
+        echo "✓ App launched with Frida"
+    else
+        echo "⚠️  Frida CLI exited unexpectedly (see ${FRIDA_APP_LOG})"
+        FRIDA_ENABLED=false
+    fi
+else
+    echo "[7/8] Launching ${APP_PACKAGE} without Frida (no certificate pinning bypass)..."
+    # Launch app normally via activity manager
+    adb shell am start -n "${APP_PACKAGE}/.Main" >/dev/null 2>&1 || \
+    adb shell am start -n "${APP_PACKAGE}/.MainActivity" >/dev/null 2>&1 || \
+    adb shell monkey -p "${APP_PACKAGE}" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+
+    sleep 3
+    echo "✓ App launched (without Frida - pinned apps may not work)"
+fi
 
 # 8. Verify traffic capture setup
 echo "[8/8] Verifying traffic capture setup..."
@@ -326,8 +424,16 @@ else
 fi
 
 # Check proxy configuration
+EXPECTED_PROXY="${ANDROID_PROXY_HOST}:${ANDROID_PROXY_PORT}"
 PROXY_CHECK=$(adb shell settings get global http_proxy 2>/dev/null | tr -d '\r' || echo "")
 if [ -n "${PROXY_CHECK}" ] && [ "${PROXY_CHECK}" != "null" ]; then
+    if [ "${PROXY_CHECK}" != "${EXPECTED_PROXY}" ]; then
+        echo "⚠️  Proxy mismatch detected (${PROXY_CHECK}); resetting to ${EXPECTED_PROXY}"
+        adb shell settings put global http_proxy "${EXPECTED_PROXY}" >/dev/null
+        adb shell settings put global global_http_proxy_host "${ANDROID_PROXY_HOST}" >/dev/null
+        adb shell settings put global global_http_proxy_port "${ANDROID_PROXY_PORT}" >/dev/null
+        PROXY_CHECK="${EXPECTED_PROXY}"
+    fi
     echo "✓ Proxy configured: ${PROXY_CHECK}"
 else
     echo "⚠️  Proxy may not be configured correctly"
@@ -361,20 +467,36 @@ echo "     Password: mitmproxy"
 echo ""
 echo "Traffic Capture Status:"
 echo "  - App: ${APP_PACKAGE}"
-echo "  - Proxy: 127.0.0.1:8080"
-echo "  - Frida: Active with certificate unpinning"
+echo "  - Proxy: ${ANDROID_PROXY_HOST}:${ANDROID_PROXY_PORT}"
+if [ "${FRIDA_ENABLED}" = "true" ]; then
+    echo "  - Frida: ✓ Active with certificate unpinning"
+    echo "  - Capabilities: Can capture pinned apps (Chrome, Twitter, etc.)"
+else
+    echo "  - Frida: ✗ Disabled or failed to start"
+    echo "  - Capabilities: Only non-pinned apps will work for HTTPS"
+fi
 echo ""
 echo "Logs are available at:"
 echo "  ${MITM_LOG}"
-echo "  ${FRIDA_SERVER_LOG}"
-echo "  ${FRIDA_APP_LOG}"
+if [ "${FRIDA_ENABLED}" = "true" ]; then
+    echo "  ${FRIDA_SERVER_LOG}"
+    echo "  ${FRIDA_APP_LOG}"
+fi
 echo "  ${SUPERVISOR_LOG}"
 echo ""
 echo "To capture traffic:"
-echo "  1. Open mitmproxy UI (http://localhost:8081)"
+echo "  1. Open mitmproxy UI (http://localhost:8081, password: mitmproxy)"
 echo "  2. Navigate in the Android app (via noVNC or automated)"
 echo "  3. View decrypted HTTPS traffic in mitmproxy"
 echo ""
+if [ "${FRIDA_ENABLED}" != "true" ]; then
+    echo "⚠️  NOTE: Frida not available - only HTTP and non-pinned HTTPS apps will work"
+    echo ""
+fi
 echo "Press Ctrl+C to stop. Keeping container alive by tailing logs..."
 
-tail -F "${MITM_LOG}" "${FRIDA_APP_LOG}" "${SUPERVISOR_LOG}"
+if [ "${FRIDA_ENABLED}" = "true" ]; then
+    tail -F "${MITM_LOG}" "${FRIDA_APP_LOG}" "${SUPERVISOR_LOG}"
+else
+    tail -F "${MITM_LOG}" "${SUPERVISOR_LOG}"
+fi
