@@ -1,5 +1,13 @@
 # Google and OpenAI Tagged Content Days in 2024
 
+## Task
+
+> Use this API to find every day within 2024 when there with at least one item of content tagged google and at least one other item of content tagged openai (or both tags on same item)
+>
+> Start with this to see the schema - be sure to consider content across entries and blogmarks and quotes and notes
+>
+> https://datasette.simonwillison.net/simonwillisonblog.json?sql=select+sql+from+sqlite_master&_shape=array
+
 ## Summary
 
 Analysis of Simon Willison's blog database to identify days in 2024 when content was tagged with both "google" and "openai" tags.
