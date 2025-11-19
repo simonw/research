@@ -42,6 +42,16 @@ WITH all_tagged_content AS (
 
 Post-processing in Python grouped results by date and identified days with both tags.
 
+## Interactive Queries
+
+Explore the data yourself with these Datasette queries:
+
+- **[All content tagged 'google' or 'openai' in 2024](https://datasette.simonwillison.net/simonwillisonblog?sql=WITH+all_tagged_content+AS+%28%0D%0A++SELECT%0D%0A++++date%28e.created%29+as+content_date%2C%0D%0A++++t.tag%2C%0D%0A++++%27entry%27+as+content_type%2C%0D%0A++++e.id+as+content_id%2C%0D%0A++++e.title+as+title%0D%0A++FROM+blog_entry+e%0D%0A++JOIN+blog_entry_tags+et+ON+e.id+%3D+et.entry_id%0D%0A++JOIN+blog_tag+t+ON+et.tag_id+%3D+t.id%0D%0A++WHERE+t.tag+IN+%28%27google%27%2C+%27openai%27%29%0D%0A++++AND+e.created+LIKE+%272024%25%27%0D%0A%0D%0A++UNION+ALL%0D%0A%0D%0A++SELECT%0D%0A++++date%28b.created%29+as+content_date%2C%0D%0A++++t.tag%2C%0D%0A++++%27blogmark%27+as+content_type%2C%0D%0A++++b.id+as+content_id%2C%0D%0A++++b.link_title+as+title%0D%0A++FROM+blog_blogmark+b%0D%0A++JOIN+blog_blogmark_tags+bt+ON+b.id+%3D+bt.blogmark_id%0D%0A++JOIN+blog_tag+t+ON+bt.tag_id+%3D+t.id%0D%0A++WHERE+t.tag+IN+%28%27google%27%2C+%27openai%27%29%0D%0A++++AND+b.created+LIKE+%272024%25%27%0D%0A%0D%0A++UNION+ALL%0D%0A%0D%0A++SELECT%0D%0A++++date%28q.created%29+as+content_date%2C%0D%0A++++t.tag%2C%0D%0A++++%27quotation%27+as+content_type%2C%0D%0A++++q.id+as+content_id%2C%0D%0A++++substr%28q.quotation%2C+1%2C+50%29+as+title%0D%0A++FROM+blog_quotation+q%0D%0A++JOIN+blog_quotation_tags+qt+ON+q.id+%3D+qt.quotation_id%0D%0A++JOIN+blog_tag+t+ON+qt.tag_id+%3D+t.id%0D%0A++WHERE+t.tag+IN+%28%27google%27%2C+%27openai%27%29%0D%0A++++AND+q.created+LIKE+%272024%25%27%0D%0A%0D%0A++UNION+ALL%0D%0A%0D%0A++SELECT%0D%0A++++date%28n.created%29+as+content_date%2C%0D%0A++++t.tag%2C%0D%0A++++%27note%27+as+content_type%2C%0D%0A++++n.id+as+content_id%2C%0D%0A++++n.title+as+title%0D%0A++FROM+blog_note+n%0D%0A++JOIN+blog_note_tags+nt+ON+n.id+%3D+nt.note_id%0D%0A++JOIN+blog_tag+t+ON+nt.tag_id+%3D+t.id%0D%0A++WHERE+t.tag+IN+%28%27google%27%2C+%27openai%27%29%0D%0A++++AND+n.created+LIKE+%272024%25%27%0D%0A%29%0D%0ASELECT%0D%0A++content_date%2C%0D%0A++content_type%2C%0D%0A++content_id%2C%0D%0A++title%2C%0D%0A++tag%0D%0AFROM+all_tagged_content%0D%0AORDER+BY+content_date+DESC%2C+content_type%2C+content_id)**
+
+- **[Just entries tagged 'google' or 'openai' in 2024](https://datasette.simonwillison.net/simonwillisonblog?sql=SELECT+date%28e.created%29+as+content_date%2C+t.tag%2C+e.title%0AFROM+blog_entry+e%0AJOIN+blog_entry_tags+et+ON+e.id+%3D+et.entry_id%0AJOIN+blog_tag+t+ON+et.tag_id+%3D+t.id%0AWHERE+t.tag+IN+%28%27google%27%2C+%27openai%27%29+AND+e.created+LIKE+%272024%25%27%0AORDER+BY+e.created+DESC)**
+
+- **[Database schema](https://datasette.simonwillison.net/simonwillisonblog?sql=select+sql+from+sqlite_master+where+name+like+%27blog_%25%27+order+by+name)**
+
 ## Results
 
 ### Statistics
