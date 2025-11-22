@@ -1,0 +1,118 @@
+[
+  {
+    "name": "10K_rows_20_cols_dict",
+    "row_count": 10000,
+    "column_count": 20,
+    "mode": "dict",
+    "batch_size": 100,
+    "elapsed_seconds": 1.9271881580352783,
+    "rows_per_second": 5188.906935892943,
+    "db_size_bytes": 2412544
+  },
+  {
+    "name": "10K_rows_20_cols_list",
+    "row_count": 10000,
+    "column_count": 20,
+    "mode": "list",
+    "batch_size": 100,
+    "elapsed_seconds": 2.6192522048950195,
+    "rows_per_second": 3817.883585746873,
+    "db_size_bytes": 2412544
+  },
+  {
+    "name": "100K_rows_5_cols_dict",
+    "row_count": 100000,
+    "column_count": 5,
+    "mode": "dict",
+    "batch_size": 500,
+    "elapsed_seconds": 4.938183307647705,
+    "rows_per_second": 20250.362080551204,
+    "db_size_bytes": 6676480
+  },
+  {
+    "name": "100K_rows_5_cols_list",
+    "row_count": 100000,
+    "column_count": 5,
+    "mode": "list",
+    "batch_size": 500,
+    "elapsed_seconds": 4.058539390563965,
+    "rows_per_second": 24639.406046544307,
+    "db_size_bytes": 6676480
+  },
+  {
+    "name": "50K_rows_10_cols_dict",
+    "row_count": 50000,
+    "column_count": 10,
+    "mode": "dict",
+    "batch_size": 200,
+    "elapsed_seconds": 4.43508768081665,
+    "rows_per_second": 11273.73427503316,
+    "db_size_bytes": 6307840
+  },
+  {
+    "name": "50K_rows_10_cols_list",
+    "row_count": 50000,
+    "column_count": 10,
+    "mode": "list",
+    "batch_size": 200,
+    "elapsed_seconds": 4.231055021286011,
+    "rows_per_second": 11817.383548182439,
+    "db_size_bytes": 6307840
+  },
+  {
+    "name": "20K_rows_15_cols_large_batch_dict",
+    "row_count": 20000,
+    "column_count": 15,
+    "mode": "dict",
+    "batch_size": 1000,
+    "elapsed_seconds": 2.710871696472168,
+    "rows_per_second": 7377.700695325157,
+    "db_size_bytes": 3735552
+  },
+  {
+    "name": "20K_rows_15_cols_large_batch_list",
+    "row_count": 20000,
+    "column_count": 15,
+    "mode": "list",
+    "batch_size": 1000,
+    "elapsed_seconds": 2.5687255859375,
+    "rows_per_second": 7785.962077650525,
+    "db_size_bytes": 3735552
+  },
+  {
+    "name": "upsert_5K_5K_10_cols_dict",
+    "initial_rows": 5000,
+    "upsert_rows": 5000,
+    "column_count": 10,
+    "mode": "dict",
+    "elapsed_seconds": 0.47367095947265625,
+    "rows_per_second": 10555.85084964162
+  },
+  {
+    "name": "upsert_5K_5K_10_cols_list",
+    "initial_rows": 5000,
+    "upsert_rows": 5000,
+    "column_count": 10,
+    "mode": "list",
+    "elapsed_seconds": 0.4755747318267822,
+    "rows_per_second": 10513.594742079656
+  },
+  {
+    "name": "upsert_20K_10K_8_cols_dict",
+    "initial_rows": 20000,
+    "upsert_rows": 10000,
+    "column_count": 8,
+    "mode": "dict",
+    "elapsed_seconds": 1.0896852016448975,
+    "rows_per_second": 9176.962286819016
+  },
+  {
+    "name": "upsert_20K_10K_8_cols_list",
+    "initial_rows": 20000,
+    "upsert_rows": 10000,
+    "column_count": 8,
+    "mode": "list",
+    "elapsed_seconds": 0.9685060977935791,
+    "rows_per_second": 10325.180215985933
+  }
+]
