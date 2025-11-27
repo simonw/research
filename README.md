@@ -115,7 +115,18 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
-## 22 research projects
+## 23 research projects
+
+### [datasette-sql-permissions-review](https://github.com/simonw/research/tree/main/datasette-sql-permissions-review) (2025-11-27)
+
+A comprehensive architecture review of Datasette's new SQL-based permissions system (introduced in v1.0a20) finds that transitioning from a callback-driven model to SQL query resolution greatly improves scalability for large deployments. The redesigned system efficiently checks access by evaluating compiled permission rules through internal catalog tables, substantially reducing processing overhead compared to the multiplicative N x M callback pattern. Despite this advancement, the review highlights that much of the core logic, especially in `default_permissions.py`, has grown complex and difficult to maintain—making it prone to subtle bugs, particularly around interactions between config-based permissions and actor restrictions. Recommendations include refactoring for clarity, improving documentation and debugging tools (see the new [debug endpoints](https://datasette.io/docs/permissions)), and adding early validation for config errors. The SQL query construction approach is effective but would benefit from more declarative abstractions and rigorous parameter handling.
+
+**Key Findings:**
+- Major performance improvements, but implementation complexity is high—especially for config/actor restriction interplay.
+- Risk of configuration confusion and subtle permission bugs; documentation and validation are critical.
+- Debugging and auditability can be enhanced with new endpoints and clearer error messages ([permission system tools](https://github.com/simonw/datasette-debug-permissions)).
+- Consistent use of parameterized queries is recommended to prevent SQL injection.
+- Refactoring and codifying type hints/utilities would improve long-term maintainability.
 
 ### [sqlite-utils-iterator-support](https://github.com/simonw/research/tree/main/sqlite-utils-iterator-support) (2025-11-22)
 
