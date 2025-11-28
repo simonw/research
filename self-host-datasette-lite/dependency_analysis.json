@@ -1,0 +1,92 @@
+{
+  "webworker_dependencies": {
+    "pyodide_core": {
+      "description": "Core Pyodide runtime files from jsdelivr CDN",
+      "files": [
+        "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.js",
+        "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.asm.js",
+        "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.asm.wasm",
+        "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/python_stdlib.zip",
+        "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide-lock.json"
+      ],
+      "version": "0.27.2"
+    },
+    "pyodide_packages": {
+      "description": "Pyodide built-in packages loaded via loadPackage",
+      "files": [
+        "micropip",
+        "setuptools",
+        "ssl"
+      ]
+    },
+    "pypi_packages": {
+      "description": "Packages installed via micropip from PyPI",
+      "files": [
+        "h11==0.12.0",
+        "httpx==0.23",
+        "python-multipart==0.0.15",
+        "typing-extensions>=4.12.2",
+        "${datasetteToInstall}",
+        "sqlite-utils==3.28",
+        "fastparquet"
+      ],
+      "note": "Datasette package name varies based on ?ref= parameter"
+    },
+    "default_databases": {
+      "description": "Default SQLite databases loaded when no URL params",
+      "files": [
+        "https://latest.datasette.io/fixtures.db",
+        "https://datasette.io/content.db"
+      ]
+    },
+    "analytics": {
+      "description": "Analytics scripts (optional)",
+      "files": []
+    }
+  },
+  "index_resources": [
+    {
+      "type": "analytics",
+      "url": "https://plausible.io/js/script.manual.js",
+      "optional": true
+    }
+  ],
+  "size_estimates": {
+    "pyodide_core": "~5-10 MB (core only) or ~327 MB (full distribution)",
+    "pyodide_packages_needed": {
+      "micropip": "~50 KB",
+      "ssl": "~1 MB",
+      "setuptools": "~1.5 MB"
+    },
+    "pypi_packages": {
+      "note": "Pure Python wheels downloaded from PyPI",
+      "datasette": "~3-5 MB (with dependencies)",
+      "sqlite-utils": "~500 KB (optional, for CSV/JSON import)",
+      "fastparquet": "~several MB (optional, for Parquet files)"
+    },
+    "total_estimated": "~50-100 MB for minimal, ~350 MB for full"
+  },
+  "external_hosts": [
+    "cdn.jsdelivr.net (Pyodide runtime and packages)",
+    "files.pythonhosted.org (PyPI wheel downloads)",
+    "pypi.org (package metadata)",
+    "latest.datasette.io (default fixtures.db)",
+    "datasette.io (default content.db)",
+    "plausible.io (analytics - optional)"
+  ],
+  "self_hosting_requirements": {
+    "minimum": [
+      "Pyodide core files (pyodide.js, pyodide.asm.wasm, python_stdlib.zip, pyodide-lock.json)",
+      "Required Pyodide packages: micropip, ssl, setuptools",
+      "Datasette wheel and all its dependencies",
+      "h11, httpx, python-multipart, typing-extensions wheels",
+      "A static file server with proper CORS and MIME types"
+    ],
+    "optional": [
+      "sqlite-utils wheel (for CSV/JSON import)",
+      "fastparquet wheel (for Parquet support)",
+      "Pre-downloaded default databases",
+      "Full Pyodide distribution (for offline package access)"
+    ]
+  }
+}
