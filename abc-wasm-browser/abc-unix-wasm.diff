@@ -1,0 +1,904 @@
+diff --git a/b/b1outp.c b/b/b1outp.c
+index 28f9acf..e782658 100755
+--- a/b/b1outp.c
++++ b/b/b1outp.c
+@@ -3,7 +3,7 @@
+ #include "b.h"
+ #include "bmem.h"
+ 
+-Forward Hidden Procedure c_putchr();
++Forward Hidden Procedure c_putchr(char c);
+ 
+ Visible Procedure putstr(FILE *file, string s)
+ {
+diff --git a/bed/e1edoc.c b/bed/e1edoc.c
+index 872bcd9..29273c8 100755
+--- a/bed/e1edoc.c
++++ b/bed/e1edoc.c
+@@ -682,7 +682,7 @@ Visible Procedure
+ #else
+ Hidden Procedure
+ #endif
+-int writenode(node n, FILE *fp)
++writenode(node n, FILE *fp)
+ {
+ 	int nch;
+ 	int i;
+diff --git a/bhdrs/b.h b/bhdrs/b.h
+index aca2bcc..7b2d92c 100755
+--- a/bhdrs/b.h
++++ b/bhdrs/b.h
+@@ -59,6 +59,15 @@ typedef struct value {HEADER; string *cts;} *value;
+ 
+ typedef value polytype; /* Also in i2stc.h*/
+ 
++/* Types needed by bvis.h - moved here to avoid forward declaration issues */
++#ifndef BMEM_TYPES_DEFINED
++#define BMEM_TYPES_DEFINED
++typedef char *ptr;
++#define Nil ((ptr) 0)
++struct bufadm {char *buf, *pbuf, *end; };
++typedef struct bufadm bufadm;
++#endif
++
+ #include "bvis.h" /* Public declarations for Visible Procedures */
+ 
+ #define Hdrsize (sizeof(struct value)-sizeof(string))
+diff --git a/bhdrs/bedi.h b/bhdrs/bedi.h
+index d7f8ed2..25ffe9b 100755
+--- a/bhdrs/bedi.h
++++ b/bhdrs/bedi.h
+@@ -1,5 +1,8 @@
+ /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1988. */
+ 
++#ifndef BEDI_H
++#define BEDI_H
++
+ #define CMDPROMPT ">>> " /* Prompt user for immediate command */
+ 
+ /* Types */
+@@ -15,9 +18,12 @@
+ #define Is_Pat(p) (Type(p) == Pat)
+ #define Is_etext(v) (Type(v) == Etex)
+ 
++#ifndef BEDI_TYPES
++#define BEDI_TYPES
+ typedef struct node *node;
+ typedef struct path *path;
+ typedef int markbits;
++#endif
+ 
+ struct node {
+ 	HEADER;
+@@ -50,3 +56,5 @@ extern int doctype;	/* type of document edited by editdocument() */
+ #define D_perm 0	/* a how-to definition or permanent location */
+ #define D_input 1	/* input for READ or question */
+ #define D_immcmd 2	/* editing immediate command */
++
++#endif /* BEDI_H */
+diff --git a/bhdrs/bint.h b/bhdrs/bint.h
+index a9f7826..734d800 100755
+--- a/bhdrs/bint.h
++++ b/bhdrs/bint.h
+@@ -1,5 +1,8 @@
+ /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1988. */
+ 
++#ifndef BINT_H
++#define BINT_H
++
+ /* interpreter values */
+ 
+ /* Types */
+@@ -19,7 +22,10 @@
+ /* environment								*/
+ /************************************************************************/
+ 
++#ifndef BINT_TYPES
++#define BINT_TYPES
+ typedef value envtab;
++#endif
+ typedef struct ec{envtab tab; struct ec *inv_env;} envchain;
+ typedef envchain *env;
+ 
+@@ -27,7 +33,9 @@ typedef envchain *env;
+ /* parsetrees								*/
+ /************************************************************************/
+ 
++#ifndef parsetree
+ typedef value parsetree;
++#endif
+ #define NilTree ((parsetree) Vnil)
+ #define Is_parsetree(v) (Type(v) == Ptn)
+ #define ValidTree(v) ((v) != NilTree)
+@@ -66,8 +74,8 @@ typedef struct {
+ typedef value fun;
+ typedef value prd;
+ 
+-fun mk_fun();
+-prd mk_prd();
++fun mk_fun(literal adic, intlet pre, parsetree unit, bool filed);
++prd mk_prd(literal adic, intlet pre, parsetree unit, bool filed);
+ value mk_how();
+ 
+ #define Is_howto(v) (Type(v) == How)
+@@ -142,3 +150,5 @@ typedef struct{value val;} indirect;
+ value mk_indirect();
+ 
+ /************************************************************************/
++
++#endif /* BINT_H */
+diff --git a/bhdrs/bmem.h b/bhdrs/bmem.h
+index 58a4384..2c62be4 100755
+--- a/bhdrs/bmem.h
++++ b/bhdrs/bmem.h
+@@ -2,8 +2,16 @@
+ 
+ /* B memory management */
+ 
++#ifndef BMEM_H
++#define BMEM_H
++
++#ifndef BMEM_TYPES_DEFINED
++#define BMEM_TYPES_DEFINED
+ typedef char *ptr;
+ #define Nil ((ptr) 0)
++struct bufadm {char *buf, *pbuf, *end; };
++typedef struct bufadm bufadm;
++#endif
+ 
+ ptr getmem();
+ ptr savestr();
+@@ -15,5 +23,4 @@ typedef unsigned long address;	/* for PC and symbol table (on a tahoe) */
+ #define F_FREE  'F'
+ #endif
+ 
+-struct bufadm {char *buf, *pbuf, *end; };
+-typedef struct bufadm bufadm;
++#endif /* BMEM_H */
+diff --git a/bhdrs/bobj.h b/bhdrs/bobj.h
+index 33e7bc4..3d75ce1 100755
+--- a/bhdrs/bobj.h
++++ b/bhdrs/bobj.h
+@@ -20,9 +20,9 @@ relation compare();
+ /*************************************************************************/
+ 
+ Visible value grab(literal type, intlet len);
+-unsigned tltsyze();
+-unsigned numsyze();
+-unsigned ptnsyze();
++unsigned tltsyze(literal type, intlet len, int *nptrs);
++unsigned numsyze(intlet len, int *nptrs);
++unsigned ptnsyze(intlet len, int *nptrs);
+ 
+ double hash();
+ 
+@@ -144,9 +144,9 @@ value associate();
+ Visible Procedure replace();
+ /* Procedure delete(); */
+ 
+-value* adrassoc();
+-value* key();
+-value* assoc();
++value* adrassoc(value t, value k);
++value* key(value v, intlet k);
++value* assoc(value v, intlet k);
+ 
+ /****************************** Texts, Lists, and Tables *******************/
+ value mk_elt();
+diff --git a/bhdrs/bvis.h b/bhdrs/bvis.h
+index d5fdaea..6800dfe 100644
+--- a/bhdrs/bvis.h
++++ b/bhdrs/bvis.h
+@@ -1,6 +1,69 @@
+ /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1991. */
+ 
+ /* bvis.h: Public declarations for Visible Procedures */
++/* Modified for WebAssembly build - forward declarations added */
++
++/* Forward declarations for types used in this header */
++/* These types are properly defined in various header files that are */
++/* included after b.h. This allows the header to be self-contained. */
++
++/* Editor types - use same struct names as bedi.h */
++#ifndef BEDI_TYPES
++#define BEDI_TYPES
++struct cell;
++typedef struct cell cell;
++struct path;
++typedef struct path *path;
++struct environ;
++#ifndef ENVIRON_DEFINED
++typedef struct environ environ;
++#endif
++struct node;
++typedef struct node *node;
++typedef int markbits;
++typedef struct queue *queue;
++#endif
++
++/* Interpreter types - use same names as bint.h */
++#ifndef BINT_TYPES
++#define BINT_TYPES
++struct real;
++typedef struct real *real;
++#ifndef parsetree
++typedef value parsetree;
++#endif
++typedef char *txptr;
++typedef value loc;
++typedef value envtab; /* same as bint.h */
++#endif
++
++/* More interpreter types that aren't in bint.h */
++#ifndef BINT_EXTRA_TYPES
++#define BINT_EXTRA_TYPES
++typedef value btype;  /* btype is same as value */
++#ifndef EXPADM_DEFINED
++struct expadm_struct;
++typedef struct expadm_struct expadm;
++#endif
++struct state;
++struct context_struct;
++typedef struct context_struct context;
++struct wsenv;
++#ifndef WSENVPTR_DEFINED
++#define WSENVPTR_DEFINED
++typedef struct wsenv *wsenvptr;
++#endif
++#ifndef BTREEPTR_DEFINED
++#define BTREEPTR_DEFINED
++struct btrnode;
++typedef struct btrnode *btreeptr;
++#endif
++#ifndef ITEMPTR_DEFINED
++#define ITEMPTR_DEFINED
++union itm;
++typedef union itm *itemptr;
++#endif
++#endif
+ 
+ /* b1grab.c */
+ Visible Procedure release(value v);
+@@ -24,7 +87,7 @@ Visible Procedure bufncpy(bufadm *bp, char *s, int len);
+ 
+ /* b1mess.c */
+ Visible Procedure putmess(int m);
+-Visible Procedure freemem(ptr p);
++/* Visible Procedure freemem(ptr p); - duplicate declaration removed */
+ Visible Procedure putSmess(int m, string s);
+ Visible Procedure putDSmess(int m, int d, string s);
+ Visible Procedure initmess(void);
+@@ -44,7 +107,7 @@ Visible Procedure doflush(FILE *file);
+ Visible Procedure putchr(FILE *file, char c);
+ 
+ /* e1cell.c */
+-Visible Procedure discard(register cell *p);
++Visible Procedure discard(cell *p);
+ 
+ /* e1comm.c */
+ Visible Procedure abced_file(string filename, intlet errline, literal kind, bool creating, bool *changed);
+@@ -52,13 +115,13 @@ Visible Procedure initbed(void);
+ Visible Procedure endbed(void);
+ 
+ /* e1deco.c*/
+-Visible Procedure delfocus(register path *pp);
++Visible Procedure delfocus(path *pp);
+ 
+ /* e1edoc.c */
+-Visible Procedure dumpev(register environ *ep, string m);
++Visible Procedure dumpev(environ *ep, string m);
+ Visible Procedure clrenv(environ *ep);
+-Visible Procedure higher(register environ *ep);
+-Visible Procedure dbmess(register environ *ep);
++Visible Procedure higher(environ *ep);
++Visible Procedure dbmess(environ *ep);
+ 
+ /* e1erro.c*/
+ Visible Procedure ederr(int m);
+@@ -66,14 +129,18 @@ Visible Procedure ederrS(int m, string s);
+ Visible Procedure ederrC(int m, char c);
+ Visible Procedure edmessage(string s);
+ Visible Procedure asserr(string file, int line);
++#ifdef __EMSCRIPTEN__
++#define debug(...) ((void)0)
++#else
+ Visible Procedure debug(string fmt, int a1, int a2, int a3, int a4, int a5, int a6, int a7, int a8, int a9, int a10);
++#endif
+ Visible Procedure stsline(int totlines, int topline, int scrlines, value copybuffer, bool recording);
+ Visible Procedure enderro(void);
+ Visible Procedure init_erro(void);
+ Visible Procedure end_erro(void);
+ 
+ /* e1eval.c*/
+-Visible Procedure evalcoord(register node n, register int jch, int *py, int *px, int *plevel);
++Visible Procedure evalcoord(node n, int jch, int *py, int *px, int *plevel);
+ 
+ /* e1getc.c*/
+ Visible Procedure initgetc(void);
+@@ -90,37 +157,37 @@ Visible Procedure gotofix(environ *ep, int y, int x);
+ /* e1gram.c*/
+ Visible Procedure setroot(int isym);
+ Visible Procedure initgram(void);
+-Visible Procedure initkeys(void);
++/* initkeys declared above */
+ Visible Procedure initclasses(void);
+ Visible Procedure endnoderepr(void);
+ 
+ /* e1line.c*/
+-Visible Procedure oneline(register environ *ep);
++Visible Procedure oneline(environ *ep);
+ 
+ /* e1node.c*/
+-Visible Procedure setchild(register node *pn, register int i, register node n);
+-Visible Procedure markpath(register path *pp, register markbits new);
+-Visible Procedure unmkpath(register path *pp, register int del);
+-Visible Procedure treereplace(register path *pp, register node n);
+-Visible Procedure top(register path *pp);
+-Visible Procedure touchpath(register path *pp);
+-Visible Procedure putintrim(register value *pn, register int head, register int tail, register string str);
++Visible Procedure setchild(node *pn, int i, node n);
++Visible Procedure markpath(path *pp, markbits new);
++Visible Procedure unmkpath(path *pp, int del);
++Visible Procedure treereplace(path *pp, node n);
++Visible Procedure top(path *pp);
++Visible Procedure touchpath(path *pp);
++Visible Procedure putintrim(value *pn, int head, int tail, string str);
+ 
+ /* e1outp.c*/
+ Visible Procedure startactupdate(bool nofocus);
+-Visible Procedure outline(register cell *p, register int lineno);
++Visible Procedure outline(cell *p, int lineno);
+ Visible Procedure endactupdate(void);
+-Visible Procedure savefocus(register environ *ep);
+-Visible Procedure setfocus(register cell *tops);
++Visible Procedure savefocus(environ *ep);
++Visible Procedure setfocus(cell *tops);
+ 
+ /* e1que1.c*/
+-Visible Procedure preptoqueue(node n, register queue *pq);
+-Visible Procedure addtoqueue(register queue *pq, register node n);
+-Visible Procedure stringtoqueue(register string str, register queue *pq);
+-Visible Procedure splitnode(register node n, register queue *pq);
+-Visible Procedure nosuggtoqueue(register environ *ep, queue *pq);
+-Visible Procedure fixfocus(register environ *ep, register int len);
+-Visible Procedure subsettoqueue(register node n, register int s1, register int s2, register queue *pq);
++Visible Procedure preptoqueue(node n, queue *pq);
++Visible Procedure addtoqueue(queue *pq, node n);
++Visible Procedure stringtoqueue(string str, queue *pq);
++Visible Procedure splitnode(node n, queue *pq);
++Visible Procedure nosuggtoqueue(environ *ep, queue *pq);
++Visible Procedure fixfocus(environ *ep, int len);
++Visible Procedure subsettoqueue(node n, int s1, int s2, queue *pq);
+ 
+ /* e1que2.c*/
+ Visible Procedure qshow(queue q, string where);
+@@ -155,18 +222,18 @@ Visible Procedure endsugg(void);
+ Visible Procedure endclasses(void);
+ 
+ /* e1supr.c */
+-Visible Procedure subgrow(register environ *ep, bool ignorespaces, bool deleting);
+-Visible Procedure subgrsubset(register environ *ep, bool ignorespaces);
+-Visible Procedure shrsubset(register environ *ep);
+-Visible Procedure ritevhole(register environ *ep);
+-Visible Procedure leftvhole(register environ *ep);
+-Visible Procedure s_up(register environ *ep);
+-Visible Procedure s_downi(register environ *ep, register int i);
++Visible Procedure subgrow(environ *ep, bool ignorespaces, bool deleting);
++Visible Procedure subgrsubset(environ *ep, bool ignorespaces);
++Visible Procedure shrsubset(environ *ep);
++Visible Procedure ritevhole(environ *ep);
++Visible Procedure leftvhole(environ *ep);
++Visible Procedure s_up(environ *ep);
++Visible Procedure s_downi(environ *ep, int i);
+ Visible Procedure grow(environ *ep, bool deleting);
+-Visible Procedure shrink(register environ *ep);
+-Visible Procedure s_down(register environ *ep);
+-Visible Procedure s_downrite(register environ *ep);
+-Visible Procedure fixit(register environ *ep);
++Visible Procedure shrink(environ *ep);
++Visible Procedure s_down(environ *ep);
++Visible Procedure s_downrite(environ *ep);
++Visible Procedure fixit(environ *ep);
+ 
+ /* i1nua.c */
+ Visible Procedure app_print(FILE *fp, real v);
+diff --git a/bint1/i1nur.c b/bint1/i1nur.c
+index b14ae22..336abbe 100755
+--- a/bint1/i1nur.c
++++ b/bint1/i1nur.c
+@@ -84,7 +84,9 @@ Visible rational mk_rat(x, y, len, simplify)
+ 
+ /* Shorthands: */
+ #define N(u) Numerator(u)
+-#define D(Denominator( u) Visible rational rat_sum(u, v) register rational u) {
++#define D(u) Denominator(u)
++
++Visible rational rat_sum(register rational u, register rational v) {
+ 	integer t1, t2, t3, t4;
+ 	rational a;
+ 
+diff --git a/bint2/i2cmd.c b/bint2/i2cmd.c
+index 2ac7ab5..5662c5e 100755
+--- a/bint2/i2cmd.c
++++ b/bint2/i2cmd.c
+@@ -9,14 +9,14 @@
+ #include "i2nod.h"
+ #include "i3env.h"
+ 
+-Forward Hidden bool chk_indent();
++Forward Hidden bool chk_indent(intlet nlevel, intlet olevel, bool first);
+ Forward Hidden Procedure suite_command();
+ Forward Hidden bool bas_com();
+-Forward Hidden value cr_newlines();
++Forward Hidden value cr_newlines(intlet cnt);
+ Forward Hidden bool udr_com();
+ Forward Hidden value hu_actuals();
+ Forward Hidden parsetree alt_suite();
+-Forward Hidden parsetree alt_seq();
++Forward Hidden parsetree alt_seq(intlet cil, bool first, bool else_encountered, bool *emp);
+ 
+ /* ******************************************************************** */
+ /*		command_suite						*/
+diff --git a/bint2/i2dis.c b/bint2/i2dis.c
+index 88cbe58..dce7f8a 100755
+--- a/bint2/i2dis.c
++++ b/bint2/i2dis.c
+@@ -67,7 +67,9 @@ Hidden Procedure d_char(char c, displadm *da)
+ 	Datnwl(da) = No;
+ }
+ 
+-#define d_space(d_char(' ', da) Hidden Procedure d_newline(da) displadm *da)	{
++#define d_space(da) d_char(' ', da)
++
++Hidden Procedure d_newline(displadm *da) {
+ 	d_linetofile(da);
+ 	putnewline(Dfile(da));
+ 	Datnwl(da) = Yes;
+@@ -412,7 +414,9 @@ Hidden Procedure d_write(parsetree v, displadm *da)
+ 	displ(r_lines, da);
+ }
+ 
+-#define is_b_tag((Valid( v) && Letter(ncharval(1, v))) Hidden Procedure d_dyaf(v, da) parsetree v) {
++#define is_b_tag(v) (Valid(v) && Letter(ncharval(1, v)))
++
++Hidden Procedure d_dyaf(parsetree v, displadm *da) {
+ 	parsetree l = *Branch(v, DYA_LEFT);
+ 	parsetree r = *Branch(v, DYA_RIGHT);
+ 	value name = (value) *Branch(v, DYA_NAME);
+diff --git a/bint2/i2exp.c b/bint2/i2exp.c
+index 1a4e179..3e00691 100755
+--- a/bint2/i2exp.c
++++ b/bint2/i2exp.c
+@@ -67,8 +67,11 @@ Visible struct prio * pprio(value f, char adic) {
+ /************************************************************************/
+ 
+ /*
+- * Stack(adm) <= "allocated space" < Top(* Sp( adm) points to the first free entry */ Hidden Procedure initstack(adm, n) expadm *adm)
+-{
++ * Stack(adm) <= "allocated space" < Top(adm)
++ * Sp(adm) points to the first free entry
++ */
++
++Hidden Procedure initstack(expadm *adm, int n) {
+ 	Stack(adm)= Sp(adm)=
+ 	    (parsetree *) getmem((unsigned) (n * sizeof(parsetree *)));
+ 	Top(adm)= Stack(adm) + n;
+@@ -228,7 +231,9 @@ Hidden parsetree par_expr(txptr q, expadm *adm) {
+ #define START	'2'
+ 
+ #define Prio_err(adm) \
+-		(Level(adm) == PARSER ? pprerr(: fixerr( PRIO)) Visible Procedure do_dya(adm, v) expadm *adm) {
++		(Level(adm) == PARSER ? pprerr(PRIO) : fixerr(PRIO))
++
++Visible Procedure do_dya(expadm *adm, value v) {
+ 	parsetree *p= Sp(adm) - 2;	/* skip operand */
+ 	struct prio *pdya, *popr;
+ 	char action= START;
+diff --git a/bint2/i2uni.c b/bint2/i2uni.c
+index 5b701fb..9548efa 100755
+--- a/bint2/i2uni.c
++++ b/bint2/i2uni.c
+@@ -25,12 +25,14 @@ Hidden value formlist, sharelist;
+ Hidden envtab reftab; 
+ Visible literal idf_cntxt;
+ 
+-Forward Hidden parsetree ref_suite();
++Forward Hidden parsetree ref_suite(intlet cil);
+ 
+-#define unicmd_suite(cmd_suite( level) {
++#define unicmd_suite(level) cmd_suite(level, Yes, cmd_seq)
++
++Visible parsetree unit(bool heading, bool editing) {
+ 	parsetree v= NilTree;
+ 	char *kw;
+-	
++
+ 	if (!heading) {
+ 		lino= 1;
+ 		cntxt= In_unit;
+diff --git a/bint3/i3int.c b/bint3/i3int.c
+index 0447917..ae631e3 100755
+--- a/bint3/i3int.c
++++ b/bint3/i3int.c
+@@ -35,7 +35,12 @@ Visible bool terminated;
+ #define Comp(op) w = pop(); v = pop(); report= (compare(v, w) op 0); Comp2()
+ #define Comp2() release(v); if (!Flagged()) {release(w);} else {Comp3()}
+ #define Comp3() if (report) {push(w);} else {release(w); jumptoend();}
+-#define F(((value)*Branch(pc, ( n))) /* Execute a threaded tree until the end or until a terminating-command. The boolean argument 'wantvalue' tells whether it must deliver a value or not. */ Hidden value run(start, wantvalue) parsetree start) {
++#define F(n) ((value)*Branch(pc, n))
++
++/* Execute a threaded tree until the end or until a terminating-command.
++   The boolean argument 'wantvalue' tells whether it must deliver a value or not. */
++
++Hidden value run(parsetree start, bool wantvalue) {
+ 	value u, v, w; int k, len; bool X, Y; int call_stop= call_level;
+ 	parsetree old_next= next;
+ 	/* While run can be used recursively, save some state info */
+diff --git a/btr/i1btr.h b/btr/i1btr.h
+index 256bf62..5642fbd 100755
+--- a/btr/i1btr.h
++++ b/btr/i1btr.h
+@@ -1,5 +1,8 @@
+ /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1986. */
+ 
++#ifndef I1BTR_H
++#define I1BTR_H
++
+ /* Private definitions for the b-tree module */
+ 
+ #define EQ ==
+@@ -16,11 +19,21 @@ typedef char texitem;
+ typedef value lisitem;
+ typedef struct pair {value k, a;} tabitem;
+ typedef struct onpair {value ka, u;} keysitem;
++
++#ifndef ITEMPTR_DEFINED
++#define ITEMPTR_DEFINED
+ typedef union itm {
+     texitem c;
+     lisitem l;
+     tabitem t;
+ } btritem, *itemarray, *itemptr;
++#else
++typedef union itm {
++    texitem c;
++    lisitem l;
++    tabitem t;
++} btritem, *itemarray;
++#endif
+ 
+ #define Charval(pitm) ((pitm)->c)
+ #define Keyval(pitm) ((pitm)->l)
+@@ -41,7 +54,7 @@ extern char itemwidth[];	/*  uses: */
+ #define Tw (sizeof(tabitem))
+ #define Kw (sizeof(keysitem))
+ 
+-intlet uflow();
++intlet uflow(intlet n, intlet l, char cbuf[], btreeptr pbuf[], intlet it);
+ 
+ /*********************************************************************/
+ /* sizes of btrees                                                   */
+@@ -68,11 +81,20 @@ intlet uflow();
+ /* rangenodes */
+ #define Biglim		(Maxbottom+1)
+ 
++#ifndef BTREEPTR_DEFINED
++#define BTREEPTR_DEFINED
+ typedef struct btrnode {
+     HEADER; int size;
+     char **g;
+ }
+ btreenode, *btreeptr;
++#else
++typedef struct btrnode {
++    HEADER; int size;
++    char **g;
++}
++btreenode;
++#endif
+ 
+ typedef struct innernode {
+     HEADER; int size;
+@@ -219,11 +241,12 @@ bool get_th_item();	/* itemptr pitm; value num, v; */
+ 
+ /* Private definitions for grabbing and ref count scheme */
+ 
+-btreeptr grabbtreenode();	/* literal flag, it */
+-btreeptr copybtree();    	/* btreeptr pnode */
++btreeptr grabbtreenode(literal flag, literal it);
++btreeptr copybtree(btreeptr pnode);
+ /* Procedure uniqlbtreenode(); */	/* btreeptr *pptr; literal it */
+-btreeptr ccopybtreenode();	/* btreeptr pnode; literal it */
+-btreeptr mknewroot();
+-    /* btreeptr ptr0, itemptr pitm0, btreeptr ptr1, literal it */
++btreeptr ccopybtreenode(btreeptr pnode, literal it);
++btreeptr mknewroot(btreeptr ptr0, itemptr pitm0, btreeptr ptr1, literal it);
+ /* Procedure relbtree(); */		/* btreeptr pnode; literal it */
+ /* Procedure freebtreenode(); */	/* btreeptr pnode; */
++
++#endif /* I1BTR_H */
+diff --git a/btr/i1lta.c b/btr/i1lta.c
+index 8089890..6d5de86 100755
+--- a/btr/i1lta.c
++++ b/btr/i1lta.c
+@@ -30,7 +30,9 @@ extern FILE *btrfp;
+ #define IsInner(p) (Flag(p) == Inner)
+ #define IsBottom(p) (Flag(p) == Bottom)
+ 
+-#define _Pxitm((IsInner( p) ? Piitm(p, l, iw) : Pbitm(p, l, iw)) Hidden itemptr Pxitm(p, l, iw) btreeptr p, intlet l, intlet iw) {
++#define _Pxitm(p, l, iw) (IsInner(p) ? Piitm(p, l, iw) : Pbitm(p, l, iw))
++
++Hidden itemptr Pxitm(btreeptr p, intlet l, intlet iw) {
+ 	return _Pxitm(p, l, iw);
+ }
+ 
+@@ -53,7 +55,10 @@ typedef struct {
+ #define Top(s, p, l) ((p)= ((s)-1)->s_ptr, (l)= ((s)-1)->s_lim)
+ #define Drop(s) (--(s))
+ #define Pop(s, p, l) (--(s), (p)= (s)->s_ptr, (l)= (s)->s_lim)
+-	/* Pop(fingertip s, Drop( s) */ /*+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/ Visible fingertip unzip(p, at, s) btreeptr p, is equivalent to Top( l)) {
++
++/*+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
++
++Visible fingertip unzip(btreeptr p, int at, fingertip s) {
+ 	int syz; intlet l;
+ 	if (p == Bnil) return s;
+ 	for (;;) {
+diff --git a/ehdrs/supr.h b/ehdrs/supr.h
+index 6262744..74bb0c0 100755
+--- a/ehdrs/supr.h
++++ b/ehdrs/supr.h
+@@ -1,5 +1,8 @@
+ /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1986. */
+ 
++#ifndef SUPR_H
++#define SUPR_H
++
+ /*
+  * B editor -- Superstructure for fine focusing.
+  */
+@@ -52,7 +55,9 @@
+ #define SUBLIST	'L'
+ #define FHOLE	'F'
+ 
+-typedef struct {
++#ifndef ENVIRON_DEFINED
++#define ENVIRON_DEFINED
++struct environ {
+ 	path focus;
+ 	char mode;
+ 	char /*bool*/ copyflag;
+@@ -66,7 +71,9 @@ typedef struct {
+ 	value oldmacro; /* A text */
+ 	value newmacro; /* A text, too */
+ 	int generation;
+-} environ;
++};
++typedef struct environ environ;
++#endif
+ 
+ #ifdef STRUCTASS
+ #define Emove(e1, e2) ((e2) = (e1))
+@@ -77,3 +84,5 @@ typedef struct {
+ #define Erelease(e) erelease(&(e))
+ 
+ bool ishole();
++
++#endif /* SUPR_H */
+diff --git a/ihdrs/i1num.h b/ihdrs/i1num.h
+index 45f3d85..11d1747 100755
+--- a/ihdrs/i1num.h
++++ b/ihdrs/i1num.h
+@@ -37,20 +37,20 @@ typedef struct integer {
+ #define Freeze2(v, vv) \
+ 	((vv).len= (v) != 0, (vv).dig[0]= SmallIntVal(v), (v)= &(vv))
+ 
+-integer int_gadd();
+-integer int_canon();
+-integer int_sum();
+-integer int_prod();
+-integer int_diff();
+-integer int_quot();
+-integer int_neg();
+-integer int_gcd();
+-integer mk_int();
+-integer int1mul();
+-integer int_tento();
+-integer int_half();
+-integer int_mod();
+-digit int_ldiv();
++integer int_gadd(integer v, integer w, intlet factor);
++integer int_canon(integer v);
++integer int_sum(integer v, integer w);
++integer int_prod(integer v, integer w);
++integer int_diff(integer v, integer w);
++integer int_quot(integer v, integer w);
++integer int_neg(integer v);
++integer int_gcd(integer v, integer w);
++integer mk_int(double x);
++integer int1mul(integer v, digit n);
++integer int_tento(int n);
++integer int_half(integer v);
++integer int_mod(integer v, integer w);
++digit int_ldiv(integer v, integer w, integer *pquot, integer *prem);
+ 
+ #define int_0 ((integer) MkSmallInt(0))
+ #define int_1 ((integer) MkSmallInt(1))
+diff --git a/ihdrs/i2exp.h b/ihdrs/i2exp.h
+index 87146cf..753b80f 100755
+--- a/ihdrs/i2exp.h
++++ b/ihdrs/i2exp.h
+@@ -1,11 +1,16 @@
+ /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1986. */
+ 
++#ifndef I2EXP_H
++#define I2EXP_H
++
+ /* General definitions for parsing expressions */
+ 
+ /* Avoid conflict with extra reserved word: */
+ #define comp b_comp
+ 
+-typedef struct {							
++#ifndef EXPADM_DEFINED
++#define EXPADM_DEFINED
++struct expadm_struct {
+ 	parsetree *stack;
+ 	parsetree *sp;
+ 	parsetree *top;
+@@ -13,7 +18,9 @@ typedef struct {
+ 	char level;		/* PARSER or FIXER */
+ 	char /* bool */ prop;	/* Yes while fixing left expr dya pred */
+ 	intlet nfield;		/* fieldnr unparsed node during fixing */
+-} expadm;
++};
++typedef struct expadm_struct expadm;
++#endif
+ 
+ #define Stack(adm)	(adm->stack)
+ #define Sp(adm)		(adm->sp)
+@@ -49,6 +56,7 @@ struct prio {
+ #define dprio(i) pprio(i, P_dya)
+ #define mprio(i) pprio(i, P_mon)
+ 
+-struct prio * pprio();
++struct prio * pprio(value f, char adic);
+ 
+ 
++#endif /* I2EXP_H */
+diff --git a/ihdrs/i2nod.h b/ihdrs/i2nod.h
+index 236a726..f826653 100755
+--- a/ihdrs/i2nod.h
++++ b/ihdrs/i2nod.h
+@@ -123,14 +123,14 @@ typedef intlet typenode;
+ #define NTYPES			74
+ 	/* number of nodetypes */
+ 
+-value node1();
+-value node2();
+-value node3();
+-value node4();
+-value node5();
+-value node6();
+-value node8();
+-value node9();
++parsetree node1(typenode type);
++parsetree node2(typenode type, value a1);
++parsetree node3(typenode type, value a1, value a2);
++parsetree node4(typenode type, value a1, value a2, value a3);
++parsetree node5(typenode type, value a1, value a2, value a3, value a4);
++parsetree node6(typenode type, value a1, value a2, value a3, value a4, value a5);
++parsetree node8(typenode type, value a1, value a2, value a3, value a4, value a5, value a6, value a7);
++parsetree node9(typenode type, value a1, value a2, value a3, value a4, value a5, value a6, value a7, value a8);
+ typenode nodetype();
+ /* Procedure display(); */
+ /* Procedure fix_nodes(); */
+diff --git a/ihdrs/i2par.h b/ihdrs/i2par.h
+index cbf5bdf..bc1e559 100755
+--- a/ihdrs/i2par.h
++++ b/ihdrs/i2par.h
+@@ -73,9 +73,9 @@ parsetree unp_test();
+ 
+ /* Commands: */
+ 
+-parsetree cmd_suite();
+-parsetree cmd_seq();
+-parsetree ucmd_seq();
++parsetree cmd_suite(intlet cil, bool first, parsetree (*suite)());
++parsetree cmd_seq(intlet cil, bool first, bool *emp);
++parsetree ucmd_seq(intlet cil, bool first, bool *emp);
+ value tail_line();
+ 
+ /* B units */
+diff --git a/ihdrs/i3cen.h b/ihdrs/i3cen.h
+index 123f814..b0b08d1 100755
+--- a/ihdrs/i3cen.h
++++ b/ihdrs/i3cen.h
+@@ -1,13 +1,24 @@
+ /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1991. */
+ 
+-typedef struct {
++#ifndef I3CEN_H
++#define I3CEN_H
++
++#ifndef WSENV_DEFINED
++#define WSENV_DEFINED
++struct wsenv {
+ 	value units;       /* mapping to the how-to's */
+ 	value perm;        /* mapping to the file names */
+ 	value abctypes;    /* mapping to the typecode of how-to's */
+ 	bool permchanges;  /* change in filename mapping ? */
+ 	bool typeschanges; /* change in typecode mapping ? */
+ 	intlet errlino;    /* linenumber in last erroneous how-to */
+-} wsenv, *wsenvptr;
++};
++typedef struct wsenv wsenv;
++#ifndef WSENVPTR_DEFINED
++#define WSENVPTR_DEFINED
++typedef struct wsenv *wsenvptr;
++#endif
++#endif
+ 
+ #define Wnil ((wsenvptr *) 0)
+ 
+@@ -37,3 +48,5 @@ extern char *cen_dir;      /* absolute path to central workspace */
+ #define InCentralEnv()     (IsCentralEnv(cur_env))
+ #define InStandardEnv()    (IsStandardEnv(cur_env))
+ 
++#endif /* I3CEN_H */
++
+diff --git a/ihdrs/i3env.h b/ihdrs/i3env.h
+index 185d699..00c0a41 100755
+--- a/ihdrs/i3env.h
++++ b/ihdrs/i3env.h
+@@ -1,15 +1,22 @@
+ /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1986. */
+ 
++#ifndef I3ENV_H
++#define I3ENV_H
++
+ /* environments and context */
+ 
+-typedef struct {
++/* Define the struct content - typedef may have been forward declared in bvis.h */
++struct context_struct {
+ 	value howtoname;
+ 	env curnv;
+ 	value r_names, *bndtgs;
+ 	literal cntxt, resexp;
+ 	parsetree cur_line;
+ 	value cur_lino;
+-} context;
++};
++#ifndef BINT_EXTRA_TYPES
++typedef struct context_struct context;
++#endif
+ 
+ #define Enil ((env) NULL)
+ 
+@@ -45,3 +52,5 @@ extern env prmnv;
+ extern parsetree curline;
+ extern value curlino;
+ 
++#endif /* I3ENV_H */
++
+diff --git a/ihdrs/i3typ.h b/ihdrs/i3typ.h
+index d32a3b6..441b6d6 100755
+--- a/ihdrs/i3typ.h
++++ b/ihdrs/i3typ.h
+@@ -1,9 +1,15 @@
+ /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1986. */
+ 
++#ifndef I3TYP_H
++#define I3TYP_H
++
+ /* Type matching */
+ 
++#ifndef BINT_EXTRA_TYPES
+ typedef value btype;
++#endif
+ btype valtype();
+ btype loctype();
+ /* Procedure must_agree(); */
+ 
++#endif /* I3TYP_H */
