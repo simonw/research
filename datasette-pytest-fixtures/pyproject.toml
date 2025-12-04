@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "datasette-pytest"
+version = "0.1.0"
+description = "Reusable pytest fixtures for Datasette plugin development"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Simon Willison", email = "simon@simonwillison.net"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Testing",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "datasette>=1.0a0",
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "httpx",
+]
+
+[project.optional-dependencies]
+sqlite-utils = [
+    "sqlite-utils>=3.0",
+]
+dev = [
+    "sqlite-utils>=3.0",
+    "pytest-httpx",
+    "black",
+    "ruff",
+]
+
+[project.urls]
+Homepage = "https://github.com/datasette/datasette-pytest"
+Documentation = "https://github.com/datasette/datasette-pytest#readme"
+Issues = "https://github.com/datasette/datasette-pytest/issues"
+
+[project.entry-points.pytest11]
+datasette_pytest = "datasette_pytest.plugin"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
