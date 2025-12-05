@@ -1,0 +1,23 @@
+# Downloaded/cloned external code (do not commit)
+wasi-sdk/
+jq-src/
+jaq-build/
+jqkungfu-ref/
+wapm-jq-ref/
+
+# Downloaded archives
+*.tar.gz
+
+# Temporary scripts
+check_env.py
+git_commit.py
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Build artifacts (except jq.wasm which is intentionally included)
+*.o
+*.a
