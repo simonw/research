@@ -13,19 +13,18 @@ This project provides a secure way to run untrusted jq programs by executing the
 
 ## Why jaq instead of jq?
 
-This project uses [jaq](https://github.com/01mf02/jaq), a Rust-based jq clone, instead of the original C-based jq:
+This research explored using [jaq](https://github.com/01mf02/jaq), a Rust-based jq clone. However, the jaq CLI currently has a `rustyline` dependency that doesn't support WASI.
 
-| Feature | jq (C) | jaq (Rust) |
-|---------|--------|------------|
-| WASI compilation | Complex (needs pthread stubs, POSIX workarounds) | Native support |
-| Performance | Good | Often 5-10x faster |
-| Memory safety | Manual | Rust guarantees |
-| Security audited | No | Yes (NLnet grant) |
+**Included binary**: The `build/jq.wasm` file is a pre-built binary from the [jqkungfu](https://github.com/robertaboukhalil/jqkungfu) project (Emscripten build of jq 1.6).
 
-jaq is:
-- **Faster**: 5-10x faster on many benchmarks
-- **Safer**: Written in memory-safe Rust, security audited
-- **WASM-ready**: Compiles to wasm32-wasi out of the box
+### Compilation Options
+
+| Approach | Status | Notes |
+|----------|--------|-------|
+| jq via Emscripten | ✅ Works | Included `jq.wasm` from jqkungfu |
+| jq via WASI SDK | ❌ Complex | Needs pthread stubs, POSIX workarounds |
+| jaq via cargo | ❌ Blocked | rustyline dependency doesn't support WASI |
+| jaq-core library | 🔄 Possible | Would need custom CLI wrapper |
 
 ## Installation
 
