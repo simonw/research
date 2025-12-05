@@ -1,0 +1,14 @@
+# Core WASM runtimes (install at least one)
+wasmtime>=15.0.0
+wasmer>=1.1.0
+wasmer-compiler-cranelift>=1.1.0
+
+# Optional: Additional wasmer compilers
+# wasmer-compiler-llvm>=1.1.0
+# wasmer-compiler-singlepass>=1.1.0
+
+# For benchmarking and charts
+matplotlib>=3.5.0
+
+# For testing
+pytest>=7.0.0
