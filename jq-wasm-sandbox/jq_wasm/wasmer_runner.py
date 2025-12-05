@@ -35,7 +35,7 @@ class WasmerJqRunner(JqRunner):
     - Multiple compiler backends (Cranelift, LLVM, Singlepass)
 
     Example:
-        runner = WasmerJqRunner("jaq.wasm", max_memory_pages=256)
+        runner = WasmerJqRunner("jq.wasm", max_memory_pages=256)
         result = runner.run(".foo", '{"foo": "bar"}')
         print(result.output)  # "bar"
     """

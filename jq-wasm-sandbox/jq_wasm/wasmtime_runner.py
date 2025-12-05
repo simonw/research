@@ -34,7 +34,7 @@ class WasmtimeJqRunner(JqRunner):
     - Complete filesystem isolation
 
     Example:
-        runner = WasmtimeJqRunner("jaq.wasm", max_fuel=1_000_000)
+        runner = WasmtimeJqRunner("jq.wasm", max_fuel=1_000_000)
         result = runner.run(".foo", '{"foo": "bar"}')
         print(result.output)  # "bar"
     """

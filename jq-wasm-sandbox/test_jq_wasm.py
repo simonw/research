@@ -21,8 +21,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from jq_wasm import WasmtimeJqRunner, WasmerJqRunner, JqError, JqTimeoutError, JqMemoryError
 
-# Path to jaq WASM binary
-JAQ_WASM = Path(__file__).parent / "build" / "jaq.wasm"
+# Path to jq WASM binary (from jqkungfu project)
+JQ_WASM = Path(__file__).parent / "build" / "jq.wasm"
 
 
 def test_basic_operations(runner_class, wasm_path):
@@ -249,14 +249,14 @@ def main():
     print("jq WASM Sandbox Test Suite")
     print("=" * 60)
 
-    if not JAQ_WASM.exists():
-        print(f"\nERROR: jaq.wasm not found at {JAQ_WASM}")
-        print("Please build jaq for WASI first:")
-        print("  ./build_jaq_wasm.sh")
+    if not JQ_WASM.exists():
+        print(f"\nERROR: jq.wasm not found at {JQ_WASM}")
+        print("Please ensure the jq.wasm binary is in the build/ directory.")
+        print("See README.md for details.")
         sys.exit(1)
 
-    print(f"\nUsing WASM binary: {JAQ_WASM}")
-    print(f"File size: {JAQ_WASM.stat().st_size / 1024:.1f} KB")
+    print(f"\nUsing WASM binary: {JQ_WASM}")
+    print(f"File size: {JQ_WASM.stat().st_size / 1024:.1f} KB")
 
     # Test configurations
     runners = []
@@ -290,13 +290,13 @@ def main():
 
     for runner_class in runners:
         try:
-            test_basic_operations(runner_class, JAQ_WASM)
-            test_memory_limits(runner_class, JAQ_WASM)
-            test_cpu_limits(runner_class, JAQ_WASM)
-            test_filesystem_isolation(runner_class, JAQ_WASM)
-            test_error_handling(runner_class, JAQ_WASM)
-            test_recursion_bomb(runner_class, JAQ_WASM)
-            benchmark_results.append(run_benchmarks(runner_class, JAQ_WASM))
+            test_basic_operations(runner_class, JQ_WASM)
+            test_memory_limits(runner_class, JQ_WASM)
+            test_cpu_limits(runner_class, JQ_WASM)
+            test_filesystem_isolation(runner_class, JQ_WASM)
+            test_error_handling(runner_class, JQ_WASM)
+            test_recursion_bomb(runner_class, JQ_WASM)
+            benchmark_results.append(run_benchmarks(runner_class, JQ_WASM))
         except Exception as e:
             print(f"\n[FAIL] {runner_class.__name__}: {e}")
             import traceback

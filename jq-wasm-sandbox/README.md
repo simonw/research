@@ -11,20 +11,17 @@ This project provides a secure way to run untrusted jq programs by executing the
 - **Filesystem isolation**: No access to host filesystem
 - **Multiple backends**: Support for both wasmtime and wasmer runtimes
 
-## Why jaq instead of jq?
-
-This research explored using [jaq](https://github.com/01mf02/jaq), a Rust-based jq clone. However, the jaq CLI currently has a `rustyline` dependency that doesn't support WASI.
+## WASM Binary
 
 **Included binary**: The `build/jq.wasm` file is a pre-built binary from the [jqkungfu](https://github.com/robertaboukhalil/jqkungfu) project (Emscripten build of jq 1.6).
 
-### Compilation Options
+### Compilation Options Explored
 
 | Approach | Status | Notes |
 |----------|--------|-------|
 | jq via Emscripten | ✅ Works | Included `jq.wasm` from jqkungfu |
 | jq via WASI SDK | ❌ Complex | Needs pthread stubs, POSIX workarounds |
 | jaq via cargo | ❌ Blocked | rustyline dependency doesn't support WASI |
-| jaq-core library | 🔄 Possible | Would need custom CLI wrapper |
 
 ## Installation
 
@@ -33,9 +30,6 @@ This research explored using [jaq](https://github.com/01mf02/jaq), a Rust-based 
 ```bash
 # Install Python dependencies
 pip install wasmtime  # or: pip install wasmer wasmer-compiler-cranelift
-
-# Build jaq WASM (requires Rust)
-./build_jaq_wasm.sh
 ```
 
 ### Quick Start
@@ -45,7 +39,7 @@ from jq_wasm import WasmtimeJqRunner
 
 # Create a sandboxed runner
 runner = WasmtimeJqRunner(
-    "build/jaq.wasm",
+    "build/jq.wasm",
     max_memory_pages=256,  # 16MB limit
     max_fuel=100_000_000   # CPU instruction limit
 )
@@ -63,7 +57,7 @@ print(result.output)  # "bar"
 from jq_wasm import WasmtimeJqRunner
 
 runner = WasmtimeJqRunner(
-    wasm_path="build/jaq.wasm",
+    wasm_path="build/jq.wasm",
     max_memory_pages=256,      # Memory limit in 64KB pages (default: 16MB)
     max_fuel=100_000_000       # CPU instruction limit (None for unlimited)
 )
@@ -90,7 +84,7 @@ result.output   # stdout.strip() or raises JqError
 from jq_wasm import WasmerJqRunner
 
 runner = WasmerJqRunner(
-    wasm_path="build/jaq.wasm",
+    wasm_path="build/jq.wasm",
     max_memory_pages=256,
     compiler="cranelift"  # Options: cranelift, llvm, singlepass
 )
@@ -138,31 +132,6 @@ result = runner.run('.', '{}')  # Works
 
 # Filesystem access is blocked by not preopening any directories
 # The WASI implementation has no access to host filesystem
-```
-
-## Building jaq WASM
-
-### From Source (Recommended)
-
-```bash
-# Install Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Add WASI target
-rustup target add wasm32-wasip1
-
-# Clone and build jaq
-git clone https://github.com/01mf02/jaq.git jaq-src
-cd jaq-src
-cargo build --release --target wasm32-wasip1
-cp target/wasm32-wasip1/release/jaq.wasm ../build/
-```
-
-### Pre-built Binaries
-
-jaq is available on the Wasmer registry:
-```bash
-wasmer run jaq/jaq '.foo' <<< '{"foo": "bar"}'
 ```
 
 ## Comparing Runtimes
@@ -217,20 +186,23 @@ jq-wasm-sandbox/
 │   ├── wasmtime_runner.py   # Wasmtime implementation
 │   └── wasmer_runner.py     # Wasmer implementation
 ├── build/
-│   └── jaq.wasm             # Compiled WASM binary
-├── build_jaq_wasm.sh        # Build script
+│   └── jq.wasm              # Pre-built WASM binary (from jqkungfu)
+├── build_jq_wasi.sh         # WASI SDK build script (documents challenges)
+├── build_jq_emscripten.sh   # Emscripten build script
+├── build_jaq_wasm.sh        # jaq build script (blocked by rustyline)
 ├── test_jq_wasm.py          # Test suite
 ├── benchmark.py             # Benchmarking script
 ├── requirements.txt         # Python dependencies
+├── notes.md                 # Research notes
 └── README.md                # This file
 ```
 
 ## Limitations
 
-1. **Not full jq compatibility**: jaq implements most of jq but not all features
+1. **Startup overhead**: First execution is slower due to WASM compilation
 2. **Single-threaded**: WebAssembly execution is single-threaded
 3. **Wasmer metering**: CPU limits are limited in wasmer Python bindings
-4. **Startup overhead**: First execution is slower due to WASM compilation
+4. **jq 1.6**: The included binary is jq 1.6 (from jqkungfu project)
 
 ## Research Notes
 
@@ -249,21 +221,22 @@ Compiling the original C-based jq to WASI proved challenging:
 3. **Emscripten vs WASI SDK**:
    - Emscripten produces browser-compatible WASM
    - WASI SDK produces standalone WASM for wasmtime/wasmer
-   - Emscripten can produce WASI-compatible output with `-s STANDALONE_WASM=1`
+   - The jqkungfu Emscripten build works with both runtimes
 
 ### Alternative Approaches Explored
 
-1. **jqkungfu**: Uses Emscripten, produces browser-targeted WASM
-2. **biowasm**: Provides pre-compiled jq for browsers
-3. **wapm jq**: WASI-compiled jq available via wasmer
+1. **jqkungfu**: Uses Emscripten, produces WASM usable with wasmtime/wasmer ✅
+2. **jaq (Rust jq clone)**: Would compile easily but rustyline dependency blocks WASI ❌
+3. **WASI SDK direct compilation**: Requires too many patches ❌
 
 ## References
 
-- [jaq - Rust jq clone](https://github.com/01mf02/jaq)
+- [jqkungfu](https://github.com/robertaboukhalil/jqkungfu) - Source of included jq.wasm
 - [wasmtime-py](https://github.com/bytecodealliance/wasmtime-py)
 - [wasmer-python](https://github.com/wasmerio/wasmer-python)
 - [WASI](https://wasi.dev/)
-- [jqkungfu](https://github.com/robertaboukhalil/jqkungfu)
+- [jq](https://github.com/jqlang/jq)
+- [jaq](https://github.com/01mf02/jaq) - Rust jq clone (explored but not used)
 
 ## License
 

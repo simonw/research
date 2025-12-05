@@ -17,8 +17,8 @@ from typing import List, Dict, Any, Optional
 # Add the library to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Path to jaq WASM binary
-JAQ_WASM = Path(__file__).parent / "build" / "jaq.wasm"
+# Path to jq WASM binary (from jqkungfu project)
+JQ_WASM = Path(__file__).parent / "build" / "jq.wasm"
 
 
 @dataclass
@@ -257,28 +257,28 @@ def main():
     print("jq WASM Sandbox Benchmarks")
     print("=" * 60)
 
-    if not JAQ_WASM.exists():
-        print(f"\nERROR: jaq.wasm not found at {JAQ_WASM}")
-        print("Please build jaq for WASI first:")
-        print("  ./build_jaq_wasm.sh")
+    if not JQ_WASM.exists():
+        print(f"\nERROR: jq.wasm not found at {JQ_WASM}")
+        print("Please ensure the jq.wasm binary is in the build/ directory.")
+        print("See README.md for details.")
         sys.exit(1)
 
-    print(f"\nUsing WASM binary: {JAQ_WASM}")
-    print(f"File size: {JAQ_WASM.stat().st_size / 1024:.1f} KB")
+    print(f"\nUsing WASM binary: {JQ_WASM}")
+    print(f"File size: {JQ_WASM.stat().st_size / 1024:.1f} KB")
 
     # Initialize runners
     runners = {}
 
     try:
         from jq_wasm import WasmtimeJqRunner
-        runners["WasmtimeJqRunner"] = WasmtimeJqRunner(str(JAQ_WASM))
+        runners["WasmtimeJqRunner"] = WasmtimeJqRunner(str(JQ_WASM))
         print("\n[OK] wasmtime initialized")
     except ImportError as e:
         print(f"\n[SKIP] wasmtime not available: {e}")
 
     try:
         from jq_wasm import WasmerJqRunner
-        runners["WasmerJqRunner"] = WasmerJqRunner(str(JAQ_WASM))
+        runners["WasmerJqRunner"] = WasmerJqRunner(str(JQ_WASM))
         print("[OK] wasmer initialized")
     except ImportError as e:
         print(f"[SKIP] wasmer not available: {e}")
