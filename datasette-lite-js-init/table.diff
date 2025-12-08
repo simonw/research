@@ -1,0 +1,430 @@
+diff --git a/datasette/static/table.js b/datasette/static/table.js
+index 0caeeb91..fdf9bdf2 100644
+--- a/datasette/static/table.js
++++ b/datasette/static/table.js
+@@ -1,3 +1,6 @@
++// Modified table.js with SPA/reinit support
++// Supports being called multiple times with proper cleanup
++
+ var DROPDOWN_HTML = `<div class="dropdown-menu">
+ <div class="hook"></div>
+ <ul>
+@@ -17,19 +20,58 @@ var DROPDOWN_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="14" heig
+   <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+ </svg>`;
+ 
+-/** Main initialization function for Datasette Table interactions */
+-const initDatasetteTable = function (manager) {
++// NEW: Track state for cleanup
++let currentCleanupFunctions = [];
++
++/**
++ * Clean up previous initialization
++ * Called before reinitializing to prevent duplicate handlers
++ */
++function cleanupDatasetteTable() {
++  currentCleanupFunctions.forEach(fn => {
++    try {
++      fn();
++    } catch (e) {
++      console.warn('Cleanup function failed:', e);
++    }
++  });
++  currentCleanupFunctions = [];
++
++  // Remove existing dropdown menu from body
++  const existingMenu = document.querySelector('body > .dropdown-menu');
++  if (existingMenu) {
++    existingMenu.remove();
++  }
++
++  // Remove dropdown icons from all table headers
++  document.querySelectorAll('.dropdown-menu-icon').forEach(icon => icon.remove());
++}
++
++/**
++ * Main initialization function for Datasette Table interactions
++ * MODIFIED: Now accepts manager AND root element, supports cleanup
++ */
++const initDatasetteTable = function (manager, root = document) {
+   // Feature detection
+   if (!window.URLSearchParams) {
+     return;
+   }
++
++  // Helper to get URL params (works with both normal and SPA mode)
+   function getParams() {
+-    return new URLSearchParams(location.search);
++    // In Datasette-lite, the "location" might be in a hash
++    let search = location.search;
++    if (location.hash && location.hash.includes('?')) {
++      search = '?' + location.hash.split('?')[1];
++    }
++    return new URLSearchParams(search);
+   }
++
+   function paramsToUrl(params) {
+     var s = params.toString();
+     return s ? "?" + s : location.pathname;
+   }
++
+   function sortDescUrl(column) {
+     var params = getParams();
+     params.set("_sort_desc", column);
+@@ -37,6 +79,7 @@ const initDatasetteTable = function (manager) {
+     params.delete("_next");
+     return paramsToUrl(params);
+   }
++
+   function sortAscUrl(column) {
+     var params = getParams();
+     params.set("_sort", column);
+@@ -44,38 +87,56 @@ const initDatasetteTable = function (manager) {
+     params.delete("_next");
+     return paramsToUrl(params);
+   }
++
+   function facetUrl(column) {
+     var params = getParams();
+     params.append("_facet", column);
+     return paramsToUrl(params);
+   }
++
+   function hideColumnUrl(column) {
+     var params = getParams();
+     params.append("_nocol", column);
+     return paramsToUrl(params);
+   }
++
+   function showAllColumnsUrl() {
+     var params = getParams();
+     params.delete("_nocol");
+     params.delete("_col");
+     return paramsToUrl(params);
+   }
++
+   function notBlankUrl(column) {
+     var params = getParams();
+     params.set(`${column}__notblank`, "1");
+     return paramsToUrl(params);
+   }
++
++  // Create menu element (will be reused)
++  var menu = document.createElement("div");
++  menu.innerHTML = DROPDOWN_HTML;
++  menu = menu.querySelector("*");
++  menu.style.position = "absolute";
++  menu.style.display = "none";
++  document.body.appendChild(menu);
++
+   function closeMenu() {
+     menu.style.display = "none";
+     menu.classList.remove("anim-scale-in");
+   }
+ 
+-  const tableWrapper = document.querySelector(manager.selectors.tableWrapper);
++  // MODIFIED: Use root element for scoped queries
++  const tableWrapper = root.querySelector(manager.selectors.tableWrapper);
++
++  // Set up event listeners with cleanup tracking
+   if (tableWrapper) {
+-    tableWrapper.addEventListener("scroll", closeMenu);
++    const scrollHandler = () => closeMenu();
++    tableWrapper.addEventListener("scroll", scrollHandler);
++    currentCleanupFunctions.push(() => tableWrapper.removeEventListener("scroll", scrollHandler));
+   }
+-  document.body.addEventListener("click", (ev) => {
+-    /* was this click outside the menu? */
++
++  const bodyClickHandler = (ev) => {
+     var target = ev.target;
+     while (target && target != menu) {
+       target = target.parentNode;
+@@ -83,7 +144,9 @@ const initDatasetteTable = function (manager) {
+     if (!target) {
+       closeMenu();
+     }
+-  });
++  };
++  document.body.addEventListener("click", bodyClickHandler);
++  currentCleanupFunctions.push(() => document.body.removeEventListener("click", bodyClickHandler));
+ 
+   function onTableHeaderClick(ev) {
+     ev.preventDefault();
+@@ -104,6 +167,7 @@ const initDatasetteTable = function (manager) {
+     var notBlank = menu.querySelector("a.dropdown-not-blank");
+     var hideColumn = menu.querySelector("a.dropdown-hide-column");
+     var showAllColumns = menu.querySelector("a.dropdown-show-all-columns");
++
+     if (params.get("_sort") == column) {
+       sort.parentNode.style.display = "none";
+     } else {
+@@ -116,7 +180,6 @@ const initDatasetteTable = function (manager) {
+       sortDesc.parentNode.style.display = "block";
+       sortDesc.setAttribute("href", sortDescUrl(column));
+     }
+-    /* Show hide columns options */
+     if (params.get("_nocol") || params.get("_col")) {
+       showAllColumns.parentNode.style.display = "block";
+       showAllColumns.setAttribute("href", showAllColumnsUrl());
+@@ -129,18 +192,20 @@ const initDatasetteTable = function (manager) {
+     } else {
+       hideColumn.parentNode.style.display = "none";
+     }
+-    /* Only show "Facet by this" if it's not the first column, not selected,
+-       not a single PK and the Datasette allow_facet setting is True */
++
++    // Check DATASETTE_ALLOW_FACET from the page or use default
++    const allowFacet = typeof DATASETTE_ALLOW_FACET !== 'undefined' ? DATASETTE_ALLOW_FACET : true;
++
+     var displayedFacets = Array.from(
+-      document.querySelectorAll(".facet-info"),
++      root.querySelectorAll(".facet-info"),
+     ).map((el) => el.dataset.column);
+     var isFirstColumn =
+       th.parentElement.querySelector("th:first-of-type") == th;
+     var isSinglePk =
+       th.getAttribute("data-is-pk") == "1" &&
+-      document.querySelectorAll('th[data-is-pk="1"]').length == 1;
++      root.querySelectorAll('th[data-is-pk="1"]').length == 1;
+     if (
+-      !DATASETTE_ALLOW_FACET ||
++      !allowFacet ||
+       isFirstColumn ||
+       displayedFacets.includes(column) ||
+       isSinglePk
+@@ -150,7 +215,7 @@ const initDatasetteTable = function (manager) {
+       facetItem.parentNode.style.display = "block";
+       facetItem.setAttribute("href", facetUrl(column));
+     }
+-    /* Show notBlank option if not selected AND at least one visible blank value */
++
+     var tdsForThisColumn = Array.from(
+       th.closest("table").querySelectorAll("td." + th.className),
+     );
+@@ -163,10 +228,10 @@ const initDatasetteTable = function (manager) {
+     } else {
+       notBlank.parentNode.style.display = "none";
+     }
++
+     var columnTypeP = menu.querySelector(".dropdown-column-type");
+     var columnType = th.dataset.columnType;
+     var notNull = th.dataset.columnNotNull == 1 ? " NOT NULL" : "";
+-
+     if (columnType) {
+       columnTypeP.style.display = "block";
+       columnTypeP.innerText = `Type: ${columnType.toUpperCase()}${notNull}`;
+@@ -181,14 +246,14 @@ const initDatasetteTable = function (manager) {
+     } else {
+       columnDescriptionP.style.display = "none";
+     }
++
+     menu.style.position = "absolute";
+     menu.style.top = menuTop + 6 + "px";
+     menu.style.left = menuLeft + "px";
+     menu.style.display = "block";
+     menu.classList.add("anim-scale-in");
+ 
+-    // Custom menu items on each render
+-    // Plugin hook: allow adding JS-based additional menu items
++    // Plugin hook for column actions
+     const columnActionsPayload = {
+       columnName: th.dataset.column,
+       columnNotNull: th.dataset.columnNotNull === "1",
+@@ -199,13 +264,10 @@ const initDatasetteTable = function (manager) {
+ 
+     const menuList = menu.querySelector("ul");
+     columnItemConfigs.forEach((itemConfig) => {
+-      // Remove items from previous render. We assume entries have unique labels.
+       const existingItems = menuList.querySelectorAll(`li`);
+       Array.from(existingItems)
+         .filter((item) => item.innerText === itemConfig.label)
+-        .forEach((node) => {
+-          node.remove();
+-        });
++        .forEach((node) => node.remove());
+ 
+       const newLink = document.createElement("a");
+       newLink.textContent = itemConfig.label;
+@@ -214,47 +276,39 @@ const initDatasetteTable = function (manager) {
+         newLink.onclick = itemConfig.onClick;
+       }
+ 
+-      // Attach new elements to DOM
+       const menuItem = document.createElement("li");
+       menuItem.appendChild(newLink);
+       menuList.appendChild(menuItem);
+     });
+ 
+-    // Measure width of menu and adjust position if too far right
++    // Adjust menu position if needed
+     const menuWidth = menu.offsetWidth;
+     const windowWidth = window.innerWidth;
+     if (menuLeft + menuWidth > windowWidth) {
+       menu.style.left = windowWidth - menuWidth - 20 + "px";
+     }
+-    // Align menu .hook arrow with the column cog icon
++
+     const hook = menu.querySelector(".hook");
+     const icon = th.querySelector(".dropdown-menu-icon");
+     const iconRect = icon.getBoundingClientRect();
+-    const hookLeft = iconRect.left - menuLeft + 1 + "px";
++    const hookLeft = iconRect.left - parseFloat(menu.style.left) + 1 + "px";
+     hook.style.left = hookLeft;
+-    // Move the whole menu right if the hook is too far right
++
+     const menuRect = menu.getBoundingClientRect();
+     if (iconRect.right > menuRect.right) {
+       menu.style.left = iconRect.right - menuWidth + "px";
+-      // And move hook tip as well
+       hook.style.left = menuWidth - 13 + "px";
+     }
+   }
+ 
++  // Create and add dropdown icons to table headers
+   var svg = document.createElement("div");
+   svg.innerHTML = DROPDOWN_ICON_SVG;
+   svg = svg.querySelector("*");
+   svg.classList.add("dropdown-menu-icon");
+-  var menu = document.createElement("div");
+-  menu.innerHTML = DROPDOWN_HTML;
+-  menu = menu.querySelector("*");
+-  menu.style.position = "absolute";
+-  menu.style.display = "none";
+-  document.body.appendChild(menu);
+ 
+-  var ths = Array.from(
+-    document.querySelectorAll(manager.selectors.tableHeaders),
+-  );
++  // MODIFIED: Use root element for scoped queries
++  var ths = Array.from(root.querySelectorAll(manager.selectors.tableHeaders));
+   ths.forEach((th) => {
+     if (!th.querySelector("a")) {
+       return;
+@@ -263,15 +317,28 @@ const initDatasetteTable = function (manager) {
+     icon.addEventListener("click", onTableHeaderClick);
+     th.appendChild(icon);
+   });
++
++  // Track cleanup for menu removal
++  currentCleanupFunctions.push(() => {
++    menu.remove();
++  });
+ };
+ 
+-/* Add x buttons to the filter rows */
+-function addButtonsToFilterRows(manager) {
+-  var x = "✖";
+-  var rows = Array.from(
+-    document.querySelectorAll(manager.selectors.filterRow),
+-  ).filter((el) => el.querySelector(".filter-op"));
++/**
++ * Add x buttons to the filter rows
++ * MODIFIED: Accepts root element
++ */
++function addButtonsToFilterRows(manager, root = document) {
++  var x = "X";
++  var rows = Array.from(root.querySelectorAll(manager.selectors.filterRows))
++    .filter((el) => el.querySelector(".filter-op"));
++
+   rows.forEach((row) => {
++    // Skip if already has remove button
++    if (row.querySelector('a[aria-label="Remove this filter"]')) {
++      return;
++    }
++
+     var a = document.createElement("a");
+     a.setAttribute("href", "#");
+     a.setAttribute("aria-label", "Remove this filter");
+@@ -293,51 +360,68 @@ function addButtonsToFilterRows(manager) {
+   });
+ }
+ 
+-/* Set up datalist autocomplete for filter values */
+-function initAutocompleteForFilterValues(manager) {
++/**
++ * Set up datalist autocomplete for filter values
++ * MODIFIED: Accepts root element
++ */
++function initAutocompleteForFilterValues(manager, root = document) {
+   function createDataLists() {
+-    var facetResults = document.querySelectorAll(
+-      manager.selectors.facetResults,
+-    );
++    var facetResults = root.querySelectorAll(manager.selectors.facetResults);
+     Array.from(facetResults).forEach(function (facetResult) {
+-      // Use link text from all links in the facet result
++      // Skip if datalist already exists
++      if (root.querySelector('#datalist-' + facetResult.dataset.column)) {
++        return;
++      }
++
+       var links = Array.from(
+         facetResult.querySelectorAll("li:not(.facet-truncated) a"),
+       );
+-      // Create a datalist element
+       var datalist = document.createElement("datalist");
+       datalist.id = "datalist-" + facetResult.dataset.column;
+-      // Create an option element for each link text
+       links.forEach(function (link) {
+         var option = document.createElement("option");
+         option.label = link.innerText;
+         option.value = link.dataset.facetValue;
+         datalist.appendChild(option);
+       });
+-      // Add the datalist to the facet result
+       facetResult.appendChild(datalist);
+     });
+   }
+   createDataLists();
+-  // When any select with name=_filter_column changes, update the datalist
+-  document.body.addEventListener("change", function (event) {
++
++  const changeHandler = function (event) {
+     if (event.target.name === "_filter_column") {
+-      event.target
+-        .closest(manager.selectors.filterRow)
+-        .querySelector(".filter-value")
+-        .setAttribute("list", "datalist-" + event.target.value);
++      const filterRow = event.target.closest(manager.selectors.filterRows);
++      if (filterRow) {
++        const filterValue = filterRow.querySelector(".filter-value");
++        if (filterValue) {
++          filterValue.setAttribute("list", "datalist-" + event.target.value);
++        }
++      }
+     }
+-  });
++  };
++
++  document.body.addEventListener("change", changeHandler);
++  currentCleanupFunctions.push(() => document.body.removeEventListener("change", changeHandler));
+ }
+ 
+-// Ensures Table UI is initialized only after the Manager is ready.
++/**
++ * Event listener for datasette_init
++ * MODIFIED: Handles both initial load and reinit, uses root element
++ */
+ document.addEventListener("datasette_init", function (evt) {
+-  const { detail: manager } = evt;
++  const { detail } = evt;
++  const manager = detail.manager || detail;
++  const root = detail.root || document;
++  const isReinit = detail.isReinit || false;
+ 
+-  // Main table
+-  initDatasetteTable(manager);
++  // Clean up previous initialization if this is a reinit
++  if (isReinit) {
++    cleanupDatasetteTable();
++  }
+ 
+-  // Other UI functions with interactive JS needs
+-  addButtonsToFilterRows(manager);
+-  initAutocompleteForFilterValues(manager);
++  // Initialize table features
++  initDatasetteTable(manager, root);
++  addButtonsToFilterRows(manager, root);
++  initAutocompleteForFilterValues(manager, root);
+ });
