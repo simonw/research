@@ -1,0 +1,9 @@
+diff --git a/go.mod b/go.mod
+index b7c1b71..230c5ff 100644
+--- a/go.mod
++++ b/go.mod
+@@ -1,3 +1,3 @@
+ module github.com/ziggy42/epsilon
+
+-go 1.25.1
++go 1.24
