@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "epsilon-python"
+version = "0.1.0"
+description = "Python bindings for epsilon WebAssembly runtime"
+readme = "README.md"
+authors = [
+    {name = "Epsilon Python Contributors"}
+]
+license = {text = "Apache-2.0"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Go",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: System :: Emulators",
+]
+requires-python = ">=3.8"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "black",
+    "mypy",
+]
+
+[project.urls]
+Homepage = "https://github.com/ziggy42/epsilon"
+Documentation = "https://github.com/ziggy42/epsilon#readme"
+Repository = "https://github.com/ziggy42/epsilon"
+
+[tool.setuptools]
+packages = ["epsilon"]
+
+[tool.setuptools.package-data]
+epsilon = ["*.so", "*.dll", "*.dylib", "*.h"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
