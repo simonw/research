@@ -1,0 +1,6 @@
+# Rule to detect ES6 default imports
+id: es6-import-default
+language: javascript
+rule:
+  pattern: import $NAME from "$SOURCE"
+message: "Found ES6 default import: $NAME from $SOURCE"

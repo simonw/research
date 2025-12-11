@@ -1,0 +1,22 @@
+{
+  "./mod_0x3c4d": "./modules/user-auth",
+  "./util_0x7g8h": "./utils/helpers",
+  "./lib_0xabcd": "./lib/core",
+  "./helpers_0xefgh": "./utils/common-helpers",
+  "./dynamic_0x1234": "./modules/lazy-loader",
+  "./lazy_0x5678": "./modules/deferred-init",
+  "./legacy_0xaaaa": "./legacy/compat-layer",
+  "./utils_0xbbbb": "./utils/extraction",
+  "./partial_0xcccc": "./partial/submodule",
+  "./reexport_0xdddd": "./exports/main",
+  "./reexport_all_0xeeee": "./exports/all",
+  "./renamed_0xffff": "./exports/renamed",
+  "./sideeffect_0x0000": "./init/setup",
+  "./multiline_0x1111": "./modules/multi-component",
+  "./single_0x2222": "./single-module",
+  "./double_0x3333": "./double-module",
+  "./webpack_0x4444": "./webpack/bundle",
+  "./internal_0x5555": "./internal/private",
+  "./amd_0x6666": "./amd/module-a",
+  "./amd_0x7777": "./amd/module-b"
+}
