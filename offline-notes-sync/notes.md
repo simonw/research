@@ -159,3 +159,56 @@ Operation {
    - Use `.first` for locators that may match multiple elements
    - Use specific text matching to avoid ambiguous selectors
 
+## CRDT Implementation (crdt.py)
+
+Added proper Conflict-free Replicated Data Types implementation:
+
+### Components
+
+1. **UniqueId** - Globally unique, totally ordered identifier
+   - Uses (timestamp, counter, site_id) tuple
+   - Provides deterministic ordering for conflict resolution
+
+2. **Clock** - Lamport logical clock
+   - Generates unique IDs for local operations
+   - Updates on receiving remote operations
+
+3. **LWW-Register** - Last-Writer-Wins Register
+   - Simple values where newest timestamp wins
+   - Site ID as tiebreaker for concurrent writes
+
+4. **RGA (Replicated Growable Array)** - Text CRDT
+   - Each character has a unique ID
+   - Insert specifies predecessor ID
+   - Concurrent inserts ordered by ID (descending)
+   - Tombstone-based deletion
+   - Tree-based structure with topological linearization
+
+5. **LWW-Map** - Map with LWW-Register values
+   - For note metadata
+
+6. **CRDTNote** - Complete note structure
+   - Title: LWW-Register
+   - Content: RGA
+   - Metadata: LWW-Map
+   - Deleted: LWW-Register
+
+### Key Properties
+
+- **Commutativity**: Operations can be applied in any order
+- **Associativity**: Grouping doesn't matter
+- **Idempotency**: Same operation applied twice has no effect
+- **Convergence**: All replicas eventually reach same state
+
+### Test Coverage
+
+94 tests covering:
+- UniqueId ordering and serialization
+- Clock behavior
+- LWW-Register operations and merging
+- RGA basic operations, concurrent edits, convergence
+- Serialization/deserialization
+- Integration scenarios (offline/online sync, multi-client)
+- Edge cases (unicode, large documents)
+- Performance tests
+
