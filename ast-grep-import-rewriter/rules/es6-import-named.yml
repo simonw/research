@@ -1,0 +1,6 @@
+# Rule to detect ES6 named imports
+id: es6-import-named
+language: javascript
+rule:
+  pattern: import { $$$NAMES } from "$SOURCE"
+message: "Found ES6 named import from $SOURCE"

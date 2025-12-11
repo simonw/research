@@ -1,0 +1,6 @@
+# Rule to detect CommonJS require
+id: commonjs-require
+language: javascript
+rule:
+  pattern: require("$SOURCE")
+message: "Found CommonJS require: $SOURCE"

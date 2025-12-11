@@ -1,0 +1,6 @@
+# Rule to detect dynamic imports
+id: dynamic-import
+language: javascript
+rule:
+  pattern: import("$SOURCE")
+message: "Found dynamic import: $SOURCE"
