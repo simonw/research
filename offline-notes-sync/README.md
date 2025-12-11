@@ -130,15 +130,74 @@ pytest test_notes_app.py -v
 }
 ```
 
+## CRDT Implementation
+
+The `crdt.py` module provides proper Conflict-free Replicated Data Types for automatic conflict resolution:
+
+### Components
+
+- **UniqueId**: Globally unique, totally ordered identifier using (timestamp, counter, site_id)
+- **Clock**: Lamport logical clock for generating unique IDs and maintaining causality
+- **LWW-Register**: Last-Writer-Wins register for simple values
+- **RGA (Replicated Growable Array)**: Text CRDT where each character has a unique ID
+- **LWW-Map**: Map with LWW-Register values for metadata
+- **CRDTNote**: Complete note structure combining all CRDT types
+
+### Key Properties
+
+- **Commutativity**: Operations can be applied in any order
+- **Associativity**: Grouping doesn't matter
+- **Idempotency**: Same operation applied twice has no effect
+- **Convergence**: All replicas eventually reach the same state
+
+### Test Coverage
+
+94 tests covering UniqueId ordering, clock behavior, LWW operations, RGA concurrent edits, serialization, integration scenarios, edge cases, and performance.
+
+## Datasette Plugin
+
+The `datasette_notes_sync/` directory contains a Datasette plugin that exposes the same API as the Starlette server:
+
+### Installation
+
+```bash
+cd datasette_notes_sync
+pip install -e .
+```
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/-/notes-sync/notes` | GET | List all non-deleted notes |
+| `/-/notes-sync/notes` | POST | Create a new note |
+| `/-/notes-sync/notes/{id}` | GET | Get a single note |
+| `/-/notes-sync/notes/{id}` | PUT | Update a note |
+| `/-/notes-sync/notes/{id}` | DELETE | Soft-delete a note |
+| `/-/notes-sync/sync` | POST | Exchange operations with server |
+| `/-/notes-sync/operations` | GET | Debug: list all operations |
+
+### Running with Datasette
+
+```bash
+datasette mydata.db
+```
+
+The plugin auto-registers and creates the necessary tables in the database.
+
 ## Files
 
 | File | Description |
 |------|-------------|
 | `server.py` | Starlette server with SQLite backend |
 | `diff_merge.py` | Character-level diff and three-way merge |
+| `crdt.py` | CRDT implementations (RGA, LWW-Register, etc.) |
 | `static/index.html` | Client HTML/CSS/JavaScript |
 | `static/sw.js` | Service worker for offline caching |
 | `test_notes_app.py` | Pytest + Playwright test suite |
+| `test_crdt.py` | CRDT test suite (94 tests) |
+| `datasette_notes_sync/` | Datasette plugin implementation |
+| `test_datasette_plugin.py` | Datasette plugin tests (12 tests) |
 | `requirements.txt` | Python dependencies |
 
 ## Limitations
@@ -152,7 +211,7 @@ pytest test_notes_app.py -v
 ## Future Improvements
 
 - WebSocket for real-time updates
-- CRDT-based text editing (e.g., Yjs) for true real-time collaboration
+- Integrate CRDT module with the client and server for true conflict-free sync
 - Rich text support with formatting merge
 - Note sharing and multi-user access control
 - End-to-end encryption for notes
