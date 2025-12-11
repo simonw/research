@@ -212,3 +212,35 @@ Added proper Conflict-free Replicated Data Types implementation:
 - Edge cases (unicode, large documents)
 - Performance tests
 
+## Datasette Plugin (datasette_notes_sync/)
+
+A Datasette plugin that provides the same API as the Starlette server but as
+a Datasette extension.
+
+### Features
+
+- All API endpoints from server.py reimplemented as Datasette routes
+- CORS support for cross-origin requests
+- Uses Datasette's SQLite database for storage
+- Plugin can be installed and loaded with any Datasette instance
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/-/notes-sync/notes` | GET | List all non-deleted notes |
+| `/-/notes-sync/notes` | POST | Create a new note |
+| `/-/notes-sync/notes/{id}` | GET | Get a single note |
+| `/-/notes-sync/notes/{id}` | PUT | Update a note |
+| `/-/notes-sync/notes/{id}` | DELETE | Soft-delete a note |
+| `/-/notes-sync/sync` | POST | Exchange operations with server |
+| `/-/notes-sync/operations` | GET | Debug: list all operations |
+
+### Test Coverage
+
+12 tests covering:
+- CRUD operations
+- Sync endpoint
+- CORS headers
+- Operations listing
+
