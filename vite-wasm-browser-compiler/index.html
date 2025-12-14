@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browser-Based Single File Bundler</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 20px;
+        }
+
+        .input-section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #646cff;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: #646cff;
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #535bf2;
+        }
+
+        .btn-secondary {
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #d0d0d0;
+        }
+
+        .btn-success {
+            background: #42b883;
+            color: white;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background: #3aa876;
+        }
+
+        .status {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .status.loading {
+            background: #e3f2fd;
+            color: #1565c0;
+        }
+
+        .status.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .status.error {
+            background: #ffebee;
+            color: #c62828;
+        }
+
+        .output-section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .output-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        textarea {
+            width: 100%;
+            height: 400px;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+            resize: vertical;
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .stat {
+            background: #f5f5f5;
+            padding: 10px 15px;
+            border-radius: 4px;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .stat-value {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .log-section {
+            margin-top: 20px;
+            background: #1e1e1e;
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .log-section pre {
+            margin: 0;
+            color: #d4d4d4;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+
+        .log-entry {
+            padding: 2px 0;
+        }
+
+        .log-entry.info { color: #9cdcfe; }
+        .log-entry.success { color: #6a9955; }
+        .log-entry.error { color: #f48771; }
+        .log-entry.warn { color: #dcdcaa; }
+
+        .preview-section {
+            margin-top: 20px;
+        }
+
+        .preview-frame {
+            width: 100%;
+            height: 400px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: white;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 15px;
+        }
+
+        .tab {
+            padding: 8px 16px;
+            border: none;
+            background: #e0e0e0;
+            border-radius: 4px 4px 0 0;
+            cursor: pointer;
+        }
+
+        .tab.active {
+            background: white;
+            font-weight: 600;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <h1>Browser-Based Single File Bundler</h1>
+    <p class="subtitle">
+        Bundle a CORS-enabled HTML page into a single self-contained file using esbuild-wasm in the browser.
+    </p>
+
+    <div class="input-section">
+        <label for="urlInput">Enter URL of a CORS-enabled HTML page:</label>
+        <input type="text" id="urlInput" placeholder="https://example.com/app/index.html"
+               value="">
+
+        <div class="button-group">
+            <button class="btn-primary" id="bundleBtn" onclick="startBundling()">
+                Bundle to Single File
+            </button>
+            <button class="btn-secondary" id="testBtn" onclick="loadTestPage()">
+                Load Test Page
+            </button>
+        </div>
+
+        <div id="status" class="status" style="display: none;"></div>
+    </div>
+
+    <div class="output-section">
+        <div class="output-header">
+            <h2>Output</h2>
+            <div class="button-group">
+                <button class="btn-success" id="copyBtn" onclick="copyOutput()" disabled>
+                    Copy to Clipboard
+                </button>
+                <button class="btn-secondary" id="downloadBtn" onclick="downloadOutput()" disabled>
+                    Download HTML
+                </button>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('output')">Bundled HTML</button>
+            <button class="tab" onclick="switchTab('preview')">Preview</button>
+        </div>
+
+        <div id="outputTab" class="tab-content active">
+            <textarea id="outputArea" readonly placeholder="Bundled output will appear here..."></textarea>
+        </div>
+
+        <div id="previewTab" class="tab-content">
+            <iframe id="previewFrame" class="preview-frame" sandbox="allow-scripts"></iframe>
+        </div>
+
+        <div class="stats" id="stats" style="display: none;">
+            <div class="stat">
+                <div class="stat-label">Original Size</div>
+                <div class="stat-value" id="originalSize">-</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Bundled Size</div>
+                <div class="stat-value" id="bundledSize">-</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Resources Inlined</div>
+                <div class="stat-value" id="resourceCount">-</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Time Taken</div>
+                <div class="stat-value" id="timeTaken">-</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="log-section">
+        <pre id="logOutput"></pre>
+    </div>
+
+    <!-- esbuild WASM -->
+    <script type="module">
+        // Import esbuild-wasm
+        import * as esbuild from 'https://esm.sh/esbuild-wasm@0.24.0';
+
+        let esbuildReady = false;
+        let bundledOutput = '';
+        let originalSize = 0;
+        let resourceCount = 0;
+
+        // Make functions available globally
+        window.startBundling = startBundling;
+        window.copyOutput = copyOutput;
+        window.downloadOutput = downloadOutput;
+        window.loadTestPage = loadTestPage;
+        window.switchTab = switchTab;
+
+        // Initialize esbuild
+        async function initEsbuild() {
+            log('Initializing esbuild-wasm...', 'info');
+            try {
+                await esbuild.initialize({
+                    wasmURL: 'https://esm.sh/esbuild-wasm@0.24.0/esbuild.wasm',
+                    worker: true
+                });
+                esbuildReady = true;
+                log('esbuild-wasm initialized successfully!', 'success');
+            } catch (error) {
+                log(`Failed to initialize esbuild: ${error.message}`, 'error');
+            }
+        }
+
+        // Initialize on load
+        initEsbuild();
+
+        function log(message, type = 'info') {
+            const logOutput = document.getElementById('logOutput');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logOutput.appendChild(entry);
+            logOutput.scrollTop = logOutput.scrollHeight;
+        }
+
+        function setStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+        }
+
+        function formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+
+        async function fetchWithCors(url) {
+            log(`Fetching: ${url}`, 'info');
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            return await response.text();
+        }
+
+        function resolveUrl(base, relative) {
+            try {
+                return new URL(relative, base).href;
+            } catch {
+                return relative;
+            }
+        }
+
+        async function fetchAndInlineCSS(cssUrl, baseUrl, fetchedUrls = new Set()) {
+            if (fetchedUrls.has(cssUrl)) {
+                return '/* Already inlined */';
+            }
+            fetchedUrls.add(cssUrl);
+
+            try {
+                let css = await fetchWithCors(cssUrl);
+                resourceCount++;
+
+                // Handle @import statements
+                const importRegex = /@import\s+(?:url\()?['"]?([^'")\s;]+)['"]?\)?[^;]*;/g;
+                let match;
+                const imports = [];
+
+                while ((match = importRegex.exec(css)) !== null) {
+                    const importUrl = resolveUrl(cssUrl, match[1]);
+                    imports.push({ full: match[0], url: importUrl });
+                }
+
+                for (const imp of imports) {
+                    const importedCss = await fetchAndInlineCSS(imp.url, cssUrl, fetchedUrls);
+                    css = css.replace(imp.full, importedCss);
+                }
+
+                // Handle url() references for fonts, images, etc.
+                const urlRegex = /url\(['"]?([^'")\s]+)['"]?\)/g;
+                const urls = [];
+
+                while ((match = urlRegex.exec(css)) !== null) {
+                    const resourceUrl = match[1];
+                    // Skip data URLs and absolute URLs to external domains
+                    if (!resourceUrl.startsWith('data:') && !resourceUrl.startsWith('http')) {
+                        urls.push({ full: match[0], path: resourceUrl });
+                    }
+                }
+
+                for (const urlRef of urls) {
+                    const absoluteUrl = resolveUrl(cssUrl, urlRef.path);
+                    try {
+                        const response = await fetch(absoluteUrl);
+                        if (response.ok) {
+                            const blob = await response.blob();
+                            const reader = new FileReader();
+                            const dataUrl = await new Promise((resolve, reject) => {
+                                reader.onloadend = () => resolve(reader.result);
+                                reader.onerror = reject;
+                                reader.readAsDataURL(blob);
+                            });
+                            css = css.replace(urlRef.full, `url("${dataUrl}")`);
+                            resourceCount++;
+                            log(`Inlined resource: ${urlRef.path}`, 'info');
+                        }
+                    } catch (e) {
+                        log(`Could not inline resource: ${urlRef.path}`, 'warn');
+                    }
+                }
+
+                return css;
+            } catch (error) {
+                log(`Failed to fetch CSS: ${cssUrl} - ${error.message}`, 'error');
+                return `/* Failed to fetch: ${cssUrl} */`;
+            }
+        }
+
+        async function bundleJavaScript(jsUrl, baseUrl) {
+            if (!esbuildReady) {
+                throw new Error('esbuild not initialized');
+            }
+
+            log(`Bundling JavaScript: ${jsUrl}`, 'info');
+
+            // Fetch the entry point
+            const entryCode = await fetchWithCors(jsUrl);
+            resourceCount++;
+
+            // Create a virtual file system for esbuild
+            const virtualFS = new Map();
+            virtualFS.set('entry.js', entryCode);
+
+            // Track modules we need to fetch
+            const modulesToFetch = new Set();
+            const fetchedModules = new Set();
+
+            // Find imports in the code
+            function findImports(code) {
+                const imports = [];
+                // ES6 imports
+                const importRegex = /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+)?['"]([^'"]+)['"]/g;
+                let match;
+                while ((match = importRegex.exec(code)) !== null) {
+                    imports.push(match[1]);
+                }
+                // Dynamic imports
+                const dynamicImportRegex = /import\(['"]([^'"]+)['"]\)/g;
+                while ((match = dynamicImportRegex.exec(code)) !== null) {
+                    imports.push(match[1]);
+                }
+                return imports;
+            }
+
+            // Recursively fetch all dependencies
+            async function fetchDependencies(code, currentUrl) {
+                const imports = findImports(code);
+
+                for (const imp of imports) {
+                    // Skip external packages (we'll let them fail gracefully)
+                    if (imp.startsWith('http://') || imp.startsWith('https://')) {
+                        continue;
+                    }
+
+                    // Skip node_modules style imports
+                    if (!imp.startsWith('.') && !imp.startsWith('/')) {
+                        log(`Skipping npm package: ${imp}`, 'warn');
+                        continue;
+                    }
+
+                    const resolvedUrl = resolveUrl(currentUrl, imp);
+                    if (fetchedModules.has(resolvedUrl)) continue;
+                    fetchedModules.add(resolvedUrl);
+
+                    try {
+                        // Try with different extensions
+                        let moduleCode = null;
+                        const extensions = ['', '.js', '.ts', '.jsx', '.tsx', '/index.js'];
+
+                        for (const ext of extensions) {
+                            try {
+                                moduleCode = await fetchWithCors(resolvedUrl + ext);
+                                log(`Fetched: ${resolvedUrl + ext}`, 'success');
+                                resourceCount++;
+                                break;
+                            } catch {
+                                continue;
+                            }
+                        }
+
+                        if (moduleCode) {
+                            virtualFS.set(resolvedUrl, moduleCode);
+                            await fetchDependencies(moduleCode, resolvedUrl);
+                        }
+                    } catch (error) {
+                        log(`Could not fetch: ${imp}`, 'warn');
+                    }
+                }
+            }
+
+            await fetchDependencies(entryCode, jsUrl);
+
+            // Use esbuild to bundle
+            try {
+                const result = await esbuild.build({
+                    stdin: {
+                        contents: entryCode,
+                        loader: 'js',
+                        resolveDir: '/',
+                    },
+                    bundle: true,
+                    minify: true,
+                    format: 'iife',
+                    write: false,
+                    plugins: [{
+                        name: 'http-fetch',
+                        setup(build) {
+                            // Handle relative imports
+                            build.onResolve({ filter: /^\./ }, args => {
+                                const resolved = resolveUrl(jsUrl, args.path);
+                                return { path: resolved, namespace: 'http-fetch' };
+                            });
+
+                            // Handle http/https imports
+                            build.onResolve({ filter: /^https?:\/\// }, args => {
+                                return { path: args.path, namespace: 'http-fetch' };
+                            });
+
+                            build.onLoad({ filter: /.*/, namespace: 'http-fetch' }, async args => {
+                                try {
+                                    const contents = await fetchWithCors(args.path);
+                                    return { contents, loader: 'js' };
+                                } catch (error) {
+                                    return { contents: `console.error("Failed to load: ${args.path}")`, loader: 'js' };
+                                }
+                            });
+                        }
+                    }]
+                });
+
+                if (result.outputFiles && result.outputFiles.length > 0) {
+                    return result.outputFiles[0].text;
+                }
+            } catch (error) {
+                log(`esbuild bundling failed: ${error.message}`, 'error');
+                // Fall back to just returning the original code
+                return entryCode;
+            }
+
+            return entryCode;
+        }
+
+        async function startBundling() {
+            const urlInput = document.getElementById('urlInput');
+            const bundleBtn = document.getElementById('bundleBtn');
+            const url = urlInput.value.trim();
+
+            if (!url) {
+                setStatus('Please enter a URL', 'error');
+                return;
+            }
+
+            if (!esbuildReady) {
+                setStatus('Please wait for esbuild to initialize...', 'loading');
+                return;
+            }
+
+            bundleBtn.disabled = true;
+            resourceCount = 0;
+            const startTime = Date.now();
+
+            try {
+                setStatus('Fetching HTML...', 'loading');
+                log(`Starting bundle process for: ${url}`, 'info');
+
+                // Fetch the HTML
+                let html = await fetchWithCors(url);
+                originalSize = new Blob([html]).size;
+
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const baseUrl = url;
+
+                // Process CSS
+                setStatus('Processing CSS...', 'loading');
+                const linkElements = doc.querySelectorAll('link[rel="stylesheet"]');
+
+                for (const link of linkElements) {
+                    const href = link.getAttribute('href');
+                    if (href) {
+                        const cssUrl = resolveUrl(baseUrl, href);
+                        const cssContent = await fetchAndInlineCSS(cssUrl, baseUrl);
+
+                        const styleElement = doc.createElement('style');
+                        styleElement.textContent = cssContent;
+                        link.parentNode.replaceChild(styleElement, link);
+                        log(`Inlined CSS: ${href}`, 'success');
+                    }
+                }
+
+                // Process inline style url() references
+                const styleElements = doc.querySelectorAll('style');
+                for (const style of styleElements) {
+                    // Handle url() in inline styles (basic handling)
+                    // More complex handling would require a CSS parser
+                }
+
+                // Process JavaScript
+                setStatus('Processing JavaScript...', 'loading');
+                const scriptElements = doc.querySelectorAll('script[src]');
+
+                for (const script of scriptElements) {
+                    const src = script.getAttribute('src');
+                    if (src) {
+                        const jsUrl = resolveUrl(baseUrl, src);
+                        try {
+                            let jsContent;
+
+                            // Check if it's a module
+                            const isModule = script.getAttribute('type') === 'module';
+
+                            if (isModule && esbuildReady) {
+                                // Try to bundle ES modules
+                                jsContent = await bundleJavaScript(jsUrl, baseUrl);
+                            } else {
+                                // Just fetch and inline
+                                jsContent = await fetchWithCors(jsUrl);
+                                resourceCount++;
+                            }
+
+                            const newScript = doc.createElement('script');
+                            if (isModule) {
+                                // Convert bundled module to IIFE
+                                newScript.textContent = jsContent;
+                            } else {
+                                newScript.textContent = jsContent;
+                            }
+
+                            // Copy other attributes
+                            for (const attr of script.attributes) {
+                                if (attr.name !== 'src') {
+                                    newScript.setAttribute(attr.name, attr.value);
+                                }
+                            }
+
+                            // Remove type="module" since we bundled it
+                            if (isModule) {
+                                newScript.removeAttribute('type');
+                            }
+
+                            script.parentNode.replaceChild(newScript, script);
+                            log(`Inlined script: ${src}`, 'success');
+                        } catch (error) {
+                            log(`Failed to inline script: ${src} - ${error.message}`, 'error');
+                        }
+                    }
+                }
+
+                // Process images (convert to data URLs)
+                setStatus('Processing images...', 'loading');
+                const imgElements = doc.querySelectorAll('img[src]');
+
+                for (const img of imgElements) {
+                    const src = img.getAttribute('src');
+                    if (src && !src.startsWith('data:')) {
+                        const imgUrl = resolveUrl(baseUrl, src);
+                        try {
+                            const response = await fetch(imgUrl);
+                            if (response.ok) {
+                                const blob = await response.blob();
+                                const reader = new FileReader();
+                                const dataUrl = await new Promise((resolve, reject) => {
+                                    reader.onloadend = () => resolve(reader.result);
+                                    reader.onerror = reject;
+                                    reader.readAsDataURL(blob);
+                                });
+                                img.setAttribute('src', dataUrl);
+                                resourceCount++;
+                                log(`Inlined image: ${src}`, 'success');
+                            }
+                        } catch (error) {
+                            log(`Could not inline image: ${src}`, 'warn');
+                        }
+                    }
+                }
+
+                // Generate final HTML
+                bundledOutput = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+
+                // Display results
+                const endTime = Date.now();
+                const bundledSize = new Blob([bundledOutput]).size;
+
+                document.getElementById('outputArea').value = bundledOutput;
+                document.getElementById('copyBtn').disabled = false;
+                document.getElementById('downloadBtn').disabled = false;
+
+                // Update stats
+                document.getElementById('stats').style.display = 'flex';
+                document.getElementById('originalSize').textContent = formatSize(originalSize);
+                document.getElementById('bundledSize').textContent = formatSize(bundledSize);
+                document.getElementById('resourceCount').textContent = resourceCount;
+                document.getElementById('timeTaken').textContent = ((endTime - startTime) / 1000).toFixed(2) + 's';
+
+                // Update preview
+                const previewFrame = document.getElementById('previewFrame');
+                previewFrame.srcdoc = bundledOutput;
+
+                setStatus('Bundling complete!', 'success');
+                log(`Bundling complete! Original: ${formatSize(originalSize)}, Bundled: ${formatSize(bundledSize)}`, 'success');
+
+            } catch (error) {
+                setStatus(`Error: ${error.message}`, 'error');
+                log(`Bundling failed: ${error.message}`, 'error');
+            } finally {
+                bundleBtn.disabled = false;
+            }
+        }
+
+        function copyOutput() {
+            const outputArea = document.getElementById('outputArea');
+            navigator.clipboard.writeText(outputArea.value).then(() => {
+                setStatus('Copied to clipboard!', 'success');
+                log('Output copied to clipboard', 'success');
+            }).catch(err => {
+                setStatus('Failed to copy', 'error');
+            });
+        }
+
+        function downloadOutput() {
+            const blob = new Blob([bundledOutput], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'bundled-page.html';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            log('Downloaded bundled HTML', 'success');
+        }
+
+        function loadTestPage() {
+            // Set a test URL that's known to be CORS-enabled
+            document.getElementById('urlInput').value = 'https://unpkg.com/vue@3/dist/vue.global.js';
+            log('Loaded test URL - note: this is a JS file for testing esbuild', 'info');
+        }
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+
+            if (tab === 'output') {
+                document.querySelector('.tab:first-child').classList.add('active');
+                document.getElementById('outputTab').classList.add('active');
+            } else {
+                document.querySelector('.tab:last-child').classList.add('active');
+                document.getElementById('previewTab').classList.add('active');
+            }
+        }
+    </script>
+</body>
+</html>
