@@ -1,0 +1,4011 @@
+[
+  {
+    "file": "ai-adoption.html",
+    "path": "/tmp/tools/ai-adoption.html",
+    "apis": [
+      "Debug:Console"
+    ],
+    "apisByCategory": {
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "alt-text-extractor.html",
+    "path": "/tmp/tools/alt-text-extractor.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Clipboard:execCommand",
+      "Debug:Console"
+    ],
+    "apisByCategory": {
+      "Clipboard": [
+        "Clipboard",
+        "execCommand"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "analytics.html",
+    "path": "/tmp/tools/analytics.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Data:JSON",
+      "Graphics:Canvas",
+      "Performance:PerformanceNow",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Data": [
+        "JSON"
+      ],
+      "Storage": [
+        "localStorage"
+      ],
+      "Performance": [
+        "PerformanceNow"
+      ],
+      "Graphics": [
+        "Canvas"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/npm/chart.js"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net"
+    ],
+    "scriptSources": [
+      "footer.js"
+    ],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "animated-rainbow-border.html",
+    "path": "/tmp/tools/animated-rainbow-border.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "annotated-presentations.html",
+    "path": "/tmp/tools/annotated-presentations.html",
+    "apis": [
+      "Data:JSON",
+      "File:FileReader",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "File": [
+        "FileReader"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Storage": [
+        "localStorage"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/npm/marked@4.3.0/lib/marked.umd.min.js",
+      "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap",
+      "https://plausible.io/js/plausible.js"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net",
+      "fonts.googleapis.com",
+      "plausible.io"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "apsw-query.html",
+    "path": "/tmp/tools/apsw-query.html",
+    "apis": [
+      "Data:JSON",
+      "Debug:Console"
+    ],
+    "apisByCategory": {
+      "Data": [
+        "JSON"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.js"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "arena-animated.html",
+    "path": "/tmp/tools/arena-animated.html",
+    "apis": [
+      "Animation:WebAnimations",
+      "Data:JSON",
+      "Debug:Console"
+    ],
+    "apisByCategory": {
+      "Animation": [
+        "WebAnimations"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "ares.html",
+    "path": "/tmp/tools/ares.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "aria-live-regions.html",
+    "path": "/tmp/tools/aria-live-regions.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "audio-spectrum.html",
+    "path": "/tmp/tools/audio-spectrum.html",
+    "apis": [
+      "Animation:RAF",
+      "Debug:Console",
+      "Graphics:Canvas",
+      "Media:MediaDevices",
+      "Media:WebAudio",
+      "Media:getUserMedia"
+    ],
+    "apisByCategory": {
+      "Media": [
+        "WebAudio",
+        "MediaDevices",
+        "getUserMedia"
+      ],
+      "Graphics": [
+        "Canvas"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Animation": [
+        "RAF"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "avatar-web-component.html",
+    "path": "/tmp/tools/avatar-web-component.html",
+    "apis": [
+      "DragDrop:DataTransfer",
+      "File:FileReader",
+      "Graphics:Canvas"
+    ],
+    "apisByCategory": {
+      "DragDrop": [
+        "DataTransfer"
+      ],
+      "File": [
+        "FileReader"
+      ],
+      "Graphics": [
+        "Canvas"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "badge-drawer.html",
+    "path": "/tmp/tools/badge-drawer.html",
+    "apis": [
+      "Data:JSON",
+      "Debug:Console",
+      "Encoding:Base64",
+      "File:ObjectURL",
+      "Graphics:Canvas",
+      "Input:PointerCapture",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "Graphics": [
+        "Canvas"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Encoding": [
+        "Base64"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Input": [
+        "PointerCapture"
+      ],
+      "File": [
+        "ObjectURL"
+      ],
+      "URL": [
+        "URL"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "badge-repl.html",
+    "path": "/tmp/tools/badge-repl.html",
+    "apis": [
+      "Debug:Console"
+    ],
+    "apisByCategory": {
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "base64-gzip-decoder.html",
+    "path": "/tmp/tools/base64-gzip-decoder.html",
+    "apis": [
+      "Debug:Console",
+      "Encoding:Base64"
+    ],
+    "apisByCategory": {
+      "Encoding": [
+        "Base64"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.esm.mjs"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "bbox-cropper.html",
+    "path": "/tmp/tools/bbox-cropper.html",
+    "apis": [
+      "DragDrop:DataTransfer",
+      "File:FileReader"
+    ],
+    "apisByCategory": {
+      "DragDrop": [
+        "DataTransfer"
+      ],
+      "File": [
+        "FileReader"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.css",
+      "https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.js"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "bluesky-faves.html",
+    "path": "/tmp/tools/bluesky-faves.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Data:JSON",
+      "Debug:Console",
+      "Navigation:History",
+      "Network:Fetch",
+      "URL:URL",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "URL": [
+        "URL",
+        "URLSearchParams"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Navigation": [
+        "History"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ],
+      "Data": [
+        "JSON"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "bluesky-firehose.html",
+    "path": "/tmp/tools/bluesky-firehose.html",
+    "apis": [
+      "Data:JSON",
+      "Network:WebSocket"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "WebSocket"
+      ],
+      "Data": [
+        "JSON"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "bluesky-quote-finder.html",
+    "path": "/tmp/tools/bluesky-quote-finder.html",
+    "apis": [
+      "Debug:Console",
+      "Navigation:History",
+      "Network:Fetch",
+      "URL:URL",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "URL": [
+        "URL",
+        "URLSearchParams"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Navigation": [
+        "History"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "bluesky-resolve.html",
+    "path": "/tmp/tools/bluesky-resolve.html",
+    "apis": [
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "bluesky-search.html",
+    "path": "/tmp/tools/bluesky-search.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Data:JSON",
+      "Debug:Console",
+      "Encoding:TextDecoder",
+      "Encoding:TextEncoder",
+      "Navigation:History",
+      "Network:Fetch",
+      "Storage:localStorage",
+      "URL:URL",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "localStorage"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "URL": [
+        "URL",
+        "URLSearchParams"
+      ],
+      "Encoding": [
+        "TextEncoder",
+        "TextDecoder"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Navigation": [
+        "History"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "bluesky-thread.html",
+    "path": "/tmp/tools/bluesky-thread.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Data:JSON",
+      "Debug:Console",
+      "Encoding:TextDecoder",
+      "Encoding:TextEncoder",
+      "Navigation:History",
+      "Network:Fetch",
+      "URL:URL",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "Encoding": [
+        "TextEncoder",
+        "TextDecoder"
+      ],
+      "URL": [
+        "URL",
+        "URLSearchParams"
+      ],
+      "Navigation": [
+        "History"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Network": [
+        "Fetch"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/npm/hls.js@1"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "bluesky-timeline.html",
+    "path": "/tmp/tools/bluesky-timeline.html",
+    "apis": [
+      "Data:JSON",
+      "Debug:Console",
+      "Network:Fetch",
+      "Performance:PerformanceNow",
+      "Storage:localStorage",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "localStorage"
+      ],
+      "Performance": [
+        "PerformanceNow"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "URL": [
+        "URL"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "box-shadow.html",
+    "path": "/tmp/tools/box-shadow.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.22.10/babel.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [
+      {
+        "type": "text/babel",
+        "isBabel": true,
+        "snippet": "const BoxShadowTool = () => {             const [h"
+      }
+    ],
+    "skippedScripts": []
+  },
+  {
+    "file": "broadcast-channel-chat.html",
+    "path": "/tmp/tools/broadcast-channel-chat.html",
+    "apis": [
+      "Messaging:BroadcastChannel",
+      "Messaging:PostMessage",
+      "Performance:PerformanceNow"
+    ],
+    "apisByCategory": {
+      "Messaging": [
+        "BroadcastChannel",
+        "PostMessage"
+      ],
+      "Performance": [
+        "PerformanceNow"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "bugzilla-bug.html",
+    "path": "/tmp/tools/bugzilla-bug.html",
+    "apis": [
+      "Debug:Console",
+      "Navigation:History",
+      "Network:Fetch",
+      "URL:URL",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "Navigation": [
+        "History"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "URL": [
+        "URL",
+        "URLSearchParams"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "bullish-bearish.html",
+    "path": "/tmp/tools/bullish-bearish.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "california-clock-change.html",
+    "path": "/tmp/tools/california-clock-change.html",
+    "apis": [
+      "Intl:DateTimeFormat",
+      "Intl:Internationalization",
+      "Performance:PerformanceNow"
+    ],
+    "apisByCategory": {
+      "Intl": [
+        "DateTimeFormat",
+        "Internationalization"
+      ],
+      "Performance": [
+        "PerformanceNow"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "census-reporter-claude.html",
+    "path": "/tmp/tools/census-reporter-claude.html",
+    "apis": [
+      "Graphics:Canvas",
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ],
+      "Graphics": [
+        "Canvas"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.1/chart.min.js"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "census-reporter-gemini.html",
+    "path": "/tmp/tools/census-reporter-gemini.html",
+    "apis": [
+      "Debug:Console",
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "chrome-prompt-playground.html",
+    "path": "/tmp/tools/chrome-prompt-playground.html",
+    "apis": [
+      "Data:JSON",
+      "Debug:Console",
+      "Navigation:History",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Debug": [
+        "Console"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Storage": [
+        "localStorage"
+      ],
+      "Navigation": [
+        "History"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "claude-token-counter.html",
+    "path": "/tmp/tools/claude-token-counter.html",
+    "apis": [
+      "Data:JSON",
+      "DragDrop:DataTransfer",
+      "File:FileReader",
+      "Network:Fetch",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "localStorage"
+      ],
+      "File": [
+        "FileReader"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "DragDrop": [
+        "DataTransfer"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "click-grid-to-expand.html",
+    "path": "/tmp/tools/click-grid-to-expand.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "clipboard-backup.html",
+    "path": "/tmp/tools/clipboard-backup.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Data:JSON",
+      "Debug:Console",
+      "Encoding:Base64",
+      "File:Blob",
+      "File:FileReader",
+      "File:ObjectURL",
+      "Graphics:Canvas",
+      "Performance:PerformanceNow",
+      "Storage:IndexedDB",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "IndexedDB"
+      ],
+      "Encoding": [
+        "Base64"
+      ],
+      "File": [
+        "Blob",
+        "ObjectURL",
+        "FileReader"
+      ],
+      "URL": [
+        "URL"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Graphics": [
+        "Canvas"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Performance": [
+        "PerformanceNow"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "clipboard-viewer.html",
+    "path": "/tmp/tools/clipboard-viewer.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Debug:Console",
+      "File:ObjectURL",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "Debug": [
+        "Console"
+      ],
+      "File": [
+        "ObjectURL"
+      ],
+      "URL": [
+        "URL"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "code-with-claude-2025.html",
+    "path": "/tmp/tools/code-with-claude-2025.html",
+    "apis": [
+      "File:Blob",
+      "File:ObjectURL",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "File": [
+        "Blob",
+        "ObjectURL"
+      ],
+      "URL": [
+        "URL"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "compare-pdfs.html",
+    "path": "/tmp/tools/compare-pdfs.html",
+    "apis": [
+      "Debug:Console",
+      "DragDrop:DataTransfer",
+      "File:ObjectURL",
+      "Graphics:Canvas",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "DragDrop": [
+        "DataTransfer"
+      ],
+      "File": [
+        "ObjectURL"
+      ],
+      "URL": [
+        "URL"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Graphics": [
+        "Canvas"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "cors-fetch.html",
+    "path": "/tmp/tools/cors-fetch.html",
+    "apis": [
+      "Data:JSON",
+      "Debug:Console",
+      "Navigation:History",
+      "Network:Fetch",
+      "URL:URL",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "Data": [
+        "JSON"
+      ],
+      "URL": [
+        "URLSearchParams",
+        "URL"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Navigation": [
+        "History"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "css-text-wrapping.html",
+    "path": "/tmp/tools/css-text-wrapping.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "csv-marker-map.html",
+    "path": "/tmp/tools/csv-marker-map.html",
+    "apis": [
+      "Navigation:History",
+      "Network:Fetch",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "URL": [
+        "URLSearchParams"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Navigation": [
+        "History"
+      ]
+    },
+    "cdnUrls": [
+      "https://unpkg.com/leaflet@1.8.0/dist/leaflet.css",
+      "https://unpkg.com/leaflet@1.8.0/dist/leaflet.js"
+    ],
+    "cdnDomains": [
+      "unpkg.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "date-calculator.html",
+    "path": "/tmp/tools/date-calculator.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "deep-research-viewer.html",
+    "path": "/tmp/tools/deep-research-viewer.html",
+    "apis": [
+      "Data:JSON",
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ],
+      "Data": [
+        "JSON"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "devon-lanes.html",
+    "path": "/tmp/tools/devon-lanes.html",
+    "apis": [
+      "Debug:Console"
+    ],
+    "apisByCategory": {
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "dot.html",
+    "path": "/tmp/tools/dot.html",
+    "apis": [
+      "Debug:Console",
+      "Navigation:History"
+    ],
+    "apisByCategory": {
+      "Debug": [
+        "Console"
+      ],
+      "Navigation": [
+        "History"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": [
+      {
+        "type": "importmap",
+        "reason": "non-js type"
+      }
+    ]
+  },
+  {
+    "file": "emoji-identifier.html",
+    "path": "/tmp/tools/emoji-identifier.html",
+    "apis": [
+      "Debug:Console",
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "encrypt.html",
+    "path": "/tmp/tools/encrypt.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Crypto:RandomValues",
+      "Crypto:SubtleCrypto",
+      "Crypto:WebCrypto",
+      "Debug:Console",
+      "Encoding:Base64",
+      "Encoding:TextDecoder",
+      "Encoding:TextEncoder"
+    ],
+    "apisByCategory": {
+      "Encoding": [
+        "TextEncoder",
+        "Base64",
+        "TextDecoder"
+      ],
+      "Crypto": [
+        "SubtleCrypto",
+        "WebCrypto",
+        "RandomValues"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "escape-entities.html",
+    "path": "/tmp/tools/escape-entities.html",
+    "apis": [
+      "Clipboard:execCommand"
+    ],
+    "apisByCategory": {
+      "Clipboard": [
+        "execCommand"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "event-planner.html",
+    "path": "/tmp/tools/event-planner.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/moment-timezone/0.5.33/moment-timezone-with-data.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "exif.html",
+    "path": "/tmp/tools/exif.html",
+    "apis": [
+      "Data:JSON",
+      "File:FileReader"
+    ],
+    "apisByCategory": {
+      "File": [
+        "FileReader"
+      ],
+      "Data": [
+        "JSON"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.min.js"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "extract-urls.html",
+    "path": "/tmp/tools/extract-urls.html",
+    "apis": [
+      "Clipboard:execCommand"
+    ],
+    "apisByCategory": {
+      "Clipboard": [
+        "execCommand"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "ffmpeg-crop.html",
+    "path": "/tmp/tools/ffmpeg-crop.html",
+    "apis": [
+      "Animation:RAF",
+      "File:ObjectURL",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "File": [
+        "ObjectURL"
+      ],
+      "URL": [
+        "URL"
+      ],
+      "Animation": [
+        "RAF"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "flexbox-playground.html",
+    "path": "/tmp/tools/flexbox-playground.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "footnotes-experiment.html",
+    "path": "/tmp/tools/footnotes-experiment.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "gemini-bbox.html",
+    "path": "/tmp/tools/gemini-bbox.html",
+    "apis": [
+      "Data:JSON",
+      "File:File",
+      "File:FileReader",
+      "Graphics:Canvas",
+      "Storage:localStorage",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "localStorage"
+      ],
+      "File": [
+        "FileReader",
+        "File"
+      ],
+      "Graphics": [
+        "Canvas"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "URL": [
+        "URLSearchParams"
+      ]
+    },
+    "cdnUrls": [
+      "https://esm.run/@google/generative-ai",
+      "https://esm.run/marked"
+    ],
+    "cdnDomains": [
+      "esm.run"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "gemini-chat.html",
+    "path": "/tmp/tools/gemini-chat.html",
+    "apis": [
+      "Data:JSON",
+      "Debug:Console",
+      "Performance:Performance",
+      "Performance:PerformanceNow",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "localStorage"
+      ],
+      "Performance": [
+        "PerformanceNow",
+        "Performance"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Data": [
+        "JSON"
+      ]
+    },
+    "cdnUrls": [
+      "https://esm.run/@google/generative-ai",
+      "https://esm.run/marked"
+    ],
+    "cdnDomains": [
+      "esm.run"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "gemini-image-json.html",
+    "path": "/tmp/tools/gemini-image-json.html",
+    "apis": [
+      "Data:JSON",
+      "Debug:Console",
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "gemini-mask.html",
+    "path": "/tmp/tools/gemini-mask.html",
+    "apis": [
+      "Data:JSON",
+      "Debug:Console",
+      "File:File",
+      "File:FileReader",
+      "Graphics:Canvas",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "localStorage"
+      ],
+      "File": [
+        "FileReader",
+        "File"
+      ],
+      "Graphics": [
+        "Canvas"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/npm/@google/genai@latest/+esm",
+      "https://esm.run/marked"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net",
+      "esm.run"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "github-account.html",
+    "path": "/tmp/tools/github-account.html",
+    "apis": [
+      "Intl:DateTimeFormat",
+      "Intl:Internationalization",
+      "Network:Fetch",
+      "Performance:PerformanceNow"
+    ],
+    "apisByCategory": {
+      "Intl": [
+        "DateTimeFormat",
+        "Internationalization"
+      ],
+      "Performance": [
+        "PerformanceNow"
+      ],
+      "Network": [
+        "Fetch"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "github-api-write.html",
+    "path": "/tmp/tools/github-api-write.html",
+    "apis": [
+      "Data:JSON",
+      "Encoding:Base64",
+      "File:FileReader",
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Encoding": [
+        "Base64"
+      ],
+      "File": [
+        "FileReader"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Network": [
+        "Fetch"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "github-graphiql.html",
+    "path": "/tmp/tools/github-graphiql.html",
+    "apis": [
+      "Data:JSON",
+      "Network:Fetch",
+      "Storage:sessionStorage"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "sessionStorage"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Network": [
+        "Fetch"
+      ]
+    },
+    "cdnUrls": [
+      "https://unpkg.com/graphiql@3.0.10/graphiql.min.css",
+      "https://unpkg.com/graphiql@3.0.10/graphiql.min.js",
+      "https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js",
+      "https://unpkg.com/react@18.2.0/umd/react.production.min.js"
+    ],
+    "cdnDomains": [
+      "unpkg.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "github-issue-to-markdown.html",
+    "path": "/tmp/tools/github-issue-to-markdown.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Data:JSON",
+      "Navigation:History",
+      "Network:Fetch",
+      "Storage:localStorage",
+      "URL:URL",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "localStorage"
+      ],
+      "URL": [
+        "URL",
+        "URLSearchParams"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ],
+      "Navigation": [
+        "History"
+      ],
+      "Data": [
+        "JSON"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "github-ratelimit.html",
+    "path": "/tmp/tools/github-ratelimit.html",
+    "apis": [
+      "Debug:Console",
+      "Network:Fetch",
+      "Performance:PerformanceNow",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "localStorage"
+      ],
+      "Performance": [
+        "PerformanceNow"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "gpt-4o-audio-player.html",
+    "path": "/tmp/tools/gpt-4o-audio-player.html",
+    "apis": [
+      "Data:JSON",
+      "Encoding:Base64",
+      "File:Blob",
+      "File:ObjectURL",
+      "Navigation:History",
+      "Network:Fetch",
+      "URL:URL",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "URL": [
+        "URL",
+        "URLSearchParams"
+      ],
+      "Navigation": [
+        "History"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Encoding": [
+        "Base64"
+      ],
+      "File": [
+        "Blob",
+        "ObjectURL"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "hacker-news-filtered.html",
+    "path": "/tmp/tools/hacker-news-filtered.html",
+    "apis": [
+      "Debug:Console",
+      "Network:Fetch",
+      "Performance:PerformanceNow",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "localStorage"
+      ],
+      "Performance": [
+        "PerformanceNow"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "hacker-news-histogram.html",
+    "path": "/tmp/tools/hacker-news-histogram.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Data:JSON",
+      "Debug:Console",
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Clipboard": [
+        "Clipboard"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Network": [
+        "Fetch"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "hacker-news-thread-export.html",
+    "path": "/tmp/tools/hacker-news-thread-export.html",
+    "apis": [
+      "Clipboard:execCommand",
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ],
+      "Clipboard": [
+        "execCommand"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "haiku.html",
+    "path": "/tmp/tools/haiku.html",
+    "apis": [
+      "Data:JSON",
+      "Debug:Console",
+      "Graphics:Canvas",
+      "Media:MediaDevices",
+      "Media:getUserMedia",
+      "Network:Fetch",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Media": [
+        "MediaDevices",
+        "getUserMedia"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Storage": [
+        "localStorage"
+      ],
+      "Graphics": [
+        "Canvas"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Network": [
+        "Fetch"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "hn-comments-for-user.html",
+    "path": "/tmp/tools/hn-comments-for-user.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "html-preview.html",
+    "path": "/tmp/tools/html-preview.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Clipboard:execCommand",
+      "Debug:Console",
+      "File:Blob",
+      "File:ObjectURL",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "File": [
+        "Blob",
+        "ObjectURL"
+      ],
+      "URL": [
+        "URL"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Clipboard": [
+        "Clipboard",
+        "execCommand"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "huggingface-storage.html",
+    "path": "/tmp/tools/huggingface-storage.html",
+    "apis": [
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "icon-editor.html",
+    "path": "/tmp/tools/icon-editor.html",
+    "apis": [
+      "Debug:Console",
+      "Encoding:Base64",
+      "File:ObjectURL",
+      "Graphics:Canvas",
+      "Navigation:History",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "Graphics": [
+        "Canvas"
+      ],
+      "Encoding": [
+        "Base64"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Navigation": [
+        "History"
+      ],
+      "File": [
+        "ObjectURL"
+      ],
+      "URL": [
+        "URL"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "iframe-api-explorer.html",
+    "path": "/tmp/tools/iframe-api-explorer.html",
+    "apis": [
+      "Messaging:PostMessage",
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ],
+      "Messaging": [
+        "PostMessage"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "iframe-sandbox.html",
+    "path": "/tmp/tools/iframe-sandbox.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "image-resize-quality.html",
+    "path": "/tmp/tools/image-resize-quality.html",
+    "apis": [
+      "DragDrop:DataTransfer",
+      "File:FileReader",
+      "File:ObjectURL",
+      "Graphics:Canvas",
+      "Input:PointerCapture",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "DragDrop": [
+        "DataTransfer"
+      ],
+      "File": [
+        "FileReader",
+        "ObjectURL"
+      ],
+      "Graphics": [
+        "Canvas"
+      ],
+      "Input": [
+        "PointerCapture"
+      ],
+      "URL": [
+        "URL"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "image-to-jpeg.html",
+    "path": "/tmp/tools/image-to-jpeg.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Clipboard:execCommand",
+      "DragDrop:DataTransfer",
+      "File:FileReader",
+      "Graphics:Canvas"
+    ],
+    "apisByCategory": {
+      "File": [
+        "FileReader"
+      ],
+      "DragDrop": [
+        "DataTransfer"
+      ],
+      "Clipboard": [
+        "Clipboard",
+        "execCommand"
+      ],
+      "Graphics": [
+        "Canvas"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "image-to-svg.html",
+    "path": "/tmp/tools/image-to-svg.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Debug:Console",
+      "DragDrop:DataTransfer",
+      "File:FileReader",
+      "Graphics:Canvas"
+    ],
+    "apisByCategory": {
+      "Clipboard": [
+        "Clipboard"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "DragDrop": [
+        "DataTransfer"
+      ],
+      "File": [
+        "FileReader"
+      ],
+      "Graphics": [
+        "Canvas"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/npm/imagetracerjs@1.2.6/+esm"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "incomplete-json-printer.html",
+    "path": "/tmp/tools/incomplete-json-printer.html",
+    "apis": [
+      "Clipboard:Clipboard"
+    ],
+    "apisByCategory": {
+      "Clipboard": [
+        "Clipboard"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "jina-embeddings-image-token-calculator.html",
+    "path": "/tmp/tools/jina-embeddings-image-token-calculator.html",
+    "apis": [
+      "DragDrop:DataTransfer",
+      "File:ObjectURL",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "DragDrop": [
+        "DataTransfer"
+      ],
+      "File": [
+        "ObjectURL"
+      ],
+      "URL": [
+        "URL"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "jina-reader.html",
+    "path": "/tmp/tools/jina-reader.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Clipboard:execCommand",
+      "Data:JSON",
+      "Debug:Console",
+      "Network:Fetch",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Clipboard": [
+        "execCommand",
+        "Clipboard"
+      ],
+      "Storage": [
+        "localStorage"
+      ],
+      "Data": [
+        "JSON"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/marked/4.0.2/marked.min.js"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "json-schema-builder.html",
+    "path": "/tmp/tools/json-schema-builder.html",
+    "apis": [
+      "Clipboard:execCommand",
+      "Data:JSON",
+      "Debug:Console",
+      "Encoding:Base64",
+      "Navigation:History",
+      "Performance:PerformanceNow"
+    ],
+    "apisByCategory": {
+      "Performance": [
+        "PerformanceNow"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Clipboard": [
+        "execCommand"
+      ],
+      "Encoding": [
+        "Base64"
+      ],
+      "Navigation": [
+        "History"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "json-string-extractor.html",
+    "path": "/tmp/tools/json-string-extractor.html",
+    "apis": [
+      "Animation:RAF",
+      "Clipboard:Clipboard",
+      "Data:JSON",
+      "Debug:Console",
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Animation": [
+        "RAF"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "json-to-markdown-transcript.html",
+    "path": "/tmp/tools/json-to-markdown-transcript.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Clipboard:execCommand",
+      "Data:JSON"
+    ],
+    "apisByCategory": {
+      "Data": [
+        "JSON"
+      ],
+      "Clipboard": [
+        "execCommand",
+        "Clipboard"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "json-to-yaml.html",
+    "path": "/tmp/tools/json-to-yaml.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Data:JSON"
+    ],
+    "apisByCategory": {
+      "Data": [
+        "JSON"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "justhtml.html",
+    "path": "/tmp/tools/justhtml.html",
+    "apis": [
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "keyboard-debug.html",
+    "path": "/tmp/tools/keyboard-debug.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "keyboard-filters.html",
+    "path": "/tmp/tools/keyboard-filters.html",
+    "apis": [
+      "Performance:PerformanceNow"
+    ],
+    "apisByCategory": {
+      "Performance": [
+        "PerformanceNow"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "lightning-timer.html",
+    "path": "/tmp/tools/lightning-timer.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "link-extractor.html",
+    "path": "/tmp/tools/link-extractor.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Clipboard:execCommand",
+      "Debug:Console"
+    ],
+    "apisByCategory": {
+      "Clipboard": [
+        "Clipboard",
+        "execCommand"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "link-temp.html",
+    "path": "/tmp/tools/link-temp.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "markdown-math.html",
+    "path": "/tmp/tools/markdown-math.html",
+    "apis": [
+      "Clipboard:execCommand"
+    ],
+    "apisByCategory": {
+      "Clipboard": [
+        "execCommand"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.15.3/contrib/auto-render.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.15.3/katex.min.css",
+      "https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.15.3/katex.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/marked/4.0.2/marked.min.js"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "mask-visualizer.html",
+    "path": "/tmp/tools/mask-visualizer.html",
+    "apis": [
+      "Data:JSON"
+    ],
+    "apisByCategory": {
+      "Data": [
+        "JSON"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "mdn-timelines.html",
+    "path": "/tmp/tools/mdn-timelines.html",
+    "apis": [
+      "Debug:Console",
+      "Navigation:History",
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Navigation": [
+        "History"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "micropython.html",
+    "path": "/tmp/tools/micropython.html",
+    "apis": [
+      "Data:JSON",
+      "Debug:Console"
+    ],
+    "apisByCategory": {
+      "Debug": [
+        "Console"
+      ],
+      "Data": [
+        "JSON"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/npm/@micropython/micropython-webassembly-pyscript@1.26.0/micropython.mjs"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "nav-for-headings.html",
+    "path": "/tmp/tools/nav-for-headings.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "new-yorker-style.html",
+    "path": "/tmp/tools/new-yorker-style.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Debug:Console"
+    ],
+    "apisByCategory": {
+      "Clipboard": [
+        "Clipboard"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [
+      "https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Playfair+Display:wght@400;500&display=swap"
+    ],
+    "cdnDomains": [
+      "fonts.googleapis.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "notes-to-markdown.html",
+    "path": "/tmp/tools/notes-to-markdown.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Debug:Console"
+    ],
+    "apisByCategory": {
+      "Clipboard": [
+        "Clipboard"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "numpy-pyodide-lab.html",
+    "path": "/tmp/tools/numpy-pyodide-lab.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [
+      "https://cdn.tailwindcss.com",
+      "https://unpkg.com/@babel/standalone@7/babel.min.js",
+      "https://unpkg.com/react-dom@18/umd/react-dom.production.min.js",
+      "https://unpkg.com/react@18/umd/react.production.min.js"
+    ],
+    "cdnDomains": [
+      "cdn.tailwindcss.com",
+      "unpkg.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [
+      {
+        "type": "text/babel",
+        "isBabel": true,
+        "snippet": "const { useEffect, useMemo, useState } = React;   "
+      }
+    ],
+    "skippedScripts": []
+  },
+  {
+    "file": "ocr.html",
+    "path": "/tmp/tools/ocr.html",
+    "apis": [
+      "Debug:Console",
+      "DragDrop:DataTransfer",
+      "File:Blob",
+      "File:File",
+      "File:ObjectURL",
+      "Graphics:Canvas",
+      "Navigation:History",
+      "Network:Fetch",
+      "URL:URL",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "DragDrop": [
+        "DataTransfer"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "File": [
+        "Blob",
+        "File",
+        "ObjectURL"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "URL": [
+        "URL",
+        "URLSearchParams"
+      ],
+      "Graphics": [
+        "Canvas"
+      ],
+      "Navigation": [
+        "History"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/+esm",
+      "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js",
+      "https://plausible.io/js/script.js"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net",
+      "plausible.io"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "octave-explainer.html",
+    "path": "/tmp/tools/octave-explainer.html",
+    "apis": [
+      "Animation:RAF",
+      "Display:DevicePixelRatio",
+      "Graphics:Canvas",
+      "Media:WebAudio"
+    ],
+    "apisByCategory": {
+      "Media": [
+        "WebAudio"
+      ],
+      "Graphics": [
+        "Canvas"
+      ],
+      "Display": [
+        "DevicePixelRatio"
+      ],
+      "Animation": [
+        "RAF"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "omit-needless-words.html",
+    "path": "/tmp/tools/omit-needless-words.html",
+    "apis": [
+      "Data:JSON",
+      "Encoding:TextDecoder",
+      "Network:Fetch",
+      "Performance:PerformanceNow",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "localStorage"
+      ],
+      "Performance": [
+        "PerformanceNow"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Encoding": [
+        "TextDecoder"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "open-sauce-2025.html",
+    "path": "/tmp/tools/open-sauce-2025.html",
+    "apis": [
+      "Debug:Console",
+      "File:Blob",
+      "File:ObjectURL",
+      "Network:Fetch",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "File": [
+        "Blob",
+        "ObjectURL"
+      ],
+      "URL": [
+        "URL"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "openai-audio-output.html",
+    "path": "/tmp/tools/openai-audio-output.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Data:JSON",
+      "Debug:Console",
+      "Encoding:Base64",
+      "File:Blob",
+      "File:ObjectURL",
+      "Network:Fetch",
+      "Storage:localStorage",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "localStorage"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ],
+      "Encoding": [
+        "Base64"
+      ],
+      "File": [
+        "Blob",
+        "ObjectURL"
+      ],
+      "URL": [
+        "URL"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "openai-audio.html",
+    "path": "/tmp/tools/openai-audio.html",
+    "apis": [
+      "Data:JSON",
+      "Debug:Console",
+      "File:Blob",
+      "File:FileReader",
+      "File:ObjectURL",
+      "Media:MediaDevices",
+      "Media:WebAudio",
+      "Media:getUserMedia",
+      "Network:Fetch",
+      "Performance:PerformanceNow",
+      "Storage:localStorage",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "Media": [
+        "MediaDevices",
+        "getUserMedia",
+        "WebAudio"
+      ],
+      "Performance": [
+        "PerformanceNow"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "File": [
+        "ObjectURL",
+        "Blob",
+        "FileReader"
+      ],
+      "URL": [
+        "URL"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Storage": [
+        "localStorage"
+      ]
+    },
+    "cdnUrls": [
+      "https://esm.run/marked"
+    ],
+    "cdnDomains": [
+      "esm.run"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "openai-webrtc.html",
+    "path": "/tmp/tools/openai-webrtc.html",
+    "apis": [
+      "Animation:RAF",
+      "Data:JSON",
+      "Debug:Console",
+      "Media:MediaDevices",
+      "Media:WebAudio",
+      "Media:getUserMedia",
+      "Network:Fetch",
+      "Storage:localStorage",
+      "WebRTC:PeerConnection"
+    ],
+    "apisByCategory": {
+      "WebRTC": [
+        "PeerConnection"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Storage": [
+        "localStorage"
+      ],
+      "Media": [
+        "WebAudio",
+        "MediaDevices",
+        "getUserMedia"
+      ],
+      "Animation": [
+        "RAF"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "openfreemap-demo.html",
+    "path": "/tmp/tools/openfreemap-demo.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [
+      "https://unpkg.com/maplibre-gl/dist/maplibre-gl.css",
+      "https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"
+    ],
+    "cdnDomains": [
+      "unpkg.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "passkeys.html",
+    "path": "/tmp/tools/passkeys.html",
+    "apis": [
+      "Crypto:RandomValues",
+      "Crypto:WebCrypto",
+      "Data:JSON",
+      "Debug:Console",
+      "Encoding:Base64",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Encoding": [
+        "Base64"
+      ],
+      "Storage": [
+        "localStorage"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Crypto": [
+        "WebCrypto",
+        "RandomValues"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "paste-html-subset.html",
+    "path": "/tmp/tools/paste-html-subset.html",
+    "apis": [
+      "Clipboard:execCommand",
+      "Debug:Console",
+      "File:Blob",
+      "File:ObjectURL",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "File": [
+        "Blob",
+        "ObjectURL"
+      ],
+      "URL": [
+        "URL"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Clipboard": [
+        "execCommand"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "paste-rich-text.html",
+    "path": "/tmp/tools/paste-rich-text.html",
+    "apis": [
+      "Clipboard:execCommand"
+    ],
+    "apisByCategory": {
+      "Clipboard": [
+        "execCommand"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "percentage-recalculator.html",
+    "path": "/tmp/tools/percentage-recalculator.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "php-deserializer.html",
+    "path": "/tmp/tools/php-deserializer.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Data:JSON"
+    ],
+    "apisByCategory": {
+      "Data": [
+        "JSON"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/npm/php-serialize@5.0.1/+esm"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "pipfile.html",
+    "path": "/tmp/tools/pipfile.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Data:JSON"
+    ],
+    "apisByCategory": {
+      "Data": [
+        "JSON"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "pomodoro.html",
+    "path": "/tmp/tools/pomodoro.html",
+    "apis": [
+      "Animation:RAF",
+      "Data:JSON",
+      "Debug:Console",
+      "Performance:PerformanceNow",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "localStorage"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Performance": [
+        "PerformanceNow"
+      ],
+      "Animation": [
+        "RAF"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "progress.html",
+    "path": "/tmp/tools/progress.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "prompt-caching.html",
+    "path": "/tmp/tools/prompt-caching.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Data:JSON",
+      "Network:Fetch",
+      "Performance:Performance",
+      "Performance:PerformanceNow",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "localStorage"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Performance": [
+        "PerformanceNow",
+        "Performance"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "prompts-js.html",
+    "path": "/tmp/tools/prompts-js.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/npm/prompts-js"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "pyodide-bar-chart.html",
+    "path": "/tmp/tools/pyodide-bar-chart.html",
+    "apis": [
+      "Debug:Console"
+    ],
+    "apisByCategory": {
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "pypi-changelog.html",
+    "path": "/tmp/tools/pypi-changelog.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Debug:Console",
+      "Navigation:History",
+      "Network:Fetch",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "URL": [
+        "URLSearchParams"
+      ],
+      "Navigation": [
+        "History"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/npm/diff2html/bundles/css/diff2html.min.css",
+      "https://cdn.jsdelivr.net/npm/diff2html/bundles/js/diff2html.min.js",
+      "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net",
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "qr.html",
+    "path": "/tmp/tools/qr.html",
+    "apis": [
+      "DragDrop:DataTransfer",
+      "File:FileReader",
+      "Graphics:Canvas",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "DragDrop": [
+        "DataTransfer"
+      ],
+      "File": [
+        "FileReader"
+      ],
+      "Graphics": [
+        "Canvas"
+      ],
+      "URL": [
+        "URL"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "query-string-stripper.html",
+    "path": "/tmp/tools/query-string-stripper.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Clipboard:execCommand"
+    ],
+    "apisByCategory": {
+      "Clipboard": [
+        "Clipboard",
+        "execCommand"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "reading-time.html",
+    "path": "/tmp/tools/reading-time.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "render-claude-citations.html",
+    "path": "/tmp/tools/render-claude-citations.html",
+    "apis": [
+      "Data:JSON"
+    ],
+    "apisByCategory": {
+      "Data": [
+        "JSON"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "render-markdown.html",
+    "path": "/tmp/tools/render-markdown.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Clipboard:execCommand",
+      "Data:JSON",
+      "Debug:Console",
+      "Network:Fetch",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Debug": [
+        "Console"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Clipboard": [
+        "execCommand",
+        "Clipboard"
+      ],
+      "Storage": [
+        "localStorage"
+      ]
+    },
+    "cdnUrls": [
+      "https://plausible.io/js/plausible.js"
+    ],
+    "cdnDomains": [
+      "plausible.io"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "rich-text-to-markdown.html",
+    "path": "/tmp/tools/rich-text-to-markdown.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Selection:Selection"
+    ],
+    "apisByCategory": {
+      "Selection": [
+        "Selection"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "rtf-to-html.html",
+    "path": "/tmp/tools/rtf-to-html.html",
+    "apis": [
+      "Clipboard:execCommand"
+    ],
+    "apisByCategory": {
+      "Clipboard": [
+        "execCommand"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "schema-dsl.html",
+    "path": "/tmp/tools/schema-dsl.html",
+    "apis": [
+      "Data:JSON",
+      "Debug:Console",
+      "Performance:Performance",
+      "Performance:PerformanceNow"
+    ],
+    "apisByCategory": {
+      "Debug": [
+        "Console"
+      ],
+      "Performance": [
+        "PerformanceNow",
+        "Performance"
+      ],
+      "Data": [
+        "JSON"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "side-panel-dialog.html",
+    "path": "/tmp/tools/side-panel-dialog.html",
+    "apis": [
+      "Debug:Console"
+    ],
+    "apisByCategory": {
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "sloccount.html",
+    "path": "/tmp/tools/sloccount.html",
+    "apis": [
+      "Debug:Console",
+      "File:ObjectURL",
+      "Network:Fetch",
+      "URL:URL"
+    ],
+    "apisByCategory": {
+      "Debug": [
+        "Console"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "File": [
+        "ObjectURL"
+      ],
+      "URL": [
+        "URL"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net"
+    ],
+    "scriptSources": [
+      "./lib/webperl/webperl.js"
+    ],
+    "parseErrors": [],
+    "skippedScripts": [
+      {
+        "type": "text/perl",
+        "reason": "non-js type"
+      }
+    ]
+  },
+  {
+    "file": "social-media-cropper.html",
+    "path": "/tmp/tools/social-media-cropper.html",
+    "apis": [
+      "DragDrop:DataTransfer",
+      "File:FileReader",
+      "Graphics:Canvas"
+    ],
+    "apisByCategory": {
+      "DragDrop": [
+        "DataTransfer"
+      ],
+      "File": [
+        "FileReader"
+      ],
+      "Graphics": [
+        "Canvas"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css",
+      "https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "species-observation-map.html",
+    "path": "/tmp/tools/species-observation-map.html",
+    "apis": [
+      "Data:JSON",
+      "Debug:Console",
+      "Navigation:History",
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Navigation": [
+        "History"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css",
+      "https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css",
+      "https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css",
+      "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "speech-synthesis.html",
+    "path": "/tmp/tools/speech-synthesis.html",
+    "apis": [
+      "Speech:Synthesis"
+    ],
+    "apisByCategory": {
+      "Speech": [
+        "Synthesis"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "sql-pretty-printer.html",
+    "path": "/tmp/tools/sql-pretty-printer.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Debug:Console"
+    ],
+    "apisByCategory": {
+      "Clipboard": [
+        "Clipboard"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/sql-formatter/12.2.3/sql-formatter.min.js"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "sqlite-wasm.html",
+    "path": "/tmp/tools/sqlite-wasm.html",
+    "apis": [
+      "Debug:Console"
+    ],
+    "apisByCategory": {
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/npm/@sqlite.org/sqlite-wasm@3.46.1-build4/sqlite-wasm/jswasm/sqlite3.mjs"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "svg-progressive-render.html",
+    "path": "/tmp/tools/svg-progressive-render.html",
+    "apis": [
+      "Debug:Console",
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "svg-render.html",
+    "path": "/tmp/tools/svg-render.html",
+    "apis": [
+      "Clipboard:execCommand",
+      "Debug:Console",
+      "DragDrop:DataTransfer",
+      "File:Blob",
+      "File:FileReader",
+      "File:ObjectURL",
+      "Graphics:Canvas",
+      "Navigation:History",
+      "Network:Fetch",
+      "Selection:Selection",
+      "URL:URL",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "Debug": [
+        "Console"
+      ],
+      "Navigation": [
+        "History"
+      ],
+      "URL": [
+        "URLSearchParams",
+        "URL"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "DragDrop": [
+        "DataTransfer"
+      ],
+      "File": [
+        "FileReader",
+        "Blob",
+        "ObjectURL"
+      ],
+      "Graphics": [
+        "Canvas"
+      ],
+      "Selection": [
+        "Selection"
+      ],
+      "Clipboard": [
+        "execCommand"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "svg-sandbox.html",
+    "path": "/tmp/tools/svg-sandbox.html",
+    "apis": [
+      "Debug:Console",
+      "Encoding:Base64"
+    ],
+    "apisByCategory": {
+      "Encoding": [
+        "Base64"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "swagger-subset.html",
+    "path": "/tmp/tools/swagger-subset.html",
+    "apis": [
+      "Clipboard:execCommand",
+      "Data:JSON"
+    ],
+    "apisByCategory": {
+      "Data": [
+        "JSON"
+      ],
+      "Clipboard": [
+        "execCommand"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "tacopy-playground.html",
+    "path": "/tmp/tools/tacopy-playground.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "terminal-to-html.html",
+    "path": "/tmp/tools/terminal-to-html.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Data:JSON",
+      "Debug:Console",
+      "Network:Fetch",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Storage": [
+        "localStorage"
+      ],
+      "Data": [
+        "JSON"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "text-diff.html",
+    "path": "/tmp/tools/text-diff.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "text-indentation.html",
+    "path": "/tmp/tools/text-indentation.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "text-wrap-balance-nav.html",
+    "path": "/tmp/tools/text-wrap-balance-nav.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "tiff-orientation.html",
+    "path": "/tmp/tools/tiff-orientation.html",
+    "apis": [
+      "DragDrop:DataTransfer",
+      "File:FileReader"
+    ],
+    "apisByCategory": {
+      "DragDrop": [
+        "DataTransfer"
+      ],
+      "File": [
+        "FileReader"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "timezones.html",
+    "path": "/tmp/tools/timezones.html",
+    "apis": [
+      "Intl:DateTimeFormat",
+      "Intl:Internationalization",
+      "Navigation:History",
+      "Performance:PerformanceNow"
+    ],
+    "apisByCategory": {
+      "Intl": [
+        "Internationalization",
+        "DateTimeFormat"
+      ],
+      "Navigation": [
+        "History"
+      ],
+      "Performance": [
+        "PerformanceNow"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "token-usage.html",
+    "path": "/tmp/tools/token-usage.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "transfer-time.html",
+    "path": "/tmp/tools/transfer-time.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "transparent-png.html",
+    "path": "/tmp/tools/transparent-png.html",
+    "apis": [
+      "DragDrop:DataTransfer",
+      "File:FileReader",
+      "Graphics:Canvas",
+      "Graphics:ImageData"
+    ],
+    "apisByCategory": {
+      "Graphics": [
+        "Canvas",
+        "ImageData"
+      ],
+      "DragDrop": [
+        "DataTransfer"
+      ],
+      "File": [
+        "FileReader"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "unix-timestamp.html",
+    "path": "/tmp/tools/unix-timestamp.html",
+    "apis": [
+      "Performance:PerformanceNow"
+    ],
+    "apisByCategory": {
+      "Performance": [
+        "PerformanceNow"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "user-agent.html",
+    "path": "/tmp/tools/user-agent.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "view-pdf.html",
+    "path": "/tmp/tools/view-pdf.html",
+    "apis": [
+      "Debug:Console",
+      "Graphics:Canvas",
+      "Navigation:History",
+      "URL:URL",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "URL": [
+        "URL",
+        "URLSearchParams"
+      ],
+      "Navigation": [
+        "History"
+      ],
+      "Graphics": [
+        "Canvas"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "wikipedia-wikitext.html",
+    "path": "/tmp/tools/wikipedia-wikitext.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Navigation:History",
+      "Network:Fetch",
+      "URL:URL",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "Network": [
+        "Fetch"
+      ],
+      "URL": [
+        "URL",
+        "URLSearchParams"
+      ],
+      "Navigation": [
+        "History"
+      ],
+      "Clipboard": [
+        "Clipboard"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "word-counter.html",
+    "path": "/tmp/tools/word-counter.html",
+    "apis": [
+      "Data:JSON",
+      "Performance:PerformanceNow",
+      "Storage:localStorage"
+    ],
+    "apisByCategory": {
+      "Performance": [
+        "PerformanceNow"
+      ],
+      "Storage": [
+        "localStorage"
+      ],
+      "Data": [
+        "JSON"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "writing-style.html",
+    "path": "/tmp/tools/writing-style.html",
+    "apis": [
+      "Graphics:Canvas"
+    ],
+    "apisByCategory": {
+      "Graphics": [
+        "Canvas"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "xml-validator.html",
+    "path": "/tmp/tools/xml-validator.html",
+    "apis": [],
+    "apisByCategory": {},
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "yaml-explorer.html",
+    "path": "/tmp/tools/yaml-explorer.html",
+    "apis": [
+      "Data:JSON",
+      "Debug:Console",
+      "Encoding:Base64",
+      "Navigation:History",
+      "Network:Fetch"
+    ],
+    "apisByCategory": {
+      "Data": [
+        "JSON"
+      ],
+      "Encoding": [
+        "Base64"
+      ],
+      "Navigation": [
+        "History"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "Network": [
+        "Fetch"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.mjs"
+    ],
+    "cdnDomains": [
+      "cdnjs.cloudflare.com"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "youtube-thumbnails.html",
+    "path": "/tmp/tools/youtube-thumbnails.html",
+    "apis": [
+      "Clipboard:Clipboard",
+      "Debug:Console",
+      "Navigation:History",
+      "URL:URL",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "Clipboard": [
+        "Clipboard"
+      ],
+      "Debug": [
+        "Console"
+      ],
+      "URL": [
+        "URL",
+        "URLSearchParams"
+      ],
+      "Navigation": [
+        "History"
+      ]
+    },
+    "cdnUrls": [],
+    "cdnDomains": [],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  },
+  {
+    "file": "zip-wheel-explorer.html",
+    "path": "/tmp/tools/zip-wheel-explorer.html",
+    "apis": [
+      "Debug:Console",
+      "Navigation:History",
+      "Network:Fetch",
+      "URL:URLSearchParams"
+    ],
+    "apisByCategory": {
+      "URL": [
+        "URLSearchParams"
+      ],
+      "Navigation": [
+        "History"
+      ],
+      "Network": [
+        "Fetch"
+      ],
+      "Debug": [
+        "Console"
+      ]
+    },
+    "cdnUrls": [
+      "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"
+    ],
+    "cdnDomains": [
+      "cdn.jsdelivr.net"
+    ],
+    "scriptSources": [],
+    "parseErrors": [],
+    "skippedScripts": []
+  }
+]
