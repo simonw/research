@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTML Tokenizer Benchmark: WASM vs JavaScript</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            background: #007bff;
+            color: white;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        select, input {
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .results {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .result-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .result-card h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .metric:last-child {
+            border-bottom: none;
+        }
+        .metric-label {
+            font-weight: 500;
+        }
+        .metric-value {
+            font-family: monospace;
+            color: #007bff;
+        }
+        .winner {
+            background: #d4edda !important;
+        }
+        .loser {
+            background: #fff3cd !important;
+        }
+        #status {
+            text-align: center;
+            padding: 20px;
+            font-size: 18px;
+            color: #666;
+        }
+        #log {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 14px;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .chart-container {
+            height: 300px;
+            margin: 20px 0;
+        }
+        #comparison-chart {
+            width: 100%;
+            height: 100%;
+        }
+        .json-output {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>HTML Tokenizer Benchmark</h1>
+    <p style="text-align: center; color: #666;">Comparing Rust WASM tokenizer vs JavaScript tokenizer</p>
+
+    <div class="container">
+        <h2>Test Configuration</h2>
+        <div class="controls">
+            <label>
+                Iterations:
+                <input type="number" id="iterations" value="100" min="1" max="10000">
+            </label>
+            <label>
+                Test HTML Size:
+                <select id="htmlSize">
+                    <option value="small">Small (~1KB)</option>
+                    <option value="medium" selected>Medium (~10KB)</option>
+                    <option value="large">Large (~100KB)</option>
+                    <option value="xlarge">XL (~500KB)</option>
+                </select>
+            </label>
+            <button id="runBenchmark">Run Benchmark</button>
+            <button id="exportResults" disabled>Export JSON</button>
+        </div>
+        <div id="status">Ready to run benchmark</div>
+    </div>
+
+    <div class="container">
+        <h2>Results</h2>
+        <div class="results" id="results">
+            <div class="result-card" id="wasm-results">
+                <h3>WASM (Rust)</h3>
+                <div class="metric">
+                    <span class="metric-label">Total Time:</span>
+                    <span class="metric-value" id="wasm-total">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Avg per Run:</span>
+                    <span class="metric-value" id="wasm-avg">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Min:</span>
+                    <span class="metric-value" id="wasm-min">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Max:</span>
+                    <span class="metric-value" id="wasm-max">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Tokens:</span>
+                    <span class="metric-value" id="wasm-tokens">-</span>
+                </div>
+            </div>
+            <div class="result-card" id="js-results">
+                <h3>JavaScript</h3>
+                <div class="metric">
+                    <span class="metric-label">Total Time:</span>
+                    <span class="metric-value" id="js-total">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Avg per Run:</span>
+                    <span class="metric-value" id="js-avg">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Min:</span>
+                    <span class="metric-value" id="js-min">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Max:</span>
+                    <span class="metric-value" id="js-max">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Tokens:</span>
+                    <span class="metric-value" id="js-tokens">-</span>
+                </div>
+            </div>
+        </div>
+        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+            <h3 style="margin-top: 0;">Summary</h3>
+            <p id="summary">Run the benchmark to see results</p>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>Execution Log</h2>
+        <div id="log"></div>
+    </div>
+
+    <pre class="json-output" id="json-output"></pre>
+
+    <script type="module">
+        import init, { tokenize_html, count_tokens, WasmTokenizer } from './wasm-pkg/wasm_html_tokenizer.js';
+        import { stream } from './js-src/stream.js';
+
+        let wasmReady = false;
+        let benchmarkResults = null;
+
+        // Initialize WASM
+        async function initWasm() {
+            try {
+                await init();
+                wasmReady = true;
+                log('WASM module loaded successfully');
+            } catch (e) {
+                log('ERROR: Failed to load WASM module: ' + e.message);
+            }
+        }
+
+        function log(message) {
+            const logEl = document.getElementById('log');
+            const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+            logEl.textContent += `[${timestamp}] ${message}\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function setStatus(message) {
+            document.getElementById('status').textContent = message;
+        }
+
+        // Generate test HTML based on size
+        function generateTestHTML(size) {
+            const base = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Document</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="app.js"></script>
+</head>
+<body>
+    <header id="main-header" class="header header-dark">
+        <nav class="navigation">
+            <ul class="nav-list">
+                <li class="nav-item"><a href="/" class="nav-link active">Home</a></li>
+                <li class="nav-item"><a href="/about" class="nav-link">About</a></li>
+                <li class="nav-item"><a href="/contact" class="nav-link">Contact</a></li>
+            </ul>
+        </nav>
+    </header>
+    <main role="main" data-page="home">
+        <article class="content">
+            <h1>Welcome to the Test Page</h1>
+            <p class="intro">This is a sample paragraph with <strong>bold text</strong> and <em>italic text</em>.</p>
+            <div class="widget" data-widget-type="gallery" data-config='{"autoplay": true, "delay": 3000}'>
+                <img src="image1.jpg" alt="Image 1" loading="lazy" />
+                <img src="image2.jpg" alt="Image 2" loading="lazy" />
+            </div>
+            <!-- This is a comment -->
+            <section id="features">
+                <h2>Features</h2>
+                <ul>
+                    <li>Fast performance</li>
+                    <li>Easy to use</li>
+                    <li>Cross-platform</li>
+                </ul>
+            </section>
+            <form action="/submit" method="POST" enctype="multipart/form-data">
+                <input type="text" name="username" placeholder="Enter username" required />
+                <input type="email" name="email" placeholder="Enter email" />
+                <textarea name="message" rows="5" cols="30">Default text</textarea>
+                <button type="submit">Submit</button>
+            </form>
+            <table class="data-table">
+                <thead><tr><th>ID</th><th>Name</th><th>Value</th></tr></thead>
+                <tbody>
+                    <tr><td>1</td><td>Item A</td><td>100</td></tr>
+                    <tr><td>2</td><td>Item B</td><td>200</td></tr>
+                </tbody>
+            </table>
+        </article>
+    </main>
+    <footer>&copy; 2024 Test Company</footer>
+</body>
+</html>`;
+
+            let multiplier;
+            switch(size) {
+                case 'small': multiplier = 1; break;
+                case 'medium': multiplier = 10; break;
+                case 'large': multiplier = 100; break;
+                case 'xlarge': multiplier = 500; break;
+                default: multiplier = 10;
+            }
+
+            let html = base;
+            for (let i = 1; i < multiplier; i++) {
+                html += `<section class="extra-section-${i}"><h3>Section ${i}</h3><p>Content for section ${i} with <a href="#link${i}">a link</a> and some more text.</p></section>`;
+            }
+
+            return html;
+        }
+
+        // JS tokenizer benchmark
+        function runJSTokenizer(html) {
+            let tokenCount = 0;
+            for (const [event, data] of stream(html)) {
+                tokenCount++;
+            }
+            return tokenCount;
+        }
+
+        // WASM tokenizer benchmark
+        function runWASMTokenizer(html) {
+            return count_tokens(html);
+        }
+
+        // Calculate stats
+        function calculateStats(times) {
+            const sorted = [...times].sort((a, b) => a - b);
+            return {
+                total: times.reduce((a, b) => a + b, 0),
+                avg: times.reduce((a, b) => a + b, 0) / times.length,
+                min: sorted[0],
+                max: sorted[sorted.length - 1],
+                median: sorted[Math.floor(sorted.length / 2)],
+                stdDev: Math.sqrt(times.reduce((acc, t) => acc + Math.pow(t - (times.reduce((a, b) => a + b, 0) / times.length), 2), 0) / times.length)
+            };
+        }
+
+        // Main benchmark function
+        async function runBenchmark() {
+            if (!wasmReady) {
+                log('ERROR: WASM not initialized');
+                return;
+            }
+
+            const iterations = parseInt(document.getElementById('iterations').value);
+            const htmlSize = document.getElementById('htmlSize').value;
+
+            document.getElementById('runBenchmark').disabled = true;
+            document.getElementById('log').textContent = '';
+
+            log(`Starting benchmark with ${iterations} iterations`);
+            log(`HTML size: ${htmlSize}`);
+
+            const testHTML = generateTestHTML(htmlSize);
+            log(`Generated test HTML: ${testHTML.length} characters`);
+
+            setStatus('Warming up...');
+
+            // Warmup runs
+            log('Warming up WASM...');
+            for (let i = 0; i < 5; i++) {
+                runWASMTokenizer(testHTML);
+            }
+
+            log('Warming up JS...');
+            for (let i = 0; i < 5; i++) {
+                runJSTokenizer(testHTML);
+            }
+
+            // WASM benchmark
+            setStatus('Running WASM benchmark...');
+            log('Running WASM benchmark...');
+            const wasmTimes = [];
+            let wasmTokens = 0;
+
+            for (let i = 0; i < iterations; i++) {
+                const start = performance.now();
+                wasmTokens = runWASMTokenizer(testHTML);
+                const end = performance.now();
+                wasmTimes.push(end - start);
+
+                if ((i + 1) % Math.ceil(iterations / 10) === 0) {
+                    log(`WASM: ${i + 1}/${iterations} iterations completed`);
+                }
+            }
+
+            // JS benchmark
+            setStatus('Running JavaScript benchmark...');
+            log('Running JavaScript benchmark...');
+            const jsTimes = [];
+            let jsTokens = 0;
+
+            for (let i = 0; i < iterations; i++) {
+                const start = performance.now();
+                jsTokens = runJSTokenizer(testHTML);
+                const end = performance.now();
+                jsTimes.push(end - start);
+
+                if ((i + 1) % Math.ceil(iterations / 10) === 0) {
+                    log(`JS: ${i + 1}/${iterations} iterations completed`);
+                }
+            }
+
+            // Calculate results
+            const wasmStats = calculateStats(wasmTimes);
+            const jsStats = calculateStats(jsTimes);
+
+            // Display results
+            document.getElementById('wasm-total').textContent = `${wasmStats.total.toFixed(2)}ms`;
+            document.getElementById('wasm-avg').textContent = `${wasmStats.avg.toFixed(3)}ms`;
+            document.getElementById('wasm-min').textContent = `${wasmStats.min.toFixed(3)}ms`;
+            document.getElementById('wasm-max').textContent = `${wasmStats.max.toFixed(3)}ms`;
+            document.getElementById('wasm-tokens').textContent = wasmTokens;
+
+            document.getElementById('js-total').textContent = `${jsStats.total.toFixed(2)}ms`;
+            document.getElementById('js-avg').textContent = `${jsStats.avg.toFixed(3)}ms`;
+            document.getElementById('js-min').textContent = `${jsStats.min.toFixed(3)}ms`;
+            document.getElementById('js-max').textContent = `${jsStats.max.toFixed(3)}ms`;
+            document.getElementById('js-tokens').textContent = jsTokens;
+
+            // Highlight winner
+            const wasmCard = document.getElementById('wasm-results');
+            const jsCard = document.getElementById('js-results');
+            wasmCard.classList.remove('winner', 'loser');
+            jsCard.classList.remove('winner', 'loser');
+
+            if (wasmStats.avg < jsStats.avg) {
+                wasmCard.classList.add('winner');
+                jsCard.classList.add('loser');
+            } else {
+                jsCard.classList.add('winner');
+                wasmCard.classList.add('loser');
+            }
+
+            // Summary
+            const speedup = jsStats.avg / wasmStats.avg;
+            const winner = wasmStats.avg < jsStats.avg ? 'WASM' : 'JavaScript';
+            const factor = Math.max(speedup, 1/speedup).toFixed(2);
+
+            document.getElementById('summary').innerHTML = `
+                <strong>${winner}</strong> is faster by <strong>${factor}x</strong><br>
+                WASM avg: ${wasmStats.avg.toFixed(3)}ms vs JS avg: ${jsStats.avg.toFixed(3)}ms<br>
+                HTML size: ${testHTML.length.toLocaleString()} characters | Iterations: ${iterations}
+            `;
+
+            // Store results for export
+            benchmarkResults = {
+                timestamp: new Date().toISOString(),
+                config: {
+                    iterations,
+                    htmlSize,
+                    htmlLength: testHTML.length
+                },
+                wasm: {
+                    ...wasmStats,
+                    tokens: wasmTokens,
+                    times: wasmTimes
+                },
+                js: {
+                    ...jsStats,
+                    tokens: jsTokens,
+                    times: jsTimes
+                },
+                speedup: speedup,
+                winner: winner
+            };
+
+            document.getElementById('json-output').textContent = JSON.stringify(benchmarkResults, null, 2);
+
+            log(`\nBenchmark complete!`);
+            log(`WASM avg: ${wasmStats.avg.toFixed(3)}ms`);
+            log(`JS avg: ${jsStats.avg.toFixed(3)}ms`);
+            log(`${winner} wins by ${factor}x`);
+
+            setStatus('Benchmark complete!');
+            document.getElementById('runBenchmark').disabled = false;
+            document.getElementById('exportResults').disabled = false;
+        }
+
+        function exportResults() {
+            if (!benchmarkResults) return;
+
+            const blob = new Blob([JSON.stringify(benchmarkResults, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `benchmark-results-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Initialize
+        document.getElementById('runBenchmark').addEventListener('click', runBenchmark);
+        document.getElementById('exportResults').addEventListener('click', exportResults);
+
+        initWasm().then(() => {
+            setStatus('Ready to run benchmark');
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "name": "wasm_html_tokenizer",
+  "type": "module",
+  "collaborators": [
+    "WASM Port"
+  ],
+  "description": "A high-performance HTML5 tokenizer compiled to WebAssembly",
+  "version": "0.1.0",
+  "files": [
+    "wasm_html_tokenizer_bg.wasm",
+    "wasm_html_tokenizer.js",
+    "wasm_html_tokenizer.d.ts"
+  ],
+  "main": "wasm_html_tokenizer.js",
+  "types": "wasm_html_tokenizer.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
