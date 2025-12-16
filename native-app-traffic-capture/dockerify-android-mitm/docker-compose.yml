@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  androidmitm:
+    build: .
+    container_name: dockerify-android-mitm
+    privileged: true
+    devices:
+      - /dev/kvm
+    ports:
+      - "5555:5555"   # ADB
+      - "8000:8000"   # ws-scrcpy web UI
+      - "8080:8080"   # mitmproxy proxy
+      - "8081:8081"   # mitmproxy web UI
+    environment:
+      - DNS=one.one.one.one
+      - RAM_SIZE=8192
+      - SCREEN_RESOLUTION=1080x1920
+      - SCREEN_DENSITY=420
+      - ROOT_SETUP=1
+      - GAPPS_SETUP=1
+      - ANDROID_PROXY_HOST=10.0.2.2
+      - ANDROID_PROXY_PORT=8080
+    volumes:
+      - ./certs:/root/.mitmproxy
+      - ./frida-scripts:/root/frida-scripts
+      - android-data:/data
+    restart: unless-stopped
+
+volumes:
+  android-data:
+    driver: local
