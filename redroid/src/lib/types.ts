@@ -10,6 +10,17 @@ export interface Session {
   kasmReady: boolean;
 }
 
+// Progress tracking for VM startup stages
+export interface VMProgress {
+  stage: string;
+  step: number;
+  totalSteps: number;
+  message: string;
+  percent: number;
+  timestamp?: number;
+  tunnelUrl?: string;  // Cloudflare tunnel URL for HTTPS access
+}
+
 export interface StartSessionRequest {
   userId?: string;
 }
@@ -22,6 +33,7 @@ export interface StartSessionResponse {
 export interface SessionStatusResponse {
   session: Session;
   url: string | null;
+  progress: VMProgress | null;
 }
 
 export interface EndSessionRequest {
@@ -41,3 +53,4 @@ export interface VMConfig {
   diskSizeGb: number;
   ttlMinutes: number;
 }
+

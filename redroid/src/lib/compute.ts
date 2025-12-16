@@ -1,6 +1,8 @@
 import { InstancesClient, ZoneOperationsClient } from '@google-cloud/compute';
 import { v4 as uuidv4 } from 'uuid';
-import { VMConfig } from './types';
+import https from 'https';
+import http from 'http';
+import { VMConfig, VMProgress } from './types';
 import { generateStartupScript } from './startup-script';
 
 // Parse GCP credentials from environment variable
@@ -182,28 +184,104 @@ async function waitForOperation(operationName: string, zone: string): Promise<vo
   }
 }
 
-// Check if noVNC is ready by attempting to connect to /vnc.html
+// Check if ws-scrcpy is ready by attempting to connect to the root
 export async function checkKasmReady(ip: string): Promise<boolean> {
-  try {
-    // Use AbortController for timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-    
-    // Check /vnc.html specifically - that's the noVNC entry point
-    const response = await fetch(`https://${ip}/vnc.html`, {
-      method: 'HEAD',
-      signal: controller.signal,
-      // @ts-expect-error - Node.js fetch option for self-signed certs
-      rejectUnauthorized: false,
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      resolve(false);
+    }, 5000);
+
+    const req = https.request(
+      {
+        hostname: ip,
+        port: 443,
+        path: '/',
+        method: 'HEAD',
+        rejectUnauthorized: false, // Accept self-signed certs
+        timeout: 5000,
+      },
+      (res) => {
+        clearTimeout(timeout);
+        console.log('[COMPUTE] checkKasmReady response status:', res.statusCode);
+        // Accept any successful response (2xx, 3xx redirects, or 401 auth required)
+        const status = res.statusCode || 0;
+        resolve(status >= 200 && status < 500);
+      }
+    );
+
+    req.on('error', (error) => {
+      clearTimeout(timeout);
+      console.log('[COMPUTE] checkKasmReady error:', error.message);
+      resolve(false);
     });
-    
-    clearTimeout(timeoutId);
-    console.log('[COMPUTE] checkKasmReady response status:', response.status);
-    return response.ok || response.status === 401 || response.status === 302;
-  } catch (error) {
-    console.log('[COMPUTE] checkKasmReady error:', error);
-    return false;
-  }
+
+    req.on('timeout', () => {
+      clearTimeout(timeout);
+      req.destroy();
+      resolve(false);
+    });
+
+    req.end();
+  });
+}
+
+// Fetch detailed progress from the VM's status.json endpoint
+export async function fetchVMProgress(ip: string): Promise<VMProgress | null> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      resolve(null);
+    }, 3000);
+
+    // Use HTTP on port 8080 (simple Python status server)
+    const req = http.request(
+      {
+        hostname: ip,
+        port: 8080,
+        path: '/status.json',
+        method: 'GET',
+        timeout: 3000,
+      },
+      (res) => {
+        clearTimeout(timeout);
+        
+        if (!res.statusCode || res.statusCode !== 200) {
+          console.log('[COMPUTE] fetchVMProgress: status.json not available yet');
+          resolve(null);
+          return;
+        }
+
+        let data = '';
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            console.log('[COMPUTE] fetchVMProgress:', json);
+            resolve(json);
+          } catch (e) {
+            console.log('[COMPUTE] fetchVMProgress parse error:', e);
+            resolve(null);
+          }
+        });
+      }
+    );
+
+    req.on('error', (error) => {
+      clearTimeout(timeout);
+      console.log('[COMPUTE] fetchVMProgress error:', error.message);
+      resolve(null);
+    });
+
+    req.on('timeout', () => {
+      clearTimeout(timeout);
+      req.destroy();
+      resolve(null);
+    });
+
+    req.end();
+  });
 }
 
 // List all redroid-* VMs from GCP (source of truth for active sessions)

@@ -4,7 +4,9 @@
  * 2. Loads kernel modules (binder_linux, ashmem)
  * 3. Sets up ReDroid (Android 13)
  * 4. Builds and runs ws-scrcpy from source for browser access
- * 5. Schedules auto-shutdown after TTL
+ * 5. Starts Cloudflare Tunnel for valid HTTPS without firewall changes
+ * 6. Schedules auto-shutdown after TTL
+ * 7. Reports progress via /status.json for frontend polling
  */
 export function generateStartupScript(ttlMinutes: number): string {
   return `#!/bin/bash
@@ -14,11 +16,50 @@ set -e
 exec > >(tee /var/log/startup-script.log) 2>&1
 echo "Starting ReDroid setup at $(date)"
 
-# Update system
+# Progress tracking function
+# Writes status to /var/www/html/status.json for frontend polling
+mkdir -p /var/www/html
+update_status() {
+  local stage="$1"
+  local step="$2"
+  local total_steps="$3"
+  local message="$4"
+  local tunnel_url="\${5:-}"
+  local percent=$((step * 100 / total_steps))
+  local timestamp=$(date +%s000)
+  
+  cat > /var/www/html/status.json << EOF
+{
+  "stage": "$stage",
+  "step": $step,
+  "totalSteps": $total_steps,
+  "message": "$message",
+  "percent": $percent,
+  "timestamp": $timestamp,
+  "tunnelUrl": "$tunnel_url"
+}
+EOF
+  echo "[PROGRESS] Step $step/$total_steps ($percent%): $message"
+}
+
+TOTAL_STEPS=10
+
+# Start a simple HTTP server to serve status.json for progress polling
+# This runs in the background on port 8080
+cd /var/www/html
+nohup python3 -m http.server 8080 --bind 0.0.0.0 > /var/log/status-server.log 2>&1 &
+cd /
+
+# Open firewall for status server
+ufw allow 8080/tcp || true
+
+# Step 1: Update system
+update_status "updating_system" 1 $TOTAL_STEPS "Updating system packages..."
 apt-get update
 apt-get upgrade -y
 
-# Install Docker
+# Step 2: Install Docker
+update_status "installing_docker" 2 $TOTAL_STEPS "Installing Docker..."
 apt-get install -y ca-certificates curl gnupg lsb-release
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
@@ -33,7 +74,8 @@ systemctl enable docker
 # Install ADB for device connection
 apt-get install -y adb
 
-# Install kernel modules for ReDroid
+# Step 3: Load kernel modules
+update_status "loading_modules" 3 $TOTAL_STEPS "Loading kernel modules..."
 apt-get install -y linux-modules-extra-$(uname -r) || true
 
 # Load binder and ashmem modules
@@ -44,12 +86,12 @@ modprobe ashmem_linux || echo "ashmem not available, ReDroid will use memfd"
 mkdir -p /dev/binderfs
 mount -t binder binder /dev/binderfs || echo "binderfs mount failed, continuing..."
 
-# Pull ReDroid image (Android 13)
-echo "Pulling ReDroid image..."
+# Step 4: Pull ReDroid image
+update_status "pulling_image" 4 $TOTAL_STEPS "Pulling ReDroid Docker image..."
 docker pull redroid/redroid:13.0.0-latest
 
-# Run ReDroid container with display settings
-echo "Starting ReDroid container..."
+# Step 5: Start ReDroid container
+update_status "starting_container" 5 $TOTAL_STEPS "Starting ReDroid container..."
 docker run -d --name redroid \\
   --privileged \\
   -v /dev/binderfs:/dev/binderfs \\
@@ -60,8 +102,8 @@ docker run -d --name redroid \\
   androidboot.redroid_width=1080 \\
   androidboot.redroid_height=1920
 
-# Wait for ReDroid to start and ADB to be available
-echo "Waiting for ReDroid to initialize..."
+# Step 6: Wait for Android boot
+update_status "waiting_boot" 6 $TOTAL_STEPS "Waiting for Android to boot..."
 sleep 30
 
 # Wait for ReDroid boot to complete
@@ -77,7 +119,8 @@ done
 # Connect ADB to ReDroid
 adb connect 127.0.0.1:5555 || echo "ADB connect will be retried"
 
-# Install build tools for native npm modules (node-pty, etc.)
+# Step 7: Install build tools
+update_status "building_scrcpy" 7 $TOTAL_STEPS "Installing build tools for ws-scrcpy..."
 apt-get install -y build-essential python3 git
 
 # Install Node.js for ws-scrcpy build
@@ -93,54 +136,56 @@ cd ws-scrcpy
 npm install
 npm run dist
 
-# Start ws-scrcpy server
-echo "Starting ws-scrcpy..."
+# Step 8: Start ws-scrcpy
+update_status "starting_scrcpy" 8 $TOTAL_STEPS "Starting ws-scrcpy streaming server..."
 nohup node dist/index.js --port 8000 --hostname 0.0.0.0 --adb-host 127.0.0.1 --adb-port 5037 > /var/log/ws-scrcpy.log 2>&1 &
 
 # Wait for ws-scrcpy to start
 sleep 5
 
-# Install nginx for HTTPS reverse proxy
-apt-get install -y nginx
+# Step 9: Install and start Cloudflare Tunnel
+update_status "starting_tunnel" 9 $TOTAL_STEPS "Starting Cloudflare Tunnel for HTTPS..."
 
-# Generate self-signed certificate
-mkdir -p /etc/nginx/ssl
-openssl req -x509 -nodes -days 1 -newkey rsa:2048 \\
-  -keyout /etc/nginx/ssl/nginx.key \\
-  -out /etc/nginx/ssl/nginx.crt \\
-  -subj "/CN=redroid-session"
+# Download and install cloudflared
+curl -L --output /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+chmod +x /usr/local/bin/cloudflared
 
-# Configure nginx as HTTPS reverse proxy for ws-scrcpy (port 8000)
-cat > /etc/nginx/sites-available/default << 'NGINX_CONF'
-server {
-    listen 443 ssl;
-    ssl_certificate /etc/nginx/ssl/nginx.crt;
-    ssl_certificate_key /etc/nginx/ssl/nginx.key;
+# Start cloudflared tunnel in quick mode (free, no account needed)
+# This creates a temporary URL like https://random-name.trycloudflare.com
+# The --url flag tells it to proxy to local ws-scrcpy
+nohup /usr/local/bin/cloudflared tunnel --url http://localhost:8000 > /var/log/cloudflared.log 2>&1 &
 
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_read_timeout 86400;
-    }
-}
+# Wait for cloudflared to start and get the tunnel URL
+echo "Waiting for Cloudflare tunnel to initialize..."
+sleep 10
 
-server {
-    listen 80;
-    return 301 https://$host$request_uri;
-}
-NGINX_CONF
+# Extract the tunnel URL from cloudflared logs
+TUNNEL_URL=""
+for i in {1..30}; do
+  TUNNEL_URL=$(grep -o 'https://[^[:space:]]*\\.trycloudflare\\.com' /var/log/cloudflared.log 2>/dev/null | head -1 || echo "")
+  if [ -n "$TUNNEL_URL" ]; then
+    echo "Cloudflare tunnel URL: $TUNNEL_URL"
+    break
+  fi
+  echo "Waiting for tunnel URL... attempt $i/30"
+  sleep 2
+done
 
-# Restart nginx
-systemctl restart nginx
+if [ -z "$TUNNEL_URL" ]; then
+  echo "WARNING: Could not get Cloudflare tunnel URL, falling back to direct IP"
+  EXTERNAL_IP=$(curl -s http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip -H "Metadata-Flavor: Google")
+  TUNNEL_URL="http://$EXTERNAL_IP:8000"
+fi
 
-# Open firewall ports
-ufw allow 443/tcp || true
+# Save tunnel URL for API to read
+echo "$TUNNEL_URL" > /var/www/html/tunnel_url.txt
+
+# Open firewall ports (for direct access fallback and ADB)
 ufw allow 5555/tcp || true
 ufw allow 8000/tcp || true
+
+# Step 10: All done!
+update_status "ready" 10 $TOTAL_STEPS "ReDroid is ready!" "$TUNNEL_URL"
 
 # Schedule auto-shutdown after TTL
 echo "shutdown -h now" | at now + ${ttlMinutes} minutes || (
@@ -149,9 +194,9 @@ echo "shutdown -h now" | at now + ${ttlMinutes} minutes || (
 )
 
 echo "=== ReDroid setup complete at $(date) ==="
-echo "Access Android via: https://<VM_IP>"
+echo "Access Android via: $TUNNEL_URL"
 echo "ADB connect via: adb connect <VM_IP>:5555"
-echo "Direct ws-scrcpy: http://<VM_IP>:8000"
+echo "Direct ws-scrcpy (fallback): http://<VM_IP>:8000"
 
 # List running containers for debug
 docker ps

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getVMStatus, checkKasmReady } from '@/lib/compute';
+import { getVMStatus, checkKasmReady, fetchVMProgress } from '@/lib/compute';
 
 // GET /api/session/[id] - Get session status by querying GCP directly
 // The ID can be a full session ID or the vmName
@@ -26,15 +26,33 @@ export async function GET(
     // Determine session status based on VM status
     let sessionStatus: 'starting' | 'running' | 'ended' | 'error' = 'starting';
     let kasmReady = false;
+    let progress = null;
     
     if (vmStatus.status === 'RUNNING' && vmStatus.ip) {
-      // Check if Kasm/noVNC is ready
-      kasmReady = await checkKasmReady(vmStatus.ip);
-      sessionStatus = kasmReady ? 'running' : 'starting';
+      // Fetch detailed progress from the VM
+      progress = await fetchVMProgress(vmStatus.ip);
+      
+      // Check if emulator is ready (status.json shows ready stage)
+      if (progress?.stage === 'ready') {
+        kasmReady = true;
+        sessionStatus = 'running';
+      } else {
+        // Fall back to checking ws-scrcpy endpoint
+        kasmReady = await checkKasmReady(vmStatus.ip);
+        sessionStatus = kasmReady ? 'running' : 'starting';
+      }
     } else if (vmStatus.status === 'TERMINATED' || vmStatus.status === 'STOPPED') {
       sessionStatus = 'ended';
     } else if (vmStatus.status === 'STAGING' || vmStatus.status === 'PROVISIONING') {
       sessionStatus = 'starting';
+      // Provide early stage progress when VM is still provisioning
+      progress = {
+        stage: 'provisioning',
+        step: 0,
+        totalSteps: 10,
+        message: 'Provisioning virtual machine...',
+        percent: 0,
+      };
     }
     
     // Build a session-like response from GCP data
@@ -52,9 +70,11 @@ export async function GET(
     
     return NextResponse.json({
       session,
-      url: session.ip && session.status === 'running' 
-        ? `https://${session.ip}/vnc.html` 
-        : null,
+      // Use Cloudflare tunnel URL for valid HTTPS (from status.json)
+      url: progress?.tunnelUrl || (session.ip && session.status === 'running' 
+        ? `http://${session.ip}:8000`  // Fallback to direct ws-scrcpy
+        : null),
+      progress,
     });
   } catch (error) {
     console.error('[SESSION STATUS] Error getting session status:', error);
