@@ -187,11 +187,20 @@ ufw allow 8000/tcp || true
 # Step 10: All done!
 update_status "ready" 10 $TOTAL_STEPS "ReDroid is ready!" "$TUNNEL_URL"
 
-# Schedule auto-shutdown after TTL
-echo "shutdown -h now" | at now + ${ttlMinutes} minutes || (
-  # Fallback if 'at' is not available
-  (sleep ${ttlMinutes * 60} && shutdown -h now) &
-)
+# Schedule auto-DELETE after TTL (not just shutdown - we want the VM completely removed)
+# Get VM metadata for self-deletion
+INSTANCE_NAME=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/name" -H "Metadata-Flavor: Google")
+ZONE=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/zone" -H "Metadata-Flavor: Google" | awk -F'/' '{print $NF}')
+PROJECT=$(curl -s "http://metadata.google.internal/computeMetadata/v1/project/project-id" -H "Metadata-Flavor: Google")
+
+echo "VM will self-delete in ${ttlMinutes} minutes: $INSTANCE_NAME in $ZONE"
+
+# Use 'at' scheduler or fallback to sleep
+(
+  sleep $((${ttlMinutes} * 60))
+  echo "TTL expired - deleting VM $INSTANCE_NAME"
+  gcloud compute instances delete "$INSTANCE_NAME" --zone="$ZONE" --project="$PROJECT" --quiet
+) &
 
 echo "=== ReDroid setup complete at $(date) ==="
 echo "Access Android via: $TUNNEL_URL"

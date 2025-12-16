@@ -68,12 +68,36 @@ export async function GET(
       kasmReady,
     };
     
+    // Build stream URL with auto-connect parameters
+    // ws-scrcpy uses URL hash params: #!action=stream&udid=...&player=...&ws=...
+    const buildStreamUrl = (baseUrl: string): string => {
+      const udid = 'emulator-5554';  // Default redroid device ID
+      
+      // Build the WebSocket proxy URL (required for streaming)
+      const wsProxyParams = new URLSearchParams({
+        action: 'proxy-adb',
+        remote: 'tcp:8886',
+        udid: udid,
+      });
+      const wsUrl = `wss://${new URL(baseUrl).host}/?${wsProxyParams.toString()}`;
+      
+      // Build the stream URL hash params
+      const params = new URLSearchParams({
+        action: 'stream',
+        udid: udid,
+        player: 'webcodecs',     // Best performance in modern browsers
+        ws: wsUrl,
+      });
+      return `${baseUrl}/#!${params.toString()}`;
+    };
+
+    const baseUrl = progress?.tunnelUrl || (session.ip && session.status === 'running' 
+      ? `http://${session.ip}:8000`  // Fallback to direct ws-scrcpy
+      : null);
+
     return NextResponse.json({
       session,
-      // Use Cloudflare tunnel URL for valid HTTPS (from status.json)
-      url: progress?.tunnelUrl || (session.ip && session.status === 'running' 
-        ? `http://${session.ip}:8000`  // Fallback to direct ws-scrcpy
-        : null),
+      url: baseUrl ? buildStreamUrl(baseUrl) : null,
       progress,
     });
   } catch (error) {

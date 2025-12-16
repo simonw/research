@@ -92,6 +92,11 @@ export function PhoneFrame({ status, progress, streamUrl, vmName }: PhoneFramePr
                             className="w-full h-full border-0"
                             allow="autoplay; fullscreen"
                             title={`Android Emulator - ${vmName}`}
+                            tabIndex={0}
+                            onLoad={(e) => {
+                                // Auto-focus iframe to enable keyboard input
+                                (e.target as HTMLIFrameElement).focus();
+                            }}
                         />
                     )}
                 </div>
