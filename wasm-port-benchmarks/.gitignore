@@ -1,0 +1,8 @@
+# Dependencies
+node_modules/
+
+# Fetched code (not part of this project)
+js-src/
+
+# Rust build artifacts
+rust-tokenizer/target/
