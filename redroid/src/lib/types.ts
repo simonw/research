@@ -19,6 +19,7 @@ export interface VMProgress {
   percent: number;
   timestamp?: number;
   tunnelUrl?: string;  // Cloudflare tunnel URL for HTTPS access
+  elapsedSeconds?: number;  // Time elapsed since startup began
 }
 
 export interface StartSessionRequest {

@@ -72,7 +72,7 @@ export function PhoneFrame({ status, progress, streamUrl, vmName }: PhoneFramePr
 
                             {/* Stage indicator dots */}
                             <div className="flex gap-1.5 mt-6">
-                                {Array.from({ length: 10 }).map((_, i) => (
+                                {Array.from({ length: 11 }).map((_, i) => (
                                     <div
                                         key={i}
                                         className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${progress && i < progress.step
