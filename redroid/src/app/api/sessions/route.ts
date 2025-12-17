@@ -19,18 +19,32 @@ export async function GET() {
       )));
     }
     
-    // Filter to only running/provisioning VMs and map to session-like objects
-    const activeSessions = vms
-      .filter(vm => vm.status === 'RUNNING' || vm.status === 'STAGING' || vm.status === 'PROVISIONING')
-      .map(vm => ({
-        vmName: vm.name,
-        status: vm.status === 'RUNNING' ? 'running' : 'starting',
-        ip: vm.ip,
-        zone: vm.zone,
-        createdAt: vm.createdAt ? new Date(vm.createdAt).getTime() : Date.now(),
-      }));
+    // Map GCP VM status to user-friendly status
+    const mapStatus = (gcpStatus: string): string => {
+      switch (gcpStatus) {
+        case 'RUNNING': return 'running';
+        case 'STAGING': return 'staging';
+        case 'PROVISIONING': return 'provisioning';
+        case 'STOPPING': return 'stopping';
+        case 'TERMINATED': return 'terminated';
+        case 'STOPPED': return 'stopped';
+        case 'SUSPENDED': return 'suspended';
+        case 'SUSPENDING': return 'suspending';
+        default: return gcpStatus.toLowerCase();
+      }
+    };
+
+    // Return ALL VMs so UI can show starting, stopping, etc. statuses
+    const allSessions = vms.map(vm => ({
+      vmName: vm.name,
+      status: mapStatus(vm.status),
+      gcpStatus: vm.status, // Include raw GCP status for debugging
+      ip: vm.ip,
+      zone: vm.zone,
+      createdAt: vm.createdAt ? new Date(vm.createdAt).getTime() : Date.now(),
+    }));
     
-    return NextResponse.json({ sessions: activeSessions });
+    return NextResponse.json({ sessions: allSessions });
   } catch (error) {
     console.error('[SESSIONS] Error listing sessions:', error);
     return NextResponse.json(

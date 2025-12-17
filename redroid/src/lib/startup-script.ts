@@ -51,7 +51,7 @@ EOF
   echo "[PROGRESS] Step \$step/\$total_steps (\$percent%) [\${elapsed}s]: \$message"
 }
 
-TOTAL_STEPS=11
+TOTAL_STEPS=13
 
 # Start a simple HTTP server to serve status.json for progress polling
 # This runs in the background on port 8080
@@ -97,7 +97,7 @@ mount -t binder binder /dev/binderfs || echo "binderfs mount failed, continuing.
 
 # Step 4: Pull ReDroid image
 update_status "pulling_image" 4 $TOTAL_STEPS "Pulling ReDroid Docker image..."
-docker pull redroid/redroid:13.0.0-latest
+docker pull redroid/redroid:14.0.0-latest
 
 # Step 5: Start ReDroid container
 update_status "starting_container" 5 $TOTAL_STEPS "Starting ReDroid container..."
@@ -105,7 +105,7 @@ docker run -d --name redroid \\
   --privileged \\
   -v /dev/binderfs:/dev/binderfs \\
   -p 5555:5555 \\
-  redroid/redroid:13.0.0-latest \\
+  redroid/redroid:14.0.0-latest \\
   androidboot.redroid_gpu_mode=guest \\
   androidboot.redroid_fps=30 \\
   androidboot.redroid_width=1080 \\
@@ -129,14 +129,22 @@ CLOUDFLARED_PID=$!
 ) &
 NODEJS_PID=$!
 
-# Clone ws-scrcpy in background
+# Clone custom ws-scrcpy fork in background (with hide-controls and auto-fullscreen)
 (
   apt-get install -y build-essential python3 git > /dev/null 2>&1
   cd /opt
-  git clone --depth 1 https://github.com/NetrisTV/ws-scrcpy.git > /dev/null 2>&1
-  echo "ws-scrcpy cloned in background"
+  git clone --depth 1 https://github.com/Kahtaf/ws-scrcpy.git > /dev/null 2>&1
+  echo "ws-scrcpy (custom fork) cloned in background"
 ) &
 WSSCRCPY_PID=$!
+
+# Download APK in background
+(
+  mkdir -p /tmp/apps
+  curl -L https://github.com/Kahtaf/research/raw/refs/heads/main/redroid/public/apps/org.vana.exporter-0.1.0-5.apk -o /tmp/apps/vana-exporter.apk > /dev/null 2>&1
+  echo "APK downloaded in background"
+) &
+APK_PID=$!
 
 # OPTIMIZATION: Removed sleep 30 - poll immediately with shorter intervals
 for i in {1..120}; do
@@ -159,6 +167,7 @@ echo "Waiting for background downloads to complete..."
 wait $CLOUDFLARED_PID && echo "cloudflared download complete" || echo "cloudflared download may have issues"
 wait $NODEJS_PID && echo "Node.js install complete" || echo "Node.js install may have issues"  
 wait $WSSCRCPY_PID && echo "ws-scrcpy clone complete" || echo "ws-scrcpy clone may have issues"
+wait $APK_PID && echo "APK download complete" || echo "APK download may have issues"
 
 chmod +x /usr/local/bin/cloudflared
 
@@ -242,9 +251,33 @@ sleep 1
 adb connect 127.0.0.1:5555
 sleep 2
 
-# Step 11: All done - device verified and ready!
+# Step 11: Install APK
+update_status "installing_app" 11 $TOTAL_STEPS "Installing Vana Exporter app..." "$TUNNEL_URL"
+
+# Ensure ADB is connected
+adb connect 127.0.0.1:5555
+sleep 2
+
+# Install APK if download completed
+if [ -f /tmp/apps/vana-exporter.apk ]; then
+  echo "Installing Vana Exporter APK..."
+  adb -s 127.0.0.1:5555 install -g /tmp/apps/vana-exporter.apk && echo "APK installed successfully" || echo "APK installation failed"
+else
+  echo "WARNING: APK file not found at /tmp/apps/vana-exporter.apk"
+fi
+
+# Step 12: Launch app
+update_status "launching_app" 12 $TOTAL_STEPS "Launching Vana Exporter app..." "$TUNNEL_URL"
+
+# Launch the app using am start (more reliable than monkey)
+adb -s 127.0.0.1:5555 shell am start -n org.vana.exporter/.MainActivity && echo "App launched" || adb -s 127.0.0.1:5555 shell am start -a android.intent.action.MAIN -n org.vana.exporter/.MainActivity && echo "App launched (fallback)" || echo "App launch failed"
+
+# Small delay to let app initialize
+sleep 2
+
+# Step 13: All done - device verified and ready!
 TOTAL_TIME=$(($(date +%s) - START_TIME))
-update_status "ready" 11 $TOTAL_STEPS "ReDroid is ready! (took \${TOTAL_TIME}s)" "$TUNNEL_URL"
+update_status "ready" 13 $TOTAL_STEPS "ReDroid is ready with Vana Exporter! (took \${TOTAL_TIME}s)" "$TUNNEL_URL"
 
 # Schedule auto-DELETE after TTL (not just shutdown - we want the VM completely removed)
 # Get VM metadata for self-deletion

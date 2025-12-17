@@ -3,7 +3,7 @@
 import { VMProgress } from '@/lib/types';
 
 interface PhoneFrameProps {
-    status: 'loading' | 'ready';
+    status: 'idle' | 'loading' | 'ready' | 'stopping';
     progress: VMProgress | null;
     streamUrl: string | null;
     vmName: string;
@@ -14,30 +14,40 @@ export function PhoneFrame({ status, progress, streamUrl, vmName }: PhoneFramePr
 
     return (
         <div className="flex flex-col items-center">
-            {/* Phone Frame Container - Fixed sizing for consistent display */}
+            {/* Phone Frame Container - Fixed sizing for 256:480 device aspect ratio */}
             <div
-                className="relative bg-gray-900 rounded-[3rem] p-2 shadow-2xl shadow-black/50"
+                className="relative bg-gray-900 rounded-[2rem] p-1.5 shadow-2xl shadow-black/50"
                 style={{
-                    width: '320px',
-                    height: '693px', // 320 * (19.5/9) = ~693px for 9:19.5 aspect ratio
+                    width: '280px',
+                    height: '528px', // 280 * (480/256) = 525px, rounded up for padding
                 }}
             >
                 {/* Inner bezel */}
-                <div className="absolute inset-2 bg-gray-800 rounded-[2.5rem]" />
-
-                {/* Top bar with speaker and camera */}
-                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-4">
-                    {/* Camera dot */}
-                    <div className="w-3 h-3 rounded-full bg-gray-700 ring-1 ring-gray-600" />
-                    {/* Speaker grille */}
-                    <div className="w-16 h-1.5 rounded-full bg-gray-700" />
-                </div>
+                <div className="absolute inset-1.5 bg-gray-800 rounded-[1.75rem]" />
 
                 {/* Screen area */}
                 <div
-                    className="relative w-full h-full bg-black rounded-[2.25rem] overflow-hidden"
+                    className="relative w-full h-full bg-black rounded-[1.5rem] overflow-hidden"
                 >
-                    {status === 'loading' ? (
+                    {status === 'idle' ? (
+                        // Idle state - no active sessions
+                        <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-gradient-to-b from-gray-900 via-gray-900 to-black">
+                            {/* Android logo (dimmed) */}
+                            <div className="mb-6">
+                                <svg className="w-16 h-16 text-gray-600" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M17.6 9.48l1.84-3.18c.16-.31.04-.69-.26-.85a.637.637 0 0 0-.83.22l-1.88 3.24a11.463 11.463 0 0 0-8.94 0L5.65 5.67a.643.643 0 0 0-.87-.2c-.28.18-.37.54-.22.83L6.4 9.48A10.78 10.78 0 0 0 1 18h22a10.78 10.78 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z" />
+                                </svg>
+                            </div>
+
+                            {/* Message */}
+                            <p className="text-gray-500 text-sm font-medium text-center mb-2">
+                                No active sessions
+                            </p>
+                            <p className="text-gray-600 text-xs text-center">
+                                Start a new session to begin
+                            </p>
+                        </div>
+                    ) : status === 'loading' ? (
                         // Status display during startup
                         <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-gradient-to-b from-gray-900 via-gray-900 to-black">
                             {/* Android logo */}
@@ -85,6 +95,24 @@ export function PhoneFrame({ status, progress, streamUrl, vmName }: PhoneFramePr
                                 ))}
                             </div>
                         </div>
+                    ) : status === 'stopping' ? (
+                        // Stopping state
+                        <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-gradient-to-b from-gray-900 via-gray-900 to-black">
+                            {/* Android logo (red) */}
+                            <div className="mb-6">
+                                <svg className="w-16 h-16 text-red-500" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M17.6 9.48l1.84-3.18c.16-.31.04-.69-.26-.85a.637.637 0 0 0-.83.22l-1.88 3.24a11.463 11.463 0 0 0-8.94 0L5.65 5.67a.643.643 0 0 0-.87-.2c-.28.18-.37.54-.22.83L6.4 9.48A10.78 10.78 0 0 0 1 18h22a10.78 10.78 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z" />
+                                </svg>
+                            </div>
+
+                            {/* Message */}
+                            <p className="text-red-400 text-sm font-medium text-center mb-2">
+                                Stopping...
+                            </p>
+                            <p className="text-gray-600 text-xs text-center">
+                                Session is shutting down
+                            </p>
+                        </div>
                     ) : (
                         // Embedded ws-scrcpy iframe when ready
                         <iframe
@@ -101,10 +129,6 @@ export function PhoneFrame({ status, progress, streamUrl, vmName }: PhoneFramePr
                     )}
                 </div>
 
-                {/* Bottom navigation pill */}
-                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20">
-                    <div className="w-24 h-1 bg-gray-600 rounded-full" />
-                </div>
             </div>
 
             {/* VM name label */}

@@ -81,12 +81,14 @@ export async function GET(
       });
       const wsUrl = `wss://${new URL(baseUrl).host}/?${wsProxyParams.toString()}`;
       
-      // Build the stream URL hash params
+      // Build the stream URL hash params with hide-controls and responsive mode
       const params = new URLSearchParams({
         action: 'stream',
         udid: udid,
         player: 'webcodecs',     // Best performance in modern browsers
         ws: wsUrl,
+        hideControls: 'true',    // Hide toolbar for embedded view
+        responsive: 'true',      // Scale video to fit container
       });
       return `${baseUrl}/#!${params.toString()}`;
     };

@@ -6,7 +6,7 @@ import { VMProgress } from '@/lib/types';
 
 interface GCPSession {
   vmName: string;
-  status: 'starting' | 'running';
+  status: 'running' | 'staging' | 'provisioning' | 'stopping' | 'terminated' | 'stopped' | 'suspended' | 'suspending' | string;
   ip: string | null;
   zone: string;
   createdAt: number;
@@ -27,6 +27,34 @@ export default function Home() {
 
   // Get the currently selected session
   const selectedSession = activeSessions.find(s => s.vmName === selectedVm) || activeSessions[0] || null;
+
+  // Helper to determine PhoneFrame status
+  const getPhoneStatus = (session: SessionWithProgress | null): 'idle' | 'loading' | 'ready' | 'stopping' => {
+    if (!session) return 'idle';
+    // Show stopping status if this VM is being killed
+    if (killingVm === session.vmName) return 'stopping';
+    if (session.status === 'running') return 'ready';
+    if (session.status === 'stopping' || session.status === 'terminated' || session.status === 'stopped' || session.status === 'suspended') return 'stopping';
+    return 'loading';
+  };
+
+  // Helper to get status display text
+  const getStatusText = (session: SessionWithProgress): string => {
+    // Show shutting down if this VM is being killed
+    if (killingVm === session.vmName) return 'Shutting down...';
+    if (session.progress?.message) return session.progress.message;
+    switch (session.status) {
+      case 'running': return 'Ready';
+      case 'stopping': return 'Stopping...';
+      case 'terminated': return 'Terminated';
+      case 'stopped': return 'Stopped';
+      case 'suspended': return 'Suspended';
+      case 'suspending': return 'Suspending...';
+      case 'staging':
+      case 'provisioning':
+      default: return 'Starting...';
+    }
+  };
 
   // Fetch all active sessions from GCP
   const fetchActiveSessions = useCallback(async () => {
@@ -146,10 +174,10 @@ export default function Home() {
           <div className="hidden lg:block lg:sticky lg:top-8 lg:self-start">
             <div className="flex justify-center py-4">
               <PhoneFrame
-                status={selectedSession ? (selectedSession.status === 'running' ? 'ready' : 'loading') : 'loading'}
+                status={getPhoneStatus(selectedSession)}
                 progress={selectedSession?.progress || null}
                 streamUrl={selectedSession?.streamUrl || null}
-                vmName={selectedSession?.vmName || 'No session'}
+                vmName={selectedSession?.vmName || ''}
               />
             </div>
           </div>
@@ -167,10 +195,10 @@ export default function Home() {
             {/* Mobile Phone Display */}
             <div className="lg:hidden flex justify-center">
               <PhoneFrame
-                status={selectedSession ? (selectedSession.status === 'running' ? 'ready' : 'loading') : 'loading'}
+                status={getPhoneStatus(selectedSession)}
                 progress={selectedSession?.progress || null}
                 streamUrl={selectedSession?.streamUrl || null}
-                vmName={selectedSession?.vmName || 'No session'}
+                vmName={selectedSession?.vmName || ''}
               />
             </div>
 
@@ -234,11 +262,10 @@ export default function Home() {
                   {activeSessions.map((session) => (
                     <div
                       key={session.vmName}
-                      className={`bg-white rounded-lg p-4 border transition-all duration-250 ${
-                        selectedVm === session.vmName
-                          ? 'border-[#C07855] shadow-sm'
-                          : 'border-[#E7E5E0] hover:border-[#D4D0C8]'
-                      }`}
+                      className={`bg-white rounded-lg p-4 border transition-all duration-250 ${selectedVm === session.vmName
+                        ? 'border-[#C07855] shadow-sm'
+                        : 'border-[#E7E5E0] hover:border-[#D4D0C8]'
+                        }`}
                     >
                       <div className="flex items-center justify-between gap-4">
                         {/* Session info */}
@@ -246,6 +273,8 @@ export default function Home() {
                           <div className="flex items-center gap-2 mb-1">
                             {session.status === 'running' ? (
                               <div className="h-2 w-2 rounded-full bg-[#6B8456] flex-shrink-0" />
+                            ) : session.status === 'stopping' || session.status === 'terminated' || session.status === 'stopped' ? (
+                              <div className="h-2 w-2 rounded-full bg-[#C65D4F] flex-shrink-0" />
                             ) : (
                               <div className="animate-spin rounded-full h-2 w-2 border border-[#C07855] border-t-transparent flex-shrink-0" />
                             )}
@@ -254,7 +283,7 @@ export default function Home() {
                             </span>
                           </div>
                           <p className="text-xs text-[#6B6763] truncate">
-                            {session.progress?.message || (session.status === 'running' ? 'Ready' : 'Starting...')}
+                            {getStatusText(session)}
                           </p>
                         </div>
 
@@ -262,22 +291,20 @@ export default function Home() {
                         <div className="flex gap-2 flex-shrink-0">
                           <button
                             onClick={() => setSelectedVm(session.vmName)}
-                            className={`py-1.5 px-3 rounded-lg text-xs font-medium transition-all duration-250 ${
-                              selectedVm === session.vmName
-                                ? 'bg-[#C07855] text-white'
-                                : 'bg-white border border-[#E7E5E0] text-[#292827] hover:border-[#D4D0C8]'
-                            }`}
+                            className={`py-1.5 px-3 rounded-lg text-xs font-medium transition-all duration-250 ${selectedVm === session.vmName
+                              ? 'bg-[#C07855] text-white'
+                              : 'bg-white border border-[#E7E5E0] text-[#292827] hover:border-[#D4D0C8]'
+                              }`}
                           >
                             View
                           </button>
                           <button
                             onClick={() => handleKill(session.vmName)}
                             disabled={killingVm === session.vmName}
-                            className={`py-1.5 px-3 rounded-lg text-xs font-medium transition-all duration-250 ${
-                              killingVm === session.vmName
-                                ? 'bg-white border border-[#E7E5E0] text-[#948F89] cursor-not-allowed'
-                                : 'bg-white border border-[#E7E5E0] text-[#C65D4F] hover:bg-[#C65D4F] hover:text-white hover:border-[#C65D4F]'
-                            }`}
+                            className={`py-1.5 px-3 rounded-lg text-xs font-medium transition-all duration-250 ${killingVm === session.vmName
+                              ? 'bg-white border border-[#E7E5E0] text-[#948F89] cursor-not-allowed'
+                              : 'bg-white border border-[#E7E5E0] text-[#C65D4F] hover:bg-[#C65D4F] hover:text-white hover:border-[#C65D4F]'
+                              }`}
                           >
                             {killingVm === session.vmName ? 'Killing...' : 'Kill'}
                           </button>
