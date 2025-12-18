@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  chromium-under-test:
+    image: lscr.io/linuxserver/chromium:latest
+    container_name: chromium-capacity-test
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+      - CHROME_CLI=--remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --disable-gpu --no-sandbox --disable-dev-shm-usage --max_old_space_size=4096
+    ports:
+      - "9222:9222"
+      - "3000:3000"
+    shm_size: 2gb
+    tmpfs:
+      - /dev/shm:rw,size=2g
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'
+          memory: 12GB
+        reservations:
+          cpus: '2.0'
+          memory: 4GB
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9222/json/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  playwright-tester:
+    image: node:18-slim
+    container_name: playwright-capacity-tester
+    working_dir: /app
+    volumes:
+      - ./:/app
+      - /app/node_modules
+    environment:
+      - CDP_ENDPOINT=http://chromium-under-test:9222
+    command: node test-script.js
+    depends_on:
+      chromium-under-test:
+        condition: service_healthy
+    profiles:
+      - test
