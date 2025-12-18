@@ -1,23 +1,13 @@
-FROM selkies-project/selkies-gstreamer-ubuntu20.04:latest
+FROM linuxserver/chromium:latest
 
-USER root
 RUN apt-get update && apt-get install -y \
     curl \
     gnupg \
-    unzip \
-    xvfb \
-    supervisor \
-    fonts-noto-color-emoji \
+    nodejs \
+    socat \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update && apt-get install -y google-chrome-stable \
-    && rm -rf /var/lib/apt/lists/*
+RUN npx playwright install-deps chromium
 
 COPY extension /opt/extension
 
@@ -25,12 +15,12 @@ COPY server /opt/server
 WORKDIR /opt/server
 RUN npm install
 
-COPY scripts/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY scripts/start-server.sh /custom-cont-init.d/start-server.sh
+RUN chmod +x /custom-cont-init.d/start-server.sh
 
-ENV SELKIES_ENABLE_AUDIO=true
-ENV SELKIES_ENABLE_RESIZE=true
-ENV DISPLAY=:0
+ENV TITLE=DockerChrome
+ENV PUID=1000
+ENV PGID=1000
+ENV TZ=Etc/UTC
 
-EXPOSE 8080 9222
-
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+EXPOSE 8080
