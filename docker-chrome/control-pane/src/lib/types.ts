@@ -1,9 +1,33 @@
+export type ResourceType =
+  | "Document"
+  | "Stylesheet"
+  | "Image"
+  | "Media"
+  | "Font"
+  | "Script"
+  | "TextTrack"
+  | "XHR"
+  | "Fetch"
+  | "Prefetch"
+  | "EventSource"
+  | "WebSocket"
+  | "Manifest"
+  | "SignedExchange"
+  | "Ping"
+  | "CSPViolationReport"
+  | "Preflight"
+  | "FedCM"
+  | "Other";
+
 export interface NetworkRequest {
   requestId: string;
-  url: string;
-  method: string;
+  url?: string;
+  method?: string;
   status?: number;
-  type: string;
+  type?: ResourceType;
+  mimeType?: string;
+  errorText?: string;
+  sessionId?: string;
   timestamp: number;
 }
 

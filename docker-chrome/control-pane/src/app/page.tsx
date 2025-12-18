@@ -13,6 +13,7 @@ export default function Home() {
   const [requests, setRequests] = useState<NetworkRequest[]>([]);
   const [status, setStatus] = useState<Status | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
+  const activeSessionIdRef = useRef<string | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -25,6 +26,11 @@ export default function Home() {
     } catch (e) {
       console.error("Failed to fetch status", e);
     }
+  };
+
+  const handleReset = () => {
+    setRequests([]);
+    activeSessionIdRef.current = null;
   };
 
   useEffect(() => {
@@ -51,22 +57,32 @@ export default function Home() {
         try {
           const msg: WebSocketMessage = JSON.parse(event.data);
           
-          if (msg.type === "NETWORK_REQUEST" || msg.type === "NETWORK_RESPONSE") {
+          if (msg.type === "SESSION_RESET") {
+            setRequests([]);
+            activeSessionIdRef.current = msg.payload.sessionId;
+            fetchStatus();
+            return;
+          }
+
+          if (msg.type === "NETWORK_REQUEST" || msg.type === "NETWORK_RESPONSE" || msg.type === "NETWORK_FAILED") {
+            const payload = msg.payload as NetworkRequest;
+            
+            if (activeSessionIdRef.current && payload.sessionId && activeSessionIdRef.current !== payload.sessionId) {
+              return;
+            }
+
             setRequests((prev) => {
-              const newReq = msg.payload as NetworkRequest;
-              const exists = prev.find(r => r.requestId === newReq.requestId);
+              const existsIndex = prev.findIndex(r => r.requestId === payload.requestId);
               
-              if (exists && msg.type === "NETWORK_RESPONSE") {
-                return prev.map(r => r.requestId === newReq.requestId ? { ...r, ...newReq } : r);
+              if (existsIndex !== -1) {
+                const newReqs = [...prev];
+                newReqs[existsIndex] = { ...newReqs[existsIndex], ...payload };
+                return newReqs;
               }
               
-              if (!exists) {
-                const next = [...prev, newReq];
-                if (next.length > 200) next.shift();
-                return next;
-              }
-              
-              return prev;
+              const next = [...prev, payload];
+              if (next.length > 200) next.shift();
+              return next;
             });
           }
         } catch (e) {
@@ -109,7 +125,7 @@ export default function Home() {
         </div>
 
         <div className="lg:col-span-5 h-full min-h-0">
-          <ControlPanel status={status} onRefreshStatus={fetchStatus} />
+          <ControlPanel status={status} onRefreshStatus={fetchStatus} onReset={handleReset} />
         </div>
       </div>
     </main>

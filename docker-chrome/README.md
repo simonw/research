@@ -30,9 +30,11 @@ docker-chrome/
 ├── extension/              # MV3 Chrome Extension for injection
 ├── scripts/                # Supervisord config
 ├── server/                 # CDP Bridge Server
-└── src/                    # Next.js Frontend Components
-    ├── app/                # Page logic
-    └── components/         # BrowserFrame component
+└── control-pane/           # Next.js Frontend Application
+    ├── src/
+    │   ├── app/            # Page logic
+    │   └── components/     # UI Components
+    └── package.json
 ```
 
 ## Quick Start

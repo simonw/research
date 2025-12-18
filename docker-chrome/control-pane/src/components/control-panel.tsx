@@ -2,16 +2,17 @@
 
 import React, { useState, useEffect } from "react";
 import { Status, PersistentScript } from "@/lib/types";
-import { Play, Save, Globe, Trash2, RefreshCw } from "lucide-react";
+import { Play, Save, Globe, Trash2, RefreshCw, RotateCcw } from "lucide-react";
 
 const API_BASE = "https://docker-chrome-432753364585.us-central1.run.app";
 
 interface ControlPanelProps {
   status: Status | null;
   onRefreshStatus: () => void;
+  onReset?: () => void;
 }
 
-export function ControlPanel({ status, onRefreshStatus }: ControlPanelProps) {
+export function ControlPanel({ status, onRefreshStatus, onReset }: ControlPanelProps) {
   const [url, setUrl] = useState("https://google.com");
   const [script, setScript] = useState("");
   const [persistScript, setPersistScript] = useState("");
@@ -99,14 +100,38 @@ export function ControlPanel({ status, onRefreshStatus }: ControlPanelProps) {
     }
   };
 
+  const handleResetSession = async () => {
+    if (!confirm("WARNING: This will restart Chrome with a new user-data-dir and clear all persistent scripts. Are you sure?")) return;
+    setLoading(true);
+    try {
+      await fetch(`${API_BASE}/api/session/reset`, { method: "POST" });
+      if (onReset) onReset();
+      onRefreshStatus();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-6 p-6 bg-surface border border-border rounded-xl h-full overflow-y-auto">
       <div className="bg-zinc-900/50 p-4 rounded-lg border border-border">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">System Status</h2>
-          <button onClick={onRefreshStatus} className="p-1 hover:bg-zinc-800 rounded transition-colors">
-            <RefreshCw size={14} className="text-zinc-500" />
-          </button>
+          <div className="flex gap-1">
+            <button 
+              onClick={handleResetSession}
+              disabled={loading}
+              title="Reset Session"
+              className="p-1 hover:bg-red-900/50 text-red-500 rounded transition-colors"
+            >
+              <RotateCcw size={14} />
+            </button>
+            <button onClick={onRefreshStatus} className="p-1 hover:bg-zinc-800 rounded transition-colors">
+              <RefreshCw size={14} className="text-zinc-500" />
+            </button>
+          </div>
         </div>
         
         <div className="grid grid-cols-2 gap-4">
