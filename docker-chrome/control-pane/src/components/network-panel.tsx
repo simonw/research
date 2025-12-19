@@ -1,13 +1,14 @@
 import React, { useRef, useEffect, useState, useMemo } from "react";
 import { NetworkRequest } from "@/lib/types";
 import { NetworkFilter, FilterGroup, FILTER_GROUPS } from "./network-filter";
-import { X } from "lucide-react";
+import { X, Trash2 } from "lucide-react";
 
 interface NetworkPanelProps {
   requests: NetworkRequest[];
+  onClearActivity?: () => void;
 }
 
-export function NetworkPanel({ requests }: NetworkPanelProps) {
+export function NetworkPanel({ requests, onClearActivity }: NetworkPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [selectedFilters, setSelectedFilters] = useState<Set<FilterGroup>>(
     new Set()
@@ -58,7 +59,7 @@ export function NetworkPanel({ requests }: NetworkPanelProps) {
         try {
           const parsed = JSON.parse(body);
           body = JSON.stringify(parsed, null, 2);
-        } catch {}
+        } catch { }
         setResponseBody(body);
       } else {
         setResponseBody('(Response body not available)');
@@ -107,10 +108,22 @@ export function NetworkPanel({ requests }: NetworkPanelProps) {
               : `${requests.length}`}
           </span>
         </div>
-        <NetworkFilter
-          selectedGroups={selectedFilters}
-          onToggleGroup={toggleFilter}
-        />
+        <div className="flex items-center gap-2">
+          {onClearActivity && (
+            <button
+              onClick={onClearActivity}
+              className="flex items-center gap-2 px-3.5 py-2 text-xs font-medium bg-surface border border-border rounded-lg hover:border-error/50 hover:bg-error/5 transition-all duration-200 text-text-secondary hover:text-error shadow-sm"
+              title="Clear all network activity"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="font-semibold">Clear</span>
+            </button>
+          )}
+          <NetworkFilter
+            selectedGroups={selectedFilters}
+            onToggleGroup={toggleFilter}
+          />
+        </div>
       </div>
 
       {/* Column Headers */}
@@ -138,30 +151,27 @@ export function NetworkPanel({ requests }: NetworkPanelProps) {
             <div
               key={`${req.requestId}-${i}`}
               onClick={() => handleRequestClick(req)}
-              className={`grid grid-cols-12 gap-3 px-5 py-3 text-sm border-b border-border/50 hover:bg-background/80 transition-all duration-200 cursor-pointer group relative ${
-                selectedRequestId === req.requestId
-                  ? "bg-accent/5 border-l-2 border-l-accent"
-                  : "border-l-2 border-l-transparent"
-              }`}
+              className={`grid grid-cols-12 gap-3 px-5 py-3 text-sm border-b border-border/50 hover:bg-background/80 transition-all duration-200 cursor-pointer group relative ${selectedRequestId === req.requestId
+                ? "bg-accent/5 border-l-2 border-l-accent"
+                : "border-l-2 border-l-transparent"
+                }`}
             >
               {/* Status Code */}
-              <div className={`col-span-1 font-mono font-semibold transition-colors ${
-                !req.status ? 'text-text-tertiary' :
+              <div className={`col-span-1 font-mono font-semibold transition-colors ${!req.status ? 'text-text-tertiary' :
                 req.status >= 400 ? 'text-error' :
-                req.status >= 300 ? 'text-accent' :
-                'text-success'
-              }`}>
+                  req.status >= 300 ? 'text-accent' :
+                    'text-success'
+                }`}>
                 {req.status || '···'}
               </div>
 
               {/* HTTP Method */}
-              <div className={`col-span-1 font-bold text-xs uppercase tracking-wide transition-colors ${
-                req.method === 'GET' ? 'text-accent' :
+              <div className={`col-span-1 font-bold text-xs uppercase tracking-wide transition-colors ${req.method === 'GET' ? 'text-accent' :
                 req.method === 'POST' ? 'text-success' :
-                req.method === 'PUT' ? 'text-accent' :
-                req.method === 'DELETE' ? 'text-error' :
-                'text-text-secondary'
-              }`}>
+                  req.method === 'PUT' ? 'text-accent' :
+                    req.method === 'DELETE' ? 'text-error' :
+                      'text-text-secondary'
+                }`}>
                 {req.method || '—'}
               </div>
 
@@ -180,8 +190,8 @@ export function NetworkPanel({ requests }: NetworkPanelProps) {
                 {new Date(req.timestamp).toLocaleTimeString([], {
                   hour12: false,
                   hour: '2-digit',
-                  minute:'2-digit',
-                  second:'2-digit'
+                  minute: '2-digit',
+                  second: '2-digit'
                 })}
               </div>
             </div>
@@ -216,12 +226,11 @@ export function NetworkPanel({ requests }: NetworkPanelProps) {
 
               <div className="px-5 py-2.5 text-xs text-text-secondary flex gap-6 flex-shrink-0 border-b border-border/50 bg-surface/30">
                 <span>
-                  Status: <span className={`font-semibold ${
-                    !selectedRequest.status ? 'text-text-tertiary' :
+                  Status: <span className={`font-semibold ${!selectedRequest.status ? 'text-text-tertiary' :
                     selectedRequest.status >= 400 ? 'text-error' :
-                    selectedRequest.status >= 300 ? 'text-accent' :
-                    'text-success'
-                  }`}>{selectedRequest.status || 'pending'}</span>
+                      selectedRequest.status >= 300 ? 'text-accent' :
+                        'text-success'
+                    }`}>{selectedRequest.status || 'pending'}</span>
                 </span>
                 <span>Type: <span className="font-semibold text-foreground">{selectedRequest.type || '—'}</span></span>
                 <span>MIME: <span className="font-semibold text-foreground font-mono">{selectedRequest.mimeType || '—'}</span></span>

@@ -33,6 +33,18 @@ export default function Home() {
     activeSessionIdRef.current = null;
   };
 
+  const handleClearNetworkActivity = async () => {
+    // Clear local state
+    setRequests([]);
+
+    // Clear server-side network cache
+    try {
+      await fetch(`${API_BASE}/api/network/clear`, { method: 'POST' });
+    } catch (e) {
+      console.error('Failed to clear network cache on server', e);
+    }
+  };
+
   useEffect(() => {
     fetchStatus();
 
@@ -56,7 +68,7 @@ export default function Home() {
       ws.onmessage = (event) => {
         try {
           const msg: WebSocketMessage = JSON.parse(event.data);
-          
+
           if (msg.type === "SESSION_RESET") {
             setRequests([]);
             activeSessionIdRef.current = msg.payload.sessionId;
@@ -66,20 +78,20 @@ export default function Home() {
 
           if (msg.type === "NETWORK_REQUEST" || msg.type === "NETWORK_RESPONSE" || msg.type === "NETWORK_FAILED") {
             const payload = msg.payload as NetworkRequest;
-            
+
             if (activeSessionIdRef.current && payload.sessionId && activeSessionIdRef.current !== payload.sessionId) {
               return;
             }
 
             setRequests((prev) => {
               const existsIndex = prev.findIndex(r => r.requestId === payload.requestId);
-              
+
               if (existsIndex !== -1) {
                 const newReqs = [...prev];
                 newReqs[existsIndex] = { ...newReqs[existsIndex], ...payload };
                 return newReqs;
               }
-              
+
               const next = [...prev, payload];
               if (next.length > 200) next.shift();
               return next;
@@ -100,63 +112,56 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-background overflow-x-hidden">
-      <div className="container mx-auto px-4 py-8 sm:px-6 sm:py-12 lg:px-8 lg:py-16 max-w-[1280px]">
-        <div className="lg:grid lg:grid-cols-[minmax(0,55%)_minmax(0,45%)] lg:gap-6 xl:gap-10">
-          {/* Left Column: Sticky BrowserFrame (Desktop) */}
-          <div className="hidden lg:block lg:sticky lg:top-8 lg:self-start">
-            <div className="flex justify-center py-4">
-              <BrowserFrame url={API_BASE} />
-            </div>
+    <div className="min-h-screen bg-background p-6">
+      <div className="container mx-auto max-w-[1400px] space-y-6">
+        {/* Header */}
+        <header className="text-center lg:text-left">
+          <h1 className="text-2xl font-semibold text-foreground tracking-tight mb-1">
+            Docker Chrome
+          </h1>
+          <p className="text-sm text-text-secondary">
+            Remote browser control with network inspection
+          </p>
+        </header>
+
+        {/* Top Row: Browser + Controls */}
+        <div className="grid lg:grid-cols-2 gap-6">
+          {/* Left: Browser Viewer */}
+          <div className="flex items-start">
+            <BrowserFrame url={API_BASE} />
           </div>
 
-          {/* Right Column: Header + Mobile Frame + Controls */}
-          <div className="space-y-6 lg:space-y-8 min-w-0">
-            {/* Header */}
-            <div className="text-center lg:text-left">
-              <h1 className="text-2xl font-semibold text-foreground tracking-tight mb-1">
-                Docker Chrome
-              </h1>
-              <p className="text-sm text-text-secondary">
-                Remote browser control with network inspection
-              </p>
-            </div>
-
-            {/* Mobile BrowserFrame */}
-            <div className="lg:hidden flex justify-center">
-              <BrowserFrame url={API_BASE} />
-            </div>
-
-            {/* WebSocket Status */}
+          {/* Right: Controls */}
+          <div className="space-y-4">
+            {/* Connection Status with Refresh */}
             <div className="bg-surface border border-border rounded-lg p-4">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-foreground">Connection Status</span>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2.5">
                   <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-success' : 'bg-error'}`} />
-                  <span className="text-xs text-text-secondary font-mono">
+                  <span className="text-sm font-medium text-foreground">
                     {wsConnected ? 'Connected' : 'Disconnected'}
                   </span>
                 </div>
+                <button
+                  onClick={fetchStatus}
+                  className="p-2 hover:bg-background rounded-lg transition-colors"
+                  title="Refresh Status"
+                >
+                  <svg className="w-4 h-4 text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </button>
               </div>
             </div>
 
-            {/* Network Panel */}
-            <div className="min-h-0">
-              <NetworkPanel requests={requests} />
-            </div>
-
             {/* Control Panel */}
-            <div className="min-h-0">
-              <ControlPanel status={status} onRefreshStatus={fetchStatus} onReset={handleReset} />
-            </div>
-
-            {/* Info Footer */}
-            <div className="text-center lg:text-left text-text-tertiary text-xs pt-4 border-t border-border">
-              <p className="leading-relaxed">
-                Real-time network monitoring • CDP-based browser control
-              </p>
-            </div>
+            <ControlPanel status={status} onRefreshStatus={fetchStatus} onReset={handleReset} />
           </div>
+        </div>
+
+        {/* Bottom Row: Network Activity (full width) */}
+        <div>
+          <NetworkPanel requests={requests} onClearActivity={handleClearNetworkActivity} />
         </div>
       </div>
     </div>

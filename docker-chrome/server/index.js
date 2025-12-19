@@ -329,6 +329,29 @@ app.get('/api/network/:requestId/body', async (req, res) => {
     res.status(404).json({ error: 'Response body not found' });
 });
 
+app.post('/api/network/clear', async (req, res) => {
+    try {
+        // Clear server-side response body cache
+        responseBodyCache.clear();
+        
+        // Clear browser cache if CDP client is available
+        if (currentSession.cdpClient) {
+            try {
+                await currentSession.cdpClient.send('Network.clearBrowserCache');
+            } catch (e) {
+                console.log('Failed to clear browser cache via CDP:', e.message);
+            }
+        }
+        
+        // Broadcast network clear event to all connected clients
+        broadcast('NETWORK_CLEARED', { timestamp: Date.now() });
+        
+        res.json({ success: true, message: 'Network cache cleared' });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.use((req, res, next) => {
     if (req.url.startsWith('/api') || req.url === '/healthz' || req.url.startsWith('/ws')) {
         next();
