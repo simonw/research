@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useMemo } from "react";
 import { NetworkRequest } from "@/lib/types";
 import { NetworkFilter, FilterGroup, FILTER_GROUPS } from "./network-filter";
+import { X } from "lucide-react";
 
 interface NetworkPanelProps {
   requests: NetworkRequest[];
@@ -12,7 +13,8 @@ export function NetworkPanel({ requests }: NetworkPanelProps) {
     new Set()
   );
 
-  const [selectedRequest, setSelectedRequest] = useState<NetworkRequest | null>(null);
+  // Bug fix: Store requestId separately to maintain panel visibility during async fetch
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [responseBody, setResponseBody] = useState<string | null>(null);
   const [loadingBody, setLoadingBody] = useState(false);
 
@@ -29,16 +31,18 @@ export function NetworkPanel({ requests }: NetworkPanelProps) {
   const API_BASE = "https://docker-chrome-432753364585.us-central1.run.app";
 
   const handleRequestClick = async (req: NetworkRequest) => {
-    if (selectedRequest?.requestId === req.requestId) {
-      setSelectedRequest(null);
+    // Toggle off if clicking the same request
+    if (selectedRequestId === req.requestId) {
+      setSelectedRequestId(null);
       setResponseBody(null);
       return;
     }
-    
-    setSelectedRequest(req);
+
+    // Set selected ID immediately to show panel
+    setSelectedRequestId(req.requestId);
     setResponseBody(null);
     setLoadingBody(true);
-    
+
     try {
       const res = await fetch(`${API_BASE}/api/network/${req.requestId}/body`);
       if (res.ok) {
@@ -77,6 +81,12 @@ export function NetworkPanel({ requests }: NetworkPanelProps) {
     return requests.filter((req) => req.type && allowedTypes.has(req.type));
   }, [requests, selectedFilters]);
 
+  // Find the currently selected request object
+  const selectedRequest = useMemo(
+    () => requests.find(r => r.requestId === selectedRequestId) || null,
+    [requests, selectedRequestId]
+  );
+
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -84,16 +94,17 @@ export function NetworkPanel({ requests }: NetworkPanelProps) {
   }, [filteredRequests]);
 
   return (
-    <div className="flex flex-col h-full bg-surface border border-border rounded-lg overflow-hidden">
-      <div className="px-4 py-2 border-b border-border bg-surface flex items-center justify-between">
+    <div className="flex flex-col h-full bg-surface border border-border rounded-lg overflow-hidden shadow-sm">
+      {/* Header */}
+      <div className="px-5 py-4 border-b border-border bg-surface flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h2 className="text-sm font-medium text-foreground">
+          <h2 className="text-base font-semibold text-foreground tracking-tight">
             Network Activity
           </h2>
-          <span className="text-xs text-zinc-500">
+          <span className="text-xs text-text-secondary font-medium bg-background px-2.5 py-1 rounded-full border border-border">
             {filteredRequests.length !== requests.length
-              ? `${filteredRequests.length}/${requests.length} requests`
-              : `${requests.length} requests`}
+              ? `${filteredRequests.length}/${requests.length}`
+              : `${requests.length}`}
           </span>
         </div>
         <NetworkFilter
@@ -102,20 +113,22 @@ export function NetworkPanel({ requests }: NetworkPanelProps) {
         />
       </div>
 
-      <div className="grid grid-cols-12 gap-2 px-4 py-2 text-xs font-medium text-zinc-500 border-b border-border bg-zinc-900/50">
-        <div className="col-span-1">Stat</div>
-        <div className="col-span-1">Meth</div>
+      {/* Column Headers */}
+      <div className="grid grid-cols-12 gap-3 px-5 py-3 text-xs font-semibold text-text-secondary border-b border-border bg-background/50 uppercase tracking-wider">
+        <div className="col-span-1">Status</div>
+        <div className="col-span-1">Method</div>
         <div className="col-span-7">URL</div>
         <div className="col-span-2">Type</div>
-        <div className="col-span-1">Time</div>
+        <div className="col-span-1 text-right">Time</div>
       </div>
 
+      {/* Request List */}
       <div
         ref={scrollRef}
         className="flex-1 overflow-y-auto min-h-[200px] max-h-[400px]"
       >
         {filteredRequests.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-zinc-600 text-sm">
+          <div className="flex items-center justify-center h-full text-text-tertiary text-sm py-12">
             {requests.length === 0
               ? "No network activity recorded"
               : "No requests match filter"}
@@ -125,66 +138,106 @@ export function NetworkPanel({ requests }: NetworkPanelProps) {
             <div
               key={`${req.requestId}-${i}`}
               onClick={() => handleRequestClick(req)}
-              className={`grid grid-cols-12 gap-2 px-4 py-2 text-xs border-b border-border/50 hover:bg-zinc-800/50 transition-colors cursor-pointer ${
-                selectedRequest?.requestId === req.requestId ? "bg-zinc-700/50" : ""
+              className={`grid grid-cols-12 gap-3 px-5 py-3 text-sm border-b border-border/50 hover:bg-background/80 transition-all duration-200 cursor-pointer group relative ${
+                selectedRequestId === req.requestId
+                  ? "bg-accent/5 border-l-2 border-l-accent"
+                  : "border-l-2 border-l-transparent"
               }`}
             >
-              <div className={`col-span-1 font-mono ${
-                !req.status ? 'text-zinc-500' :
-                req.status >= 400 ? 'text-red-400' : 
-                req.status >= 300 ? 'text-yellow-400' : 
-                'text-green-400'
+              {/* Status Code */}
+              <div className={`col-span-1 font-mono font-semibold transition-colors ${
+                !req.status ? 'text-text-tertiary' :
+                req.status >= 400 ? 'text-error' :
+                req.status >= 300 ? 'text-accent' :
+                'text-success'
               }`}>
-                {req.status || '...'}
+                {req.status || '···'}
               </div>
-              <div className={`col-span-1 font-bold ${
-                req.method === 'GET' ? 'text-blue-400' :
-                req.method === 'POST' ? 'text-green-400' :
-                req.method === 'PUT' ? 'text-orange-400' :
-                req.method === 'DELETE' ? 'text-red-400' :
-                'text-zinc-400'
+
+              {/* HTTP Method */}
+              <div className={`col-span-1 font-bold text-xs uppercase tracking-wide transition-colors ${
+                req.method === 'GET' ? 'text-accent' :
+                req.method === 'POST' ? 'text-success' :
+                req.method === 'PUT' ? 'text-accent' :
+                req.method === 'DELETE' ? 'text-error' :
+                'text-text-secondary'
               }`}>
-                {req.method || '-'}
+                {req.method || '—'}
               </div>
-              <div className="col-span-7 truncate text-zinc-300" title={req.url || ''}>
+
+              {/* URL */}
+              <div className="col-span-7 truncate text-foreground font-medium group-hover:text-accent transition-colors" title={req.url || ''}>
                 {req.url || ''}
               </div>
-              <div className="col-span-2 text-zinc-500 truncate">
-                {req.type || '-'}
+
+              {/* Resource Type */}
+              <div className="col-span-2 text-text-secondary text-xs truncate uppercase tracking-wide">
+                {req.type || '—'}
               </div>
-              <div className="col-span-1 text-zinc-600 text-right">
-                {new Date(req.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })}
+
+              {/* Timestamp */}
+              <div className="col-span-1 text-text-tertiary text-xs text-right font-mono">
+                {new Date(req.timestamp).toLocaleTimeString([], {
+                  hour12: false,
+                  hour: '2-digit',
+                  minute:'2-digit',
+                  second:'2-digit'
+                })}
               </div>
             </div>
           ))
         )}
       </div>
 
-      {selectedRequest && (
-        <div className="border-t border-border p-4 bg-zinc-900/50 max-h-[300px] overflow-hidden flex flex-col">
-          <div className="flex items-center justify-between mb-2 flex-shrink-0">
-            <span className="text-xs font-medium text-zinc-400">Response Details</span>
-            <button 
-              onClick={() => { setSelectedRequest(null); setResponseBody(null); }} 
-              className="text-xs text-zinc-500 hover:text-zinc-300 px-2"
+      {/* Response Details Panel - Now properly controlled by selectedRequestId */}
+      {selectedRequestId && (
+        <div className="border-t border-border bg-background/50 backdrop-blur-sm max-h-[320px] overflow-hidden flex flex-col animate-in slide-in-from-bottom duration-300">
+          <div className="px-5 py-4 border-b border-border/50 flex items-center justify-between flex-shrink-0">
+            <span className="text-sm font-semibold text-foreground">Response Details</span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedRequestId(null);
+                setResponseBody(null);
+              }}
+              className="p-1.5 hover:bg-surface rounded-lg transition-all duration-200 text-text-secondary hover:text-foreground group/close"
+              aria-label="Close response details"
             >
-              ✕
+              <X size={16} className="group-hover/close:rotate-90 transition-transform duration-200" />
             </button>
           </div>
-          <div className="text-xs text-zinc-300 break-all truncate mb-2 flex-shrink-0">
-            <span className="text-zinc-500">URL:</span> {selectedRequest.url}
-          </div>
-          <div className="text-xs text-zinc-500 mb-2 flex-shrink-0">
-            <span className="mr-3">Status: <span className="text-zinc-300">{selectedRequest.status || 'pending'}</span></span>
-            <span className="mr-3">Type: <span className="text-zinc-300">{selectedRequest.type || '-'}</span></span>
-            <span>MIME: <span className="text-zinc-300">{selectedRequest.mimeType || '-'}</span></span>
-          </div>
-          <div className="flex-1 overflow-auto min-h-0">
+
+          {selectedRequest && (
+            <>
+              <div className="px-5 py-3 text-xs text-foreground break-all border-b border-border/50 flex-shrink-0 bg-surface/50">
+                <span className="text-text-secondary font-medium">URL: </span>
+                <span className="font-mono">{selectedRequest.url}</span>
+              </div>
+
+              <div className="px-5 py-2.5 text-xs text-text-secondary flex gap-6 flex-shrink-0 border-b border-border/50 bg-surface/30">
+                <span>
+                  Status: <span className={`font-semibold ${
+                    !selectedRequest.status ? 'text-text-tertiary' :
+                    selectedRequest.status >= 400 ? 'text-error' :
+                    selectedRequest.status >= 300 ? 'text-accent' :
+                    'text-success'
+                  }`}>{selectedRequest.status || 'pending'}</span>
+                </span>
+                <span>Type: <span className="font-semibold text-foreground">{selectedRequest.type || '—'}</span></span>
+                <span>MIME: <span className="font-semibold text-foreground font-mono">{selectedRequest.mimeType || '—'}</span></span>
+              </div>
+            </>
+          )}
+
+          <div className="flex-1 overflow-auto min-h-0 p-5">
             {loadingBody ? (
-              <div className="text-zinc-500 text-sm">Loading...</div>
+              <div className="flex items-center gap-3 text-text-secondary text-sm">
+                <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                <span>Loading response body...</span>
+              </div>
             ) : (
-              <pre className="text-xs font-mono text-zinc-300 whitespace-pre-wrap bg-black/30 p-2 rounded overflow-auto max-h-[180px]">
-                {responseBody || '(empty)'}
+              <pre className="text-xs font-mono text-foreground whitespace-pre-wrap bg-surface border border-border p-4 rounded-lg leading-relaxed shadow-inner">
+                {responseBody || '(empty response)'}
               </pre>
             )}
           </div>

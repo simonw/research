@@ -100,34 +100,65 @@ export default function Home() {
   }, []);
 
   return (
-    <main className="h-screen w-full flex flex-col overflow-hidden p-6 gap-6">
-      <header className="flex items-center justify-between pb-4 border-b border-border">
-        <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
-          <span className="text-accent">Docker</span>Chrome
-        </h1>
-        <div className="flex items-center gap-4 text-xs font-mono">
-          <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="text-zinc-500">WS {wsConnected ? 'LIVE' : 'OFFLINE'}</span>
+    <div className="min-h-screen bg-background overflow-x-hidden">
+      <div className="container mx-auto px-4 py-8 sm:px-6 sm:py-12 lg:px-8 lg:py-16 max-w-[1280px]">
+        <div className="lg:grid lg:grid-cols-[minmax(0,55%)_minmax(0,45%)] lg:gap-6 xl:gap-10">
+          {/* Left Column: Sticky BrowserFrame (Desktop) */}
+          <div className="hidden lg:block lg:sticky lg:top-8 lg:self-start">
+            <div className="flex justify-center py-4">
+              <BrowserFrame url={API_BASE} />
+            </div>
           </div>
-        </div>
-      </header>
 
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-0">
-        <div className="lg:col-span-7 flex flex-col gap-6 h-full min-h-0">
-          <div className="flex-[3] flex justify-center items-center py-4 bg-zinc-900/30 rounded-xl border border-border/50 min-h-0">
-            <BrowserFrame url={API_BASE} />
-          </div>
-          
-          <div className="flex-1 min-h-0 max-h-[300px]">
-            <NetworkPanel requests={requests} />
-          </div>
-        </div>
+          {/* Right Column: Header + Mobile Frame + Controls */}
+          <div className="space-y-6 lg:space-y-8 min-w-0">
+            {/* Header */}
+            <div className="text-center lg:text-left">
+              <h1 className="text-2xl font-semibold text-foreground tracking-tight mb-1">
+                Docker Chrome
+              </h1>
+              <p className="text-sm text-text-secondary">
+                Remote browser control with network inspection
+              </p>
+            </div>
 
-        <div className="lg:col-span-5 h-full min-h-0">
-          <ControlPanel status={status} onRefreshStatus={fetchStatus} onReset={handleReset} />
+            {/* Mobile BrowserFrame */}
+            <div className="lg:hidden flex justify-center">
+              <BrowserFrame url={API_BASE} />
+            </div>
+
+            {/* WebSocket Status */}
+            <div className="bg-surface border border-border rounded-lg p-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-foreground">Connection Status</span>
+                <div className="flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-success' : 'bg-error'}`} />
+                  <span className="text-xs text-text-secondary font-mono">
+                    {wsConnected ? 'Connected' : 'Disconnected'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Network Panel */}
+            <div className="min-h-0">
+              <NetworkPanel requests={requests} />
+            </div>
+
+            {/* Control Panel */}
+            <div className="min-h-0">
+              <ControlPanel status={status} onRefreshStatus={fetchStatus} onReset={handleReset} />
+            </div>
+
+            {/* Info Footer */}
+            <div className="text-center lg:text-left text-text-tertiary text-xs pt-4 border-t border-border">
+              <p className="leading-relaxed">
+                Real-time network monitoring • CDP-based browser control
+              </p>
+            </div>
+          </div>
         </div>
       </div>
-    </main>
+    </div>
   );
 }
