@@ -9,8 +9,6 @@ RUN apt-get update && apt-get install -y \
 
 RUN npx playwright install-deps chromium
 
-COPY extension /opt/extension
-
 COPY server /opt/server
 WORKDIR /opt/server
 RUN npm install

@@ -1,20 +1,16 @@
-# Chromium Browser Context Limits Research
+# Chromium Browser Context Limits Research Summary
 
-## Purpose
-Determine the practical concurrency limits and resource overhead of running multiple browser contexts within a single Chromium instance to inform scaling strategies.
+## Overview
+Analysis of the performance and stability limits of running multiple isolated `BrowserContexts` within a single Chromium instance.
 
 ## Key Findings
-- **Concurrency Limits:** There is no architectural "hard limit" in Chromium. Practical limits are dictated by system resources (RAM/CPU).
-- **Rule of Thumb:**
-  - **Conservative:** 10-20 contexts per instance.
-  - **Aggressive:** Up to 50-100 contexts (Playwright's target).
-- **Resource Overhead:**
-  - **Empty Context:** ~10-50MB RAM.
-  - **Active Context (with page):** 100MB-300MB+ depending on content.
-- **Bottlenecks:** RAM is the primary constraint. CPU becomes a bottleneck if pages are JS-heavy.
+- **Isolation**: Each context provides full cookie/storage isolation with minimal overhead compared to full browser instances.
+- **Resource Usage**: 
+  - Memory: ~10-50MB per empty context; 100-300MB per active page.
+  - CPU: Contention increases linearly; Playwright claims support for up to 100 concurrent contexts.
+- **Practical Limits**: Stable operations are typically observed with 10-20 contexts per browser instance on standard hardware. Beyond 50 contexts, system RAM and CPU core count become significant bottlenecks.
 
-## Benchmarking
-A custom measurement script (`measurement-script.js`) confirmed that context creation is lightweight (~ms), but memory usage grows linearly.
-
-## Conclusion
-Scaling should be based on available RAM (allocating ~200MB per expected active session) rather than an arbitrary count limit.
+## Recommendations
+- Use "Incognito" contexts for stateless sessions to avoid disk I/O overhead.
+- Monitor PSS (Proportional Set Size) rather than RSS for accurate memory measurement of shared Chromium processes.
+- Implement a pool of browser instances if more than 50-100 concurrent sessions are required.

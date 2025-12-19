@@ -1,20 +1,15 @@
-# WebSocket Fanout/Multiplexing Research
+# WebSocket Fanout and Multiplexing Research Summary
 
-## Purpose
-This research explores best practices for high-performance WebSocket fanout (broadcasting), multiplexing, and backpressure handling to support scalable real-time applications.
+## Overview
+Investigation into scaling the number of concurrent viewers for a single `docker-chrome` session using WebSocket fanout and multiplexing techniques.
 
 ## Key Findings
-1.  **Backpressure is Critical**:
-    *   Without backpressure, fast producers overwhelm slow consumers, leading to unbounded memory growth and crashes.
-    *   **Pattern**: Check `ws.bufferedAmount` before sending. If it exceeds a threshold (e.g., 64KB), pause sending or drop messages (if lossy is acceptable).
-    *   **Drain Events**: Wait for the buffer to drain (bufferedAmount decreases) before resuming sends.
-2.  **Library Differences**:
-    *   **`ws` (Node.js)**: Requires manual implementation of backpressure logic.
-    *   **`uWebSockets.js`**: C++ based, significantly higher performance, built-in backpressure API (`getBufferedAmount`, `drain` event), and efficient Pub/Sub.
-3.  **Multiplexing**:
-    *   Running multiple logical streams over a single WebSocket connection is efficient but requires a framing protocol on top of WebSockets.
-4.  **Framing Overhead**:
-    *   WebSocket framing overhead is negligible (2-14 bytes per message), making it efficient for small, frequent messages like mouse coordinates or network events.
+- **Shared Worker vs Proxy**: A server-side proxy (e.g., Redis Pub/Sub or a simple event emitter) is necessary to fan out CDP events from a single browser connection to multiple client WebSockets.
+- **Backpressure**: Slow clients can cause the broadcast buffer to grow, potentially lagging the entire session. Dropping old messages for slow clients is required.
+- **Multiplexing**: Using a single WebSocket to carry both CDP events and WebRTC signaling requires a clear framing protocol (e.g., JSON with a `type` field).
+- **Latency**: Each layer of fanout adds ~5ms-20ms of end-to-end latency.
 
-## Conclusion
-For the Docker Chrome project, implementing backpressure is mandatory for stability. Moving to `uWebSockets.js` could offer significant performance gains for high-fanout scenarios (broadcasting network events to many clients) if Node.js `ws` proves insufficient.
+## Recommendations
+- Implement a server-side "Room" pattern for each browser session.
+- Use a non-blocking broadcast mechanism.
+- Add a "stale" flag or drop threshold for slow WebSocket clients.

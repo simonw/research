@@ -153,13 +153,13 @@ const { body } = await client.send('Network.getResponseBody', {
 
 **Conclusion:** Extension is NOT required for network capture. CDP provides full access.
 
-### 3.2 What the Extension Currently Does
+### 3.2 What the Extension Did (Now Removed)
 
-Looking at `extension/background.js`, it appears to be for:
+The extension (`extension/`) was used for:
 - Universal content script injection
 - Possibly clipboard access
 
-**Recommendation:** The extension may be removable if we use CDP for everything.
+**Status:** Extension has been removed. All functionality now handled via CDP.
 
 ---
 
@@ -311,18 +311,17 @@ await context.addInitScript(() => {
 
 ### Extension Removal Feasibility
 
-The extension (`extension/`) appears to be for:
-1. Content script injection → **Replaceable with CDP**
-2. Network interception → **Already using CDP**
+**UPDATE (2025-12-18):** The extension has been removed. All functionality now uses CDP.
 
-**Recommendation:** We can likely remove the extension entirely and rely on CDP for all functionality. This would:
-- Simplify the architecture
-- Remove the `--load-extension` flag requirement
-- Make the browser appear less automated
+The extension (`extension/`) was used for:
+1. Content script injection → **Replaced with CDP `Page.addScriptToEvaluateOnNewDocument`**
+2. Network interception → **Already using CDP Network domain**
 
-### Next Steps
+### Implementation Status
 
-1. Test removing extension and using CDP-only approach
-2. Add residential proxy support (env var for proxy URL)
-3. Add stealth flags to Chrome startup
-4. Test CAPTCHA rates with stealth configuration
+| Next Step | Status |
+|-----------|--------|
+| Remove extension, use CDP-only | ✅ Done |
+| Add stealth flags to Chrome startup | ✅ Done |
+| Add residential proxy support | 📋 Planned (see `docker-chrome-next-steps/README.md`) |
+| Test CAPTCHA rates | ⚠️ Google blocks on IP; bot.sannysoft passes |

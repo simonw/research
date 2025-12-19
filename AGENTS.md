@@ -1,4 +1,4 @@
-Start by creating a new folder for your work with an appropriate name.
+Whenever we create a new investigation/research task, start by creating a new folder for your work with an appropriate name. Otherwise keep working in the same folder.
 
 Create a notes.md file in that folder and append notes to it as you work, tracking what you tried and anything you learned along the way.
 

@@ -24,7 +24,16 @@ gcloud run deploy "${SERVICE_NAME}" \
   --cpu 2 \
   --memory 2Gi \
   --session-affinity \
-  --set-env-vars="CHROME_CLI=--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --remote-allow-origins=* --disable-extensions-except=/opt/extension --load-extension=/opt/extension,CDP_PORT=9222"
+  --set-env-vars="CHROME_CLI=--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --remote-allow-origins=* --no-first-run --start-fullscreen --start-maximized --block-new-web-contents --disable-infobars --disable-extensions --disable-dev-tools about:blank" \
+  --set-env-vars="CDP_PORT=9222" \
+  --set-env-vars="NO_DECOR=true" \
+  --set-env-vars="HARDEN_DESKTOP=true" \
+  --set-env-vars="DISABLE_MOUSE_BUTTONS=true" \
+  --set-env-vars="HARDEN_KEYBINDS=true" \
+  --set-env-vars="SELKIES_UI_SHOW_SIDEBAR=false" \
+  --set-env-vars="HARDEN_OPENBOX=true" \
+  --set-env-vars="SELKIES_MANUAL_WIDTH=1920" \
+  --set-env-vars="SELKIES_MANUAL_HEIGHT=1080"
 
 echo "✅ Deployment complete!"
 gcloud run services describe "${SERVICE_NAME}" --platform managed --region "${REGION}" --project "${PROJECT_ID}" --format 'value(status.url)'

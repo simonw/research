@@ -11,11 +11,11 @@ This project replicates the `redroid` pattern but for a desktop browser:
     *   Session management
     *   Network traffic inspector (planned)
 
-2.  **Container**: `selkies-gstreamer` + Chromium
-    *   **Streaming**: Selkies (GStreamer WebRTC) for <100ms latency
-    *   **Browser**: Google Chrome Stable with remote debugging (CDP) enabled
-    *   **Automation**: Playwright connected to existing Chrome instance
-    *   **Injection**: Custom Chrome Extension (MV3) for universal script injection
+2.  **Container**: `linuxserver/chromium` + Node.js
+    *   **Streaming**: KasmVNC for low-latency browser streaming
+    *   **Browser**: Chromium with remote debugging (CDP) enabled
+    *   **Automation**: CDP-based control and script injection
+    *   **Stealth**: Anti-bot-detection measures via CDP Page.addScriptToEvaluateOnNewDocument
 
 3.  **Bridge Server**: Node.js
     *   Connects to Chrome via CDP (port 9222)
@@ -27,9 +27,9 @@ This project replicates the `redroid` pattern but for a desktop browser:
 ```
 docker-chrome/
 ├── Dockerfile              # Selkies + Chrome + Node.js
-├── extension/              # MV3 Chrome Extension for injection
 ├── scripts/                # Supervisord config
-├── server/                 # CDP Bridge Server
+├── server/                 # CDP Bridge Server (network capture, stealth injection)
+├── docs/                   # Research documentation
 └── control-pane/           # Next.js Frontend Application
     ├── src/
     │   ├── app/            # Page logic
@@ -57,10 +57,11 @@ docker run -d \
 
 ## Features
 
-*   **Universal Injection**: Extension injects hooks into *every* page/frame immediately.
+*   **Stealth Mode**: CDP-based script injection removes bot detection fingerprints.
 *   **Network Capture**: CDP captures decrypted HTTPS traffic (headers, bodies).
-*   **Remote Control**: WebRTC streaming allows human interaction (login, captcha).
-*   **Automation**: Playwright can drive the session programmatically via the bridge.
+*   **Remote Control**: VNC streaming allows human interaction (login, captcha).
+*   **Session Reset**: Fresh browser profile on demand via API.
+*   **Paste API**: Insert text into focused elements via CDP.
 
 ## Cloud Run Deployment
 

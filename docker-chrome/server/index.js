@@ -42,6 +42,9 @@ let appliedScriptCount = 0;
 
 const clients = new Set();
 
+const responseBodyCache = new Map(); // requestId -> { body, base64Encoded }
+const MAX_CACHE_SIZE = 100;
+
 wss.on('connection', (ws) => {
     clients.add(ws);
     ws.on('close', () => clients.delete(ws));
@@ -163,13 +166,18 @@ app.post('/api/viewport', async (req, res) => {
     const h = Math.max(480, Math.min(1080, Number(height) || 667));
 
     try {
+        // Only set the logical viewport (what JS sees as window.innerWidth/Height)
+        // Do NOT resize the actual Chrome window - Selkies handles display resolution
         await currentSession.page.setViewportSize({ width: w, height: h });
+        
         broadcast('VIEWPORT_CHANGED', { width: w, height: h });
         res.json({ success: true, width: w, height: h });
     } catch (e) {
+        console.error('Viewport change failed:', e.message);
         res.status(500).json({ error: e.message });
     }
 });
+
 
 app.get('/api/viewport', async (req, res) => {
     if (!currentSession.page) return res.status(503).json({ error: 'No active session' });
@@ -228,6 +236,52 @@ app.delete('/api/inject/persist', (req, res) => {
     res.json({ ok: true, count: 0 });
 });
 
+app.post('/api/paste', async (req, res) => {
+    if (!currentSession.page) return res.status(503).json({ error: 'No active session' });
+    const { text, selector } = req.body;
+
+    if (typeof text !== 'string') {
+        return res.status(400).json({ error: 'text must be a string' });
+    }
+
+    try {
+        if (selector) {
+            await currentSession.page.click(selector);
+        }
+
+        const client = currentSession.cdpClient || await currentSession.page.context().newCDPSession(currentSession.page);
+        await client.send('Input.insertText', { text });
+
+        res.json({ success: true, length: text.length });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/network/:requestId/body', async (req, res) => {
+    const { requestId } = req.params;
+    const cached = responseBodyCache.get(requestId);
+    if (cached) {
+        return res.json(cached);
+    }
+
+    if (currentSession.cdpClient) {
+        try {
+            const result = await currentSession.cdpClient.send('Network.getResponseBody', { requestId });
+            responseBodyCache.set(requestId, result);
+            if (responseBodyCache.size > MAX_CACHE_SIZE) {
+                const firstKey = responseBodyCache.keys().next().value;
+                responseBodyCache.delete(firstKey);
+            }
+            return res.json(result);
+        } catch (e) {
+            return res.status(404).json({ error: 'Response body not available', details: e.message });
+        }
+    }
+
+    res.status(404).json({ error: 'Response body not found' });
+});
+
 app.use((req, res, next) => {
     if (req.url.startsWith('/api') || req.url === '/healthz' || req.url.startsWith('/ws')) {
         next();
@@ -269,9 +323,10 @@ async function restartChromeWithNewUserDataDir(sessionId) {
     await fs.mkdir(userDataDir, { recursive: true });
 
     try {
-        await execAsync(`pkill -f "--remote-debugging-port=${CDP_PORT}"`);
+        await execAsync(`pkill -f "remote-debugging-port=${CDP_PORT}"`);
     } catch (e) {
-        if (e && e.code !== 1) throw e;
+        // pkill returns 1 if no processes matched, which is fine
+        // Only throw on actual errors
     }
 
     const chromeBin = await resolveChromeBin();
@@ -282,12 +337,26 @@ async function restartChromeWithNewUserDataDir(sessionId) {
         '--disable-dev-shm-usage',
         `--remote-debugging-port=${CDP_PORT}`,
         '--remote-debugging-address=0.0.0.0',
-        '--load-extension=/opt/extension',
         '--no-first-run',
         '--no-default-browser-check',
         `--user-data-dir=${userDataDir}`,
         '--window-position=0,0',
-        '--window-size=1920,1080',
+        '--start-maximized',
+        '--start-fullscreen',
+        '--disable-infobars',
+        '--disable-session-crashed-bubble',
+        '--disable-restore-session-state',
+        '--noerrdialogs',
+        '--disable-translate',
+        '--disable-extensions',
+        '--disable-component-extensions-with-background-pages',
+        '--disable-background-networking',
+        '--disable-sync',
+        '--disable-default-apps',
+        '--disable-client-side-phishing-detection',
+        '--disable-dev-tools',
+        '--block-new-web-contents',
+        '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'about:blank'
     ];
 
@@ -312,11 +381,80 @@ async function connectToBrowser() {
 
         cdpConnected = true;
         appliedScriptCount = 0;
+
+        await applyStealthScripts();
         await applyPendingPersistentScripts();
-        setupNetworkCapture(currentSession.page, currentSession.id);
+        await setupNetworkCapture(currentSession.page, currentSession.id);
+        
+        // Reload the page to ensure lockdown scripts are active
+        // (addScriptToEvaluateOnNewDocument only works on NEW document loads)
+        try {
+            await currentSession.page.reload({ waitUntil: 'domcontentloaded' });
+            console.log('Page reloaded to apply lockdown scripts');
+        } catch (reloadErr) {
+            console.log('Page reload skipped:', reloadErr.message);
+        }
     } catch (err) {
         cdpConnected = false;
         setTimeout(connectToBrowser, 2000);
+    }
+}
+
+async function applyStealthScripts() {
+    if (!currentSession.page) return;
+
+    const lockdownScript = `
+        // Stealth: Remove automation flags
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+        window.chrome = { runtime: {} };
+        
+        // Lockdown: Disable right-click context menu
+        document.addEventListener('contextmenu', e => e.preventDefault(), true);
+        
+        // Lockdown: Block certain keyboard shortcuts
+        document.addEventListener('keydown', e => {
+            // Block Ctrl+T (new tab), Ctrl+N (new window), Ctrl+Shift+N (incognito)
+            if (e.ctrlKey && ['t', 'n'].includes(e.key.toLowerCase())) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            // Block F12 (dev tools)
+            if (e.key === 'F12') {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            // Block Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+U (view source)
+            if (e.ctrlKey && e.shiftKey && ['i', 'j'].includes(e.key.toLowerCase())) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            if (e.ctrlKey && e.key.toLowerCase() === 'u') {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        }, true);
+    `;
+
+    try {
+        const client = await currentSession.page.context().newCDPSession(currentSession.page);
+        
+        // Add script for all future documents
+        await client.send('Page.addScriptToEvaluateOnNewDocument', {
+            source: lockdownScript
+        });
+        
+        // Also run on the current page immediately
+        await client.send('Runtime.evaluate', {
+            expression: lockdownScript,
+            awaitPromise: false
+        });
+        
+        currentSession.cdpClient = client;
+        console.log('Stealth and lockdown scripts applied successfully');
+    } catch (err) {
+        console.error('Failed to apply stealth scripts:', err.message);
     }
 }
 
@@ -354,6 +492,19 @@ async function setupNetworkCapture(page, sessionId = null) {
                 errorText: event.errorText,
                 timestamp: Date.now()
             });
+        });
+
+        client.on('Network.loadingFinished', async (event) => {
+            try {
+                const result = await client.send('Network.getResponseBody', { requestId: event.requestId });
+                responseBodyCache.set(event.requestId, result);
+                if (responseBodyCache.size > MAX_CACHE_SIZE) {
+                    const firstKey = responseBodyCache.keys().next().value;
+                    responseBodyCache.delete(firstKey);
+                }
+            } catch (e) {
+                // Body may not be available for all requests (e.g., 204, redirects)
+            }
         });
     } catch (err) {
         cdpConnected = false;

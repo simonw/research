@@ -54,7 +54,7 @@ export function BrowserFrame({ url, apiBase }: BrowserFrameProps) {
   return (
     <div
       ref={containerRef}
-      className="relative w-full aspect-video min-w-[320px] max-w-[1920px] min-h-[480px] max-h-[1080px] bg-black rounded-lg overflow-hidden shadow-2xl ring-1 ring-white/10 resize-y"
+      className="relative w-full h-full bg-black rounded-lg overflow-hidden shadow-2xl ring-1 ring-white/10"
     >
       <iframe
         src={url}

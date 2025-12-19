@@ -115,7 +115,7 @@ export default function Home() {
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-0">
         <div className="lg:col-span-7 flex flex-col gap-6 h-full min-h-0">
-          <div className="flex-none flex justify-center py-4 bg-zinc-900/30 rounded-xl border border-border/50">
+          <div className="flex-1 flex justify-center py-4 bg-zinc-900/30 rounded-xl border border-border/50 min-h-0">
             <BrowserFrame url={API_BASE} />
           </div>
           
