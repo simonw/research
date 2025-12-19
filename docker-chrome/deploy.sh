@@ -32,8 +32,8 @@ gcloud run deploy "${SERVICE_NAME}" \
   --set-env-vars="HARDEN_KEYBINDS=true" \
   --set-env-vars="SELKIES_UI_SHOW_SIDEBAR=false" \
   --set-env-vars="HARDEN_OPENBOX=true" \
-  --set-env-vars="SELKIES_MANUAL_WIDTH=1920" \
-  --set-env-vars="SELKIES_MANUAL_HEIGHT=1080"
+  --set-env-vars="SELKIES_MANUAL_WIDTH=430" \
+  --set-env-vars="SELKIES_MANUAL_HEIGHT=932"
 
 echo "✅ Deployment complete!"
 gcloud run services describe "${SERVICE_NAME}" --platform managed --region "${REGION}" --project "${PROJECT_ID}" --format 'value(status.url)'

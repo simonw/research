@@ -26,6 +26,19 @@ app.use(express.json());
 const PORT = process.env.PORT || 8080;
 const CDP_PORT = process.env.CDP_PORT || 9222;
 
+// Fixed mobile viewport - matches SELKIES_MANUAL_WIDTH/HEIGHT in deploy.sh
+// deviceScaleFactor: 1 because Xvfb display is the physical pixels
+// Chrome will render at 430x932 CSS pixels filling the display exactly
+const FIXED_VIEWPORT = {
+    width: 430,
+    height: 932,
+    deviceScaleFactor: 1,
+    mobile: true
+};
+
+// iPhone 15 Pro Max user agent
+const MOBILE_USER_AGENT = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+
 let browser = null;
 let cdpConnected = false;
 
@@ -98,37 +111,53 @@ app.post('/api/session/reset', async (req, res) => {
         persistentScripts = [];
         appliedScriptCount = 0;
 
-        if (currentSession.context) {
-            await currentSession.context.close().catch(() => {});
+        // Don't restart Chrome - just clear cookies and navigate to blank
+        // This is much more reliable than trying to respawn Chrome
+        if (currentSession.page && currentSession.cdpClient) {
+            try {
+                await currentSession.cdpClient.send('Network.clearBrowserCookies');
+                await currentSession.cdpClient.send('Network.clearBrowserCache');
+                await currentSession.page.goto('about:blank');
+                await applyFixedViewport();
+                await applyStealthScripts();
+                
+                currentSession.id = sessionId;
+                currentSession.createdAt = Date.now();
+                
+                broadcast('SESSION_RESET', { sessionId, timestamp: Date.now() });
+                
+                return res.json({
+                    success: true,
+                    sessionId,
+                    message: 'Session reset. Cookies/cache cleared, navigated to blank page.'
+                });
+            } catch (e) {
+                console.log('Soft reset failed, will attempt reconnect:', e.message);
+            }
         }
 
-        if (browser) {
-            await browser.close().catch(() => {});
-        }
-
+        // If we don't have a connection, try to connect to existing Chrome
         currentSession = {
             id: sessionId,
             userDataDir: null,
             context: null,
             page: null,
+            cdpClient: null,
             createdAt: Date.now()
         };
 
         browser = null;
         cdpConnected = false;
 
-        const userDataDir = await restartChromeWithNewUserDataDir(sessionId);
-        currentSession.userDataDir = userDataDir;
-
         broadcast('SESSION_RESET', { sessionId, timestamp: Date.now() });
 
-        setTimeout(connectToBrowser, 250);
+        // Try to connect to the existing Chrome (started by linuxserver)
+        setTimeout(connectToBrowser, 500);
 
         res.json({
             success: true,
             sessionId,
-            userDataDir,
-            message: 'Session reset. Chrome restarted with a new user-data-dir and persistent scripts cleared.'
+            message: 'Session reset. Reconnecting to browser...'
         });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -160,18 +189,36 @@ app.post('/api/inject', async (req, res) => {
 app.post('/api/viewport', async (req, res) => {
     if (!currentSession.page) return res.status(503).json({ error: 'No active session' });
 
-    const { width, height } = req.body;
+    const { width, height, devicePixelRatio, mobile } = req.body;
 
     const w = Math.max(320, Math.min(1920, Number(width) || 375));
     const h = Math.max(480, Math.min(1080, Number(height) || 667));
+    const dpr = Math.max(1, Math.min(3, Number(devicePixelRatio) || 1));
+    // Auto-detect mobile if not specified: width < 768 is mobile
+    const isMobile = typeof mobile === 'boolean' ? mobile : w < 768;
 
     try {
-        // Only set the logical viewport (what JS sees as window.innerWidth/Height)
-        // Do NOT resize the actual Chrome window - Selkies handles display resolution
-        await currentSession.page.setViewportSize({ width: w, height: h });
+        // Use CDP Emulation.setDeviceMetricsOverride for full viewport control
+        // This sets: window.innerWidth/Height, screen.width/height, DPR, and mobile mode
+        const client = currentSession.cdpClient || await currentSession.page.context().newCDPSession(currentSession.page);
         
-        broadcast('VIEWPORT_CHANGED', { width: w, height: h });
-        res.json({ success: true, width: w, height: h });
+        await client.send('Emulation.setDeviceMetricsOverride', {
+            width: w,
+            height: h,
+            deviceScaleFactor: dpr,
+            mobile: isMobile,
+            screenOrientation: w > h 
+                ? { type: 'landscapePrimary', angle: 90 }
+                : { type: 'portraitPrimary', angle: 0 }
+        });
+        
+        // Cache CDP client for reuse
+        if (!currentSession.cdpClient) {
+            currentSession.cdpClient = client;
+        }
+        
+        broadcast('VIEWPORT_CHANGED', { width: w, height: h, devicePixelRatio: dpr, mobile: isMobile });
+        res.json({ success: true, width: w, height: h, devicePixelRatio: dpr, mobile: isMobile });
     } catch (e) {
         console.error('Viewport change failed:', e.message);
         res.status(500).json({ error: e.message });
@@ -336,13 +383,12 @@ async function restartChromeWithNewUserDataDir(sessionId) {
         '--no-sandbox',
         '--disable-dev-shm-usage',
         `--remote-debugging-port=${CDP_PORT}`,
-        '--remote-debugging-address=0.0.0.0',
+        '--remote-debugging-address=127.0.0.1',
         '--no-first-run',
         '--no-default-browser-check',
         `--user-data-dir=${userDataDir}`,
-        '--window-position=0,0',
-        '--start-maximized',
         '--start-fullscreen',
+        '--start-maximized',
         '--disable-infobars',
         '--disable-session-crashed-bubble',
         '--disable-restore-session-state',
@@ -356,17 +402,21 @@ async function restartChromeWithNewUserDataDir(sessionId) {
         '--disable-client-side-phishing-detection',
         '--disable-dev-tools',
         '--block-new-web-contents',
-        '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        `--user-agent=${MOBILE_USER_AGENT}`,
         'about:blank'
     ];
 
     const proc = spawn(chromeBin, args, { detached: true, stdio: 'ignore', env });
     proc.unref();
+    
+    console.log(`Spawned Chrome with PID ${proc.pid}, bin: ${chromeBin}`);
+    console.log(`Chrome args: ${args.join(' ')}`);
 
     return userDataDir;
 }
 
 async function connectToBrowser() {
+    console.log(`Attempting to connect to CDP at http://127.0.0.1:${CDP_PORT}...`);
     try {
         browser = await chromium.connectOverCDP(`http://127.0.0.1:${CDP_PORT}`);
 
@@ -386,6 +436,9 @@ async function connectToBrowser() {
         await applyPendingPersistentScripts();
         await setupNetworkCapture(currentSession.page, currentSession.id);
         
+        // Apply fixed mobile viewport to match Selkies resolution
+        await applyFixedViewport();
+        
         // Reload the page to ensure lockdown scripts are active
         // (addScriptToEvaluateOnNewDocument only works on NEW document loads)
         try {
@@ -395,6 +448,7 @@ async function connectToBrowser() {
             console.log('Page reload skipped:', reloadErr.message);
         }
     } catch (err) {
+        console.log(`CDP connection failed: ${err.message}. Retrying in 2s...`);
         cdpConnected = false;
         setTimeout(connectToBrowser, 2000);
     }
@@ -455,6 +509,45 @@ async function applyStealthScripts() {
         console.log('Stealth and lockdown scripts applied successfully');
     } catch (err) {
         console.error('Failed to apply stealth scripts:', err.message);
+    }
+}
+
+async function applyFixedViewport() {
+    if (!currentSession.page) return;
+    
+    try {
+        const client = currentSession.cdpClient || await currentSession.page.context().newCDPSession(currentSession.page);
+        
+        await client.send('Emulation.setDeviceMetricsOverride', {
+            width: FIXED_VIEWPORT.width,
+            height: FIXED_VIEWPORT.height,
+            deviceScaleFactor: FIXED_VIEWPORT.deviceScaleFactor,
+            mobile: FIXED_VIEWPORT.mobile,
+            screenOrientation: { type: 'portraitPrimary', angle: 0 }
+        });
+        
+        await client.send('Emulation.setUserAgentOverride', {
+            userAgent: MOBILE_USER_AGENT,
+            platform: 'iPhone',
+            userAgentMetadata: {
+                brands: [{ brand: 'Safari', version: '17' }],
+                fullVersionList: [{ brand: 'Safari', version: '17.0' }],
+                platform: 'iOS',
+                platformVersion: '17.0',
+                architecture: '',
+                model: 'iPhone',
+                mobile: true
+            }
+        });
+        
+        if (!currentSession.cdpClient) {
+            currentSession.cdpClient = client;
+        }
+        
+        console.log(`Fixed viewport applied: ${FIXED_VIEWPORT.width}x${FIXED_VIEWPORT.height} @${FIXED_VIEWPORT.deviceScaleFactor}x mobile=${FIXED_VIEWPORT.mobile}`);
+        console.log(`Mobile user agent applied: iPhone/Safari`);
+    } catch (err) {
+        console.error('Failed to apply fixed viewport:', err.message);
     }
 }
 
