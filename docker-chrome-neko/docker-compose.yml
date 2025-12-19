@@ -1,0 +1,39 @@
+services:
+  neko-chrome:
+    build: .
+    container_name: docker-chrome-neko
+    restart: unless-stopped
+    shm_size: "2gb"
+    ports:
+      # neko WebRTC UI
+      - "8080:8080"
+      # neko WebRTC UDP ports  
+      - "52000-52100:52000-52100/udp"
+      # Chrome DevTools Protocol
+      - "9222:9222"
+      # CDP Agent API
+      - "3001:3001"
+    environment:
+      # neko member passwords
+      NEKO_MEMBER_MULTIUSER_USER_PASSWORD: "neko"
+      NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD: "admin"
+      
+      # WebRTC configuration
+      NEKO_WEBRTC_EPR: "52000-52100"
+      NEKO_WEBRTC_ICELITE: "true"
+      # Set to your external IP for production
+      # NEKO_WEBRTC_NAT1TO1: "<your-ip>"
+      
+      # Session configuration - auto-grant control to first user
+      NEKO_SESSION_IMPLICIT_HOSTING: "true"
+      
+      # Disable audio (as requested)
+      NEKO_CAPTURE_AUDIO_ENABLED: "false"
+      
+      # Initial screen size (will be adjusted via viewport API)
+      NEKO_DESKTOP_SCREEN: "1280x720@30"
+      
+      # CDP Agent port
+      CDP_AGENT_PORT: "3001"
+      CDP_PORT: "9222"
+      CDP_HOST: "127.0.0.1"
