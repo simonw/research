@@ -26,6 +26,12 @@ app.use(express.json());
 const PORT = process.env.PORT || 8080;
 const CDP_PORT = process.env.CDP_PORT || 9222;
 
+// Residential proxy configuration (optional - set all three to enable)
+const PROXY_SERVER = process.env.PROXY_SERVER; // e.g., "brd.superproxy.io:33335"
+const PROXY_USERNAME = process.env.PROXY_USERNAME; // e.g., "brd-customer-XXX-zone-residential"
+const PROXY_PASSWORD = process.env.PROXY_PASSWORD;
+const PROXY_ENABLED = Boolean(PROXY_SERVER && PROXY_USERNAME && PROXY_PASSWORD);
+
 // Fixed mobile viewport - matches SELKIES_MANUAL_WIDTH/HEIGHT in deploy.sh
 // deviceScaleFactor: 1 because Xvfb display is the physical pixels
 // Chrome will render at 430x932 CSS pixels filling the display exactly
@@ -459,6 +465,11 @@ async function connectToBrowser() {
         await applyPendingPersistentScripts();
         await setupNetworkCapture(currentSession.page, currentSession.id);
         
+        // Set up proxy if configured
+        if (PROXY_ENABLED) {
+            await setupProxy(currentSession.page);
+        }
+        
         // Apply fixed mobile viewport to match Selkies resolution
         await applyFixedViewport();
         
@@ -627,6 +638,60 @@ async function setupNetworkCapture(page, sessionId = null) {
     }
 }
 
+async function setupProxy(page) {
+    if (!PROXY_ENABLED) return;
+    
+    try {
+        const client = currentSession.cdpClient || await page.context().newCDPSession(page);
+        
+        // Enable Fetch with auth request handling
+        await client.send('Fetch.enable', {
+            handleAuthRequests: true,
+            patterns: [{ urlPattern: '*' }]
+        });
+        
+        // Handle auth challenges from proxy
+        client.on('Fetch.authRequired', async (event) => {
+            const { requestId, authChallenge } = event;
+            
+            if (authChallenge.source === 'Proxy') {
+                await client.send('Fetch.continueWithAuth', {
+                    requestId,
+                    authChallengeResponse: {
+                        response: 'ProvideCredentials',
+                        username: PROXY_USERNAME,
+                        password: PROXY_PASSWORD
+                    }
+                });
+            } else {
+                // Not a proxy auth challenge, cancel
+                await client.send('Fetch.continueWithAuth', {
+                    requestId,
+                    authChallengeResponse: { response: 'CancelAuth' }
+                });
+            }
+        });
+        
+        // Continue all requests (they'll be routed through proxy via Chrome args)
+        client.on('Fetch.requestPaused', async (event) => {
+            await client.send('Fetch.continueRequest', { requestId: event.requestId });
+        });
+        
+        if (!currentSession.cdpClient) {
+            currentSession.cdpClient = client;
+        }
+        
+        console.log(`Proxy authentication handler configured for ${PROXY_SERVER}`);
+    } catch (err) {
+        console.error('Failed to setup proxy authentication:', err.message);
+    }
+}
+
 server.listen(PORT, () => {
+    if (PROXY_ENABLED) {
+        console.log(`Proxy enabled: ${PROXY_SERVER} (user: ${PROXY_USERNAME.substring(0, 20)}...)`);
+    } else {
+        console.log('Proxy: disabled (set PROXY_SERVER, PROXY_USERNAME, PROXY_PASSWORD to enable)');
+    }
     connectToBrowser();
 });
