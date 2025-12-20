@@ -69,3 +69,49 @@ This container is designed for Cloud Run:
 *   Single port (8080) for both WebRTC signaling and Control API.
 *   Stateless (sessions are ephemeral).
 *   Handles its own display server (Xvfb).
+
+```bash
+./deploy.sh
+```
+
+## VM Deployment (Alternative)
+
+For testing in a persistent VM environment instead of Cloud Run:
+
+```bash
+./deploy-vm.sh
+```
+
+The script is **idempotent**:
+*   Creates a VM if it doesn't exist
+*   Updates the container if VM already exists
+*   Sets up firewall rules automatically
+
+After deployment, the script outputs:
+*   External IP address
+*   Direct access URL: `http://<IP>:8080`
+*   Control pane connection: Add `?target=vm&ip=<IP>` to control pane URL
+
+### VM Management Commands
+
+```bash
+# View container logs
+gcloud compute ssh docker-chrome-vm --zone=us-central1-a --project=corsali-development \
+  --command='sudo journalctl -u konlet-startup -f'
+
+# SSH into VM
+gcloud compute ssh docker-chrome-vm --zone=us-central1-a --project=corsali-development
+
+# Delete VM
+gcloud compute instances delete docker-chrome-vm --zone=us-central1-a --project=corsali-development
+```
+
+### Control Pane Target Switching
+
+The control pane supports switching between deployment targets via URL parameters:
+
+| Target | URL |
+|--------|-----|
+| Cloud Run (default) | `https://your-control-pane.vercel.app` |
+| VM | `https://your-control-pane.vercel.app?target=vm&ip=<VM_IP>` |
+

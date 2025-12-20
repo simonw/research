@@ -15,7 +15,7 @@ gcloud builds submit --tag "${IMAGE_NAME}" . --project "${PROJECT_ID}"
 # Residential proxy defaults (Brightdata) - override with env vars if needed
 PROXY_SERVER="${PROXY_SERVER:-brd.superproxy.io:33335}"
 PROXY_USERNAME="${PROXY_USERNAME:-brd-customer-hl_b6c4198e-zone-residential1}"
-PROXY_PASSWORD="${PROXY_PASSWORD:-a4xr7h7v58zb}"
+PROXY_PASSWORD="${PROXY_PASSWORD:-}"  # Set via environment variable or Cloud Run secrets
 
 # Build Chrome CLI args (optionally including proxy)
 CHROME_ARGS="--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --remote-allow-origins=* --no-first-run --start-fullscreen --start-maximized --block-new-web-contents --disable-infobars --disable-extensions --disable-dev-tools --allow-running-insecure-content"

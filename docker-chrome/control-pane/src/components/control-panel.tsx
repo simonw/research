@@ -4,15 +4,14 @@ import React, { useState } from "react";
 import { Status } from "@/lib/types";
 import { Globe, Play } from "lucide-react";
 
-const API_BASE = "https://docker-chrome-432753364585.us-central1.run.app";
-
 interface ControlPanelProps {
   status: Status | null;
   onRefreshStatus: () => void;
   onReset?: () => void;
+  apiBase: string;
 }
 
-export function ControlPanel({ status, onRefreshStatus, onReset }: ControlPanelProps) {
+export function ControlPanel({ status, onRefreshStatus, onReset, apiBase }: ControlPanelProps) {
   const [url, setUrl] = useState("https://google.com");
   const [script, setScript] = useState("");
   const [loading, setLoading] = useState(false);
@@ -20,7 +19,7 @@ export function ControlPanel({ status, onRefreshStatus, onReset }: ControlPanelP
   const handleNavigate = async () => {
     setLoading(true);
     try {
-      await fetch(`${API_BASE}/api/navigate`, {
+      await fetch(`${apiBase}/api/navigate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url }),
@@ -35,7 +34,7 @@ export function ControlPanel({ status, onRefreshStatus, onReset }: ControlPanelP
   const handleInject = async () => {
     setLoading(true);
     try {
-      await fetch(`${API_BASE}/api/inject`, {
+      await fetch(`${apiBase}/api/inject`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: script }),
