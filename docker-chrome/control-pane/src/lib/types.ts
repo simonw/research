@@ -47,3 +47,24 @@ export interface WebSocketMessage {
   type: string;
   payload: any;
 }
+
+// Automation types
+export type AutomationMode = "idle" | "automation" | "user-input";
+
+export interface AutomationState {
+  mode: AutomationMode;
+  isRunning: boolean;
+  scriptId: string | null;
+  prompt: string | null;
+  error: string | null;
+  data: Record<string, any>;
+  cursorPosition?: { x: number; y: number } | null;
+  cursorAction?: "move" | "click";
+}
+
+export interface AutomationCursorEvent {
+  x: number;
+  y: number;
+  action: "move" | "click";
+  timestamp: number;
+}

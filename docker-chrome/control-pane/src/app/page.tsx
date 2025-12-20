@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { BrowserFrame } from "@/components/browser-frame";
 import { NetworkPanel } from "@/components/network-panel";
 import { ControlPanel } from "@/components/control-panel";
-import { NetworkRequest, Status, WebSocketMessage } from "@/lib/types";
+import { DataPanel } from "@/components/data-panel";
+import { NetworkRequest, Status, WebSocketMessage, AutomationMode, AutomationState } from "@/lib/types";
 import { ChevronDown, Cloud, Server } from "lucide-react";
 
 // Deployment targets configuration
@@ -75,6 +76,18 @@ export default function Home() {
   const activeSessionIdRef = useRef<string | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  // Automation state
+  const [automationState, setAutomationState] = useState<AutomationState>({
+    mode: "idle",
+    isRunning: false,
+    scriptId: null,
+    prompt: null,
+    error: null,
+    data: {},
+    cursorPosition: null,
+    cursorAction: "move",
+  });
 
   // Initialize deployment target on client side
   useEffect(() => {
@@ -193,6 +206,42 @@ export default function Home() {
               return next;
             });
           }
+
+          // Automation events
+          if (msg.type === "AUTOMATION_MODE_CHANGED") {
+            setAutomationState(prev => ({
+              ...prev,
+              mode: msg.payload.mode as AutomationMode,
+              isRunning: msg.payload.mode !== "idle",
+              prompt: msg.payload.prompt || null,
+              scriptId: msg.payload.scriptId || prev.scriptId,
+            }));
+          }
+
+          if (msg.type === "AUTOMATION_CURSOR") {
+            setAutomationState(prev => ({
+              ...prev,
+              cursorPosition: { x: msg.payload.x, y: msg.payload.y },
+              cursorAction: msg.payload.action,
+            }));
+          }
+
+          if (msg.type === "AUTOMATION_DATA_UPDATED") {
+            setAutomationState(prev => ({
+              ...prev,
+              data: msg.payload.data || prev.data,
+            }));
+          }
+
+          if (msg.type === "AUTOMATION_COMPLETE") {
+            setAutomationState(prev => ({
+              ...prev,
+              mode: "idle",
+              isRunning: false,
+              error: msg.payload.error || null,
+              data: msg.payload.data || prev.data,
+            }));
+          }
         } catch (e) {
           console.error("Failed to parse WS message", e);
         }
@@ -290,7 +339,13 @@ export default function Home() {
         <div className="grid lg:grid-cols-2 gap-6">
           {/* Left: Browser Viewer */}
           <div className="flex items-start">
-            <BrowserFrame url={deploymentTarget?.apiBase || ''} />
+            <BrowserFrame
+              url={deploymentTarget?.apiBase || ''}
+              automationMode={automationState.mode}
+              automationPrompt={automationState.prompt || ''}
+              cursorPosition={automationState.cursorPosition}
+              cursorAction={automationState.cursorAction}
+            />
           </div>
 
           {/* Right: Controls */}
@@ -317,7 +372,16 @@ export default function Home() {
             </div>
 
             {/* Control Panel */}
-            <ControlPanel status={status} onRefreshStatus={fetchStatus} onReset={handleReset} apiBase={deploymentTarget?.apiBase || ''} />
+            <ControlPanel
+              status={status}
+              onRefreshStatus={fetchStatus}
+              onReset={handleReset}
+              apiBase={deploymentTarget?.apiBase || ''}
+              automationMode={automationState.mode}
+            />
+
+            {/* Data Panel */}
+            <DataPanel data={automationState.data} />
           </div>
         </div>
 

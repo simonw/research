@@ -64,6 +64,18 @@ const clients = new Set();
 const responseBodyCache = new Map(); // requestId -> { body, base64Encoded }
 const MAX_CACHE_SIZE = 100;
 
+// Automation state - persists across page navigations
+let automationState = {
+    isRunning: false,
+    mode: 'idle', // 'automation' | 'user-input' | 'idle'
+    data: {},     // Persistent data object built during automation
+    scriptId: null,
+    prompt: null,
+    error: null,
+    networkCaptures: [], // { urlPattern?, bodyPattern?, key }
+    continueResolver: null // Promise resolver for user-input mode
+};
+
 wss.on('connection', (ws) => {
     clients.add(ws);
     ws.on('close', () => clients.delete(ws));
@@ -357,6 +369,377 @@ app.post('/api/network/clear', async (req, res) => {
         res.status(500).json({ error: e.message });
     }
 });
+
+// ==================== AUTOMATION API ====================
+
+// Get automation status
+app.get('/api/automation/status', (req, res) => {
+    res.json({
+        isRunning: automationState.isRunning,
+        mode: automationState.mode,
+        scriptId: automationState.scriptId,
+        prompt: automationState.prompt,
+        error: automationState.error,
+        dataKeys: Object.keys(automationState.data)
+    });
+});
+
+// Get automation data
+app.get('/api/automation/data', (req, res) => {
+    res.json(automationState.data);
+});
+
+// Update automation data (merge)
+app.post('/api/automation/data', (req, res) => {
+    const { key, value } = req.body;
+    if (key) {
+        automationState.data[key] = value;
+        broadcast('AUTOMATION_DATA_UPDATED', { key, value, data: automationState.data });
+    } else if (typeof req.body === 'object') {
+        automationState.data = { ...automationState.data, ...req.body };
+        broadcast('AUTOMATION_DATA_UPDATED', { data: automationState.data });
+    }
+    res.json({ success: true, data: automationState.data });
+});
+
+// Clear automation data
+app.delete('/api/automation/data', (req, res) => {
+    automationState.data = {};
+    broadcast('AUTOMATION_DATA_UPDATED', { data: {} });
+    res.json({ success: true });
+});
+
+// Helper: Set automation mode and broadcast
+function setAutomationMode(mode, extra = {}) {
+    automationState.mode = mode;
+    broadcast('AUTOMATION_MODE_CHANGED', { mode, ...extra });
+}
+
+// Helper: Broadcast cursor position
+function broadcastCursor(x, y, action = 'move') {
+    broadcast('AUTOMATION_CURSOR', { x, y, action, timestamp: Date.now() });
+}
+
+// Helper: Get element center position
+async function getElementCenter(selector) {
+    if (!currentSession.page) throw new Error('No active page');
+    
+    const box = await currentSession.page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return null;
+        const rect = el.getBoundingClientRect();
+        return {
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2,
+            width: rect.width,
+            height: rect.height
+        };
+    }, selector);
+    
+    if (!box) throw new Error(`Element not found: ${selector}`);
+    return box;
+}
+
+// Helper: Animate cursor to position
+async function animateCursorTo(x, y, duration = 300) {
+    const steps = 10;
+    const startX = automationState.lastCursorX || 0;
+    const startY = automationState.lastCursorY || 0;
+    
+    for (let i = 1; i <= steps; i++) {
+        const progress = i / steps;
+        const currentX = startX + (x - startX) * progress;
+        const currentY = startY + (y - startY) * progress;
+        broadcastCursor(currentX, currentY, 'move');
+        await new Promise(r => setTimeout(r, duration / steps));
+    }
+    
+    automationState.lastCursorX = x;
+    automationState.lastCursorY = y;
+}
+
+// Create playwright wrapper API for scripts
+function createPlaywrightAPI() {
+    const page = currentSession.page;
+    if (!page) throw new Error('No active page');
+    
+    return {
+        // Navigate with cursor animation
+        goto: async (url, options = {}) => {
+            setAutomationMode('automation', { action: 'navigating', url });
+            await page.goto(url, options);
+            return true;
+        },
+        
+        // Click with cursor animation
+        click: async (selector, options = {}) => {
+            const box = await getElementCenter(selector);
+            await animateCursorTo(box.x, box.y);
+            broadcastCursor(box.x, box.y, 'click');
+            await new Promise(r => setTimeout(r, 150)); // Visual feedback delay
+            await page.click(selector, options);
+            return true;
+        },
+        
+        // Type with cursor animation
+        type: async (selector, text, options = {}) => {
+            const box = await getElementCenter(selector);
+            await animateCursorTo(box.x, box.y);
+            broadcastCursor(box.x, box.y, 'click');
+            await page.click(selector);
+            await page.type(selector, text, { delay: options.delay || 50 });
+            return true;
+        },
+        
+        // Fill (faster than type, no keystroke animation)
+        fill: async (selector, text) => {
+            const box = await getElementCenter(selector);
+            await animateCursorTo(box.x, box.y);
+            broadcastCursor(box.x, box.y, 'click');
+            await page.fill(selector, text);
+            return true;
+        },
+        
+        // Wait for selector
+        waitFor: async (selector, options = {}) => {
+            await page.waitForSelector(selector, { timeout: options.timeout || 30000 });
+            return true;
+        },
+        
+        // Wait for navigation
+        waitForNavigation: async (options = {}) => {
+            await page.waitForNavigation({ timeout: options.timeout || 30000, ...options });
+            return true;
+        },
+        
+        // Wait for URL pattern
+        waitForURL: async (urlPattern, options = {}) => {
+            await page.waitForURL(urlPattern, { timeout: options.timeout || 30000 });
+            return true;
+        },
+        
+        // Sleep
+        sleep: async (ms) => {
+            await new Promise(r => setTimeout(r, ms));
+            return true;
+        },
+        
+        // Scrape text from DOM
+        scrapeText: async (selector, key) => {
+            const text = await page.evaluate((sel) => {
+                const el = document.querySelector(sel);
+                return el ? el.textContent?.trim() : null;
+            }, selector);
+            if (key && text !== null) {
+                automationState.data[key] = text;
+                broadcast('AUTOMATION_DATA_UPDATED', { key, value: text, data: automationState.data });
+            }
+            return text;
+        },
+        
+        // Scrape multiple elements
+        scrapeAll: async (selector, key) => {
+            const texts = await page.evaluate((sel) => {
+                const els = document.querySelectorAll(sel);
+                return Array.from(els).map(el => el.textContent?.trim());
+            }, selector);
+            if (key) {
+                automationState.data[key] = texts;
+                broadcast('AUTOMATION_DATA_UPDATED', { key, value: texts, data: automationState.data });
+            }
+            return texts;
+        },
+        
+        // Scrape attribute
+        scrapeAttribute: async (selector, attribute, key) => {
+            const value = await page.evaluate((sel, attr) => {
+                const el = document.querySelector(sel);
+                return el ? el.getAttribute(attr) : null;
+            }, selector, attribute);
+            if (key && value !== null) {
+                automationState.data[key] = value;
+                broadcast('AUTOMATION_DATA_UPDATED', { key, value, data: automationState.data });
+            }
+            return value;
+        },
+        
+        // Evaluate custom code
+        evaluate: async (code) => {
+            return await page.evaluate(code);
+        },
+        
+        // Capture network response (registers a pattern to watch)
+        captureNetwork: (options) => {
+            const { urlPattern, bodyPattern, key } = options;
+            if (!key) throw new Error('captureNetwork requires a key');
+            automationState.networkCaptures.push({ urlPattern, bodyPattern, key });
+            return true;
+        },
+        // Switch to user-input mode
+        // condition: async function that returns true when automation should resume
+        // pollInterval: how often to check condition (default 500ms)
+        promptUser: async (message, condition, pollInterval = 500) => {
+            automationState.prompt = message;
+            setAutomationMode('user-input', { prompt: message });
+            
+            // Poll the condition until it returns true
+            return new Promise((resolve) => {
+                const checkCondition = async () => {
+                    try {
+                        const result = await condition();
+                        if (result === true) {
+                            automationState.prompt = null;
+                            setAutomationMode('automation');
+                            resolve('condition-met');
+                        } else {
+                            setTimeout(checkCondition, pollInterval);
+                        }
+                    } catch (err) {
+                        // Condition errored, keep polling
+                        setTimeout(checkCondition, pollInterval);
+                    }
+                };
+                checkCondition();
+            });
+        },
+        
+        // Get current URL
+        url: () => page.url(),
+        
+        // Check if element exists
+        exists: async (selector) => {
+            const el = await page.$(selector);
+            return el !== null;
+        },
+        
+        // Access persistent data
+        get data() {
+            return automationState.data;
+        },
+        
+        // Set data directly
+        setData: (key, value) => {
+            automationState.data[key] = value;
+            broadcast('AUTOMATION_DATA_UPDATED', { key, value, data: automationState.data });
+        }
+    };
+}
+
+// Start automation script
+app.post('/api/automation/start', async (req, res) => {
+    if (!currentSession.page) {
+        return res.status(503).json({ error: 'No active browser session' });
+    }
+    
+    if (automationState.isRunning) {
+        return res.status(400).json({ error: 'Automation already running' });
+    }
+    
+    const { script } = req.body;
+    if (!script || typeof script !== 'string') {
+        return res.status(400).json({ error: 'Script is required' });
+    }
+    
+    const scriptId = `script_${Date.now()}`;
+    
+    // Reset state
+    automationState = {
+        isRunning: true,
+        mode: 'automation',
+        data: {},
+        scriptId,
+        prompt: null,
+        error: null,
+        networkCaptures: [],
+        continueResolver: null,
+        lastCursorX: 0,
+        lastCursorY: 0
+    };
+    
+    broadcast('AUTOMATION_MODE_CHANGED', { mode: 'automation', scriptId });
+    
+    // Run script in background
+    (async () => {
+        try {
+            const playwright = createPlaywrightAPI();
+            
+            // Create async function from script and execute it
+            const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+            const scriptFn = new AsyncFunction('playwright', script);
+            
+            const result = await scriptFn(playwright);
+            
+            // Script completed successfully
+            automationState.isRunning = false;
+            automationState.mode = 'idle';
+            
+            broadcast('AUTOMATION_COMPLETE', {
+                scriptId,
+                success: true,
+                data: automationState.data,
+                result
+            });
+            
+            console.log(`Automation ${scriptId} completed successfully`);
+        } catch (error) {
+            automationState.isRunning = false;
+            automationState.mode = 'idle';
+            automationState.error = error.message;
+            
+            broadcast('AUTOMATION_COMPLETE', {
+                scriptId,
+                success: false,
+                error: error.message,
+                data: automationState.data
+            });
+            
+            console.error(`Automation ${scriptId} failed:`, error.message);
+        }
+    })();
+    
+    res.json({ success: true, scriptId });
+});
+
+// Continue automation after user-input mode
+app.post('/api/automation/continue', (req, res) => {
+    if (automationState.mode !== 'user-input') {
+        return res.status(400).json({ error: 'Not in user-input mode' });
+    }
+    
+    if (automationState.continueResolver) {
+        automationState.continueResolver();
+        automationState.continueResolver = null;
+    }
+    
+    automationState.prompt = null;
+    setAutomationMode('automation');
+    
+    res.json({ success: true });
+});
+
+// Stop automation
+app.post('/api/automation/stop', (req, res) => {
+    // Always reset state to avoid stuck automation
+    const wasRunning = automationState.isRunning;
+    
+    automationState.isRunning = false;
+    automationState.mode = 'idle';
+    automationState.scriptId = null;
+    automationState.prompt = null;
+    automationState.error = wasRunning ? 'Stopped by user' : null;
+    
+    if (automationState.continueResolver) {
+        automationState.continueResolver('stopped');
+        automationState.continueResolver = null;
+    }
+    
+    broadcast('AUTOMATION_MODE_CHANGED', { mode: 'idle', stopped: true });
+    broadcast('AUTOMATION_COMPLETE', { success: false, error: 'Stopped by user', data: automationState.data });
+    
+    res.json({ success: true, data: automationState.data });
+});
+
+// ==================== END AUTOMATION API ====================
 
 app.use((req, res, next) => {
     if (req.url.startsWith('/api') || req.url === '/healthz' || req.url.startsWith('/ws')) {
