@@ -20,5 +20,6 @@ ENV TITLE=DockerChrome
 ENV PUID=1000
 ENV PGID=1000
 ENV TZ=Etc/UTC
+ENV CHROME_CLI="--remote-debugging-port=9222"
 
 EXPOSE 8080

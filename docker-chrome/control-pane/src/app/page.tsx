@@ -6,7 +6,7 @@ import { NetworkPanel } from "@/components/network-panel";
 import { ControlPanel } from "@/components/control-panel";
 import { DataPanel } from "@/components/data-panel";
 import { NetworkRequest, Status, WebSocketMessage, AutomationMode, AutomationState } from "@/lib/types";
-import { ChevronDown, Cloud, Server } from "lucide-react";
+import { ChevronDown, Cloud, Server, Trash2 } from "lucide-react";
 
 // Deployment targets configuration
 const CLOUD_RUN_BASE = "docker-chrome-432753364585.us-central1.run.app";
@@ -70,6 +70,7 @@ export default function Home() {
   const [requests, setRequests] = useState<NetworkRequest[]>([]);
   const [status, setStatus] = useState<Status | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
+  const [killingSession, setKillingSession] = useState(false);
   const [deploymentTarget, setDeploymentTarget] = useState<DeploymentTarget | null>(null);
   const [showTargetMenu, setShowTargetMenu] = useState(false);
   const [vmHostInput, setVmHostInput] = useState("");
@@ -135,11 +136,6 @@ export default function Home() {
     }
   };
 
-  const handleReset = () => {
-    setRequests([]);
-    activeSessionIdRef.current = null;
-  };
-
   const handleClearNetworkActivity = async () => {
     // Clear local state
     setRequests([]);
@@ -150,6 +146,30 @@ export default function Home() {
       await fetch(`${deploymentTarget.apiBase}/api/network/clear`, { method: 'POST' });
     } catch (e) {
       console.error('Failed to clear network cache on server', e);
+    }
+  };
+
+  const handleKillSession = async () => {
+    if (!deploymentTarget) return;
+
+    if (!confirm("Are you sure you want to kill the session? This will force close the browser.")) {
+      return;
+    }
+
+    setKillingSession(true);
+    try {
+      const res = await fetch(`${deploymentTarget.apiBase}/api/session/kill`, {
+        method: "POST",
+      });
+
+      if (res.ok) {
+        setRequests([]);
+        activeSessionIdRef.current = null;
+      }
+    } catch (e) {
+      console.error("Failed to kill session", e);
+    } finally {
+      setKillingSession(false);
     }
   };
 
@@ -178,9 +198,9 @@ export default function Home() {
         try {
           const msg: WebSocketMessage = JSON.parse(event.data);
 
-          if (msg.type === "SESSION_RESET") {
+          if (msg.type === "SESSION_KILLED") {
             setRequests([]);
-            activeSessionIdRef.current = msg.payload.sessionId;
+            activeSessionIdRef.current = null;
             fetchStatus();
             return;
           }
@@ -359,15 +379,29 @@ export default function Home() {
                     {wsConnected ? 'Connected' : 'Disconnected'}
                   </span>
                 </div>
-                <button
-                  onClick={fetchStatus}
-                  className="p-2 hover:bg-background rounded-lg transition-colors"
-                  title="Refresh Status"
-                >
-                  <svg className="w-4 h-4 text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={fetchStatus}
+                    className="p-2 hover:bg-background rounded-lg transition-colors"
+                    title="Refresh Status"
+                  >
+                    <svg className="w-4 h-4 text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={handleKillSession}
+                    disabled={killingSession}
+                    className="p-2 bg-error hover:bg-error/80 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Kill Session"
+                  >
+                    {killingSession ? (
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <Trash2 className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -375,7 +409,6 @@ export default function Home() {
             <ControlPanel
               status={status}
               onRefreshStatus={fetchStatus}
-              onReset={handleReset}
               apiBase={deploymentTarget?.apiBase || ''}
               automationMode={automationState.mode}
             />

@@ -7,7 +7,6 @@ import { Globe, Play, Square, Loader2 } from "lucide-react";
 interface ControlPanelProps {
   status: Status | null;
   onRefreshStatus: () => void;
-  onReset?: () => void;
   apiBase: string;
   automationMode?: "idle" | "automation" | "user-input";
   onAutomationStart?: (scriptId: string) => void;
@@ -29,7 +28,6 @@ return playwright.data;`;
 export function ControlPanel({
   status,
   onRefreshStatus,
-  onReset,
   apiBase,
   automationMode = "idle",
   onAutomationStart,
@@ -109,6 +107,11 @@ export function ControlPanel({
             type="text"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !loading && !isRunning) {
+                handleNavigate();
+              }
+            }}
             className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent transition-colors text-foreground placeholder:text-text-tertiary"
             placeholder="https://example.com"
             disabled={isRunning}
@@ -155,16 +158,14 @@ export function ControlPanel({
             <Play size={14} />
             Run Automation
           </button>
-          {isRunning && (
-            <button
-              onClick={handleStopAutomation}
-              disabled={loading}
-              className="bg-error hover:bg-error/80 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              <Square size={14} />
-              Stop
-            </button>
-          )}
+          <button
+            onClick={handleStopAutomation}
+            disabled={loading}
+            className="bg-error hover:bg-error/80 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            <Square size={14} />
+            Stop
+          </button>
         </div>
 
         {/* API Reference Hint */}
@@ -179,11 +180,15 @@ export function ControlPanel({
             <div>playwright.fill(selector, text)</div>
             <div>playwright.waitFor(selector)</div>
             <div>playwright.sleep(ms)</div>
+            <div>playwright.evaluate(code)</div>
             <div>playwright.scrapeText(selector, key)</div>
             <div>playwright.scrapeAll(selector, key)</div>
             <div>playwright.promptUser(msg, conditionFn)</div>
             <div>playwright.captureNetwork({`{urlPattern, bodyPattern, key}`})</div>
+            <div>playwright.waitForNetworkCapture(key, {`{timeout}`})</div>
+            <div>playwright.getCapturedResponse(key)</div>
             <div>playwright.data - collected data object</div>
+            <div>playwright.setData(key, value)</div>
           </div>
         </details>
       </div>

@@ -6,7 +6,6 @@ import { UserPromptBanner } from "./user-prompt-modal";
 
 interface BrowserFrameProps {
   url: string;
-  apiBase?: string;
   automationMode?: "idle" | "automation" | "user-input";
   automationPrompt?: string;
   cursorPosition?: { x: number; y: number } | null;
@@ -36,7 +35,7 @@ export function BrowserFrame({
           <iframe
             src={url}
             className="w-full h-full border-none bg-white"
-            allow="cross-origin-isolated"
+            allow="clipboard-read; clipboard-write"
             referrerPolicy="no-referrer"
             title="Browser content"
           />

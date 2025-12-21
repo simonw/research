@@ -64,17 +64,68 @@ const clients = new Set();
 const responseBodyCache = new Map(); // requestId -> { body, base64Encoded }
 const MAX_CACHE_SIZE = 100;
 
-// Automation state - persists across page navigations
 let automationState = {
     isRunning: false,
-    mode: 'idle', // 'automation' | 'user-input' | 'idle'
-    data: {},     // Persistent data object built during automation
+    mode: 'idle',
+    data: {},
     scriptId: null,
     prompt: null,
     error: null,
-    networkCaptures: [], // { urlPattern?, bodyPattern?, key }
-    continueResolver: null // Promise resolver for user-input mode
+    networkCaptures: [],
+    capturedResponses: {},
+    pendingRequests: {},
+    continueResolver: null
 };
+
+function matchesUrlPattern(url, pattern) {
+    if (!pattern) return true;
+    return new RegExp(pattern).test(url);
+}
+
+function matchesBodyPattern(body, pattern) {
+    if (!pattern) return true;
+    if (!body) return false;
+    return new RegExp(pattern).test(body);
+}
+
+function tryParseJson(text) {
+    if (typeof text !== 'string') return text;
+    try {
+        return JSON.parse(text);
+    } catch {
+        return text;
+    }
+}
+
+function checkNetworkCapture(url, requestBody, responseBody) {
+    if (!automationState.isRunning || automationState.networkCaptures.length === 0) {
+        return;
+    }
+
+    for (const capture of automationState.networkCaptures) {
+        const { urlPattern, bodyPattern, key, transform } = capture;
+        
+        if (!matchesUrlPattern(url, urlPattern)) continue;
+        if (!matchesBodyPattern(requestBody, bodyPattern)) continue;
+        
+        try {
+            let data = tryParseJson(responseBody);
+            
+            if (transform && typeof transform === 'function') {
+                data = transform(data);
+            }
+            
+            automationState.capturedResponses[key] = data;
+            automationState.data[key] = data;
+            
+            console.log(`[NetworkCapture] Captured: ${key}`);
+            broadcast('AUTOMATION_DATA_UPDATED', { key, value: data, data: automationState.data });
+            broadcast('NETWORK_CAPTURED', { key, url, timestamp: Date.now() });
+        } catch (err) {
+            console.error(`[NetworkCapture] Error for ${key}:`, err.message);
+        }
+    }
+}
 
 wss.on('connection', (ws) => {
     clients.add(ws);
@@ -122,39 +173,24 @@ app.get('/api/session', (req, res) => {
     });
 });
 
-app.post('/api/session/reset', async (req, res) => {
+app.post('/api/session/kill', async (req, res) => {
     try {
         const sessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
         persistentScripts = [];
         appliedScriptCount = 0;
+        responseBodyCache.clear();
 
-        // Don't restart Chrome - just clear cookies and navigate to blank
-        // This is much more reliable than trying to respawn Chrome
-        if (currentSession.page && currentSession.cdpClient) {
+        if (browser) {
             try {
-                await currentSession.cdpClient.send('Network.clearBrowserCookies');
-                await currentSession.cdpClient.send('Network.clearBrowserCache');
-                await currentSession.page.goto('about:blank');
-                await applyFixedViewport();
-                await applyStealthScripts();
-                
-                currentSession.id = sessionId;
-                currentSession.createdAt = Date.now();
-                
-                broadcast('SESSION_RESET', { sessionId, timestamp: Date.now() });
-                
-                return res.json({
-                    success: true,
-                    sessionId,
-                    message: 'Session reset. Cookies/cache cleared, navigated to blank page.'
-                });
+                await browser.close();
             } catch (e) {
-                console.log('Soft reset failed, will attempt reconnect:', e.message);
+                console.log('Browser close failed (may already be closed):', e.message);
             }
         }
 
-        // If we don't have a connection, try to connect to existing Chrome
+        browser = null;
+        cdpConnected = false;
         currentSession = {
             id: sessionId,
             userDataDir: null,
@@ -164,20 +200,22 @@ app.post('/api/session/reset', async (req, res) => {
             createdAt: Date.now()
         };
 
-        browser = null;
-        cdpConnected = false;
+        console.log(`Killing session and restarting Chrome with fresh profile: ${sessionId}`);
+        const userDataDir = await restartChromeWithNewUserDataDir(sessionId);
+        currentSession.userDataDir = userDataDir;
 
-        broadcast('SESSION_RESET', { sessionId, timestamp: Date.now() });
+        broadcast('SESSION_KILLED', { sessionId, timestamp: Date.now() });
 
-        // Try to connect to the existing Chrome (started by linuxserver)
-        setTimeout(connectToBrowser, 500);
+        setTimeout(connectToBrowser, 1500);
 
         res.json({
             success: true,
             sessionId,
-            message: 'Session reset. Reconnecting to browser...'
+            userDataDir,
+            message: 'Session killed. Chrome restarting with fresh user data directory.'
         });
     } catch (e) {
+        console.error('Session kill failed:', e.message);
         res.status(500).json({ error: e.message });
     }
 });
@@ -568,13 +606,46 @@ function createPlaywrightAPI() {
             return await page.evaluate(code);
         },
         
-        // Capture network response (registers a pattern to watch)
         captureNetwork: (options) => {
             const { urlPattern, bodyPattern, key } = options;
             if (!key) throw new Error('captureNetwork requires a key');
             automationState.networkCaptures.push({ urlPattern, bodyPattern, key });
             return true;
         },
+        
+        waitForNetworkCapture: async (key, options = {}) => {
+            const timeout = options.timeout || 30000;
+            const pollInterval = options.pollInterval || 500;
+            const startTime = Date.now();
+            
+            return new Promise((resolve, reject) => {
+                const checkCapture = () => {
+                    const captured = automationState.capturedResponses[key];
+                    if (captured !== undefined) {
+                        resolve(captured);
+                        return;
+                    }
+                    
+                    if (Date.now() - startTime > timeout) {
+                        reject(new Error(`Timeout waiting for network capture: ${key}`));
+                        return;
+                    }
+                    
+                    setTimeout(checkCapture, pollInterval);
+                };
+                checkCapture();
+            });
+        },
+        
+        getCapturedResponse: (key) => {
+            return automationState.capturedResponses[key];
+        },
+        
+        clearNetworkCaptures: () => {
+            automationState.networkCaptures = [];
+            automationState.capturedResponses = {};
+        },
+        
         // Switch to user-input mode
         // condition: async function that returns true when automation should resume
         // pollInterval: how often to check condition (default 500ms)
@@ -642,7 +713,6 @@ app.post('/api/automation/start', async (req, res) => {
     
     const scriptId = `script_${Date.now()}`;
     
-    // Reset state
     automationState = {
         isRunning: true,
         mode: 'automation',
@@ -651,6 +721,8 @@ app.post('/api/automation/start', async (req, res) => {
         prompt: null,
         error: null,
         networkCaptures: [],
+        capturedResponses: {},
+        pendingRequests: {},
         continueResolver: null,
         lastCursorX: 0,
         lastCursorY: 0
@@ -974,6 +1046,12 @@ async function setupNetworkCapture(page, sessionId = null) {
         await client.send('Network.enable');
 
         client.on('Network.requestWillBeSent', (event) => {
+            automationState.pendingRequests[event.requestId] = {
+                url: event.request.url,
+                method: event.request.method,
+                postData: event.request.postData || ''
+            };
+            
             broadcast('NETWORK_REQUEST', {
                 sessionId,
                 requestId: event.requestId,
@@ -996,6 +1074,7 @@ async function setupNetworkCapture(page, sessionId = null) {
         });
 
         client.on('Network.loadingFailed', (event) => {
+            delete automationState.pendingRequests[event.requestId];
             broadcast('NETWORK_FAILED', {
                 sessionId,
                 requestId: event.requestId,
@@ -1005,6 +1084,9 @@ async function setupNetworkCapture(page, sessionId = null) {
         });
 
         client.on('Network.loadingFinished', async (event) => {
+            const requestInfo = automationState.pendingRequests[event.requestId];
+            delete automationState.pendingRequests[event.requestId];
+            
             try {
                 const result = await client.send('Network.getResponseBody', { requestId: event.requestId });
                 responseBodyCache.set(event.requestId, result);
@@ -1012,8 +1094,15 @@ async function setupNetworkCapture(page, sessionId = null) {
                     const firstKey = responseBodyCache.keys().next().value;
                     responseBodyCache.delete(firstKey);
                 }
+                
+                if (requestInfo && automationState.networkCaptures.length > 0) {
+                    const responseBody = result.base64Encoded 
+                        ? Buffer.from(result.body, 'base64').toString('utf-8')
+                        : result.body;
+                    checkNetworkCapture(requestInfo.url, requestInfo.postData, responseBody);
+                }
             } catch (e) {
-                // Body may not be available for all requests (e.g., 204, redirects)
+                // Body may not be available for all requests
             }
         });
     } catch (err) {
