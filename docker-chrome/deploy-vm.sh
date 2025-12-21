@@ -1,21 +1,11 @@
 #!/bin/bash
 set -e
 
-# Parse command line arguments
-USE_PROXY=false
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --proxy)
-            USE_PROXY=true
-            shift
-            ;;
-        *)
-            echo "Unknown option: $1"
-            echo "Usage: $0 [--proxy]"
-            exit 1
-            ;;
-    esac
-done
+if [ -f .env ]; then
+    source .env
+else
+    echo "⚠️  Warning: .env file not found. Cloudflare Tunnel and Proxy will not be configured."
+fi
 
 PROJECT_ID="corsali-development"
 ZONE="us-central1-a"
@@ -23,29 +13,22 @@ VM_NAME="docker-chrome-vm"
 IMAGE_NAME="gcr.io/${PROJECT_ID}/docker-chrome"
 MACHINE_TYPE="e2-medium"
 FIREWALL_RULE="allow-docker-chrome-8080"
+HTTPS_URL="https://docker-chrome.vana.com"
 
 echo "🚀 Deploying Docker Chrome to VM in ${PROJECT_ID}..."
 
-# 1. Build and push image (same as Cloud Run)
 echo "📦 Building container..."
 gcloud builds submit --tag "${IMAGE_NAME}" . --project "${PROJECT_ID}"
 
-# Build Chrome CLI args
 CHROME_ARGS="--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --remote-allow-origins=* --no-first-run --start-fullscreen --start-maximized --block-new-web-contents --disable-infobars --disable-extensions --disable-dev-tools --allow-running-insecure-content"
 
-# Proxy configuration (only if --proxy flag is passed)
-if [ "$USE_PROXY" = true ]; then
-    PROXY_SERVER="${PROXY_SERVER:-brd.superproxy.io:33335}"
-    PROXY_USERNAME="${PROXY_USERNAME:-brd-customer-hl_b6c4198e-zone-residential1}"
-    PROXY_PASSWORD="${PROXY_PASSWORD:-}"  # Set via environment variable
-    CHROME_ARGS="${CHROME_ARGS} --proxy-server=${PROXY_SERVER}"
-    echo "🔒 Proxy enabled: ${PROXY_SERVER}"
-else
-    PROXY_SERVER=""
-    PROXY_USERNAME=""
-    PROXY_PASSWORD=""
-    echo "🌐 Proxy disabled (use --proxy flag to enable)"
-fi
+# Proxy configuration - residential proxy disabled for now on the VM because it gets flagged as a bot less often than Cloud Run
+#if [ -n "${PROXY_SERVER}" ]; then
+#    CHROME_ARGS="${CHROME_ARGS} --proxy-server=${PROXY_SERVER}"
+#    echo "🔒 Proxy enabled: ${PROXY_SERVER}"
+#else
+#    echo "🌐 Proxy disabled (set PROXY_SERVER in .env to enable)"
+#fi
 
 CHROME_ARGS="${CHROME_ARGS} about:blank"
 
@@ -138,55 +121,37 @@ for i in {1..30}; do
     sleep 3
 done
 
-# 6. Set up Cloudflare Tunnel for HTTPS
-echo "🔒 Setting up Cloudflare Tunnel for HTTPS..."
-
-# SSH into VM and set up cloudflared using Docker (COS has read-only filesystem)
-TUNNEL_URL=$(gcloud compute ssh "${VM_NAME}" \
-    --zone="${ZONE}" \
-    --project="${PROJECT_ID}" \
-    --command='
-    # Check if cloudflared container is already running with a tunnel
-    if docker ps --filter name=cloudflared --format "{{.Names}}" | grep -q cloudflared; then
-        echo "cloudflared container already running" >&2
-        # Get existing tunnel URL from container logs
-        EXISTING_URL=$(docker logs cloudflared 2>&1 | grep -o "https://[^[:space:]]*\.trycloudflare\.com" | tail -1)
-        if [ -n "$EXISTING_URL" ]; then
-            echo "$EXISTING_URL"
-            exit 0
+# 6. Set up Named Cloudflare Tunnel for HTTPS
+if [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+    echo "🔒 Starting Cloudflare Tunnel..."
+    
+    gcloud compute ssh "${VM_NAME}" \
+        --zone="${ZONE}" \
+        --project="${PROJECT_ID}" \
+        --command="
+        docker rm -f cloudflared 2>/dev/null || true
+        
+        docker run -d \
+            --name cloudflared \
+            --network host \
+            --restart unless-stopped \
+            cloudflare/cloudflared:latest \
+            tunnel run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+        
+        sleep 3
+        if docker ps | grep -q cloudflared; then
+            echo '✅ Cloudflared running'
+        else
+            echo '❌ Cloudflared failed to start'
+            docker logs cloudflared
+            exit 1
         fi
-    fi
+    "
     
-    # Remove any stopped cloudflared container
-    docker rm -f cloudflared 2>/dev/null || true
-    
-    # Start cloudflared tunnel using Docker container
-    echo "Starting cloudflared container..." >&2
-    docker run -d --name cloudflared --network host \
-        cloudflare/cloudflared:latest tunnel --url http://localhost:8080
-    
-    # Wait for tunnel URL
-    for i in $(seq 1 30); do
-        TUNNEL_URL=$(docker logs cloudflared 2>&1 | grep -o "https://[^[:space:]]*\.trycloudflare\.com" | head -1)
-        if [ -n "$TUNNEL_URL" ]; then
-            echo "$TUNNEL_URL"
-            exit 0
-        fi
-        sleep 1
-    done
-    
-    echo "Failed to get tunnel URL" >&2
-    docker logs cloudflared >&2
-    exit 1
-' 2>&1)
-
-# Extract the URL from output (last https URL)
-HTTPS_URL=$(echo "$TUNNEL_URL" | grep -o 'https://[^[:space:]]*\.trycloudflare\.com' | tail -1)
-
-if [ -z "$HTTPS_URL" ]; then
-    echo "⚠️ Could not get Cloudflare Tunnel URL"
-    echo "   Debug output: $TUNNEL_URL"
-    HTTPS_URL="(tunnel setup failed - check VM logs)"
+    echo "✅ Tunnel connected to ${HTTPS_URL}"
+else
+    echo "⚠️  Cloudflare Tunnel not configured (no CLOUDFLARE_TUNNEL_TOKEN in .env)"
+    HTTPS_URL="http://${EXTERNAL_IP}:8080"
 fi
 
 echo ""
@@ -198,16 +163,21 @@ echo "   Zone: ${ZONE}"
 echo "   IP:   ${EXTERNAL_IP}"
 echo ""
 echo "🌐 Access URLs:"
-echo "   HTTPS (Cloudflare): ${HTTPS_URL}"
-echo "   HTTP (direct):      http://${EXTERNAL_IP}:8080"
-echo "   API Status:         ${HTTPS_URL}/api/status"
+echo "   HTTPS: ${HTTPS_URL}"
+echo "   API:   ${HTTPS_URL}/api/status"
 echo ""
-echo "🔧 Control Pane (use HTTPS URL for streaming):"
-echo "   ?target=vm&ip=${HTTPS_URL#https://}"
+echo "🔧 Control Pane:"
+if [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+    echo "   ?target=vm&ip=docker-chrome.vana.com"
+else
+    echo "   ?target=vm&ip=${EXTERNAL_IP}:8080"
+fi
 echo ""
 echo "📋 Useful Commands:"
-echo "   View logs:      gcloud compute ssh ${VM_NAME} --zone=${ZONE} --project=${PROJECT_ID} --command='sudo docker logs \$(docker ps -q) -f'"
-echo "   Tunnel logs:    gcloud compute ssh ${VM_NAME} --zone=${ZONE} --project=${PROJECT_ID} --command='docker logs cloudflared'"
+echo "   View logs:      gcloud compute ssh ${VM_NAME} --zone=${ZONE} --project=${PROJECT_ID} --command='docker logs \$(docker ps -q --filter ancestor=${IMAGE_NAME}) -f'"
+if [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+    echo "   Tunnel logs:    gcloud compute ssh ${VM_NAME} --zone=${ZONE} --project=${PROJECT_ID} --command='docker logs cloudflared'"
+fi
 echo "   SSH:            gcloud compute ssh ${VM_NAME} --zone=${ZONE} --project=${PROJECT_ID}"
 echo "   Delete VM:      gcloud compute instances delete ${VM_NAME} --zone=${ZONE} --project=${PROJECT_ID}"
 

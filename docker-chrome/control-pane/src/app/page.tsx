@@ -8,10 +8,9 @@ import { DataPanel } from "@/components/data-panel";
 import { NetworkRequest, Status, WebSocketMessage, AutomationMode, AutomationState } from "@/lib/types";
 import { ChevronDown, Cloud, Server, Trash2 } from "lucide-react";
 
-// Deployment targets configuration
 const CLOUD_RUN_BASE = "docker-chrome-432753364585.us-central1.run.app";
+const VM_BASE = "docker-chrome.vana.com";
 
-// Predefined targets that users can switch between
 const PREDEFINED_TARGETS = [
   {
     id: "cloudrun",
@@ -24,8 +23,8 @@ const PREDEFINED_TARGETS = [
     id: "vm",
     name: "VM (Cloudflare)",
     icon: "server",
-    host: "", // Will be filled from URL or input
-    isSecure: true, // trycloudflare.com uses HTTPS
+    host: VM_BASE,
+    isSecure: true,
   },
 ];
 
@@ -43,7 +42,7 @@ function buildTarget(id: string, host: string, isSecure: boolean): DeploymentTar
 
   return {
     id,
-    name: id === "cloudrun" ? "Cloud Run" : `VM (${host.substring(0, 20)}${host.length > 20 ? '...' : ''})`,
+    name: id === "cloudrun" ? "Cloud Run" : "VM (Cloudflare)",
     wsUrl: `${wsProtocol}://${host}${portSuffix}/ws`,
     apiBase: `${protocol}://${host}${portSuffix}`,
   };
@@ -56,11 +55,9 @@ function getDeploymentTarget(): DeploymentTarget {
 
   const params = new URLSearchParams(window.location.search);
   const target = params.get("target");
-  const vmHost = params.get("ip");
 
-  if (target === "vm" && vmHost) {
-    const isSecure = vmHost.includes("trycloudflare.com") || vmHost.startsWith("localhost");
-    return buildTarget("vm", vmHost, isSecure);
+  if (target === "vm") {
+    return buildTarget("vm", VM_BASE, true);
   }
 
   return buildTarget("cloudrun", CLOUD_RUN_BASE, true);
@@ -73,7 +70,6 @@ export default function Home() {
   const [killingSession, setKillingSession] = useState(false);
   const [deploymentTarget, setDeploymentTarget] = useState<DeploymentTarget | null>(null);
   const [showTargetMenu, setShowTargetMenu] = useState(false);
-  const [vmHostInput, setVmHostInput] = useState("");
   const activeSessionIdRef = useRef<string | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -90,20 +86,12 @@ export default function Home() {
     cursorAction: "move",
   });
 
-  // Initialize deployment target on client side
   useEffect(() => {
     const target = getDeploymentTarget();
     setDeploymentTarget(target);
-    // Pre-fill VM host input from URL if present
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const ip = params.get("ip");
-      if (ip) setVmHostInput(ip);
-    }
   }, []);
 
-  const switchTarget = (targetId: string, host?: string) => {
-    // Close any existing WebSocket
+  const switchTarget = (targetId: string) => {
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -112,14 +100,11 @@ export default function Home() {
     setRequests([]);
     setStatus(null);
 
-    // Update URL and reload
     const url = new URL(window.location.href);
-    if (targetId === "vm" && host) {
+    if (targetId === "vm") {
       url.searchParams.set("target", "vm");
-      url.searchParams.set("ip", host);
     } else {
       url.searchParams.delete("target");
-      url.searchParams.delete("ip");
     }
     window.location.href = url.toString();
   };
@@ -302,17 +287,16 @@ export default function Home() {
 
               {showTargetMenu && (
                 <div className="absolute top-full left-0 mt-1 w-72 bg-surface border border-border rounded-lg shadow-lg z-50">
-                  {/* Cloud Run Option */}
                   <button
                     onClick={() => {
                       switchTarget("cloudrun");
                       setShowTargetMenu(false);
                     }}
-                    className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm text-left hover:bg-background transition-colors ${deploymentTarget?.id === "cloudrun" ? "text-accent" : "text-foreground"
+                    className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm text-left hover:bg-background transition-colors rounded-t-lg ${deploymentTarget?.id === "cloudrun" ? "text-accent bg-background" : "text-foreground"
                       }`}
                   >
                     <Cloud size={14} />
-                    <div>
+                    <div className="flex-1">
                       <div className="font-medium">Cloud Run</div>
                       <div className="text-xs text-text-secondary truncate">{CLOUD_RUN_BASE}</div>
                     </div>
@@ -320,32 +304,20 @@ export default function Home() {
 
                   <div className="border-t border-border" />
 
-                  {/* VM Option with Input */}
-                  <div className="p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Server size={14} className="text-text-secondary" />
-                      <span className="text-sm font-medium text-foreground">VM Target</span>
+                  <button
+                    onClick={() => {
+                      switchTarget("vm");
+                      setShowTargetMenu(false);
+                    }}
+                    className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm text-left hover:bg-background transition-colors rounded-b-lg ${deploymentTarget?.id === "vm" ? "text-accent bg-background" : "text-foreground"
+                      }`}
+                  >
+                    <Server size={14} />
+                    <div className="flex-1">
+                      <div className="font-medium">VM (Cloudflare)</div>
+                      <div className="text-xs text-text-secondary truncate">{VM_BASE}</div>
                     </div>
-                    <input
-                      type="text"
-                      value={vmHostInput}
-                      onChange={(e) => setVmHostInput(e.target.value)}
-                      placeholder="xyz.trycloudflare.com or IP:port"
-                      className="w-full bg-background border border-border rounded px-2 py-1.5 text-xs text-foreground placeholder:text-text-tertiary focus:outline-none focus:border-accent"
-                    />
-                    <button
-                      onClick={() => {
-                        if (vmHostInput.trim()) {
-                          switchTarget("vm", vmHostInput.trim());
-                          setShowTargetMenu(false);
-                        }
-                      }}
-                      disabled={!vmHostInput.trim()}
-                      className="w-full mt-2 bg-accent hover:bg-accent-hover text-white px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-50"
-                    >
-                      Connect to VM
-                    </button>
-                  </div>
+                  </button>
                 </div>
               )}
             </div>
