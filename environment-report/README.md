@@ -77,12 +77,44 @@ dockerd --iptables=false --ip-forward=false --ip-masq=false --bridge=none &
 - Privileged mode
 - Container image management
 
-### What Does NOT Work
+### What Does NOT Work (By Default)
 
 - **Container networking** - No bridge network, no internet from containers
 - **Port publishing** (`-p 8080:80`) - Requires bridge networking
 - **Docker Compose** - Not installed by default
 - **Overlay filesystem** - Falls back to `vfs` storage driver
+
+### Workaround: Unix Socket Proxy for Container Networking
+
+While containers can't access the network directly, you can work around this using a **Unix socket proxy**. The host runs a proxy server that listens on a Unix socket, which is mounted into the container. The container sends HTTP requests through the socket, and the host proxy fetches from the real network.
+
+```
+┌─────────────────┐     Unix Socket      ┌─────────────────┐
+│   Container     │ ──────────────────── │   Host Proxy    │ ──── Internet
+│ (no networking) │   /tmp/proxy.sock    │ (has network)   │
+└─────────────────┘                      └─────────────────┘
+```
+
+**Step 1: Start the proxy on the host**
+
+```bash
+python3 http_proxy.py &
+```
+
+**Step 2: Run container with socket mounted**
+
+```bash
+docker run --network=none \
+  -v /tmp/http_proxy.sock:/tmp/http_proxy.sock \
+  -v $(pwd)/proxy_client.py:/proxy_client.py \
+  python:3.11-alpine python3 -c "
+from proxy_client import fetch
+result = fetch('https://httpbin.org/get')
+print(result['status'], result['body'][:100])
+"
+```
+
+See `http_proxy.py` and `proxy_client.py` in this directory for the implementation.
 
 ### Example Usage
 

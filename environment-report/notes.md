@@ -61,7 +61,36 @@ Tested successfully:
 - `docker build` ✓
 - Volume mounts (`-v`) ✓
 
-### 6. Environment Characteristics
+### 6. Unix Socket Proxy for Container Networking
+
+Investigated workarounds for Docker container networking limitations.
+
+**Attempts:**
+- `--network=host` - Does NOT work (host also lacks routes in gVisor)
+- Unix socket proxy - **WORKS!**
+
+**Solution:** Mount a Unix socket from host into container. Host runs a proxy server that forwards HTTP requests to the real network.
+
+Tested successfully:
+```bash
+# Start proxy on host
+python3 http_proxy.py &
+
+# Container fetches via proxy
+docker run --network=none \
+  -v /tmp/http_proxy.sock:/tmp/http_proxy.sock \
+  python:3.11-alpine python3 -c "
+import socket, json
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.connect('/tmp/http_proxy.sock')
+sock.send(json.dumps({'url': 'https://httpbin.org/get'}).encode())
+print(sock.recv(4096).decode())
+"
+```
+
+Result: Successfully fetched from httpbin.org with status 200.
+
+### 7. Environment Characteristics
 - This is a gVisor-sandboxed container environment ("runsc" hostname)
 - No systemd (invoke-rc.d couldn't determine runlevel)
 - File system is 9p (virtualized)
@@ -70,7 +99,8 @@ Tested successfully:
 
 ## Key Findings
 1. Very well-provisioned development environment with modern tool versions
-2. Docker CAN work with workarounds (no networking)
-3. Running in gVisor sandbox which provides security isolation but limits some system features
-4. Generous resources: 21GB RAM, 16 cores, 30GB storage
-5. Database clients available but servers need testing
+2. Docker CAN work with workarounds (no networking by default)
+3. **Container networking IS possible via Unix socket proxy**
+4. Running in gVisor sandbox which provides security isolation but limits some system features
+5. Generous resources: 21GB RAM, 16 cores, 30GB storage
+6. Database clients available but servers need testing
