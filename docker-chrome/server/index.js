@@ -61,8 +61,18 @@ let appliedScriptCount = 0;
 
 const clients = new Set();
 
-const responseBodyCache = new Map(); // requestId -> { body, base64Encoded }
-const MAX_CACHE_SIZE = 100;
+// Network request/response stores with LRU eviction
+const requestStore = new Map(); // requestId -> { url, method, requestHeaders, requestBody, timestamp }
+const responseStore = new Map(); // requestId -> { responseHeaders, body, base64Encoded }
+const MAX_STORE_SIZE = 1000;
+
+// Helper to evict oldest entries when store exceeds limit
+function evictOldestFromStore(store) {
+    while (store.size > MAX_STORE_SIZE) {
+        const firstKey = store.keys().next().value;
+        store.delete(firstKey);
+    }
+}
 
 let automationState = {
     isRunning: false,
@@ -97,7 +107,7 @@ function tryParseJson(text) {
     }
 }
 
-function checkNetworkCapture(url, requestBody, responseBody) {
+function checkNetworkCapture(requestId, url, requestBody, responseBody) {
     if (!automationState.isRunning || automationState.networkCaptures.length === 0) {
         return;
     }
@@ -120,7 +130,7 @@ function checkNetworkCapture(url, requestBody, responseBody) {
             
             console.log(`[NetworkCapture] Captured: ${key}`);
             broadcast('AUTOMATION_DATA_UPDATED', { key, value: data, data: automationState.data });
-            broadcast('NETWORK_CAPTURED', { key, url, timestamp: Date.now() });
+            broadcast('NETWORK_CAPTURED', { key, url, requestId, timestamp: Date.now() });
         } catch (err) {
             console.error(`[NetworkCapture] Error for ${key}:`, err.message);
         }
@@ -179,7 +189,8 @@ app.post('/api/session/kill', async (req, res) => {
 
         persistentScripts = [];
         appliedScriptCount = 0;
-        responseBodyCache.clear();
+        requestStore.clear();
+        responseStore.clear();
 
         if (browser) {
             try {
@@ -205,6 +216,7 @@ app.post('/api/session/kill', async (req, res) => {
         currentSession.userDataDir = userDataDir;
 
         broadcast('SESSION_KILLED', { sessionId, timestamp: Date.now() });
+        broadcast('NETWORK_CLEARED', { timestamp: Date.now() });
 
         setTimeout(connectToBrowser, 1500);
 
@@ -361,36 +373,39 @@ app.post('/api/paste', async (req, res) => {
     }
 });
 
-app.get('/api/network/:requestId/body', async (req, res) => {
+app.get('/api/network/:requestId', async (req, res) => {
     const { requestId } = req.params;
-    const cached = responseBodyCache.get(requestId);
-    if (cached) {
-        return res.json(cached);
+    
+    const requestData = requestStore.get(requestId);
+    const responseData = responseStore.get(requestId);
+    
+    if (!requestData && !responseData) {
+        return res.status(404).json({ error: 'Request not found' });
     }
-
-    if (currentSession.cdpClient) {
+    
+    let responseBody = responseData?.body || '';
+    if (responseData?.base64Encoded && responseBody) {
         try {
-            const result = await currentSession.cdpClient.send('Network.getResponseBody', { requestId });
-            responseBodyCache.set(requestId, result);
-            if (responseBodyCache.size > MAX_CACHE_SIZE) {
-                const firstKey = responseBodyCache.keys().next().value;
-                responseBodyCache.delete(firstKey);
-            }
-            return res.json(result);
+            responseBody = Buffer.from(responseBody, 'base64').toString('utf-8');
         } catch (e) {
-            return res.status(404).json({ error: 'Response body not available', details: e.message });
+            responseBody = '(binary content)';
         }
     }
-
-    res.status(404).json({ error: 'Response body not found' });
+    
+    res.json({
+        requestHeaders: requestData?.requestHeaders || {},
+        requestBody: requestData?.requestBody || '',
+        responseHeaders: responseData?.responseHeaders || {},
+        responseBody: responseBody,
+        base64Encoded: responseData?.base64Encoded || false
+    });
 });
 
 app.post('/api/network/clear', async (req, res) => {
     try {
-        // Clear server-side response body cache
-        responseBodyCache.clear();
+        requestStore.clear();
+        responseStore.clear();
         
-        // Clear browser cache if CDP client is available
         if (currentSession.cdpClient) {
             try {
                 await currentSession.cdpClient.send('Network.clearBrowserCache');
@@ -399,7 +414,6 @@ app.post('/api/network/clear', async (req, res) => {
             }
         }
         
-        // Broadcast network clear event to all connected clients
         broadcast('NETWORK_CLEARED', { timestamp: Date.now() });
         
         res.json({ success: true, message: 'Network cache cleared' });
@@ -904,6 +918,15 @@ async function connectToBrowser() {
     try {
         browser = await chromium.connectOverCDP(`http://127.0.0.1:${CDP_PORT}`);
 
+        browser.on('disconnected', () => {
+            console.log('Browser disconnected. Will attempt to reconnect in 2s...');
+            cdpConnected = false;
+            currentSession.page = null;
+            currentSession.context = null;
+            currentSession.cdpClient = null;
+            setTimeout(connectToBrowser, 2000);
+        });
+
         const contexts = browser.contexts();
         currentSession.context = contexts.length > 0 ? contexts[0] : await browser.newContext();
 
@@ -1046,6 +1069,17 @@ async function setupNetworkCapture(page, sessionId = null) {
         await client.send('Network.enable');
 
         client.on('Network.requestWillBeSent', (event) => {
+            const requestData = {
+                url: event.request.url,
+                method: event.request.method,
+                requestHeaders: event.request.headers || {},
+                requestBody: event.request.postData || '',
+                timestamp: Date.now()
+            };
+            
+            requestStore.set(event.requestId, requestData);
+            evictOldestFromStore(requestStore);
+            
             automationState.pendingRequests[event.requestId] = {
                 url: event.request.url,
                 method: event.request.method,
@@ -1063,6 +1097,15 @@ async function setupNetworkCapture(page, sessionId = null) {
         });
 
         client.on('Network.responseReceived', (event) => {
+            const existing = responseStore.get(event.requestId) || {};
+            responseStore.set(event.requestId, {
+                ...existing,
+                responseHeaders: event.response.headers || {},
+                status: event.response.status,
+                mimeType: event.response.mimeType
+            });
+            evictOldestFromStore(responseStore);
+            
             broadcast('NETWORK_RESPONSE', {
                 sessionId,
                 requestId: event.requestId,
@@ -1089,17 +1132,20 @@ async function setupNetworkCapture(page, sessionId = null) {
             
             try {
                 const result = await client.send('Network.getResponseBody', { requestId: event.requestId });
-                responseBodyCache.set(event.requestId, result);
-                if (responseBodyCache.size > MAX_CACHE_SIZE) {
-                    const firstKey = responseBodyCache.keys().next().value;
-                    responseBodyCache.delete(firstKey);
-                }
+                
+                const existing = responseStore.get(event.requestId) || {};
+                responseStore.set(event.requestId, {
+                    ...existing,
+                    body: result.body,
+                    base64Encoded: result.base64Encoded
+                });
+                evictOldestFromStore(responseStore);
                 
                 if (requestInfo && automationState.networkCaptures.length > 0) {
                     const responseBody = result.base64Encoded 
                         ? Buffer.from(result.body, 'base64').toString('utf-8')
                         : result.body;
-                    checkNetworkCapture(requestInfo.url, requestInfo.postData, responseBody);
+                    checkNetworkCapture(event.requestId, requestInfo.url, requestInfo.postData, responseBody);
                 }
             } catch (e) {
                 // Body may not be available for all requests
@@ -1126,27 +1172,37 @@ async function setupProxy(page) {
         client.on('Fetch.authRequired', async (event) => {
             const { requestId, authChallenge } = event;
             
-            if (authChallenge.source === 'Proxy') {
-                await client.send('Fetch.continueWithAuth', {
-                    requestId,
-                    authChallengeResponse: {
-                        response: 'ProvideCredentials',
-                        username: PROXY_USERNAME,
-                        password: PROXY_PASSWORD
-                    }
-                });
-            } else {
-                // Not a proxy auth challenge, cancel
-                await client.send('Fetch.continueWithAuth', {
-                    requestId,
-                    authChallengeResponse: { response: 'CancelAuth' }
-                });
+            try {
+                if (authChallenge.source === 'Proxy') {
+                    await client.send('Fetch.continueWithAuth', {
+                        requestId,
+                        authChallengeResponse: {
+                            response: 'ProvideCredentials',
+                            username: PROXY_USERNAME,
+                            password: PROXY_PASSWORD
+                        }
+                    });
+                } else {
+                    // Not a proxy auth challenge, cancel
+                    await client.send('Fetch.continueWithAuth', {
+                        requestId,
+                        authChallengeResponse: { response: 'CancelAuth' }
+                    });
+                }
+            } catch (e) {
+                // CDP session may be invalid after browser restart
+                console.log('Fetch.authRequired handler error (stale session?):', e.message);
             }
         });
         
         // Continue all requests (they'll be routed through proxy via Chrome args)
         client.on('Fetch.requestPaused', async (event) => {
-            await client.send('Fetch.continueRequest', { requestId: event.requestId });
+            try {
+                await client.send('Fetch.continueRequest', { requestId: event.requestId });
+            } catch (e) {
+                // CDP session may be invalid after browser restart
+                console.log('Fetch.requestPaused handler error (stale session?):', e.message);
+            }
         });
         
         if (!currentSession.cdpClient) {

@@ -186,7 +186,22 @@ export default function Home() {
           if (msg.type === "SESSION_KILLED") {
             setRequests([]);
             activeSessionIdRef.current = null;
+            setAutomationState({
+              mode: "idle",
+              isRunning: false,
+              scriptId: null,
+              prompt: null,
+              error: null,
+              data: {},
+              cursorPosition: null,
+              cursorAction: "move",
+            });
             fetchStatus();
+            return;
+          }
+
+          if (msg.type === "NETWORK_CLEARED") {
+            setRequests([]);
             return;
           }
 
@@ -246,6 +261,15 @@ export default function Home() {
               error: msg.payload.error || null,
               data: msg.payload.data || prev.data,
             }));
+          }
+
+          if (msg.type === "NETWORK_CAPTURED") {
+            const { requestId, key } = msg.payload;
+            setRequests(prev => prev.map(r =>
+              r.requestId === requestId
+                ? { ...r, capturedByKey: key }
+                : r
+            ));
           }
         } catch (e) {
           console.error("Failed to parse WS message", e);
@@ -392,7 +416,7 @@ export default function Home() {
 
         {/* Bottom Row: Network Activity (full width) */}
         <div>
-          <NetworkPanel requests={requests} onClearActivity={handleClearNetworkActivity} />
+          <NetworkPanel requests={requests} onClearActivity={handleClearNetworkActivity} apiBase={deploymentTarget?.apiBase || ''} />
         </div>
       </div>
     </div>

@@ -29,6 +29,15 @@ export interface NetworkRequest {
   errorText?: string;
   sessionId?: string;
   timestamp: number;
+  capturedByKey?: string;
+}
+
+export interface NetworkRequestDetails {
+  requestHeaders: Record<string, string>;
+  requestBody: string;
+  responseHeaders: Record<string, string>;
+  responseBody: string;
+  base64Encoded: boolean;
 }
 
 export interface Status {

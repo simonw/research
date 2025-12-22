@@ -1,23 +1,25 @@
 import React, { useRef, useEffect, useState, useMemo } from "react";
-import { NetworkRequest } from "@/lib/types";
+import { NetworkRequest, NetworkRequestDetails } from "@/lib/types";
 import { NetworkFilter, FilterGroup, FILTER_GROUPS } from "./network-filter";
-import { X, Trash2 } from "lucide-react";
+import { X, Trash2, Download, ChevronDown, ChevronRight } from "lucide-react";
 
 interface NetworkPanelProps {
   requests: NetworkRequest[];
   onClearActivity?: () => void;
+  apiBase?: string;
 }
 
-export function NetworkPanel({ requests, onClearActivity }: NetworkPanelProps) {
+export function NetworkPanel({ requests, onClearActivity, apiBase = "https://docker-chrome-432753364585.us-central1.run.app" }: NetworkPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [selectedFilters, setSelectedFilters] = useState<Set<FilterGroup>>(
     new Set()
   );
 
-  // Bug fix: Store requestId separately to maintain panel visibility during async fetch
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
-  const [responseBody, setResponseBody] = useState<string | null>(null);
-  const [loadingBody, setLoadingBody] = useState(false);
+  const [requestDetails, setRequestDetails] = useState<NetworkRequestDetails | null>(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [activeTab, setActiveTab] = useState<"headers" | "payload" | "response">("headers");
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(["requestHeaders", "responseHeaders"]));
 
   const toggleFilter = (group: FilterGroup) => {
     const newFilters = new Set(selectedFilters);
@@ -29,57 +31,67 @@ export function NetworkPanel({ requests, onClearActivity }: NetworkPanelProps) {
     setSelectedFilters(newFilters);
   };
 
-  const API_BASE = "https://docker-chrome-432753364585.us-central1.run.app";
+  const toggleSection = (section: string) => {
+    const newSections = new Set(expandedSections);
+    if (newSections.has(section)) {
+      newSections.delete(section);
+    } else {
+      newSections.add(section);
+    }
+    setExpandedSections(newSections);
+  };
 
   const handleRequestClick = async (req: NetworkRequest) => {
-    // Toggle off if clicking the same request
     if (selectedRequestId === req.requestId) {
       setSelectedRequestId(null);
-      setResponseBody(null);
+      setRequestDetails(null);
       return;
     }
 
-    // Set selected ID immediately to show panel
     setSelectedRequestId(req.requestId);
-    setResponseBody(null);
-    setLoadingBody(true);
+    setRequestDetails(null);
+    setLoadingDetails(true);
+    setActiveTab("headers");
 
     try {
-      const res = await fetch(`${API_BASE}/api/network/${req.requestId}/body`);
+      const res = await fetch(`${apiBase}/api/network/${req.requestId}`);
       if (res.ok) {
-        const data = await res.json();
-        let body = data.body || '';
-        if (data.base64Encoded) {
-          try {
-            body = atob(data.body);
-          } catch {
-            body = '(binary content)';
-          }
-        }
-        try {
-          const parsed = JSON.parse(body);
-          body = JSON.stringify(parsed, null, 2);
-        } catch { }
-        setResponseBody(body);
+        const data: NetworkRequestDetails = await res.json();
+        setRequestDetails(data);
       } else {
-        setResponseBody('(Response body not available)');
+        setRequestDetails(null);
       }
     } catch {
-      setResponseBody('(Failed to fetch response body)');
+      setRequestDetails(null);
     } finally {
-      setLoadingBody(false);
+      setLoadingDetails(false);
     }
   };
 
   const filteredRequests = useMemo(() => {
     if (selectedFilters.size === 0) return requests;
 
+    const hasCapturedFilter = selectedFilters.has("Captured");
+    const otherFilters = new Set(selectedFilters);
+    otherFilters.delete("Captured");
+
     const allowedTypes = new Set<string>();
-    selectedFilters.forEach((group) => {
+    otherFilters.forEach((group) => {
       FILTER_GROUPS[group].forEach((type) => allowedTypes.add(type));
     });
 
-    return requests.filter((req) => req.type && allowedTypes.has(req.type));
+    return requests.filter((req) => {
+      if (hasCapturedFilter && otherFilters.size === 0) {
+        return !!req.capturedByKey;
+      }
+      if (hasCapturedFilter && req.capturedByKey) {
+        return true;
+      }
+      if (otherFilters.size > 0 && req.type && allowedTypes.has(req.type)) {
+        return true;
+      }
+      return false;
+    });
   }, [requests, selectedFilters]);
 
   // Find the currently selected request object
@@ -176,8 +188,16 @@ export function NetworkPanel({ requests, onClearActivity }: NetworkPanelProps) {
               </div>
 
               {/* URL */}
-              <div className="col-span-7 truncate text-foreground font-medium group-hover:text-accent transition-colors" title={req.url || ''}>
-                {req.url || ''}
+              <div className="col-span-7 flex items-center gap-2 min-w-0">
+                <span className="truncate text-foreground font-medium group-hover:text-accent transition-colors" title={req.url || ''}>
+                  {req.url || ''}
+                </span>
+                {req.capturedByKey && (
+                  <span className="flex-shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold bg-accent/10 text-accent border border-accent/20 rounded">
+                    <Download className="w-2.5 h-2.5" />
+                    {req.capturedByKey}
+                  </span>
+                )}
               </div>
 
               {/* Resource Type */}
@@ -199,19 +219,27 @@ export function NetworkPanel({ requests, onClearActivity }: NetworkPanelProps) {
         )}
       </div>
 
-      {/* Response Details Panel - Now properly controlled by selectedRequestId */}
+      {/* Request Details Panel */}
       {selectedRequestId && (
-        <div className="border-t border-border bg-background/50 backdrop-blur-sm max-h-[320px] overflow-hidden flex flex-col animate-in slide-in-from-bottom duration-300">
-          <div className="px-5 py-4 border-b border-border/50 flex items-center justify-between flex-shrink-0">
-            <span className="text-sm font-semibold text-foreground">Response Details</span>
+        <div className="border-t border-border bg-background/50 backdrop-blur-sm max-h-[400px] overflow-hidden flex flex-col animate-in slide-in-from-bottom duration-300">
+          <div className="px-5 py-3 border-b border-border/50 flex items-center justify-between flex-shrink-0">
+            <div className="flex items-center gap-4">
+              <span className="text-sm font-semibold text-foreground">Request Details</span>
+              {selectedRequest?.capturedByKey && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-semibold bg-accent/10 text-accent border border-accent/20 rounded">
+                  <Download className="w-3 h-3" />
+                  {selectedRequest.capturedByKey}
+                </span>
+              )}
+            </div>
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 setSelectedRequestId(null);
-                setResponseBody(null);
+                setRequestDetails(null);
               }}
               className="p-1.5 hover:bg-surface rounded-lg transition-all duration-200 text-text-secondary hover:text-foreground group/close"
-              aria-label="Close response details"
+              aria-label="Close request details"
             >
               <X size={16} className="group-hover/close:rotate-90 transition-transform duration-200" />
             </button>
@@ -219,12 +247,12 @@ export function NetworkPanel({ requests, onClearActivity }: NetworkPanelProps) {
 
           {selectedRequest && (
             <>
-              <div className="px-5 py-3 text-xs text-foreground break-all border-b border-border/50 flex-shrink-0 bg-surface/50">
-                <span className="text-text-secondary font-medium">URL: </span>
+              <div className="px-5 py-2 text-xs text-foreground break-all border-b border-border/50 flex-shrink-0 bg-surface/50">
+                <span className="text-text-secondary font-medium">{selectedRequest.method} </span>
                 <span className="font-mono">{selectedRequest.url}</span>
               </div>
 
-              <div className="px-5 py-2.5 text-xs text-text-secondary flex gap-6 flex-shrink-0 border-b border-border/50 bg-surface/30">
+              <div className="px-5 py-2 text-xs text-text-secondary flex gap-6 flex-shrink-0 border-b border-border/50 bg-surface/30">
                 <span>
                   Status: <span className={`font-semibold ${!selectedRequest.status ? 'text-text-tertiary' :
                     selectedRequest.status >= 400 ? 'text-error' :
@@ -235,19 +263,136 @@ export function NetworkPanel({ requests, onClearActivity }: NetworkPanelProps) {
                 <span>Type: <span className="font-semibold text-foreground">{selectedRequest.type || '—'}</span></span>
                 <span>MIME: <span className="font-semibold text-foreground font-mono">{selectedRequest.mimeType || '—'}</span></span>
               </div>
+
+              {/* Tabs */}
+              <div className="flex border-b border-border/50 bg-surface/20 flex-shrink-0">
+                {(["headers", "payload", "response"] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab)}
+                    className={`px-4 py-2.5 text-xs font-medium capitalize transition-colors ${
+                      activeTab === tab
+                        ? "text-accent border-b-2 border-accent bg-background/50"
+                        : "text-text-secondary hover:text-foreground hover:bg-background/30"
+                    }`}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
             </>
           )}
 
-          <div className="flex-1 overflow-auto min-h-0 p-5">
-            {loadingBody ? (
+          <div className="flex-1 overflow-auto min-h-0 p-4">
+            {loadingDetails ? (
               <div className="flex items-center gap-3 text-text-secondary text-sm">
                 <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                <span>Loading response body...</span>
+                <span>Loading request details...</span>
               </div>
+            ) : requestDetails ? (
+              <>
+                {activeTab === "headers" && (
+                  <div className="space-y-3">
+                    {/* Request Headers */}
+                    <div className="border border-border rounded-lg overflow-hidden">
+                      <button
+                        onClick={() => toggleSection("requestHeaders")}
+                        className="w-full flex items-center gap-2 px-3 py-2 bg-surface/50 hover:bg-surface transition-colors"
+                      >
+                        {expandedSections.has("requestHeaders") ? (
+                          <ChevronDown className="w-3.5 h-3.5 text-text-secondary" />
+                        ) : (
+                          <ChevronRight className="w-3.5 h-3.5 text-text-secondary" />
+                        )}
+                        <span className="text-xs font-semibold text-foreground">Request Headers</span>
+                        <span className="text-xs text-text-tertiary">({Object.keys(requestDetails.requestHeaders).length})</span>
+                      </button>
+                      {expandedSections.has("requestHeaders") && (
+                        <div className="px-3 py-2 bg-background/30 border-t border-border/50">
+                          {Object.entries(requestDetails.requestHeaders).length > 0 ? (
+                            Object.entries(requestDetails.requestHeaders).map(([key, value]) => (
+                              <div key={key} className="flex gap-2 py-1 text-xs font-mono">
+                                <span className="text-accent font-medium">{key}:</span>
+                                <span className="text-foreground break-all">{value}</span>
+                              </div>
+                            ))
+                          ) : (
+                            <span className="text-xs text-text-tertiary">No request headers</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Response Headers */}
+                    <div className="border border-border rounded-lg overflow-hidden">
+                      <button
+                        onClick={() => toggleSection("responseHeaders")}
+                        className="w-full flex items-center gap-2 px-3 py-2 bg-surface/50 hover:bg-surface transition-colors"
+                      >
+                        {expandedSections.has("responseHeaders") ? (
+                          <ChevronDown className="w-3.5 h-3.5 text-text-secondary" />
+                        ) : (
+                          <ChevronRight className="w-3.5 h-3.5 text-text-secondary" />
+                        )}
+                        <span className="text-xs font-semibold text-foreground">Response Headers</span>
+                        <span className="text-xs text-text-tertiary">({Object.keys(requestDetails.responseHeaders).length})</span>
+                      </button>
+                      {expandedSections.has("responseHeaders") && (
+                        <div className="px-3 py-2 bg-background/30 border-t border-border/50">
+                          {Object.entries(requestDetails.responseHeaders).length > 0 ? (
+                            Object.entries(requestDetails.responseHeaders).map(([key, value]) => (
+                              <div key={key} className="flex gap-2 py-1 text-xs font-mono">
+                                <span className="text-accent font-medium">{key}:</span>
+                                <span className="text-foreground break-all">{value}</span>
+                              </div>
+                            ))
+                          ) : (
+                            <span className="text-xs text-text-tertiary">No response headers</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === "payload" && (
+                  <div>
+                    {requestDetails.requestBody ? (
+                      <pre className="text-xs font-mono text-foreground whitespace-pre-wrap bg-surface border border-border p-3 rounded-lg leading-relaxed">
+                        {(() => {
+                          try {
+                            return JSON.stringify(JSON.parse(requestDetails.requestBody), null, 2);
+                          } catch {
+                            return requestDetails.requestBody;
+                          }
+                        })()}
+                      </pre>
+                    ) : (
+                      <div className="text-xs text-text-tertiary text-center py-8">No request payload</div>
+                    )}
+                  </div>
+                )}
+
+                {activeTab === "response" && (
+                  <div>
+                    {requestDetails.responseBody ? (
+                      <pre className="text-xs font-mono text-foreground whitespace-pre-wrap bg-surface border border-border p-3 rounded-lg leading-relaxed max-h-[200px] overflow-auto">
+                        {(() => {
+                          try {
+                            return JSON.stringify(JSON.parse(requestDetails.responseBody), null, 2);
+                          } catch {
+                            return requestDetails.responseBody;
+                          }
+                        })()}
+                      </pre>
+                    ) : (
+                      <div className="text-xs text-text-tertiary text-center py-8">No response body</div>
+                    )}
+                  </div>
+                )}
+              </>
             ) : (
-              <pre className="text-xs font-mono text-foreground whitespace-pre-wrap bg-surface border border-border p-4 rounded-lg leading-relaxed shadow-inner">
-                {responseBody || '(empty response)'}
-              </pre>
+              <div className="text-xs text-text-tertiary text-center py-8">Request details not available</div>
             )}
           </div>
         </div>

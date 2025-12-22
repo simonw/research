@@ -1,17 +1,18 @@
 "use client";
 
 import React from "react";
-import { Filter, ChevronDown, Check } from "lucide-react";
+import { Filter, ChevronDown, Check, Download } from "lucide-react";
 import { ResourceType } from "@/lib/types";
 
-export type FilterGroup = "API" | "Doc" | "Assets" | "Realtime" | "Other";
+export type FilterGroup = "API" | "Doc" | "Assets" | "Realtime" | "Other" | "Captured";
 
-export const FILTER_GROUPS: Record<FilterGroup, ResourceType[]> = {
+export const FILTER_GROUPS: Record<FilterGroup, ResourceType[] | "__captured__"[]> = {
   API: ["XHR", "Fetch", "Preflight"],
   Doc: ["Document"],
   Assets: ["Script", "Stylesheet", "Image", "Font", "Media"],
   Realtime: ["WebSocket", "EventSource"],
   Other: ["Manifest", "Prefetch", "Other"],
+  Captured: ["__captured__"],
 };
 
 interface NetworkFilterProps {
@@ -20,7 +21,7 @@ interface NetworkFilterProps {
 }
 
 export function NetworkFilter({ selectedGroups, onToggleGroup }: NetworkFilterProps) {
-  const groups: FilterGroup[] = ["API", "Doc", "Assets", "Realtime", "Other"];
+  const groups: FilterGroup[] = ["Captured", "API", "Doc", "Assets", "Realtime", "Other"];
   const activeCount = selectedGroups.size;
 
   return (
@@ -53,10 +54,11 @@ export function NetworkFilter({ selectedGroups, onToggleGroup }: NetworkFilterPr
         {/* Filter Options */}
         {groups.map((group) => {
           const isSelected = selectedGroups.has(group);
+          const isCaptured = group === "Captured";
           return (
             <label
               key={group}
-              className="flex items-center gap-3 px-3 py-2.5 text-sm text-foreground hover:bg-background rounded-md cursor-pointer transition-all duration-150 group/item"
+              className={`flex items-center gap-3 px-3 py-2.5 text-sm text-foreground hover:bg-background rounded-md cursor-pointer transition-all duration-150 group/item ${isCaptured ? "border-b border-border mb-1" : ""}`}
             >
               <div
                 className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all duration-200 ${
@@ -73,10 +75,13 @@ export function NetworkFilter({ selectedGroups, onToggleGroup }: NetworkFilterPr
                 checked={isSelected}
                 onChange={() => onToggleGroup(group)}
               />
-              <span className="font-medium">{group}</span>
-              <span className="ml-auto text-xs text-text-tertiary font-mono">
-                {FILTER_GROUPS[group].length}
-              </span>
+              {isCaptured && <Download className="w-3.5 h-3.5 text-accent" />}
+              <span className={`font-medium ${isCaptured ? "text-accent" : ""}`}>{group}</span>
+              {!isCaptured && (
+                <span className="ml-auto text-xs text-text-tertiary font-mono">
+                  {FILTER_GROUPS[group].length}
+                </span>
+              )}
             </label>
           );
         })}

@@ -1,7 +1,3 @@
-// Instagram Profile Scraper - Playwright API Version
-// Migrated from instagram-inpage.js with full functionality
-// Paste this into the Control Panel's Playwright Script textarea
-
 // State management
 const state = {
   webInfo: null,
@@ -13,25 +9,6 @@ const state = {
   isTimelineComplete: false,
   isComplete: false,
   lastRequestInfo: null
-};
-
-// Helper: Check if we're on login page
-const isOnLoginPage = async () => {
-  return await playwright.evaluate(`
-    (() => {
-      const url = window.location.href;
-      const isHomepage = url === "https://www.instagram.com/" || 
-                         url === "https://www.instagram.com" ||
-                         url.includes('/accounts/login');
-      const hasLoginForm = document.querySelector('input[name="username"]') ||
-                           document.querySelector('input[type="password"]') ||
-                           document.querySelector('[data-loginscreen]');
-      const hasLoginButton = !!document.querySelector('button[type="submit"]');
-      const hasSignUpText = document.body.innerText.includes("Sign up") && 
-                            document.body.innerText.includes("Log in");
-      return isHomepage || hasLoginForm || (hasLoginButton && hasSignUpText);
-    })()
-  `);
 };
 
 // Helper: Fetch web_info to get logged-in user data
@@ -102,15 +79,12 @@ playwright.setData('isLoggedIn', !!isLoggedIn);
 
 if (!isLoggedIn) {
   // Navigate to login page if needed
-  const onLoginPage = await isOnLoginPage();
-  if (!onLoginPage) {
-    await playwright.goto('https://www.instagram.com/accounts/login/');
-    await playwright.sleep(1000);
-  }
+  await playwright.goto('https://www.instagram.com/accounts/login/');
+  await playwright.sleep(1000);
 
   // Wait for user to log in - check periodically for login completion
   await playwright.promptUser(
-    'Please log in to Instagram. The automation will continue once logged in.',
+    'Please log in to Instagram.',
     async () => {
       const info = await fetchWebInfo();
       return !!(info && info.username);
@@ -252,7 +226,7 @@ if (postsData) {
 
         while (hasMore && scrollAttempts < maxScrollAttempts) {
           scrollAttempts++;
-          
+
           // Clear the capture to get fresh data
           playwright.clearNetworkCaptures();
           playwright.captureNetwork({
@@ -320,7 +294,7 @@ const transformDataForSchema = () => {
   const posts = (edges || []).map((edge) => {
     const node = edge.node;
     const imgUrl = node.image_versions2?.candidates?.[0]?.url ||
-                   node.carousel_media?.[0]?.image_versions2?.candidates?.[0]?.url || "";
+      node.carousel_media?.[0]?.image_versions2?.candidates?.[0]?.url || "";
     const caption = node.caption?.text || "";
     const numOfLikes = node.like_count || 0;
     const whoLiked = (node.facepile_top_likers || []).map((liker) => ({
@@ -369,7 +343,7 @@ if (result) {
   playwright.setData('result', result);
   playwright.setData('postsCount', result.posts?.length || 0);
   playwright.setData('status', `Complete! ${result.posts?.length || 0} posts collected for @${result.username}`);
-  
+
   // Store individual keys for easy viewing in data panel
   playwright.setData('username', result.username);
   playwright.setData('bio', result.bio);
@@ -377,7 +351,7 @@ if (result) {
   playwright.setData('following_count', result.following_count);
   playwright.setData('posts', result.posts);
   playwright.setData('complete', true);
-  
+
   return result;
 } else {
   playwright.setData('error', 'Failed to transform data');
