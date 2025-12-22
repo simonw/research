@@ -18,9 +18,11 @@ export const FILTER_GROUPS: Record<FilterGroup, ResourceType[] | "__captured__"[
 interface NetworkFilterProps {
   selectedGroups: Set<FilterGroup>;
   onToggleGroup: (group: FilterGroup) => void;
+  /** Count of requests per filter group */
+  groupCounts?: Record<FilterGroup, number>;
 }
 
-export function NetworkFilter({ selectedGroups, onToggleGroup }: NetworkFilterProps) {
+export function NetworkFilter({ selectedGroups, onToggleGroup, groupCounts }: NetworkFilterProps) {
   const groups: FilterGroup[] = ["Captured", "API", "Doc", "Assets", "Realtime", "Other"];
   const activeCount = selectedGroups.size;
 
@@ -77,9 +79,9 @@ export function NetworkFilter({ selectedGroups, onToggleGroup }: NetworkFilterPr
               />
               {isCaptured && <Download className="w-3.5 h-3.5 text-accent" />}
               <span className={`font-medium ${isCaptured ? "text-accent" : ""}`}>{group}</span>
-              {!isCaptured && (
+              {groupCounts && (
                 <span className="ml-auto text-xs text-text-tertiary font-mono">
-                  {FILTER_GROUPS[group].length}
+                  {groupCounts[group]}
                 </span>
               )}
             </label>
