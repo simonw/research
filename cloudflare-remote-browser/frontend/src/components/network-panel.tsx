@@ -53,7 +53,7 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [requestDetails, setRequestDetails] = useState<NetworkRequestDetails | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
-  const [selectedGroups, setSelectedGroups] = useState<Set<FilterGroup>>(new Set(Object.keys(FILTER_GROUPS) as FilterGroup[]));
+  const [selectedGroups, setSelectedGroups] = useState<Set<FilterGroup>>(new Set(['Captured', 'API']));
   const [activeTab, setActiveTab] = useState<'headers' | 'payload' | 'response'>('headers');
 
   const handleToggleGroup = useCallback((group: FilterGroup) => {

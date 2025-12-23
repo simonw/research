@@ -1,7 +1,10 @@
 'use client';
 
 import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
-import { ClientMessage } from '@/lib/types';
+import { ClientMessage, SessionStatus } from '@/lib/types';
+import { RemoteCursor } from './RemoteCursor';
+import { AgentModeOverlay } from './AgentModeOverlay';
+import { CursorState } from '@/hooks/useSession';
 
 function debounce<T extends (...args: Parameters<T>) => void>(
   fn: T,
@@ -17,9 +20,10 @@ function debounce<T extends (...args: Parameters<T>) => void>(
 interface BrowserViewerProps {
   onFrame: (callback: (data: string) => void) => void;
   sendInput: (message: ClientMessage) => void;
-  isInteractive: boolean;
+  status: SessionStatus;
   viewport: { width: number; height: number };
   takeoverMessage?: string;
+  agentCursor: CursorState | null;
 }
 
 const ASPECT_RATIO = 4 / 3;
@@ -29,14 +33,38 @@ const MIN_HEIGHT = 240;
 export function BrowserViewer({
   onFrame,
   sendInput,
-  isInteractive,
+  status,
   viewport,
-  takeoverMessage
+  takeoverMessage,
+  agentCursor
 }: BrowserViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
   const [hasRequestedInitialViewport, setHasRequestedInitialViewport] = useState(false);
+  const [userCursor, setUserCursor] = useState<{ x: number; y: number } | null>(null);
+  const [isHovering, setIsHovering] = useState(false);
+  const [idleDrift, setIdleDrift] = useState({ x: 0, y: 0 });
+
+  const isAgentMode = status === 'running' || status === 'starting';
+  const isUserMode = status === 'takeover';
+  const isInteractive = isUserMode;
+
+  useEffect(() => {
+    if (!isAgentMode) {
+      setIdleDrift({ x: 0, y: 0 });
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setIdleDrift({
+        x: Math.sin(Date.now() / 1000) * 8,
+        y: Math.cos(Date.now() / 1200) * 6
+      });
+    }, 50);
+
+    return () => clearInterval(interval);
+  }, [isAgentMode]);
 
   const calculateViewportForContainer = useCallback((containerWidth: number, containerHeight: number) => {
     let width = Math.floor(containerWidth);
@@ -216,6 +244,60 @@ export function BrowserViewer({
     }
   }, [isInteractive, sendInput]);
 
+  const handleMouseMoveForCursor = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    setUserCursor({ x, y });
+  }, []);
+
+  const handleMouseEnter = useCallback(() => {
+    setIsHovering(true);
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    setIsHovering(false);
+    setUserCursor(null);
+  }, []);
+
+  const getDisplayCursor = useCallback(() => {
+    if (isAgentMode && agentCursor) {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return null;
+      const scaleX = rect.width / viewport.width;
+      const scaleY = rect.height / viewport.height;
+      return {
+        x: agentCursor.x * scaleX + idleDrift.x,
+        y: agentCursor.y * scaleY + idleDrift.y,
+        color: 'blue' as const,
+        isClicking: agentCursor.action === 'click'
+      };
+    }
+    if (isAgentMode && !agentCursor) {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return null;
+      return {
+        x: rect.width / 2 + idleDrift.x * 3,
+        y: rect.height / 2 + idleDrift.y * 3,
+        color: 'blue' as const,
+        isClicking: false
+      };
+    }
+    if (isUserMode && userCursor && isHovering) {
+      return {
+        x: userCursor.x,
+        y: userCursor.y,
+        color: 'black' as const,
+        isClicking: false
+      };
+    }
+    return null;
+  }, [isAgentMode, isUserMode, agentCursor, userCursor, isHovering, viewport.width, viewport.height, idleDrift]);
+
+  const displayCursor = getDisplayCursor();
+
   return (
     <div className="w-full flex flex-col max-h-[600px]">
       {isInteractive && takeoverMessage && (
@@ -244,23 +326,57 @@ export function BrowserViewer({
             width={viewport.width}
             height={viewport.height}
             tabIndex={0}
-            className="cursor-default focus:outline-none bg-white block"
+            className={`focus:outline-none bg-white block ${
+              (isAgentMode || isUserMode) ? 'cursor-none' : 'cursor-default'
+            }`}
             onMouseDown={(e) => handleMouseEvent(e, 'mousePressed')}
             onMouseUp={(e) => handleMouseEvent(e, 'mouseReleased')}
-            onMouseMove={(e) => handleMouseEvent(e, 'mouseMoved')}
+            onMouseMove={(e) => {
+              handleMouseEvent(e, 'mouseMoved');
+              handleMouseMoveForCursor(e);
+            }}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
             onWheel={handleWheel}
             onKeyDown={handleKeyDown}
             onKeyUp={handleKeyUp}
             onPaste={handlePaste}
             onContextMenu={(e) => e.preventDefault()}
           />
-          {isInteractive && (
+          
+          <AgentModeOverlay 
+            visible={isAgentMode} 
+            width={viewport.width} 
+            height={viewport.height} 
+          />
+          
+          {displayCursor && (
+            <RemoteCursor
+              x={displayCursor.x}
+              y={displayCursor.y}
+              color={displayCursor.color}
+              isClicking={displayCursor.isClicking}
+              visible={true}
+            />
+          )}
+          
+          {isAgentMode && (
             <div className="absolute top-2 left-2 right-2 flex justify-center pointer-events-none">
-              <div className="bg-accent/90 text-white px-3 py-1 rounded-full text-xs font-medium shadow-sm backdrop-blur-sm">
-                Interactive Mode
+              <div className="bg-blue-500/90 text-white px-3 py-1 rounded-full text-xs font-medium shadow-sm backdrop-blur-sm flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
+                Agent Running
               </div>
             </div>
           )}
+          
+          {isInteractive && (
+            <div className="absolute top-2 left-2 right-2 flex justify-center pointer-events-none">
+              <div className="bg-accent/90 text-white px-3 py-1 rounded-full text-xs font-medium shadow-sm backdrop-blur-sm">
+                Your Turn
+              </div>
+            </div>
+          )}
+          
           <div className="absolute bottom-2 right-2 pointer-events-none">
             <div className="bg-black/50 text-white px-2 py-0.5 rounded text-xs font-mono backdrop-blur-sm">
               {viewport.width}×{viewport.height}

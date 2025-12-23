@@ -78,7 +78,7 @@ export default {
         }
 
         if (subPath === '/finish' && request.method === 'POST') {
-          const { result } = await request.json();
+          const { result } = await request.json() as { result: unknown };
           const response = await stub.fetch(new Request('http://internal/finish', {
             method: 'POST',
             body: JSON.stringify({ result }),

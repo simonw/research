@@ -616,6 +616,7 @@ export class BrowserSession {
         const selector = args[0];
         if (typeof selector !== 'string') throw new Error('click(selector) requires a string');
         const options = (args[1] ?? undefined) as Parameters<Page['click']>[1];
+        await this.broadcastCursorForSelector(page, selector, 'click');
         return await page.click(selector, options);
       }
       case 'fill': {
@@ -625,6 +626,7 @@ export class BrowserSession {
           throw new Error('fill(selector, value) requires strings');
         }
         const options = (args[2] ?? undefined) as Parameters<Page['fill']>[2];
+        await this.broadcastCursorForSelector(page, selector, 'click');
         return await page.fill(selector, value, options);
       }
       case 'type': {
@@ -634,6 +636,7 @@ export class BrowserSession {
           throw new Error('type(selector, text) requires strings');
         }
         const options = (args[2] ?? undefined) as Parameters<Page['type']>[2];
+        await this.broadcastCursorForSelector(page, selector, 'click');
         return await page.type(selector, text, options);
       }
       case 'press': {
@@ -643,6 +646,7 @@ export class BrowserSession {
           throw new Error('press(selector, key) requires strings');
         }
         const options = (args[2] ?? undefined) as Parameters<Page['press']>[2];
+        await this.broadcastCursorForSelector(page, selector, 'click');
         return await page.press(selector, key, options);
       }
       case 'waitForSelector': {
@@ -675,6 +679,21 @@ export class BrowserSession {
       }
       default:
         throw new Error(`Unsupported page method: ${method}`);
+    }
+  }
+
+  private async broadcastCursorForSelector(page: Page, selector: string, action: 'move' | 'click'): Promise<void> {
+    try {
+      const element = await page.$(selector);
+      if (element) {
+        const box = await element.boundingBox();
+        if (box) {
+          const x = Math.round(box.x + box.width / 2);
+          const y = Math.round(box.y + box.height / 2);
+          this.broadcast({ type: 'automation:cursor', x, y, action });
+        }
+      }
+    } catch {
     }
   }
 
@@ -727,6 +746,8 @@ export class BrowserSession {
   }
 
   private async executeLocatorAction(locator: ReturnType<Page['getByText']>, action: string, actionArgs: unknown[]): Promise<unknown> {
+    await this.broadcastCursorForLocator(locator, action === 'click' ? 'click' : 'move');
+    
     if (action === 'fill') {
       const value = actionArgs[0];
       if (typeof value !== 'string') throw new Error('locator.fill(value) requires a string');
@@ -747,6 +768,18 @@ export class BrowserSession {
     }
 
     throw new Error(`Unsupported locator action: ${action}`);
+  }
+
+  private async broadcastCursorForLocator(locator: ReturnType<Page['getByText']>, action: 'move' | 'click'): Promise<void> {
+    try {
+      const box = await locator.boundingBox();
+      if (box) {
+        const x = Math.round(box.x + box.width / 2);
+        const y = Math.round(box.y + box.height / 2);
+        this.broadcast({ type: 'automation:cursor', x, y, action });
+      }
+    } catch {
+    }
   }
 
   private requestTakeover(message: string): Promise<void> {

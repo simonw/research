@@ -5,10 +5,18 @@ import { SessionState, ServerMessage, ClientMessage, NetworkRequest, AutomationS
 import { PlaywrightProxy } from '@/lib/playwright-proxy';
 import * as api from '@/lib/api';
 
+export interface CursorState {
+  x: number;
+  y: number;
+  action: 'move' | 'click' | 'idle';
+  timestamp: number;
+}
+
 interface ExtendedSessionState extends SessionState {
   networkRequests: NetworkRequest[];
   automationData: Record<string, unknown>;
   viewport: { width: number; height: number };
+  agentCursor: CursorState | null;
 }
 
 const INITIAL_STATE: ExtendedSessionState = {
@@ -20,7 +28,8 @@ const INITIAL_STATE: ExtendedSessionState = {
   connected: false,
   networkRequests: [],
   automationData: {},
-  viewport: { width: 800, height: 600 }
+  viewport: { width: 800, height: 600 },
+  agentCursor: null
 };
 
 export function useSession() {
@@ -118,6 +127,17 @@ export function useSession() {
           setState(s => ({
             ...s,
             automationData: { ...s.automationData, [message.key]: message.value }
+          }));
+          break;
+        case 'automation:cursor':
+          setState(s => ({
+            ...s,
+            agentCursor: {
+              x: message.x,
+              y: message.y,
+              action: message.action,
+              timestamp: Date.now()
+            }
           }));
           break;
         case 'viewport:ack':

@@ -78,8 +78,6 @@ export default function Home() {
     await loadSessions();
   };
 
-  const isInteractive = session.status === 'takeover';
-
   return (
     <div className="min-h-screen bg-background p-6">
       <div className="container mx-auto max-w-[1400px] space-y-6">
@@ -170,9 +168,10 @@ export default function Home() {
             <BrowserViewer
               onFrame={session.setOnFrame}
               sendInput={session.sendInput}
-              isInteractive={isInteractive}
+              status={session.status}
               viewport={session.viewport}
               takeoverMessage={session.takeoverMessage}
+              agentCursor={session.agentCursor}
             />
           </div>
 
