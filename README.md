@@ -117,7 +117,17 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
-## 38 research projects
+## 39 research projects
+
+### [url-limits-investigation](https://github.com/simonw/research/tree/main/url-limits-investigation) (2025-12-23)
+
+Major browser engines demonstrate significant differences in how they enforce URL length limits. Chromium sets a 2 MB cap at its inter-process communication boundary, rejecting longer URLs when crossing processes. Firefox relies on user-configurable preferences, employing a 1 MB "standard" limit but permitting up to 512 MB in absolute terms, with stricter limits (2,000 characters) for history and bookmarks. WebKit (Safari) places almost no hard restriction, technically permitting URLs as large as ~2 GB per its string implementation, though real-world operational boundaries come from servers, memory, and infrastructure rather than the browser. Tools and source code links include [Chromium's url_constants.h](https://github.com/chromium/chromium/blob/eae506cc8e9b1cd874a63d20d4d006a1428d29ec/url/url_constants.h#L68-L70) and [Firefox's StaticPrefList.yaml](https://github.com/mozilla-firefox/firefox/blob/20a1fb35a4d5c2f2ea6c865ecebc8e4bee6f86c9/modules/libpref/init/StaticPrefList.yaml).
+
+**Key findings:**
+- No unified standard: Each browser enforces limits independently and inconsistently.
+- Context-specific: Limits vary depending on whether URLs cross processes, are stored, or parsed.
+- Outdated guidance: The longstanding "2KB limit" legend does not apply to modern browsers.
+- Ultimate limits are often practical, dictated more by system constraints than browser source code policies.
 
 ### [environment-report](https://github.com/simonw/research/tree/main/environment-report) (2025-12-22)
 
