@@ -11,8 +11,13 @@ function trimTrailingUndefined(args: unknown[]): unknown[] {
 }
 
 function getCommandTimeoutMs(method: string, args: unknown[]): number {
-  if (method === 'requestTakeover') {
+  if (method === 'promptUser') {
     return 10 * 60 * 1000;
+  }
+
+  if (method === 'waitForNetworkCapture') {
+    const timeout = args[1];
+    return typeof timeout === 'number' ? timeout + 5_000 : 35_000;
   }
 
   if (method === 'waitForTimeout') {
@@ -124,6 +129,10 @@ export class PlaywrightPageProxy {
     return this.execute('waitForTimeout', [timeout]);
   }
 
+  async sleep(timeout: number): Promise<unknown> {
+    return this.execute('waitForTimeout', [timeout]);
+  }
+
   async screenshot(options?: unknown): Promise<unknown> {
     return this.execute('screenshot', [options]);
   }
@@ -156,8 +165,87 @@ export class PlaywrightPageProxy {
     return new PlaywrightLocatorProxy(this.execute, 'getByRole', trimTrailingUndefined([role, options]));
   }
 
-  async requestTakeover(message: string): Promise<void> {
-    await this.execute('requestTakeover', [message]);
+  async captureNetwork(arg1: string | { key: string; urlPattern?: string; bodyPattern?: string }, arg2?: string): Promise<void> {
+    if (typeof arg1 === 'string') {
+      await this.execute('captureNetwork', [arg1, arg2]);
+    } else {
+      await this.execute('captureNetwork', [arg1]);
+    }
+  }
+
+  async clearNetworkCaptures(): Promise<void> {
+    await this.execute('clearNetworkCaptures', []);
+  }
+
+  async getCapturedResponse(key: string): Promise<unknown> {
+    return this.execute('getCapturedResponse', [key]);
+  }
+
+  async waitForNetworkCapture(key: string, timeout?: number): Promise<unknown> {
+    return this.execute('waitForNetworkCapture', [key, timeout]);
+  }
+
+  async setData(key: string, value: unknown): Promise<void> {
+    await this.execute('setData', [key, value]);
+  }
+
+  async getData(): Promise<Record<string, unknown>> {
+    const result = await this.execute('getData', []);
+    return (result as Record<string, unknown>) || {};
+  }
+
+  async clearData(): Promise<void> {
+    await this.execute('clearData', []);
+  }
+
+  async scrapeText(selector: string): Promise<string | null> {
+    const result = await this.execute('scrapeText', [selector]);
+    return result as string | null;
+  }
+
+  async scrapeAttribute(selector: string, attribute: string): Promise<string | null> {
+    const result = await this.execute('scrapeAttribute', [selector, attribute]);
+    return result as string | null;
+  }
+
+  async scrapeAll(selector: string, options?: { text?: boolean; attribute?: string }): Promise<(string | null)[]> {
+    const result = await this.execute('scrapeAll', [selector, options]);
+    return result as (string | null)[];
+  }
+
+  async promptUser(message: string, ...args: unknown[]): Promise<void> {
+    let conditionFn: (() => Promise<boolean>) | undefined;
+    let pollInterval = 2000;
+    let options: any = {};
+
+    if (args.length > 0) {
+      if (typeof args[0] === 'function') {
+        conditionFn = args[0] as () => Promise<boolean>;
+        if (typeof args[1] === 'number') pollInterval = args[1];
+      } else if (typeof args[0] === 'object') {
+        options = args[0];
+      }
+    }
+
+    if (conditionFn) {
+      await this.execute('promptUser', [message, { ...options, nonBlocking: true }]);
+      
+      while (true) {
+        let result = false;
+        try {
+          result = await conditionFn();
+        } catch (e) {
+          console.error('Error in promptUser condition:', e);
+        }
+        
+        if (result) break;
+        await new Promise(r => setTimeout(r, pollInterval));
+      }
+      
+      await this.execute('completeTakeover', []);
+    } else {
+      await this.execute('promptUser', [message, options]);
+    }
   }
 }
 

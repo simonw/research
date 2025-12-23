@@ -77,6 +77,17 @@ export default {
           return Response.json(data, { headers: corsHeaders });
         }
 
+        if (subPath === '/finish' && request.method === 'POST') {
+          const { result } = await request.json();
+          const response = await stub.fetch(new Request('http://internal/finish', {
+            method: 'POST',
+            body: JSON.stringify({ result }),
+            headers: { 'Content-Type': 'application/json' }
+          }));
+          const data = await response.json();
+          return Response.json(data, { headers: corsHeaders });
+        }
+
         if (request.method === 'DELETE' && !subPath) {
           const response = await stub.fetch(new Request('http://internal/destroy', { method: 'POST' }));
           const data = await response.json();
@@ -93,6 +104,20 @@ export default {
 
         if (request.method === 'GET' && !subPath) {
           const response = await stub.fetch(new Request('http://internal/status'));
+          const data = await response.json();
+          return Response.json(data, { headers: corsHeaders });
+        }
+
+        if (subPath === '/network/clear' && request.method === 'POST') {
+          const response = await stub.fetch(new Request('http://internal/network/clear', { method: 'POST' }));
+          const data = await response.json();
+          return Response.json(data, { headers: corsHeaders });
+        }
+
+        const networkMatch = subPath.match(/^\/network\/(.+)$/);
+        if (networkMatch && request.method === 'GET') {
+          const requestId = networkMatch[1];
+          const response = await stub.fetch(new Request(`http://internal/network/${requestId}`));
           const data = await response.json();
           return Response.json(data, { headers: corsHeaders });
         }

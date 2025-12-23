@@ -1,21 +1,30 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { SessionState, ServerMessage, ClientMessage } from '@/lib/types';
+import { SessionState, ServerMessage, ClientMessage, NetworkRequest, AutomationState } from '@/lib/types';
 import { PlaywrightProxy } from '@/lib/playwright-proxy';
 import * as api from '@/lib/api';
 
-const INITIAL_STATE: SessionState = {
+interface ExtendedSessionState extends SessionState {
+  networkRequests: NetworkRequest[];
+  automationData: Record<string, unknown>;
+  viewport: { width: number; height: number };
+}
+
+const INITIAL_STATE: ExtendedSessionState = {
   sessionId: null,
   status: 'idle',
   takeoverMessage: '',
   error: '',
   result: null,
-  connected: false
+  connected: false,
+  networkRequests: [],
+  automationData: {},
+  viewport: { width: 800, height: 600 }
 };
 
 export function useSession() {
-  const [state, setState] = useState<SessionState>(INITIAL_STATE);
+  const [state, setState] = useState<ExtendedSessionState>(INITIAL_STATE);
   const wsRef = useRef<WebSocket | null>(null);
   const onFrameRef = useRef<((data: string) => void) | null>(null);
   const playwrightProxyRef = useRef<PlaywrightProxy | null>(null);
@@ -49,7 +58,8 @@ export function useSession() {
           setState(s => ({
             ...s,
             status: message.status,
-            takeoverMessage: message.message || ''
+            takeoverMessage: message.message || '',
+            takeoverMode: message.takeoverMode
           }));
           break;
         case 'result':
@@ -57,6 +67,65 @@ export function useSession() {
           break;
         case 'error':
           setState(s => ({ ...s, error: message.message }));
+          break;
+        case 'network:request':
+          setState(s => ({
+            ...s,
+            networkRequests: [...s.networkRequests, message.request]
+          }));
+          break;
+        case 'network:response':
+          setState(s => ({
+            ...s,
+            networkRequests: s.networkRequests.map(req =>
+              req.requestId === message.requestId
+                ? { 
+                    ...req, 
+                    status: message.status, 
+                    statusText: message.statusText, 
+                    mimeType: message.mimeType,
+                    responseTimestamp: Date.now()
+                  }
+                : req
+            )
+          }));
+          break;
+        case 'network:finished':
+          if (message.capturedByKey) {
+            setState(s => ({
+              ...s,
+              networkRequests: s.networkRequests.map(req =>
+                req.requestId === message.requestId
+                  ? { ...req, capturedByKey: message.capturedByKey }
+                  : req
+              )
+            }));
+          }
+          break;
+        case 'network:failed':
+          setState(s => ({
+            ...s,
+            networkRequests: s.networkRequests.map(req =>
+              req.requestId === message.requestId
+                ? { ...req, errorText: message.errorText }
+                : req
+            )
+          }));
+          break;
+        case 'network:clear':
+          setState(s => ({ ...s, networkRequests: [] }));
+          break;
+        case 'automation:data':
+          setState(s => ({
+            ...s,
+            automationData: { ...s.automationData, [message.key]: message.value }
+          }));
+          break;
+        case 'viewport:ack':
+          setState(s => ({
+            ...s,
+            viewport: { width: message.width, height: message.height }
+          }));
           break;
       }
     };
@@ -85,7 +154,7 @@ export function useSession() {
     wsRef.current?.close();
     wsRef.current = null;
     playwrightProxyRef.current = null;
-    setState(s => ({ ...s, sessionId, connected: false, error: '', status: 'idle', takeoverMessage: '', result: null }));
+    setState(s => ({ ...s, sessionId, connected: false, error: '', status: 'idle', takeoverMessage: '', result: null, networkRequests: [], automationData: {}, viewport: { width: 800, height: 600 } }));
     connect(sessionId);
   }, [connect]);
 
@@ -103,13 +172,11 @@ export function useSession() {
       const page = playwrightProxyRef.current.createPageProxy();
       
       const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-      const scriptFn = new AsyncFunction('page', 'requestTakeover', code);
-      
-      const requestTakeover = async (message: string) => {
-        await page.requestTakeover(message);
-      };
+      const scriptFn = new AsyncFunction('page', code);
 
-      const result = await scriptFn(page, requestTakeover);
+      const result = await scriptFn(page);
+      
+      await api.finishScript(state.sessionId, result);
       
       setState(s => ({ ...s, status: 'done', result }));
     } catch (e) {
@@ -148,6 +215,55 @@ export function useSession() {
     onFrameRef.current = callback;
   }, []);
 
+  const clearNetworkRequests = useCallback(() => {
+    setState(s => ({ ...s, networkRequests: [] }));
+  }, []);
+
+  // Keep sessionId in a ref for polling to avoid stale closures
+  const sessionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    sessionIdRef.current = state.sessionId;
+  }, [state.sessionId]);
+
+  // Poll status every 3 seconds to keep UI synchronized
+  useEffect(() => {
+    if (!state.sessionId || !state.connected) {
+      console.log('[useSession] Polling not started - sessionId:', state.sessionId, 'connected:', state.connected);
+      return;
+    }
+
+    console.log('[useSession] Starting status polling for session:', state.sessionId);
+
+    const pollStatus = async () => {
+      const currentSessionId = sessionIdRef.current;
+      if (!currentSessionId) return;
+      
+      console.log('[useSession] Polling status for session:', currentSessionId);
+      try {
+        const data = await api.getStatus(currentSessionId);
+        console.log('[useSession] Poll response:', data);
+        setState(s => ({
+          ...s,
+          status: data.status,
+          takeoverMessage: data.takeoverMessage || s.takeoverMessage,
+          takeoverMode: data.takeoverMode || s.takeoverMode
+        }));
+      } catch (e) {
+        // Don't update error state on poll failures - WebSocket will handle real errors
+        console.warn('[useSession] Status poll failed:', e);
+      }
+    };
+
+    // Poll immediately, then every 3 seconds
+    pollStatus();
+    const interval = setInterval(pollStatus, 3000);
+
+    return () => {
+      console.log('[useSession] Stopping status polling');
+      clearInterval(interval);
+    };
+  }, [state.sessionId, state.connected]);
+
   useEffect(() => {
     return () => {
       wsRef.current?.close();
@@ -163,6 +279,7 @@ export function useSession() {
     completeTakeover,
     destroySession,
     sendInput,
-    setOnFrame
+    setOnFrame,
+    clearNetworkRequests
   };
 }

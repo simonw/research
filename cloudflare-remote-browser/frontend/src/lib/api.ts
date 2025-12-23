@@ -62,6 +62,15 @@ export async function completeTakeover(sessionId: string): Promise<void> {
   await handleResponse(res, 'Failed to complete takeover');
 }
 
+export async function finishScript(sessionId: string, result: unknown): Promise<void> {
+  const res = await fetch(`${WORKER_URL}/sessions/${sessionId}/finish`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ result })
+  });
+  await handleResponse(res, 'Failed to finish script');
+}
+
 export async function destroySession(sessionId: string): Promise<void> {
   const res = await fetch(`${WORKER_URL}/sessions/${sessionId}`, {
     method: 'DELETE',
@@ -70,7 +79,47 @@ export async function destroySession(sessionId: string): Promise<void> {
   await handleResponse(res, 'Failed to destroy session');
 }
 
+export interface SessionStatusResponse {
+  status: 'idle' | 'running' | 'takeover' | 'done' | 'error';
+  takeoverMessage?: string;
+  error?: string;
+  result?: unknown;
+  takeoverMode?: 'manual' | 'auto';
+}
+
+export async function getStatus(sessionId: string): Promise<SessionStatusResponse> {
+  const res = await fetch(`${WORKER_URL}/sessions/${sessionId}`, {
+    method: 'GET',
+    headers
+  });
+  await handleResponse(res, 'Failed to get session status');
+  return res.json();
+}
+
 export function getWebSocketUrl(sessionId: string): string {
   const wsUrl = WORKER_URL.replace('https://', 'wss://').replace('http://', 'ws://');
   return `${wsUrl}/sessions/${sessionId}/ws`;
+}
+
+export async function getNetworkRequestDetails(sessionId: string, requestId: string): Promise<{
+  requestHeaders: Record<string, string>;
+  requestBody?: string;
+  responseHeaders: Record<string, string>;
+  responseBody?: string;
+  base64Encoded: boolean;
+}> {
+  const res = await fetch(`${WORKER_URL}/sessions/${sessionId}/network/${requestId}`, {
+    method: 'GET',
+    headers
+  });
+  await handleResponse(res, 'Failed to get network request details');
+  return res.json();
+}
+
+export async function clearNetworkRequests(sessionId: string): Promise<void> {
+  const res = await fetch(`${WORKER_URL}/sessions/${sessionId}/network/clear`, {
+    method: 'POST',
+    headers
+  });
+  await handleResponse(res, 'Failed to clear network requests');
 }

@@ -1,12 +1,16 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import { DM_Sans } from 'next/font/google';
 import './globals.css';
 
-const inter = Inter({ subsets: ['latin'] });
+const dmSans = DM_Sans({
+  variable: "--font-dm-sans",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+});
 
 export const metadata: Metadata = {
-  title: 'Remote Browser Automation',
-  description: 'Run Playwright scripts with live streaming and user takeover',
+  title: 'Cloudflare Remote Browser',
+  description: 'Remote browser automation with user takeover',
 };
 
 export default function RootLayout({
@@ -16,7 +20,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>{children}</body>
+      <body className={`${dmSans.variable} antialiased min-h-screen bg-background`}>{children}</body>
     </html>
   );
 }
