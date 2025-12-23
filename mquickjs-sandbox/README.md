@@ -150,14 +150,18 @@ Attempted to run the WASM module directly with Python WASM runtimes:
 
 **Wasmer**: Python bindings require native compiler support not available in all environments.
 
-**Wasmtime**: Successfully loads module but cannot execute because mquickjs uses `setjmp/longjmp` for exception handling, which requires emscripten's `invoke_*` trampolines.
+**Wasmtime**: Successfully implemented! Required implementing proper `invoke_*` trampolines that:
+1. Call through the `__indirect_function_table`
+2. Catch exceptions signaling `longjmp`
+3. Manage the emscripten setjmp/longjmp state via `setThrew`/`stackRestore`
 
-**Conclusion**: For standalone Python WASM use, the emscripten JS glue is required. The WASM module works perfectly with:
-- Node.js
-- Deno
-- Browsers
+The WASM module works with:
+- Node.js (via emscripten JS glue)
+- Deno (via emscripten JS glue)
+- Browsers (via emscripten JS glue)
+- **Python wasmtime** (via custom invoke_* implementation)
 
-For pure Python, use the FFI or C Extension instead.
+See the Appendix for a detailed explanation of the wasmtime implementation.
 
 ## Files Included
 
@@ -169,9 +173,12 @@ For pure Python, use the FFI or C Extension instead.
 | `mquickjs_ext.c` | C Extension source |
 | `setup.py` | C Extension build script |
 | `mquickjs_subprocess.py` | Subprocess wrapper |
+| `mquickjs_wasmtime.py` | Wasmtime Python implementation |
 | `build_wasm.py` | WASM build script |
+| `build_wasm_wasmtime.py` | Alternative WASM build for wasmtime |
 | `mquickjs.js` | Emscripten JS glue |
-| `mquickjs.wasm` | WASM binary |
+| `mquickjs.wasm` | WASM binary (for Node/Deno/Browser) |
+| `mquickjs_standalone.wasm` | Standalone WASM (for wasmtime) |
 | `test_sandbox.py` | Pytest tests (35 tests) |
 | `test_wasm_node.js` | Node.js WASM tests |
 | `test_wasm_deno.ts` | Deno WASM tests |
@@ -230,3 +237,101 @@ mquickjs is an excellent choice for JavaScript sandboxing:
 4. **Simplicity**: ~400KB of C code, easy to audit
 
 **Recommended approach**: Use the FFI implementation for most cases. It provides good performance without requiring compilation and works across platforms.
+
+---
+
+## Appendix: Wasmtime Integration Deep Dive
+
+### The Challenge
+
+Getting mquickjs to run in Python via wasmtime required solving a complex problem: mquickjs uses `setjmp`/`longjmp` for error handling during JavaScript parsing. When compiled to WASM, emscripten translates these to special `invoke_*` functions that wrap indirect calls with exception handling.
+
+### How setjmp/longjmp Works in Emscripten WASM
+
+1. **setjmp** saves the current stack state to a buffer
+2. **longjmp** restores that state and continues from setjmp
+3. In WASM, this is implemented via:
+   - `invoke_*` trampolines that catch exceptions
+   - `_emscripten_throw_longjmp` to signal a longjmp
+   - `setThrew`/`testSetjmp` for state management
+
+The emscripten-generated WASM exports these imports:
+```
+env.invoke_iii(index, a1, a2) -> i32
+env.invoke_iiii(index, a1, a2, a3) -> i32
+env.invoke_vi(index, a1) -> void
+... etc
+env.setTempRet0(value)
+env.getTempRet0() -> i32
+env._emscripten_throw_longjmp()
+```
+
+### Failed Attempts
+
+1. **SUPPORT_LONGJMP=wasm**: Emscripten's native WASM exceptions use the WASM exception handling proposal, but wasmtime requires `legacy_exceptions` feature which isn't widely available.
+
+2. **Stub invoke_* functions**: Simply returning 0 from invoke_* doesn't work because the actual function calls never happen.
+
+3. **Removing setjmp/longjmp from source**: Would require extensive modifications to the parser's error handling throughout mquickjs.c.
+
+### Working Solution
+
+The key insight is that `invoke_*` functions must:
+1. Call through the `__indirect_function_table`
+2. Catch any "longjmp" exceptions (WASM traps or Python exceptions)
+3. Set the `threw` flag via `setThrew` export
+4. Return control to allow the WASM code to handle the error
+
+Implementation in Python:
+
+```python
+def make_invoke_fn(return_type, param_count):
+    def invoke_fn(*args):
+        index = args[0]
+        params = args[1:]
+
+        # Save stack
+        stack_ptr = self._stackSave(self.store)
+
+        try:
+            # Call through indirect table
+            func = self._table.get(self.store, index)
+            result = func(self.store, *params)
+            return result
+
+        except (LongjmpException, wasmtime.Trap):
+            # longjmp was called
+            self._setThrew(self.store, 1, 0)
+            self._stackRestore(self.store, stack_ptr)
+            return 0
+
+    return invoke_fn
+```
+
+### Performance Characteristics
+
+| Implementation | Startup | Simple Op | Recursion |
+|---------------|---------|-----------|-----------|
+| C Extension   | 0.01ms  | 0.002ms   | 0.082ms   |
+| FFI (ctypes)  | 0.02ms  | 0.007ms   | 0.086ms   |
+| **Wasmtime**  | 57.6ms  | 2.9ms     | 6.2ms     |
+| Subprocess    | 0.09ms  | 3.8ms     | 3.6ms     |
+
+Wasmtime is ~300x slower than FFI for simple operations due to:
+- WASM compilation on startup (~58ms)
+- Python/WASM boundary crossing for each invoke_* call
+- Exception handling overhead for longjmp support
+
+### When to Use Wasmtime
+
+Despite the performance cost, wasmtime may be preferable when:
+- You need the security guarantees of WASM isolation
+- You can't install shared libraries (e.g., serverless functions)
+- You want to run the same WASM in Python and browsers
+- Startup time is amortized over many executions
+
+### Files
+
+- `mquickjs_wasmtime.py` - Python wasmtime implementation with proper invoke_* support
+- `mquickjs_standalone.wasm` - Standalone WASM module (used with wasmtime)
+- `build_wasm_wasmtime.py` - Alternative build script for wasmtime experiments

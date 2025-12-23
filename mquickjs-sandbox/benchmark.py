@@ -200,6 +200,29 @@ def main():
     except Exception as e:
         print(f"  C Extension error: {e}")
 
+    # Test Wasmtime implementation
+    print("\nTesting Wasmtime implementation...")
+    try:
+        from mquickjs_wasmtime import MQuickJSWasmtime, execute_js as wasmtime_execute
+
+        # Startup time
+        startup = measure_startup_time(MQuickJSWasmtime)
+        print(f"  Startup time: {startup['mean_ms']:.3f}ms")
+
+        # Execution benchmarks
+        sandbox = MQuickJSWasmtime()
+        results = run_benchmark(sandbox.execute, "Wasmtime", iterations=50)
+        sandbox.close()
+
+        results["_startup"] = startup
+        all_results["Wasmtime"] = results
+        print_results(results, "Wasmtime Implementation")
+
+    except ImportError as e:
+        print(f"  Wasmtime not available: {e}")
+    except Exception as e:
+        print(f"  Wasmtime error: {e}")
+
     # Summary comparison
     if len(all_results) > 1:
         print("\n" + "="*60)
