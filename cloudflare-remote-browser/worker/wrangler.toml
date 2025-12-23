@@ -1,0 +1,28 @@
+name = "remote-browser"
+account_id = "5287c8e640ca55532dc18576178f008c"
+main = "src/index.ts"
+compatibility_date = "2025-09-17"
+compatibility_flags = ["nodejs_compat"]
+
+# Browser Rendering binding
+[browser]
+binding = "BROWSER"
+
+# Durable Object for session management
+[[durable_objects.bindings]]
+name = "BROWSER_SESSION"
+class_name = "BrowserSession"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["BrowserSession"]
+
+[vars]
+API_KEY = "dev-api-key-12345"
+
+[observability]
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true

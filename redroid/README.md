@@ -83,12 +83,60 @@ npm run dev
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    subgraph Browser["🖥️ User Browser"]
+        CP["Control Panel<br/>(Next.js Frontend)"]
+        Viewer["ws-scrcpy Viewer<br/>(Android Display)"]
+    end
+
+    subgraph NextJS["⚙️ Next.js Backend"]
+        API["/api/session/*<br/>Session Management"]
+        GCPLib["GCP Compute Library"]
+    end
+
+    subgraph GCP["☁️ Google Cloud Platform"]
+        subgraph VM["GCE VM (Ephemeral)"]
+            Docker["🐳 Docker Engine"]
+            subgraph Containers["Containers"]
+                ReDroid["📱 ReDroid<br/>(Android 13)"]
+                Scrcpy["ws-scrcpy Server<br/>(Display Streaming)"]
+            end
+            ADB["ADB Connection<br/>:5555"]
+            StatusAPI["Status API<br/>(Progress Tracking)"]
+        end
+    end
+
+    %% Control Flow
+    CP -->|"Start/End Session"| API
+    API -->|"Create/Delete VM"| GCPLib
+    GCPLib -->|"GCP Compute API"| VM
+    
+    %% Streaming Flow
+    Viewer <-->|"WebSocket<br/>scrcpy protocol"| Scrcpy
+    Scrcpy <-->|"ADB"| ReDroid
+    
+    %% Status Polling
+    CP -.->|"Poll Status"| API
+    API -.->|"Check VM IP/Status"| GCPLib
+    API -.->|"Fetch Progress"| StatusAPI
+
+    %% Docker relationships
+    Docker --> ReDroid
+    Docker --> Scrcpy
 ```
-Browser → Next.js API → GCE VM (ephemeral)
-                           ├── Docker
-                           ├── ReDroid (Android 13)
-                           └── noVNC (browser access)
-```
+
+### Component Details
+
+| Component | Description |
+|-----------|-------------|
+| **Control Panel** | Next.js frontend for session management (start/stop) |
+| **ws-scrcpy Viewer** | Browser-based Android display via WebSocket streaming |
+| **Next.js API** | REST endpoints for VM lifecycle management |
+| **GCP Compute Library** | SDK wrapper for GCE instance operations |
+| **GCE VM** | Ephemeral n1-standard-4 instance with nested virtualization |
+| **ReDroid** | Android 13 container with GPU acceleration |
+| **ws-scrcpy Server** | Converts ADB screen capture to WebSocket stream |
 
 ## Cost
 

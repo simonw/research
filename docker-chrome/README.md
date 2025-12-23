@@ -4,6 +4,29 @@ A serverless-ready, remotely controllable Chromium instance with full network ca
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    CP["Control Pane (Next.js)"]
+    
+    subgraph Container["Docker Container"]
+        BRIDGE["Bridge Server<br/>(Playwright + CDP)"]
+        CHROME["Chromium"]
+        STREAM["WebRTC Streaming<br/>(Selkies)"]
+    end
+
+    subgraph Deployment["Deployment Options"]
+        CR["Cloud Run<br/>+ Residential Proxy"]
+        VM["VM<br/>(Static IP)"]
+    end
+
+    CP <-->|"API + WebSocket"| BRIDGE
+    CP <-->|"Video Stream"| STREAM
+    BRIDGE <-->|"CDP :9222"| CHROME
+    CHROME --> STREAM
+    Container --> CR
+    Container --> VM
+```
+
 This project replicates the `redroid` pattern but for a desktop browser:
 
 1.  **Frontend**: Next.js Control Pane (copied and adapted from redroid)
