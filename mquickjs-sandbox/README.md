@@ -85,16 +85,21 @@ The WASM module can be loaded directly in browsers and used with Pyodide for Pyt
 
 | Implementation | Startup | Simple Op | Loop 1000 | Recursion (fib 15) |
 |---------------|---------|-----------|-----------|-----------|
-| **C Extension** | 0.01ms | **0.002ms** | **0.035ms** | **0.085ms** |
+| **C Extension** | 0.01ms | **0.003ms** | **0.033ms** | **0.083ms** |
 | **FFI (ctypes)** | 0.04ms | 0.007ms | 0.039ms | 0.086ms |
-| **Subprocess** | 0.12ms | 4.3ms | 4.7ms | 4.6ms |
+| **Wasmtime** | 56.6ms | 2.8ms | 5.6ms | 6.2ms |
+| **Subprocess** | 0.13ms | 4.9ms | 4.6ms | 4.5ms |
 
 **Key Findings**:
 - C Extension and FFI have near-identical execution performance
 - C Extension has ~4x faster startup (no ctypes overhead)
 - Subprocess is ~500x slower due to process spawn overhead
+- Wasmtime is ~300-900x slower but provides WASM isolation benefits
 - For interactive/repeated use: prefer FFI or C Extension
 - For one-off use: subprocess is acceptable (~5ms latency)
+- For security-critical isolation: consider Wasmtime despite overhead
+
+See **[benchmark_results.md](benchmark_results.md)** for detailed benchmarks including all test cases and performance ratios.
 
 ## Security Analysis
 
@@ -148,7 +153,11 @@ mquickjs implements a subset of JavaScript (ES5-like):
 
 Attempted to run the WASM module directly with Python WASM runtimes:
 
-**Wasmer**: Python bindings require native compiler support not available in all environments.
+**Wasmer**:
+- Python bindings (`wasmer` pip package) require platform-specific native libraries not available in all environments
+- Wasmer CLI (v4.4.0) can be installed but requires the same `invoke_*` imports as wasmtime
+- Error: `error: Instantiation failed - Error while importing "env"."invoke_iii": unknown import`
+- Would need the same trampoline implementation as wasmtime to work
 
 **Wasmtime**: Successfully implemented! Required implementing proper `invoke_*` trampolines that:
 1. Call through the `__indirect_function_table`
@@ -184,6 +193,7 @@ See the Appendix for a detailed explanation of the wasmtime implementation.
 | `test_wasm_deno.ts` | Deno WASM tests |
 | `test_wasm_browser.py` | Playwright browser tests |
 | `benchmark.py` | Performance benchmarks |
+| `benchmark_results.md` | Detailed benchmark results |
 | `notes.md` | Investigation notes |
 
 ## Running Tests
