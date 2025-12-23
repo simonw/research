@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>mquickjs WASM Browser Test</title>
+</head>
+<body>
+    <h1>mquickjs WASM Browser Test</h1>
+    <pre id="output">Loading...</pre>
+
+    <script src="mquickjs.js"></script>
+    <script>
+        const output = document.getElementById('output');
+        let results = [];
+
+        function log(msg) {
+            output.textContent += msg + '\n';
+            console.log(msg);
+        }
+
+        async function runTests() {
+            try {
+                output.textContent = '';
+                log('Loading mquickjs WASM...');
+
+                // Create the module
+                const Module = await createMQuickJS();
+
+                log('mquickjs WASM loaded!');
+
+                // Get function wrappers
+                const sandbox_init = Module.cwrap('sandbox_init', 'number', ['number']);
+                const sandbox_free = Module.cwrap('sandbox_free', null, []);
+                const sandbox_eval = Module.cwrap('sandbox_eval', 'string', ['string']);
+                const sandbox_get_error = Module.cwrap('sandbox_get_error', 'string', []);
+
+                // Initialize sandbox
+                const initResult = sandbox_init(1024 * 1024);
+                if (!initResult) {
+                    throw new Error('Failed to initialize sandbox');
+                }
+                log('Sandbox initialized!');
+
+                // Run tests
+                const tests = [
+                    { code: "1 + 2", expected: "3", name: "arithmetic" },
+                    { code: "'hello' + ' world'", expected: "hello world", name: "string concat" },
+                    { code: "true && false", expected: "false", name: "boolean" },
+                    { code: "Math.abs(-5)", expected: "5", name: "Math.abs" },
+                    { code: "[1, 2, 3].length", expected: "3", name: "array length" },
+                    { code: "Math.floor(3.7)", expected: "3", name: "Math.floor" },
+                    { code: "JSON.stringify([1, 2, 3])", expected: "[1,2,3]", name: "JSON.stringify" },
+                ];
+
+                let passed = 0;
+                let failed = 0;
+
+                for (const test of tests) {
+                    const result = sandbox_eval(test.code);
+                    if (result === null) {
+                        const error = sandbox_get_error();
+                        log(`FAIL: ${test.name} - error: ${error}`);
+                        results.push({ name: test.name, passed: false, error: error });
+                        failed++;
+                    } else if (result === test.expected) {
+                        log(`PASS: ${test.name}`);
+                        results.push({ name: test.name, passed: true });
+                        passed++;
+                    } else {
+                        log(`FAIL: ${test.name} - expected ${test.expected}, got ${result}`);
+                        results.push({ name: test.name, passed: false, expected: test.expected, got: result });
+                        failed++;
+                    }
+                }
+
+                // Cleanup
+                sandbox_free();
+
+                log(`\nResults: ${passed} passed, ${failed} failed`);
+
+                // Set results for Playwright
+                window.testResults = { passed, failed, tests: results };
+                window.testComplete = true;
+
+            } catch (error) {
+                log(`Error: ${error.message}`);
+                console.error(error);
+                window.testResults = { error: error.message };
+                window.testComplete = true;
+            }
+        }
+
+        // Start tests
+        window.testComplete = false;
+        runTests();
+    </script>
+</body>
+</html>
