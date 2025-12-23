@@ -13,9 +13,17 @@ binding = "BROWSER"
 name = "BROWSER_SESSION"
 class_name = "BrowserSession"
 
+[[durable_objects.bindings]]
+name = "SESSION_REGISTRY"
+class_name = "SessionRegistry"
+
 [[migrations]]
 tag = "v1"
 new_classes = ["BrowserSession"]
+
+[[migrations]]
+tag = "v2"
+new_classes = ["SessionRegistry"]
 
 [vars]
 API_KEY = "dev-api-key-12345"

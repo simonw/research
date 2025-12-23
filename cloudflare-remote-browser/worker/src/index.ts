@@ -1,6 +1,7 @@
 import { Env } from './types';
 
 export { BrowserSession } from './session';
+export { SessionRegistry } from './registry';
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -28,10 +29,25 @@ export default {
     }
 
     try {
+      if (path === '/sessions' && request.method === 'GET') {
+        const reg = env.SESSION_REGISTRY.get(env.SESSION_REGISTRY.idFromName('global'));
+        const response = await reg.fetch(new Request('http://internal/list'));
+        const data = await response.json();
+        return Response.json(data, { headers: corsHeaders });
+      }
+
       if (path === '/sessions' && request.method === 'POST') {
         const id = crypto.randomUUID();
         const stub = env.BROWSER_SESSION.get(env.BROWSER_SESSION.idFromName(id));
         await stub.fetch(new Request('http://internal/init', { method: 'POST' }));
+
+        const reg = env.SESSION_REGISTRY.get(env.SESSION_REGISTRY.idFromName('global'));
+        await reg.fetch(new Request('http://internal/add', {
+          method: 'POST',
+          body: JSON.stringify({ sessionId: id }),
+          headers: { 'Content-Type': 'application/json' }
+        }));
+
         return Response.json({ sessionId: id }, { headers: corsHeaders });
       }
 
@@ -64,6 +80,14 @@ export default {
         if (request.method === 'DELETE' && !subPath) {
           const response = await stub.fetch(new Request('http://internal/destroy', { method: 'POST' }));
           const data = await response.json();
+
+          const reg = env.SESSION_REGISTRY.get(env.SESSION_REGISTRY.idFromName('global'));
+          await reg.fetch(new Request('http://internal/remove', {
+            method: 'POST',
+            body: JSON.stringify({ sessionId }),
+            headers: { 'Content-Type': 'application/json' }
+          }));
+
           return Response.json(data, { headers: corsHeaders });
         }
 

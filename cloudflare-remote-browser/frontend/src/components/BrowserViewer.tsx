@@ -72,14 +72,15 @@ export function BrowserViewer({
     if (!isInteractive) return;
     e.preventDefault();
 
+    const isPrintable = e.key.length === 1;
+
     sendInput({
       type: 'keyboard',
       action: 'keyDown',
-      key: e.key,
-      text: e.key.length === 1 ? e.key : undefined
+      key: e.key
     });
 
-    if (e.key.length === 1) {
+    if (isPrintable) {
       sendInput({
         type: 'keyboard',
         action: 'char',

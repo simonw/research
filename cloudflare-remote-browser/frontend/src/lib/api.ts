@@ -31,6 +31,20 @@ export async function createSession(): Promise<{ sessionId: string }> {
   return res.json();
 }
 
+export interface ListedSession {
+  sessionId: string;
+  createdAt: number;
+}
+
+export async function listSessions(): Promise<{ sessions: ListedSession[] }> {
+  const res = await fetch(`${WORKER_URL}/sessions`, {
+    method: 'GET',
+    headers
+  });
+  await handleResponse(res, 'Failed to list sessions');
+  return res.json();
+}
+
 export async function runScript(sessionId: string, code: string): Promise<void> {
   const res = await fetch(`${WORKER_URL}/sessions/${sessionId}/script`, {
     method: 'POST',

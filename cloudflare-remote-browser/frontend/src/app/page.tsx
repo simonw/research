@@ -1,15 +1,139 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSession } from '@/hooks/useSession';
 import { BrowserViewer } from '@/components/BrowserViewer';
 import { SessionStatus } from '@/lib/types';
+import * as api from '@/lib/api';
 import dynamic from 'next/dynamic';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react').then(mod => mod.default), {
   ssr: false,
   loading: () => <div className="h-full bg-gray-800 flex items-center justify-center text-gray-400">Loading editor...</div>
 });
+
+interface SessionManagerProps {
+  session: ReturnType<typeof useSession>;
+}
+
+function SessionManager({ session }: SessionManagerProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [sessions, setSessions] = useState<api.ListedSession[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const loadSessions = async () => {
+    setLoading(true);
+    try {
+      const data = await session.listSessions();
+      setSessions(data.sessions || []);
+    } catch (e) {
+      console.error('Failed to list sessions:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      loadSessions();
+    }
+  }, [isOpen]);
+
+  const handleKill = async (sessionId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Are you sure you want to kill this session?')) return;
+
+    try {
+      if (session.sessionId === sessionId) {
+        await session.destroySession();
+      } else {
+        await api.destroySession(sessionId);
+      }
+      await loadSessions();
+    } catch {
+      alert('Failed to kill session');
+    }
+  };
+
+  return (
+    <div className="relative inline-block text-left mr-2">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium text-sm flex items-center gap-2"
+      >
+        <span>Sessions</span>
+        <span className="text-xs bg-gray-100 px-1.5 py-0.5 rounded-full border border-gray-200">
+          {sessions.length}
+        </span>
+      </button>
+
+      {isOpen && (
+        <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50 overflow-hidden">
+          <div className="p-3 border-b border-gray-100 flex items-center justify-between bg-gray-50">
+            <h3 className="font-semibold text-gray-700 text-sm">Active Sessions</h3>
+            <button
+              onClick={loadSessions}
+              disabled={loading}
+              className="px-2 py-1 text-xs text-gray-700 border border-gray-200 rounded hover:bg-gray-100 disabled:opacity-60"
+              title="Refresh"
+            >
+              Refresh
+            </button>
+          </div>
+          
+          <div className="max-h-64 overflow-y-auto">
+            {loading && sessions.length === 0 ? (
+              <div className="p-4 text-center text-gray-500 text-sm">Loading...</div>
+            ) : sessions.length === 0 ? (
+              <div className="p-4 text-center text-gray-500 text-sm">No active sessions</div>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {sessions.map((s) => {
+                  const isCurrent = session.sessionId === s.sessionId;
+                  return (
+                    <li key={s.sessionId} className={`p-3 hover:bg-gray-50 ${isCurrent ? 'bg-blue-50' : ''}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-mono text-xs text-gray-600 truncate w-32" title={s.sessionId}>
+                          {s.sessionId}
+                        </span>
+                        <span className="text-xs text-gray-400">
+                          {new Date(s.createdAt).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-end gap-2">
+                        {isCurrent ? (
+                          <span className="text-xs font-medium text-blue-600 px-2 py-1 bg-blue-100 rounded">
+                            Active
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              session.attachSession(s.sessionId);
+                              setIsOpen(false);
+                            }}
+                            className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-50 rounded border border-blue-200"
+                          >
+                            Attach
+                          </button>
+                        )}
+                        <button
+                          onClick={(e) => handleKill(s.sessionId, e)}
+                          className="text-xs px-2 py-1 text-red-600 hover:bg-red-50 rounded border border-red-200"
+                        >
+                          Kill
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const DEFAULT_SCRIPT = `// Remote Browser Automation Script
 //
@@ -26,7 +150,7 @@ await page.goto('https://practicetestautomation.com/practice-test-login/');
 await page.waitForSelector('#username');
 
 await requestTakeover(
-  'Please log in in the remote browser, then click "I\'m Done".\\n\\nTest creds (optional): student / Password123'
+  "Please log in in the remote browser, then click I'm Done.\\n\\nTest creds (optional): student / Password123"
 );
 
 await page.waitForSelector('text=Logged In Successfully', { timeout: 5 * 60 * 1000 });
@@ -65,6 +189,7 @@ export default function Home() {
             Remote Browser Automation
           </h1>
           <div className="flex items-center gap-2">
+            <SessionManager session={session} />
             {canCreate && (
               <button
                 onClick={session.createSession}

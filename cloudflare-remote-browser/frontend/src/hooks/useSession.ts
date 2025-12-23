@@ -81,6 +81,18 @@ export function useSession() {
     }
   }, [connect]);
 
+  const attachSession = useCallback((sessionId: string) => {
+    wsRef.current?.close();
+    wsRef.current = null;
+    playwrightProxyRef.current = null;
+    setState(s => ({ ...s, sessionId, connected: false, error: '', status: 'idle', takeoverMessage: '', result: null }));
+    connect(sessionId);
+  }, [connect]);
+
+  const listSessions = useCallback(async () => {
+    return api.listSessions();
+  }, []);
+
   const runScript = useCallback(async (code: string) => {
     if (!state.sessionId || !playwrightProxyRef.current) return;
     
@@ -145,6 +157,8 @@ export function useSession() {
   return {
     ...state,
     createSession,
+    attachSession,
+    listSessions,
     runScript,
     completeTakeover,
     destroySession,

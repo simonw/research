@@ -1,6 +1,7 @@
 export interface Env {
   BROWSER: Fetcher;
   BROWSER_SESSION: DurableObjectNamespace;
+  SESSION_REGISTRY: DurableObjectNamespace;
   API_KEY: string;
 }
 
