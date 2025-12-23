@@ -1,17 +1,17 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { 
-  X, 
-  Trash2, 
-  Globe, 
-  Clock, 
-  FileText, 
-  Send, 
-  ArrowDown, 
-  Layout, 
-  Code, 
-  Braces 
+import {
+  X,
+  Trash2,
+  Globe,
+  Clock,
+  FileText,
+  Send,
+  ArrowDown,
+  Layout,
+  Code,
+  Braces
 } from 'lucide-react';
 import { NetworkRequest, NetworkRequestDetails, ResourceType } from '@/lib/types';
 import { getNetworkRequestDetails, clearNetworkRequests } from '@/lib/api';
@@ -80,7 +80,7 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
           return selectedGroups.has(group as FilterGroup);
         }
       }
-      
+
       return selectedGroups.has('Other');
     });
   }, [requests, selectedGroups]);
@@ -106,7 +106,7 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
     return counts;
   }, [requests]);
 
-  const selectedRequest = useMemo(() => 
+  const selectedRequest = useMemo(() =>
     requests.find(r => r.requestId === selectedRequestId),
     [requests, selectedRequestId]
   );
@@ -148,13 +148,13 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
     try {
       const parsed = JSON.parse(data);
       return (
-        <pre className="text-xs font-mono whitespace-pre-wrap text-text-secondary overflow-auto max-h-[500px] p-2 bg-background/50 rounded border border-border/50">
+        <pre className="text-xs font-mono whitespace-pre-wrap text-text-secondary overflow-auto flex-1 min-h-0 p-2 bg-background/50 rounded border border-border/50">
           {JSON.stringify(parsed, null, 2)}
         </pre>
       );
     } catch {
       return (
-        <pre className="text-xs font-mono whitespace-pre-wrap text-text-secondary overflow-auto max-h-[500px] p-2 bg-background/50 rounded border border-border/50">
+        <pre className="text-xs font-mono whitespace-pre-wrap text-text-secondary overflow-auto flex-1 min-h-0 p-2 bg-background/50 rounded border border-border/50">
           {data}
         </pre>
       );
@@ -162,11 +162,11 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
   };
 
   return (
-    <div className="flex flex-col h-full bg-surface border border-border rounded-lg shadow-sm">
+    <div className="flex flex-col h-[500px] bg-surface border border-border rounded-lg shadow-sm">
       <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface/50 backdrop-blur-sm rounded-t-lg">
         <div className="flex items-center gap-4">
-          <NetworkFilter 
-            selectedGroups={selectedGroups} 
+          <NetworkFilter
+            selectedGroups={selectedGroups}
             onToggleGroup={handleToggleGroup}
             groupCounts={groupCounts}
           />
@@ -184,7 +184,7 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
         </button>
       </div>
 
-      <div className="flex-1 flex overflow-hidden relative rounded-b-lg min-h-[300px]">
+      <div className="flex-1 flex overflow-hidden relative rounded-b-lg">
         <div className="flex-1 overflow-auto bg-background custom-scrollbar">
           <table className="w-full text-left border-collapse">
             <thead className="sticky top-0 z-10 bg-surface border-b border-border shadow-sm">
@@ -198,13 +198,13 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
             </thead>
             <tbody className="divide-y divide-border/30">
               {filteredRequests.map((req) => (
-                <tr 
+                <tr
                   key={req.requestId}
                   onClick={() => setSelectedRequestId(req.requestId)}
                   className={`
                     group cursor-pointer transition-colors text-sm
-                    ${selectedRequestId === req.requestId 
-                      ? 'bg-accent/5 hover:bg-accent/10' 
+                    ${selectedRequestId === req.requestId
+                      ? 'bg-accent/5 hover:bg-accent/10'
                       : 'hover:bg-surface'
                     }
                   `}
@@ -222,8 +222,8 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
                   </td>
                   <td className="px-4 py-2 max-w-[300px]">
                     <div className="flex flex-col truncate">
-                      <span 
-                        className={`truncate font-medium ${selectedRequestId === req.requestId ? 'text-accent' : 'text-foreground'}`} 
+                      <span
+                        className={`truncate font-medium ${selectedRequestId === req.requestId ? 'text-accent' : 'text-foreground'}`}
                         title={req.url}
                       >
                         {req.url.split('/').pop()?.split('?')[0] || '/'}
@@ -235,8 +235,8 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
                   </td>
                   <td className="px-4 py-2 whitespace-nowrap text-xs text-text-secondary">
                     {req.capturedByKey ? (
-                      <span 
-                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-accent/10 text-accent border border-accent/20 max-w-[100px] truncate" 
+                      <span
+                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-accent/10 text-accent border border-accent/20 max-w-[100px] truncate"
                         title={`Captured as: ${req.capturedByKey}`}
                       >
                         {req.capturedByKey}
@@ -246,7 +246,7 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
                     )}
                   </td>
                   <td className="px-4 py-2 whitespace-nowrap text-xs text-text-tertiary text-right font-mono">
-                    {req.responseTimestamp 
+                    {req.responseTimestamp
                       ? formatTime(req.responseTimestamp - req.timestamp)
                       : <span className="animate-pulse">...</span>
                     }
@@ -267,7 +267,7 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
           </table>
         </div>
 
-        <div 
+        <div
           className={`
             absolute top-0 right-0 h-full w-[500px] bg-surface border-l border-border shadow-2xl z-20
             transform transition-transform duration-300 ease-out flex flex-col
@@ -289,7 +289,7 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
                     <span className="font-mono">{selectedRequest.type}</span>
                   </div>
                 </div>
-                <button 
+                <button
                   onClick={() => setSelectedRequestId(null)}
                   className="p-1.5 text-text-tertiary hover:text-foreground hover:bg-background rounded-md transition-colors shrink-0"
                 >
@@ -308,8 +308,8 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
                     onClick={() => setActiveTab(tab.id as any)}
                     className={`
                       flex items-center gap-2 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors
-                      ${activeTab === tab.id 
-                        ? 'border-accent text-accent bg-accent/5' 
+                      ${activeTab === tab.id
+                        ? 'border-accent text-accent bg-accent/5'
                         : 'border-transparent text-text-secondary hover:text-foreground hover:bg-surface'
                       }
                     `}
@@ -320,7 +320,7 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
                 ))}
               </div>
 
-              <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-background">
+              <div className="flex-1 overflow-hidden p-4 bg-background flex flex-col min-h-0">
                 {loadingDetails ? (
                   <div className="flex flex-col items-center justify-center h-full gap-3 text-text-tertiary">
                     <div className="w-5 h-5 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
@@ -332,9 +332,9 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
                     <span className="text-xs">No details available</span>
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="flex flex-col flex-1 min-h-0">
                     {activeTab === 'headers' && (
-                      <div className="space-y-6">
+                      <div className="flex-1 overflow-auto min-h-0 space-y-6">
                         <div>
                           <h4 className="text-xs font-bold text-text-secondary uppercase tracking-wider mb-2 flex items-center gap-2">
                             <ArrowDown className="w-3 h-3" /> Request Headers
@@ -363,7 +363,7 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
                                 <span className="text-text-tertiary font-mono break-all select-all">{value}</span>
                               </div>
                             ))}
-                             {Object.keys(requestDetails.responseHeaders).length === 0 && (
+                            {Object.keys(requestDetails.responseHeaders).length === 0 && (
                               <div className="px-3 py-2 text-xs text-text-tertiary italic">No response headers</div>
                             )}
                           </div>
@@ -372,8 +372,8 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
                     )}
 
                     {activeTab === 'payload' && (
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
+                      <div className="flex flex-col flex-1 min-h-0">
+                        <div className="flex items-center justify-between mb-2 shrink-0">
                           <h4 className="text-xs font-bold text-text-secondary uppercase tracking-wider">Request Body</h4>
                           {requestDetails.requestBody && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface border border-border text-text-tertiary">
@@ -392,8 +392,8 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
                     )}
 
                     {activeTab === 'response' && (
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
+                      <div className="flex flex-col flex-1 min-h-0">
+                        <div className="flex items-center justify-between mb-2 shrink-0">
                           <h4 className="text-xs font-bold text-text-secondary uppercase tracking-wider">Response Body</h4>
                           {requestDetails.responseBody && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface border border-border text-text-tertiary">
@@ -407,8 +407,8 @@ export function NetworkPanel({ requests, sessionId, onClearRequests }: NetworkPa
                               <div className="text-xs text-accent bg-accent/10 px-2 py-1 rounded inline-block">Base64 Encoded Binary</div>
                               {selectedRequest.type === 'Image' && (
                                 <div className="border border-border rounded-lg p-2 bg-checkerboard flex items-center justify-center">
-                                  <img 
-                                    src={`data:${selectedRequest.mimeType || 'image/png'};base64,${requestDetails.responseBody}`} 
+                                  <img
+                                    src={`data:${selectedRequest.mimeType || 'image/png'};base64,${requestDetails.responseBody}`}
                                     className="max-w-full max-h-[300px] object-contain"
                                     alt="Response preview"
                                   />

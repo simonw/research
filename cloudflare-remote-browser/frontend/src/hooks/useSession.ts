@@ -59,7 +59,6 @@ export function useSession() {
             ...s,
             status: message.status,
             takeoverMessage: message.message || '',
-            takeoverMode: message.takeoverMode
           }));
           break;
         case 'result':
@@ -139,9 +138,31 @@ export function useSession() {
     };
   }, [sendMessage]);
 
+  // Destroy session but keep captured data and network requests
+  const destroySessionKeepData = useCallback(async (sessionId: string) => {
+    try {
+      await api.destroySession(sessionId);
+    } catch { /* cleanup */ }
+    wsRef.current?.close();
+    wsRef.current = null;
+    playwrightProxyRef.current = null;
+    // Keep networkRequests and automationData, just clear session-specific state
+    setState(s => ({
+      ...s,
+      sessionId: null,
+      connected: false,
+      takeoverMessage: '',
+      // Keep: networkRequests, automationData, result, error, status
+    }));
+  }, []);
+
   const createSession = useCallback(async () => {
     try {
-      setState(s => ({ ...s, status: 'starting', error: '' }));
+      // Clear all data when starting a new session
+      setState(s => ({ 
+        ...INITIAL_STATE,
+        status: 'starting'
+      }));
       const { sessionId } = await api.createSession();
       setState(s => ({ ...s, sessionId }));
       connect(sessionId);
@@ -154,7 +175,12 @@ export function useSession() {
     wsRef.current?.close();
     wsRef.current = null;
     playwrightProxyRef.current = null;
-    setState(s => ({ ...s, sessionId, connected: false, error: '', status: 'idle', takeoverMessage: '', result: null, networkRequests: [], automationData: {}, viewport: { width: 800, height: 600 } }));
+    // Clear data when attaching to a different session
+    setState({ 
+      ...INITIAL_STATE, 
+      sessionId, 
+      status: 'idle' 
+    });
     connect(sessionId);
   }, [connect]);
 
@@ -165,9 +191,11 @@ export function useSession() {
   const runScript = useCallback(async (code: string) => {
     if (!state.sessionId || !playwrightProxyRef.current) return;
     
+    const currentSessionId = state.sessionId;
+    
     try {
       setState(s => ({ ...s, error: '', status: 'running' }));
-      await api.runScript(state.sessionId, code);
+      await api.runScript(currentSessionId, code);
 
       const page = playwrightProxyRef.current.createPageProxy();
       
@@ -176,14 +204,20 @@ export function useSession() {
 
       const result = await scriptFn(page);
       
-      await api.finishScript(state.sessionId, result);
+      await api.finishScript(currentSessionId, result);
       
       setState(s => ({ ...s, status: 'done', result }));
+      
+      // Kill the session after successful completion, but keep data
+      await destroySessionKeepData(currentSessionId);
     } catch (e) {
       const errorMessage = (e as Error).message;
       setState(s => ({ ...s, error: errorMessage, status: 'error' }));
+      
+      // Kill the session after error, but keep data
+      await destroySessionKeepData(currentSessionId);
     }
-  }, [state.sessionId]);
+  }, [state.sessionId, destroySessionKeepData]);
 
   const completeTakeover = useCallback(async () => {
     if (!state.sessionId) return;
@@ -228,29 +262,22 @@ export function useSession() {
   // Poll status every 3 seconds to keep UI synchronized
   useEffect(() => {
     if (!state.sessionId || !state.connected) {
-      console.log('[useSession] Polling not started - sessionId:', state.sessionId, 'connected:', state.connected);
       return;
     }
-
-    console.log('[useSession] Starting status polling for session:', state.sessionId);
 
     const pollStatus = async () => {
       const currentSessionId = sessionIdRef.current;
       if (!currentSessionId) return;
       
-      console.log('[useSession] Polling status for session:', currentSessionId);
       try {
         const data = await api.getStatus(currentSessionId);
-        console.log('[useSession] Poll response:', data);
         setState(s => ({
           ...s,
           status: data.status,
           takeoverMessage: data.takeoverMessage || s.takeoverMessage,
-          takeoverMode: data.takeoverMode || s.takeoverMode
         }));
       } catch (e) {
         // Don't update error state on poll failures - WebSocket will handle real errors
-        console.warn('[useSession] Status poll failed:', e);
       }
     };
 
@@ -259,7 +286,6 @@ export function useSession() {
     const interval = setInterval(pollStatus, 3000);
 
     return () => {
-      console.log('[useSession] Stopping status polling');
       clearInterval(interval);
     };
   }, [state.sessionId, state.connected]);

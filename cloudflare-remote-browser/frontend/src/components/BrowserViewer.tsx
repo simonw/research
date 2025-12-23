@@ -20,7 +20,6 @@ interface BrowserViewerProps {
   isInteractive: boolean;
   viewport: { width: number; height: number };
   takeoverMessage?: string;
-  onDone?: () => void;
 }
 
 const ASPECT_RATIO = 4 / 3;
@@ -32,8 +31,7 @@ export function BrowserViewer({
   sendInput,
   isInteractive,
   viewport,
-  takeoverMessage,
-  onDone
+  takeoverMessage
 }: BrowserViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -219,25 +217,17 @@ export function BrowserViewer({
   }, [isInteractive, sendInput]);
 
   return (
-    <div className="w-full flex flex-col">
+    <div className="w-full flex flex-col max-h-[600px]">
       {isInteractive && takeoverMessage && (
-        <div className="bg-surface border border-accent/30 rounded-lg p-4 shadow-sm animate-in fade-in slide-in-from-top-2 mb-4">
-          <h3 className="font-semibold text-accent mb-1 text-sm">Action Required</h3>
-          <p className="text-sm text-foreground mb-3">{takeoverMessage}</p>
-          {onDone && (
-            <button
-              onClick={onDone}
-              className="w-full py-2 px-4 bg-accent hover:bg-accent-hover text-white rounded-md text-sm font-medium transition-colors"
-            >
-              I'm Done
-            </button>
-          )}
+        <div className="bg-surface border border-accent/30 rounded-lg p-3 shadow-sm animate-in fade-in slide-in-from-top-2 mb-3 shrink-0">
+          <h3 className="font-semibold text-accent mb-0.5 text-sm">Action Required</h3>
+          <p className="text-sm text-foreground">{takeoverMessage}</p>
         </div>
       )}
 
       <div 
         ref={measureRef} 
-        className="w-full h-[500px] flex items-center justify-center"
+        className="w-full flex-1 min-h-[300px] flex items-center justify-center"
       >
         <div
           ref={containerRef}

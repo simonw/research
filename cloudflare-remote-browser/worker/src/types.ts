@@ -14,7 +14,6 @@ export interface SessionState {
   takeoverMessage?: string;
   error?: string;
   result?: unknown;
-  takeoverMode?: 'manual' | 'auto'; // manual = user clicks Done, auto = script controls exit
 }
 
 export type ResourceType =
@@ -80,7 +79,7 @@ export interface AutomationState {
 
 export type ServerMessage =
   | { type: 'frame'; data: string; timestamp: number }
-  | { type: 'status'; status: SessionStatus; message?: string; takeoverMode?: 'manual' | 'auto' }
+  | { type: 'status'; status: SessionStatus; message?: string }
   | { type: 'result'; data: unknown }
   | { type: 'error'; message: string }
   | { type: 'commandResult'; commandId: string; result: unknown; error?: string }

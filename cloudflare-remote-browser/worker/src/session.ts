@@ -578,7 +578,7 @@ export class BrowserSession {
             type: 'status', 
             status: 'takeover', 
             message, 
-            takeoverMode: 'auto' 
+            
           });
           result = null;
         } else {

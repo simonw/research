@@ -84,7 +84,6 @@ export interface SessionStatusResponse {
   takeoverMessage?: string;
   error?: string;
   result?: unknown;
-  takeoverMode?: 'manual' | 'auto';
 }
 
 export async function getStatus(sessionId: string): Promise<SessionStatusResponse> {

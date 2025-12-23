@@ -62,12 +62,11 @@ export interface SessionState {
   error: string;
   result: unknown;
   connected: boolean;
-  takeoverMode?: 'manual' | 'auto';
 }
 
 export type ServerMessage =
   | { type: 'frame'; data: string; timestamp: number }
-  | { type: 'status'; status: SessionStatus; message?: string; takeoverMode?: 'manual' | 'auto' }
+  | { type: 'status'; status: SessionStatus; message?: string }
   | { type: 'result'; data: unknown }
   | { type: 'error'; message: string }
   | { type: 'commandResult'; commandId: string; result: unknown; error?: string }

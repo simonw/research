@@ -173,7 +173,6 @@ export default function Home() {
               isInteractive={isInteractive}
               viewport={session.viewport}
               takeoverMessage={session.takeoverMessage}
-              onDone={session.completeTakeover}
             />
           </div>
 
