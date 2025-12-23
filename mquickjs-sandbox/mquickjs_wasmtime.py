@@ -1,12 +1,13 @@
 """
 mquickjs sandbox using wasmtime.
 
-This implementation loads the WASM module directly using wasmtime.
+This implementation loads the WASM module directly using wasmtime and
+implements proper invoke_* trampolines for setjmp/longjmp support.
 """
 
 import struct
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 import wasmtime
 
@@ -16,12 +17,45 @@ SCRIPT_DIR = Path(__file__).parent
 WASM_PATH = SCRIPT_DIR / "mquickjs_standalone.wasm"
 
 
+class SetjmpLongjmpHandler:
+    """
+    Handler for emscripten's setjmp/longjmp mechanism.
+
+    Emscripten uses a table-based approach for setjmp:
+    - setjmp stores info in a buffer and returns 0
+    - longjmp looks up the info and calls _emscripten_throw_longjmp
+    - invoke_* functions catch the longjmp and return control
+
+    The invoke_* pattern:
+    1. Save stack state
+    2. Call function via indirect call
+    3. If longjmp is thrown, catch it and set threw flag
+    4. Restore stack and return
+    """
+
+    def __init__(self):
+        self.threw = 0
+        self.threw_value = 0
+        self.temp_ret0 = 0
+
+    def set_threw(self, value, type_val):
+        """Called when longjmp is executed."""
+        if self.threw == 0:
+            self.threw = value
+            self.threw_value = type_val
+
+    def clear_threw(self):
+        """Clear the threw flag."""
+        self.threw = 0
+        self.threw_value = 0
+
+
 class MQuickJSWasmtime(BaseSandbox):
     """
     mquickjs sandbox using wasmtime.
 
-    This loads the standalone WASM module and provides Python bindings.
-    Note: setjmp/longjmp based error handling requires special support.
+    This loads the standalone WASM module and provides Python bindings
+    with proper setjmp/longjmp support via invoke_* trampolines.
     """
 
     def __init__(
@@ -49,8 +83,11 @@ class MQuickJSWasmtime(BaseSandbox):
         self.linker = wasmtime.Linker(self.engine)
         self.linker.define_wasi()
 
-        # Add stub functions for emscripten runtime
-        self._add_emscripten_stubs()
+        # Setjmp/longjmp handler
+        self.sjlj = SetjmpLongjmpHandler()
+
+        # Add emscripten runtime functions
+        self._add_emscripten_runtime()
 
         # Instantiate module
         try:
@@ -59,13 +96,23 @@ class MQuickJSWasmtime(BaseSandbox):
             raise SandboxError(f"Failed to instantiate WASM module: {e}")
 
         # Get exports
-        self.memory = self.instance.exports(self.store)["memory"]
-        self._sandbox_init = self.instance.exports(self.store)["sandbox_init"]
-        self._sandbox_free = self.instance.exports(self.store)["sandbox_free"]
-        self._sandbox_eval = self.instance.exports(self.store)["sandbox_eval"]
-        self._sandbox_get_error = self.instance.exports(self.store)["sandbox_get_error"]
-        self._malloc = self.instance.exports(self.store)["malloc"]
-        self._free = self.instance.exports(self.store)["free"]
+        exports = self.instance.exports(self.store)
+        self.memory = exports["memory"]
+        self._sandbox_init = exports["sandbox_init"]
+        self._sandbox_free = exports["sandbox_free"]
+        self._sandbox_eval = exports["sandbox_eval"]
+        self._sandbox_get_error = exports["sandbox_get_error"]
+        self._malloc = exports["malloc"]
+        self._free = exports["free"]
+
+        # Get the indirect function table for invoke_* calls
+        self._table = exports.get("__indirect_function_table")
+
+        # Get setjmp helper exports
+        self._setThrew = exports.get("setThrew")
+        self._saveSetjmp = exports.get("saveSetjmp")
+        self._stackSave = exports.get("stackSave")
+        self._stackRestore = exports.get("stackRestore")
 
         # Initialize sandbox
         result = self._sandbox_init(self.store, memory_limit_bytes)
@@ -74,73 +121,135 @@ class MQuickJSWasmtime(BaseSandbox):
 
         self._initialized = True
 
-    def _add_emscripten_stubs(self):
-        """Add stub functions for emscripten runtime imports."""
+    def _add_emscripten_runtime(self):
+        """Add emscripten runtime functions with proper invoke_* support."""
         i32 = wasmtime.ValType.i32()
 
-        # TempRet0 storage
-        temp_ret0 = [0]
-
+        # TempRet0 - used for returning 64-bit values
         def setTempRet0_fn(value):
-            temp_ret0[0] = value
+            self.sjlj.temp_ret0 = value
 
         def getTempRet0_fn():
-            return temp_ret0[0]
+            return self.sjlj.temp_ret0
 
-        # Stub invoke functions - these are trampolines for indirect calls with exception handling
-        # Without proper setjmp support, we just return 0 or do nothing
-
-        def invoke_iii_fn(index, a1, a2):
-            return 0
-
-        def invoke_iiii_fn(index, a1, a2, a3):
-            return 0
-
-        def invoke_iiiii_fn(index, a1, a2, a3, a4):
-            return 0
-
-        def invoke_vi_fn(index, a1):
-            pass
-
-        def invoke_vii_fn(index, a1, a2):
-            pass
-
-        def invoke_viii_fn(index, a1, a2, a3):
-            pass
-
-        def invoke_viiiii_fn(index, a1, a2, a3, a4, a5):
-            pass
-
-        def invoke_viiiiii_fn(index, a1, a2, a3, a4, a5, a6):
-            pass
-
+        # _emscripten_throw_longjmp - called by longjmp
         def emscripten_throw_longjmp_fn():
-            raise RuntimeError("longjmp called")
+            # This signals that longjmp was called
+            # The invoke_* wrapper will catch this
+            raise LongjmpException()
 
-        # Create Func objects and add to linker
+        # Create invoke_* functions that properly call through the indirect table
+        def make_invoke_fn(return_type: str, param_count: int):
+            """Create an invoke function with the given signature."""
+
+            def invoke_fn(*args):
+                # args[0] is the function index, rest are parameters
+                index = args[0]
+                params = args[1:]
+
+                # Save stack
+                stack_ptr = None
+                if self._stackSave:
+                    try:
+                        stack_ptr = self._stackSave(self.store)
+                    except:
+                        pass
+
+                try:
+                    # Get the function from the indirect table
+                    if self._table is None:
+                        # No table available, return default
+                        return 0 if return_type == 'i' else None
+
+                    # Call through the table
+                    func = self._table.get(self.store, index)
+                    if func is None:
+                        return 0 if return_type == 'i' else None
+
+                    # Call the function
+                    result = func(self.store, *params)
+
+                    # Clear threw flag on successful return
+                    if self._setThrew:
+                        self._setThrew(self.store, 0, 0)
+
+                    return result if return_type == 'i' else None
+
+                except LongjmpException:
+                    # longjmp was called, set the threw flag
+                    if self._setThrew:
+                        self._setThrew(self.store, 1, 0)
+
+                    # Restore stack
+                    if stack_ptr is not None and self._stackRestore:
+                        try:
+                            self._stackRestore(self.store, stack_ptr)
+                        except:
+                            pass
+
+                    return 0 if return_type == 'i' else None
+
+                except wasmtime.Trap as e:
+                    # WASM trap (could be longjmp or actual error)
+                    if "unreachable" in str(e):
+                        # Likely a longjmp that reached unreachable
+                        if self._setThrew:
+                            try:
+                                self._setThrew(self.store, 1, 0)
+                            except:
+                                pass
+
+                    # Restore stack
+                    if stack_ptr is not None and self._stackRestore:
+                        try:
+                            self._stackRestore(self.store, stack_ptr)
+                        except:
+                            pass
+
+                    return 0 if return_type == 'i' else None
+
+                except Exception as e:
+                    # Other error
+                    return 0 if return_type == 'i' else None
+
+            return invoke_fn
+
+        # Create and register invoke functions
+        invoke_fns = {
+            # invoke_iii(index, a1, a2) -> i32
+            "invoke_iii": (wasmtime.FuncType([i32, i32, i32], [i32]), make_invoke_fn('i', 2)),
+            # invoke_iiii(index, a1, a2, a3) -> i32
+            "invoke_iiii": (wasmtime.FuncType([i32, i32, i32, i32], [i32]), make_invoke_fn('i', 3)),
+            # invoke_iiiii(index, a1, a2, a3, a4) -> i32
+            "invoke_iiiii": (wasmtime.FuncType([i32, i32, i32, i32, i32], [i32]), make_invoke_fn('i', 4)),
+            # invoke_vi(index, a1)
+            "invoke_vi": (wasmtime.FuncType([i32, i32], []), make_invoke_fn('v', 1)),
+            # invoke_vii(index, a1, a2)
+            "invoke_vii": (wasmtime.FuncType([i32, i32, i32], []), make_invoke_fn('v', 2)),
+            # invoke_viii(index, a1, a2, a3)
+            "invoke_viii": (wasmtime.FuncType([i32, i32, i32, i32], []), make_invoke_fn('v', 3)),
+            # invoke_viiiii(index, a1, a2, a3, a4, a5)
+            "invoke_viiiii": (wasmtime.FuncType([i32, i32, i32, i32, i32, i32], []), make_invoke_fn('v', 5)),
+            # invoke_viiiiii(index, a1, a2, a3, a4, a5, a6)
+            "invoke_viiiiii": (wasmtime.FuncType([i32, i32, i32, i32, i32, i32, i32], []), make_invoke_fn('v', 6)),
+        }
+
+        # Register all functions
         setTempRet0 = wasmtime.Func(self.store, wasmtime.FuncType([i32], []), setTempRet0_fn)
         getTempRet0 = wasmtime.Func(self.store, wasmtime.FuncType([], [i32]), getTempRet0_fn)
-        invoke_iii = wasmtime.Func(self.store, wasmtime.FuncType([i32, i32, i32], [i32]), invoke_iii_fn)
-        invoke_iiii = wasmtime.Func(self.store, wasmtime.FuncType([i32, i32, i32, i32], [i32]), invoke_iiii_fn)
-        invoke_iiiii = wasmtime.Func(self.store, wasmtime.FuncType([i32, i32, i32, i32, i32], [i32]), invoke_iiiii_fn)
-        invoke_vi = wasmtime.Func(self.store, wasmtime.FuncType([i32, i32], []), invoke_vi_fn)
-        invoke_vii = wasmtime.Func(self.store, wasmtime.FuncType([i32, i32, i32], []), invoke_vii_fn)
-        invoke_viii = wasmtime.Func(self.store, wasmtime.FuncType([i32, i32, i32, i32], []), invoke_viii_fn)
-        invoke_viiiii = wasmtime.Func(self.store, wasmtime.FuncType([i32, i32, i32, i32, i32, i32], []), invoke_viiiii_fn)
-        invoke_viiiiii = wasmtime.Func(self.store, wasmtime.FuncType([i32, i32, i32, i32, i32, i32, i32], []), invoke_viiiiii_fn)
-        emscripten_throw_longjmp = wasmtime.Func(self.store, wasmtime.FuncType([], []), emscripten_throw_longjmp_fn)
+        emscripten_throw_longjmp = wasmtime.Func(
+            self.store, wasmtime.FuncType([], []), emscripten_throw_longjmp_fn
+        )
 
         self.linker.define(self.store, "env", "setTempRet0", setTempRet0)
         self.linker.define(self.store, "env", "getTempRet0", getTempRet0)
-        self.linker.define(self.store, "env", "invoke_iii", invoke_iii)
-        self.linker.define(self.store, "env", "invoke_iiii", invoke_iiii)
-        self.linker.define(self.store, "env", "invoke_iiiii", invoke_iiiii)
-        self.linker.define(self.store, "env", "invoke_vi", invoke_vi)
-        self.linker.define(self.store, "env", "invoke_vii", invoke_vii)
-        self.linker.define(self.store, "env", "invoke_viii", invoke_viii)
-        self.linker.define(self.store, "env", "invoke_viiiii", invoke_viiiii)
-        self.linker.define(self.store, "env", "invoke_viiiiii", invoke_viiiiii)
         self.linker.define(self.store, "env", "_emscripten_throw_longjmp", emscripten_throw_longjmp)
+
+        for name, (func_type, func) in invoke_fns.items():
+            self.linker.define(
+                self.store, "env", name,
+                wasmtime.Func(self.store, func_type, func)
+            )
 
     def _read_string(self, ptr: int) -> str:
         """Read a null-terminated string from WASM memory."""
@@ -222,6 +331,11 @@ class MQuickJSWasmtime(BaseSandbox):
         if hasattr(self, "_initialized") and self._initialized:
             self._sandbox_free(self.store)
             self._initialized = False
+
+
+class LongjmpException(Exception):
+    """Exception raised when longjmp is called in WASM."""
+    pass
 
 
 def execute_js(

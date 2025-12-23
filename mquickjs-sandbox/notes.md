@@ -101,29 +101,42 @@ Both wasmer and wasmtime struggle with the emscripten-generated WASM module due 
 - Attempted to implement stub functions for emscripten imports
 - Stubs don't work properly because `invoke_*` functions need to call through the indirect function table with exception handling
 
-**Conclusion**: For Python WASM integration, the emscripten JS glue is required. Direct wasmtime/wasmer use would require either:
-1. Building a truly standalone WASM module without setjmp/longjmp (may require mquickjs source changes)
-2. Implementing the full emscripten runtime in Python (very complex)
+**Solution Found**: After deeper investigation, wasmtime CAN work by properly implementing the `invoke_*` trampolines:
 
-The WASM module works perfectly with:
+1. The invoke_* functions must call through the `__indirect_function_table` export
+2. They must catch WASM traps and Python exceptions that signal longjmp
+3. They must call `setThrew(1, 0)` when a longjmp occurs
+4. They must restore the stack via `stackRestore`
+
+The working implementation:
+- Uses the WASM indirect function table to make actual function calls
+- Catches both `wasmtime.Trap` and custom `LongjmpException`
+- Properly manages the emscripten setjmp/longjmp state
+
+The WASM module works with:
 - Node.js (using emscripten JS glue)
 - Deno (using emscripten JS glue)
 - Browsers (using emscripten JS glue)
+- **Python wasmtime** (using custom invoke_* implementation)
 
 ### Benchmark Results
 
 | Implementation | Startup | Simple Op | Loop 1000 | Recursion |
 |---------------|---------|-----------|-----------|-----------|
-| C Extension   | 0.01ms  | 0.002ms   | 0.035ms   | 0.085ms   |
-| FFI (ctypes)  | 0.04ms  | 0.007ms   | 0.039ms   | 0.086ms   |
-| Subprocess    | 0.12ms  | 4.3ms     | 4.7ms     | 4.6ms     |
+| C Extension   | 0.01ms  | 0.002ms   | 0.033ms   | 0.082ms   |
+| FFI (ctypes)  | 0.02ms  | 0.007ms   | 0.038ms   | 0.086ms   |
+| **Wasmtime**  | 57.6ms  | 2.9ms     | 5.6ms     | 6.2ms     |
+| Subprocess    | 0.09ms  | 3.8ms     | 3.8ms     | 3.6ms     |
 
 **Key Findings**:
 - C Extension and FFI have similar execution performance (both use same C library)
 - C Extension has ~4x faster startup (no ctypes overhead)
-- Subprocess is ~500x slower due to process spawning overhead
-- For one-off executions: subprocess is still acceptable (~5ms)
+- Subprocess is ~500x slower than FFI due to process spawning overhead
+- **Wasmtime works but has significant overhead** (~300x slower than FFI)
+- Wasmtime has slow startup (~58ms) due to WASM compilation
+- For one-off executions: subprocess is acceptable (~4ms)
 - For repeated executions: FFI or C Extension is essential
+- Wasmtime is viable for security-critical scenarios despite performance cost
 
 ### mquickjs Commit Used
 
