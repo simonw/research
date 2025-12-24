@@ -1,5 +1,10 @@
 # Datasette-lite JavaScript Initialization: Problem Analysis & Solution Proposal
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 ## Executive Summary
 
 Datasette-lite currently cannot execute JavaScript from Datasette pages because it loads content using `innerHTML`, which does not execute `<script>` tags. This document analyzes the problem and proposes a solution using a JavaScript initialization event pattern.

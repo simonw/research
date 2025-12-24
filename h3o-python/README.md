@@ -1,5 +1,10 @@
 # h3o-python
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 `h3o-python` provides Python bindings for the [h3o](https://github.com/HydroniumLabs/h3o)
 Rust implementation of the [H3](https://h3geo.org/) geospatial indexing system.
 It exposes a concise set of high-level helpers for converting between latitude

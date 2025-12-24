@@ -1,5 +1,10 @@
 # Blog Tag Prediction with Scikit-Learn
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 This project implements multiple machine learning models to predict tags for untagged blog entries from Simon Willison's blog database. The models are trained on blog entries that have tags and then predict tags for older entries that don't have tags yet.
 
 ## Table of Contents

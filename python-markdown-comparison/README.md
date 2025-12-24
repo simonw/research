@@ -1,5 +1,10 @@
 # Python Markdown Library Comparison: cmarkgfm vs Alternatives
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 A comprehensive performance benchmark and feature comparison of popular Python markdown libraries, with a focus on **cmarkgfm** (GitHub's cmark) compared to pure Python implementations.
 
 ## Executive Summary

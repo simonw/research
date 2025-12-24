@@ -1,5 +1,10 @@
 # Datasette 1.0a20 SQL Permissions System: Architecture Review
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 **Date:** 2025-11-27
 **Version Reviewed:** 1.0a20 (and subsequent alphas through 1.0a22)
 **Author:** Architecture Review

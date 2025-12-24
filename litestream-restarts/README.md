@@ -1,5 +1,10 @@
 # Litestream S3 Replication Experiments
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 This repository contains experiments testing Litestream's behavior when replicating SQLite databases to S3, specifically focusing on what happens when Litestream is stopped and restarted while writes continue.
 
 ## Background

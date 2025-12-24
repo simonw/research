@@ -1,5 +1,10 @@
 # Browser URL Size Limits Investigation
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 This investigation examines the maximum URL size limits enforced by the three major browser engines: Chromium, Firefox (Gecko), and WebKit.
 
 ## Summary
