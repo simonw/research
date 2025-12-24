@@ -1,5 +1,10 @@
 # OpenAI Codex CLI Sandbox Implementation Analysis
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 ## Executive Summary
 
 This report provides a comprehensive analysis of the sandboxing implementation in OpenAI's Codex CLI (https://github.com/openai/codex). The sandbox is a critical security feature that restricts the Codex AI agent's ability to modify files, access the network, and execute potentially dangerous operations while still allowing it to perform useful development tasks.

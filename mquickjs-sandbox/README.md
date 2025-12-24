@@ -1,5 +1,10 @@
 # mquickjs Sandbox Investigation
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 An investigation of [mquickjs](https://github.com/bellard/mquickjs) as a safe sandboxing environment for running untrusted JavaScript code.
 
 **mquickjs commit used**: `17ce6fe54c1ea4f500f26636bd22058fce2ce61a`

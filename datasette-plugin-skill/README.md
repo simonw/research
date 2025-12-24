@@ -1,5 +1,10 @@
 # Datasette Plugin Writer Skill
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 A comprehensive skill for writing Datasette plugins, covering all aspects of plugin development from initial setup through publishing.
 
 ## What This Skill Covers

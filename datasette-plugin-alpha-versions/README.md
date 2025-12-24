@@ -1,5 +1,10 @@
 # Datasette Plugins Analysis - Complete Report
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 ## Overview
 
 This repository contains a comprehensive analysis of all Datasette plugins from the `datasette` organization and `simonw` user on GitHub that start with `datasette-`.

@@ -1,5 +1,10 @@
 # cmarkgfm in Pyodide - ✅ WORKING!
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 **Status:** ✅ **FULLY FUNCTIONAL**
 **Build:** ✅ **Complete** (290KB WebAssembly module)
 **Tests:** ✅ **All passing** (100% functional)

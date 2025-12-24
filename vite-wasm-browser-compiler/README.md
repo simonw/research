@@ -1,5 +1,10 @@
 # Browser-Based Single File Bundler
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 ## Research Summary
 
 This project explores whether Vite can run as WebAssembly entirely in the browser, and provides proof-of-concept tools for bundling HTML pages into single self-contained files client-side.

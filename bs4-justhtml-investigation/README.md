@@ -1,5 +1,10 @@
 # Can BeautifulSoup Use JustHTML as a Parser?
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 **TL;DR: Yes, with full HTML5 compliance!** This investigation demonstrates that BeautifulSoup 4 can use [JustHTML](https://github.com/EmilStenstrom/justhtml) as its parsing backend with complete HTML5 tree construction.
 
 ## Background

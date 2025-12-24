@@ -1,5 +1,10 @@
 # SVG to PNG Conversion Methods in Python
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 This investigation compares different methods for converting SVG files to PNG format using Python. We tested 6 successful approaches using the [tiger.svg](https://gist.githubusercontent.com/simonw/aedecb93564af13ac1596810d40cac3c/raw/83e7f3be5b65bba61124684700fa7925d37c36c3/tiger.svg) file as our test case.
 
 ## Test Results Summary

@@ -1,5 +1,10 @@
 # SQLite Ripgrep Function
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 A custom SQLite function for running [ripgrep](https://github.com/BurntSushi/ripgrep) searches directly from SQL queries. Provides both a pure Python implementation and a C extension with table-valued function support.
 
 ## Features
