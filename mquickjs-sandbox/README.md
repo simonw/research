@@ -75,6 +75,18 @@ sandbox_init(1024 * 1024);
 const result = sandbox_eval("1 + 2");  // Returns "3"
 ```
 
+**Optimized WASM Build**: For production use where download size matters, use the size-optimized build:
+
+| Build | File | Size | Optimization |
+|-------|------|------|--------------|
+| Default | `mquickjs.wasm` | 229 KB | `-O2` |
+| **Optimized** | `mquickjs_optimized.wasm` | **148 KB** | `-Oz` (35% smaller) |
+
+The optimized build uses emscripten's `-Oz` flag for size optimization. Build with:
+```bash
+python3 build_wasm_optimized.py
+```
+
 ### 5. Browser/Pyodide Integration
 
 **Files**: `test_wasm_browser.html`, `mquickjs_pyodide.py`
@@ -184,9 +196,12 @@ See the Appendix for a detailed explanation of the wasmtime implementation.
 | `mquickjs_subprocess.py` | Subprocess wrapper |
 | `mquickjs_wasmtime.py` | Wasmtime Python implementation |
 | `build_wasm.py` | WASM build script |
+| `build_wasm_optimized.py` | Optimized WASM build script (-Oz) |
 | `build_wasm_wasmtime.py` | Alternative WASM build for wasmtime |
 | `mquickjs.js` | Emscripten JS glue |
 | `mquickjs.wasm` | WASM binary (for Node/Deno/Browser) |
+| `mquickjs_optimized.wasm` | Size-optimized WASM (35% smaller) |
+| `mquickjs_optimized.js` | JS glue for optimized WASM |
 | `mquickjs_standalone.wasm` | Standalone WASM (for wasmtime) |
 | `test_sandbox.py` | Pytest tests (35 tests) |
 | `test_wasm_node.js` | Node.js WASM tests |

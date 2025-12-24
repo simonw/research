@@ -138,6 +138,31 @@ The WASM module works with:
 - For repeated executions: FFI or C Extension is essential
 - Wasmtime is viable for security-critical scenarios despite performance cost
 
+### WASM Size Optimization
+
+**Date**: 2024-12-24
+
+Tested different emscripten optimization flags to reduce WASM file size:
+
+| Build Flag | File Size | Notes |
+|------------|-----------|-------|
+| -O2 (original) | 228,745 bytes | Original build |
+| -O3 | 248,490 bytes | **Larger** - aggressive inlining increases size |
+| **-Oz** | **147,523 bytes** | **Best - 35.5% smaller** |
+| --closure 1 | N/A | Failed (closure-compiler not installed) |
+
+**Key Findings**:
+- `-O3` optimizes for speed, not size - actually makes the WASM larger
+- `-Oz` optimizes for size and achieves 35.5% reduction
+- The optimized `-Oz` build passes all functional tests
+- `--closure 1` would minify the JS glue code but requires closure-compiler
+
+**Files Created**:
+- `mquickjs_optimized.wasm` - Built with `-Oz` (147,523 bytes)
+- `mquickjs_optimized.js` - Corresponding JS glue code
+
+**Recommendation**: Use `-Oz` for production deployments where download size matters (e.g., web browsers). The performance difference is negligible for typical JavaScript sandbox use cases.
+
 ### mquickjs Commit Used
 
 Repository: https://github.com/bellard/mquickjs
