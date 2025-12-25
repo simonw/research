@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vibium Test Page</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        h1 { color: #333; }
+        .container { max-width: 800px; margin: 0 auto; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        input { padding: 10px; margin: 5px; width: 200px; }
+        #result { margin-top: 20px; padding: 10px; background: #f0f0f0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Vibium Test Page</h1>
+        <p id="welcome">Welcome to the test page!</p>
+
+        <div>
+            <input type="text" id="name-input" placeholder="Enter your name">
+            <button id="greet-btn" onclick="greet()">Greet</button>
+        </div>
+
+        <div>
+            <button id="counter-btn" onclick="increment()">Click count: 0</button>
+        </div>
+
+        <a id="link" href="page2.html">Go to Page 2</a>
+
+        <div id="result"></div>
+    </div>
+
+    <script>
+        let count = 0;
+
+        function greet() {
+            const name = document.getElementById('name-input').value || 'World';
+            document.getElementById('result').textContent = 'Hello, ' + name + '!';
+        }
+
+        function increment() {
+            count++;
+            document.getElementById('counter-btn').textContent = 'Click count: ' + count;
+        }
+    </script>
+</body>
+</html>
