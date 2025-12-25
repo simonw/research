@@ -29,14 +29,18 @@ class TestServer:
 
     def start(self):
         """Start the HTTP server in a background thread."""
-        handler = http.server.SimpleHTTPRequestHandler
-        handler.directory = str(self.fixtures_dir)
+        import functools
+        import os
 
-        class QuietHandler(handler):
-            def log_message(self, format, *args):
-                pass  # Suppress logging
+        fixtures_path = str(self.fixtures_dir)
 
-        self.server = http.server.HTTPServer(("127.0.0.1", self.port), QuietHandler)
+        # Create handler class with correct directory
+        handler = functools.partial(
+            http.server.SimpleHTTPRequestHandler,
+            directory=fixtures_path
+        )
+
+        self.server = http.server.HTTPServer(("127.0.0.1", self.port), handler)
         self.thread = threading.Thread(target=self.server.serve_forever)
         self.thread.daemon = True
         self.thread.start()
