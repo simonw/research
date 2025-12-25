@@ -1,5 +1,10 @@
 # Redis JavaScript Module
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 A Redis module that adds JavaScript scripting support using the [mquickjs](https://github.com/bellard/mquickjs) engine - a minimal, fast JavaScript engine optimized for embedded use.
 
 This provides functionality similar to Redis's built-in Lua scripting, but using JavaScript instead.
