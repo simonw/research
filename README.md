@@ -160,7 +160,15 @@ for dirname, _ in subdirs_with_dates:
             readme_path.write_text('\n'.join(new_lines))
 
 ]]]-->
-## 41 research projects
+## 42 research projects
+
+### [debug-failed-fix](https://github.com/simonw/research/tree/main/debug-failed-fix) (2025-12-24)
+
+Debugging investigation into why commit 0dcfad4's fix for cog code rendering didn't work. The fix correctly used string concatenation to avoid `-->` in Python strings, but the explanatory comment itself contained the literal `-->` sequence, which closed the HTML comment early. Solution: rewrote the comment to avoid the problematic character sequence.
+
+- Root cause: Python comment on line 121 contained `"-->"` which HTML parser treats as comment terminator
+- Fix: Changed comment wording to avoid the literal sequence
+- Lesson: When avoiding character sequences, they must be avoided everywhere in raw text including comments
 
 ### [microquickjs-in-redis](https://github.com/simonw/research/tree/main/microquickjs-in-redis) (2025-12-24)
 
