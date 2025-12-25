@@ -1,0 +1,6 @@
+Examining the [Vibium](https://github.com/VibiumDev/vibium) browser automation project, this investigation developed a Python client library that interoperates with Vibium’s Go-powered "clicker" binary and existing Node.js tools. The Python client exposes both synchronous and asynchronous APIs, replicating advanced browser automation features such as auto-waiting, visibility checks, and custom commands (e.g., `vibium:find`, `vibium:click`) via WebDriver BiDi over WebSocket. This approach leverages Vibium’s architecture: all browser management resides in the single Go binary, while clients like Python and JS interact only through simple JSON messaging. All critical functionality, including navigation, element querying, and action execution, were validated with comprehensive sync and async test cases. Find source and documentation at [Vibium Python Client](https://github.com/VibiumDev/vibium/tree/main/vibium-python).
+
+Key findings:
+- Vibium's protocol adds custom commands to standard WebDriver BiDi for actionability and robust auto-wait operations.
+- The Python client fully mirrors the Node.js design, enabling seamless integration for AI agents or scripted workflows.
+- The Go binary simplifies client development by abstracting browser complexity and supporting both WebSocket API and direct LLM/agent connections via MCP server.
