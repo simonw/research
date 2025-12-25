@@ -118,8 +118,9 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 # Add AI-generated note to all project README.md files
-AI_NOTE_START = "<!-- AI-GENERATED-NOTE -->"
-AI_NOTE_END = "<!-- /AI-GENERATED-NOTE -->"
+# Note: we construct these strings to avoid "-->" which would close the HTML comment
+AI_NOTE_START = "<!-- AI-GENERATED-NOTE --" + ">"
+AI_NOTE_END = "<!-- /AI-GENERATED-NOTE --" + ">"
 AI_NOTE_CONTENT = """> [!NOTE]
 > This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research)."""
 
