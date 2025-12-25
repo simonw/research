@@ -118,7 +118,7 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 # Add AI-generated note to all project README.md files
-# Note: we construct these strings to avoid "-->" which would close the HTML comment
+# Note: we construct these marker strings via concatenation to avoid the HTML comment close sequence
 AI_NOTE_START = "<!-- AI-GENERATED-NOTE --" + ">"
 AI_NOTE_END = "<!-- /AI-GENERATED-NOTE --" + ">"
 AI_NOTE_CONTENT = """> [!NOTE]
