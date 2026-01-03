@@ -166,12 +166,6 @@ for dirname, _ in subdirs_with_dates:
 
 Designed as a Python C extension, the SQLite Time Limit Extension introduces a function, execute_with_timeout, enabling SQL queries against a SQLite database to be terminated if they exceed a specified millisecond threshold. This is achieved using SQLite's progress handler, ensuring that long-running queries do not block application responsiveness. Usage is simple via standard import, and rigorous tests are provided with pytest to validate both normal operation and timeouts. The project is organized for easy development and rapid testing, making it practical for integration into larger Python projects.
 
-Key features:
-- Provides precise control over query execution times.
-- Raises TimeoutError automatically on time exceedance.
-- Full source and tests available at [GitHub repository](https://github.com/example/sqlite-time-limit-extension) (replace with your real link).
-- Built as a minimal package for straightforward integration: [PyPI Listing](https://pypi.org/project/sqlite-time-limit/) (if available).
-
 ### [http-range-wheel-metadata](https://github.com/simonw/research/tree/main/http-range-wheel-metadata) (2025-12-26)
 
 Leveraging ZIP file structure and HTTP range requests, tools like [uv](https://github.com/astral-sh/uv) efficiently extract wheel metadata for Python packages without downloading entire archives. By fetching just the last 16KB of the wheel (central directory and EOCD), parsing for the METADATA file offset, and then requesting exactly its byte range, uv and the accompanying Python prototype routinely reduce bandwidth usage by over 70%. This approach drastically speeds up dependency resolution for large wheels, provided PyPI or the package index supports range requests. In tandem, uv’s innovative packing of PEP 440 version information into a single `u64` integer accelerates version comparisons from O(n) string parsing to fast integer checks, affecting millions of operations during package resolution. Together, these methods showcase how protocol and data structure choices can compound to improve package manager performance.
