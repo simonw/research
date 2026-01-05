@@ -74,39 +74,156 @@ const uint8_t* memchr_find(uint8_t needle, const uint8_t* haystack, size_t len) 
     return (const uint8_t*)memchr(haystack, needle, len);
 }
 
+#ifdef USE_X86_64
+
 /*
- * Single byte search - reverse
- * Uses libc memrchr if available, otherwise custom implementation
+ * AVX2 implementation for memrchr - reverse single byte search
+ * Processes 64 bytes per iteration (2x unrolled) for better throughput
  */
-const uint8_t* memrchr_find(uint8_t needle, const uint8_t* haystack, size_t len) {
-#if defined(_GNU_SOURCE) || defined(__GLIBC__)
-    return (const uint8_t*)memrchr(haystack, needle, len);
-#else
-    /* Fallback implementation */
+static inline const uint8_t* memrchr_avx2(uint8_t needle, const uint8_t* haystack, size_t len) {
     if (len == 0) return NULL;
 
     const uint8_t* ptr = haystack + len;
+    __m256i needle_vec = _mm256_set1_epi8(needle);
 
-    /* Handle unaligned tail bytes first */
-    while (ptr > haystack && ((uintptr_t)ptr & 7) != 0) {
+    /* Handle unaligned suffix first */
+    while (ptr > haystack && ((uintptr_t)ptr & 31) != 0) {
         ptr--;
         if (*ptr == needle) return ptr;
     }
 
-    /* Process 8 bytes at a time for aligned portion */
-    while (ptr >= haystack + 8) {
-        ptr -= 8;
-        for (int i = 7; i >= 0; i--) {
-            if (ptr[i] == needle) return ptr + i;
+    /* Main loop: process 64 bytes per iteration (unrolled 2x) */
+    while (ptr >= haystack + 64) {
+        ptr -= 64;
+
+        /* Load and compare second chunk first (we want rightmost match) */
+        __m256i chunk1 = _mm256_loadu_si256((const __m256i*)(ptr + 32));
+        __m256i eq1 = _mm256_cmpeq_epi8(chunk1, needle_vec);
+        int mask1 = _mm256_movemask_epi8(eq1);
+
+        if (mask1 != 0) {
+            int idx = 31 - __builtin_clz(mask1);
+            return ptr + 32 + idx;
+        }
+
+        /* Then check first chunk */
+        __m256i chunk0 = _mm256_loadu_si256((const __m256i*)ptr);
+        __m256i eq0 = _mm256_cmpeq_epi8(chunk0, needle_vec);
+        int mask0 = _mm256_movemask_epi8(eq0);
+
+        if (mask0 != 0) {
+            int idx = 31 - __builtin_clz(mask0);
+            return ptr + idx;
         }
     }
 
-    /* Handle remaining bytes */
+    /* Handle remaining 32+ bytes */
+    while (ptr >= haystack + 32) {
+        ptr -= 32;
+        __m256i chunk = _mm256_loadu_si256((const __m256i*)ptr);
+        __m256i eq = _mm256_cmpeq_epi8(chunk, needle_vec);
+        int mask = _mm256_movemask_epi8(eq);
+
+        if (mask != 0) {
+            int idx = 31 - __builtin_clz(mask);
+            return ptr + idx;
+        }
+    }
+
+    /* Scalar tail */
     while (ptr > haystack) {
         ptr--;
         if (*ptr == needle) return ptr;
     }
 
+    return NULL;
+}
+
+/*
+ * SSE2 implementation for memrchr - reverse single byte search
+ */
+static inline const uint8_t* memrchr_sse2(uint8_t needle, const uint8_t* haystack, size_t len) {
+    if (len == 0) return NULL;
+
+    const uint8_t* ptr = haystack + len;
+    __m128i needle_vec = _mm_set1_epi8(needle);
+
+    /* Handle unaligned suffix first */
+    while (ptr > haystack && ((uintptr_t)ptr & 15) != 0) {
+        ptr--;
+        if (*ptr == needle) return ptr;
+    }
+
+    /* Main loop: process 32 bytes per iteration (unrolled 2x) */
+    while (ptr >= haystack + 32) {
+        ptr -= 32;
+
+        /* Check second chunk first (rightmost) */
+        __m128i chunk1 = _mm_loadu_si128((const __m128i*)(ptr + 16));
+        __m128i eq1 = _mm_cmpeq_epi8(chunk1, needle_vec);
+        int mask1 = _mm_movemask_epi8(eq1);
+
+        if (mask1 != 0) {
+            int idx = 31 - __builtin_clz(mask1);
+            return ptr + 16 + idx;
+        }
+
+        /* Then check first chunk */
+        __m128i chunk0 = _mm_loadu_si128((const __m128i*)ptr);
+        __m128i eq0 = _mm_cmpeq_epi8(chunk0, needle_vec);
+        int mask0 = _mm_movemask_epi8(eq0);
+
+        if (mask0 != 0) {
+            int idx = 31 - __builtin_clz(mask0);
+            return ptr + idx;
+        }
+    }
+
+    /* Handle remaining 16 bytes */
+    while (ptr >= haystack + 16) {
+        ptr -= 16;
+        __m128i chunk = _mm_loadu_si128((const __m128i*)ptr);
+        __m128i eq = _mm_cmpeq_epi8(chunk, needle_vec);
+        int mask = _mm_movemask_epi8(eq);
+
+        if (mask != 0) {
+            int idx = 31 - __builtin_clz(mask);
+            return ptr + idx;
+        }
+    }
+
+    /* Scalar tail */
+    while (ptr > haystack) {
+        ptr--;
+        if (*ptr == needle) return ptr;
+    }
+
+    return NULL;
+}
+
+#endif /* USE_X86_64 */
+
+/*
+ * Single byte search - reverse
+ * Uses custom SIMD implementation for better performance
+ */
+const uint8_t* memrchr_find(uint8_t needle, const uint8_t* haystack, size_t len) {
+#ifdef USE_X86_64
+    ENSURE_CPU_DETECTED();
+    if (has_avx2) {
+        return memrchr_avx2(needle, haystack, len);
+    }
+    return memrchr_sse2(needle, haystack, len);
+#elif defined(_GNU_SOURCE) || defined(__GLIBC__)
+    return (const uint8_t*)memrchr(haystack, needle, len);
+#else
+    /* Fallback scalar implementation */
+    if (len == 0) return NULL;
+    const uint8_t* ptr = haystack + len;
+    while (ptr > haystack) {
+        ptr--;
+        if (*ptr == needle) return ptr;
+    }
     return NULL;
 #endif
 }
@@ -223,6 +340,7 @@ static inline const uint8_t* memchr2_sse2(uint8_t n1, uint8_t n2,
 
 /*
  * AVX2 implementation for memchr3
+ * Processes 64 bytes per iteration (2x unrolled) for better throughput
  */
 static inline const uint8_t* memchr3_avx2(uint8_t n1, uint8_t n2, uint8_t n3,
                                            const uint8_t* haystack, size_t len) {
@@ -244,8 +362,45 @@ static inline const uint8_t* memchr3_avx2(uint8_t n1, uint8_t n2, uint8_t n3,
     __m256i needle2 = _mm256_set1_epi8(n2);
     __m256i needle3 = _mm256_set1_epi8(n3);
 
+    /* Prefetch hint */
+    _mm_prefetch((const char*)(ptr + 256), _MM_HINT_T0);
+
+    /* Main loop: process 64 bytes per iteration (unrolled 2x) */
+    while (ptr + 64 <= end) {
+        _mm_prefetch((const char*)(ptr + 320), _MM_HINT_T0);
+
+        /* First 32 bytes */
+        __m256i chunk0 = _mm256_load_si256((const __m256i*)ptr);
+        __m256i cmp1_0 = _mm256_cmpeq_epi8(chunk0, needle1);
+        __m256i cmp2_0 = _mm256_cmpeq_epi8(chunk0, needle2);
+        __m256i cmp3_0 = _mm256_cmpeq_epi8(chunk0, needle3);
+        __m256i result0 = _mm256_or_si256(_mm256_or_si256(cmp1_0, cmp2_0), cmp3_0);
+        int mask0 = _mm256_movemask_epi8(result0);
+
+        if (mask0 != 0) {
+            int idx = __builtin_ctz(mask0);
+            return ptr + idx;
+        }
+
+        /* Second 32 bytes */
+        __m256i chunk1 = _mm256_load_si256((const __m256i*)(ptr + 32));
+        __m256i cmp1_1 = _mm256_cmpeq_epi8(chunk1, needle1);
+        __m256i cmp2_1 = _mm256_cmpeq_epi8(chunk1, needle2);
+        __m256i cmp3_1 = _mm256_cmpeq_epi8(chunk1, needle3);
+        __m256i result1 = _mm256_or_si256(_mm256_or_si256(cmp1_1, cmp2_1), cmp3_1);
+        int mask1 = _mm256_movemask_epi8(result1);
+
+        if (mask1 != 0) {
+            int idx = __builtin_ctz(mask1);
+            return ptr + 32 + idx;
+        }
+
+        ptr += 64;
+    }
+
+    /* Handle remaining 32 bytes */
     while (ptr + 32 <= end) {
-        __m256i chunk = _mm256_load_si256((const __m256i*)ptr);
+        __m256i chunk = _mm256_loadu_si256((const __m256i*)ptr);
         __m256i cmp1 = _mm256_cmpeq_epi8(chunk, needle1);
         __m256i cmp2 = _mm256_cmpeq_epi8(chunk, needle2);
         __m256i cmp3 = _mm256_cmpeq_epi8(chunk, needle3);
@@ -270,6 +425,7 @@ static inline const uint8_t* memchr3_avx2(uint8_t n1, uint8_t n2, uint8_t n3,
 
 /*
  * SSE2 implementation for memchr3
+ * Processes 32 bytes per iteration (2x unrolled) for better throughput
  */
 static inline const uint8_t* memchr3_sse2(uint8_t n1, uint8_t n2, uint8_t n3,
                                            const uint8_t* haystack, size_t len) {
@@ -291,8 +447,40 @@ static inline const uint8_t* memchr3_sse2(uint8_t n1, uint8_t n2, uint8_t n3,
     __m128i needle2 = _mm_set1_epi8(n2);
     __m128i needle3 = _mm_set1_epi8(n3);
 
+    /* Main loop: process 32 bytes per iteration (unrolled 2x) */
+    while (ptr + 32 <= end) {
+        /* First 16 bytes */
+        __m128i chunk0 = _mm_load_si128((const __m128i*)ptr);
+        __m128i cmp1_0 = _mm_cmpeq_epi8(chunk0, needle1);
+        __m128i cmp2_0 = _mm_cmpeq_epi8(chunk0, needle2);
+        __m128i cmp3_0 = _mm_cmpeq_epi8(chunk0, needle3);
+        __m128i result0 = _mm_or_si128(_mm_or_si128(cmp1_0, cmp2_0), cmp3_0);
+        int mask0 = _mm_movemask_epi8(result0);
+
+        if (mask0 != 0) {
+            int idx = __builtin_ctz(mask0);
+            return ptr + idx;
+        }
+
+        /* Second 16 bytes */
+        __m128i chunk1 = _mm_load_si128((const __m128i*)(ptr + 16));
+        __m128i cmp1_1 = _mm_cmpeq_epi8(chunk1, needle1);
+        __m128i cmp2_1 = _mm_cmpeq_epi8(chunk1, needle2);
+        __m128i cmp3_1 = _mm_cmpeq_epi8(chunk1, needle3);
+        __m128i result1 = _mm_or_si128(_mm_or_si128(cmp1_1, cmp2_1), cmp3_1);
+        int mask1 = _mm_movemask_epi8(result1);
+
+        if (mask1 != 0) {
+            int idx = __builtin_ctz(mask1);
+            return ptr + 16 + idx;
+        }
+
+        ptr += 32;
+    }
+
+    /* Handle remaining 16 bytes */
     while (ptr + 16 <= end) {
-        __m128i chunk = _mm_load_si128((const __m128i*)ptr);
+        __m128i chunk = _mm_loadu_si128((const __m128i*)ptr);
         __m128i cmp1 = _mm_cmpeq_epi8(chunk, needle1);
         __m128i cmp2 = _mm_cmpeq_epi8(chunk, needle2);
         __m128i cmp3 = _mm_cmpeq_epi8(chunk, needle3);
@@ -316,14 +504,86 @@ static inline const uint8_t* memchr3_sse2(uint8_t n1, uint8_t n2, uint8_t n3,
 }
 
 /*
+ * AVX2 implementation for memrchr2
+ * Processes 64 bytes per iteration (2x unrolled)
+ */
+static inline const uint8_t* memrchr2_avx2(uint8_t n1, uint8_t n2,
+                                            const uint8_t* haystack, size_t len) {
+    if (len == 0) return NULL;
+
+    const uint8_t* ptr = haystack + len;
+    __m256i needle1 = _mm256_set1_epi8(n1);
+    __m256i needle2 = _mm256_set1_epi8(n2);
+
+    /* Handle unaligned suffix first */
+    while (ptr > haystack && ((uintptr_t)ptr & 31) != 0) {
+        ptr--;
+        if (*ptr == n1 || *ptr == n2) return ptr;
+    }
+
+    /* Main loop: process 64 bytes per iteration (unrolled 2x) */
+    while (ptr >= haystack + 64) {
+        ptr -= 64;
+
+        /* Check second chunk first (rightmost) */
+        __m256i chunk1 = _mm256_loadu_si256((const __m256i*)(ptr + 32));
+        __m256i cmp1_1 = _mm256_cmpeq_epi8(chunk1, needle1);
+        __m256i cmp2_1 = _mm256_cmpeq_epi8(chunk1, needle2);
+        __m256i result1 = _mm256_or_si256(cmp1_1, cmp2_1);
+        int mask1 = _mm256_movemask_epi8(result1);
+
+        if (mask1 != 0) {
+            int idx = 31 - __builtin_clz(mask1);
+            return ptr + 32 + idx;
+        }
+
+        /* Then check first chunk */
+        __m256i chunk0 = _mm256_loadu_si256((const __m256i*)ptr);
+        __m256i cmp1_0 = _mm256_cmpeq_epi8(chunk0, needle1);
+        __m256i cmp2_0 = _mm256_cmpeq_epi8(chunk0, needle2);
+        __m256i result0 = _mm256_or_si256(cmp1_0, cmp2_0);
+        int mask0 = _mm256_movemask_epi8(result0);
+
+        if (mask0 != 0) {
+            int idx = 31 - __builtin_clz(mask0);
+            return ptr + idx;
+        }
+    }
+
+    /* Handle remaining 32+ bytes */
+    while (ptr >= haystack + 32) {
+        ptr -= 32;
+        __m256i chunk = _mm256_loadu_si256((const __m256i*)ptr);
+        __m256i cmp1 = _mm256_cmpeq_epi8(chunk, needle1);
+        __m256i cmp2 = _mm256_cmpeq_epi8(chunk, needle2);
+        __m256i result = _mm256_or_si256(cmp1, cmp2);
+        int mask = _mm256_movemask_epi8(result);
+
+        if (mask != 0) {
+            int idx = 31 - __builtin_clz(mask);
+            return ptr + idx;
+        }
+    }
+
+    /* Scalar tail */
+    while (ptr > haystack) {
+        ptr--;
+        if (*ptr == n1 || *ptr == n2) return ptr;
+    }
+
+    return NULL;
+}
+
+/*
  * SSE2 implementation for memrchr2
  */
 static inline const uint8_t* memrchr2_sse2(uint8_t n1, uint8_t n2,
                                             const uint8_t* haystack, size_t len) {
     if (len == 0) return NULL;
 
-    const uint8_t* end = haystack + len;
-    const uint8_t* ptr = end;
+    const uint8_t* ptr = haystack + len;
+    __m128i needle1 = _mm_set1_epi8(n1);
+    __m128i needle2 = _mm_set1_epi8(n2);
 
     /* Handle unaligned suffix */
     while (ptr > haystack && ((uintptr_t)ptr & 15) != 0) {
@@ -331,15 +591,39 @@ static inline const uint8_t* memrchr2_sse2(uint8_t n1, uint8_t n2,
         if (*ptr == n1 || *ptr == n2) return ptr;
     }
 
-    if (ptr <= haystack) return NULL;
+    /* Main loop: process 32 bytes per iteration (unrolled 2x) */
+    while (ptr >= haystack + 32) {
+        ptr -= 32;
 
-    /* SSE2 vectorized search */
-    __m128i needle1 = _mm_set1_epi8(n1);
-    __m128i needle2 = _mm_set1_epi8(n2);
+        /* Check second chunk first (rightmost) */
+        __m128i chunk1 = _mm_loadu_si128((const __m128i*)(ptr + 16));
+        __m128i cmp1_1 = _mm_cmpeq_epi8(chunk1, needle1);
+        __m128i cmp2_1 = _mm_cmpeq_epi8(chunk1, needle2);
+        __m128i result1 = _mm_or_si128(cmp1_1, cmp2_1);
+        int mask1 = _mm_movemask_epi8(result1);
 
+        if (mask1 != 0) {
+            int idx = 31 - __builtin_clz(mask1);
+            return ptr + 16 + idx;
+        }
+
+        /* Then check first chunk */
+        __m128i chunk0 = _mm_loadu_si128((const __m128i*)ptr);
+        __m128i cmp1_0 = _mm_cmpeq_epi8(chunk0, needle1);
+        __m128i cmp2_0 = _mm_cmpeq_epi8(chunk0, needle2);
+        __m128i result0 = _mm_or_si128(cmp1_0, cmp2_0);
+        int mask0 = _mm_movemask_epi8(result0);
+
+        if (mask0 != 0) {
+            int idx = 31 - __builtin_clz(mask0);
+            return ptr + idx;
+        }
+    }
+
+    /* Handle remaining 16 bytes */
     while (ptr >= haystack + 16) {
         ptr -= 16;
-        __m128i chunk = _mm_load_si128((const __m128i*)ptr);
+        __m128i chunk = _mm_loadu_si128((const __m128i*)ptr);
         __m128i cmp1 = _mm_cmpeq_epi8(chunk, needle1);
         __m128i cmp2 = _mm_cmpeq_epi8(chunk, needle2);
         __m128i result = _mm_or_si128(cmp1, cmp2);
@@ -351,10 +635,85 @@ static inline const uint8_t* memrchr2_sse2(uint8_t n1, uint8_t n2,
         }
     }
 
-    /* Handle remaining bytes */
+    /* Scalar tail */
     while (ptr > haystack) {
         ptr--;
         if (*ptr == n1 || *ptr == n2) return ptr;
+    }
+
+    return NULL;
+}
+
+/*
+ * AVX2 implementation for memrchr3
+ * Processes 64 bytes per iteration (2x unrolled)
+ */
+static inline const uint8_t* memrchr3_avx2(uint8_t n1, uint8_t n2, uint8_t n3,
+                                            const uint8_t* haystack, size_t len) {
+    if (len == 0) return NULL;
+
+    const uint8_t* ptr = haystack + len;
+    __m256i needle1 = _mm256_set1_epi8(n1);
+    __m256i needle2 = _mm256_set1_epi8(n2);
+    __m256i needle3 = _mm256_set1_epi8(n3);
+
+    /* Handle unaligned suffix first */
+    while (ptr > haystack && ((uintptr_t)ptr & 31) != 0) {
+        ptr--;
+        if (*ptr == n1 || *ptr == n2 || *ptr == n3) return ptr;
+    }
+
+    /* Main loop: process 64 bytes per iteration (unrolled 2x) */
+    while (ptr >= haystack + 64) {
+        ptr -= 64;
+
+        /* Check second chunk first (rightmost) */
+        __m256i chunk1 = _mm256_loadu_si256((const __m256i*)(ptr + 32));
+        __m256i cmp1_1 = _mm256_cmpeq_epi8(chunk1, needle1);
+        __m256i cmp2_1 = _mm256_cmpeq_epi8(chunk1, needle2);
+        __m256i cmp3_1 = _mm256_cmpeq_epi8(chunk1, needle3);
+        __m256i result1 = _mm256_or_si256(_mm256_or_si256(cmp1_1, cmp2_1), cmp3_1);
+        int mask1 = _mm256_movemask_epi8(result1);
+
+        if (mask1 != 0) {
+            int idx = 31 - __builtin_clz(mask1);
+            return ptr + 32 + idx;
+        }
+
+        /* Then check first chunk */
+        __m256i chunk0 = _mm256_loadu_si256((const __m256i*)ptr);
+        __m256i cmp1_0 = _mm256_cmpeq_epi8(chunk0, needle1);
+        __m256i cmp2_0 = _mm256_cmpeq_epi8(chunk0, needle2);
+        __m256i cmp3_0 = _mm256_cmpeq_epi8(chunk0, needle3);
+        __m256i result0 = _mm256_or_si256(_mm256_or_si256(cmp1_0, cmp2_0), cmp3_0);
+        int mask0 = _mm256_movemask_epi8(result0);
+
+        if (mask0 != 0) {
+            int idx = 31 - __builtin_clz(mask0);
+            return ptr + idx;
+        }
+    }
+
+    /* Handle remaining 32+ bytes */
+    while (ptr >= haystack + 32) {
+        ptr -= 32;
+        __m256i chunk = _mm256_loadu_si256((const __m256i*)ptr);
+        __m256i cmp1 = _mm256_cmpeq_epi8(chunk, needle1);
+        __m256i cmp2 = _mm256_cmpeq_epi8(chunk, needle2);
+        __m256i cmp3 = _mm256_cmpeq_epi8(chunk, needle3);
+        __m256i result = _mm256_or_si256(_mm256_or_si256(cmp1, cmp2), cmp3);
+        int mask = _mm256_movemask_epi8(result);
+
+        if (mask != 0) {
+            int idx = 31 - __builtin_clz(mask);
+            return ptr + idx;
+        }
+    }
+
+    /* Scalar tail */
+    while (ptr > haystack) {
+        ptr--;
+        if (*ptr == n1 || *ptr == n2 || *ptr == n3) return ptr;
     }
 
     return NULL;
@@ -367,8 +726,10 @@ static inline const uint8_t* memrchr3_sse2(uint8_t n1, uint8_t n2, uint8_t n3,
                                             const uint8_t* haystack, size_t len) {
     if (len == 0) return NULL;
 
-    const uint8_t* end = haystack + len;
-    const uint8_t* ptr = end;
+    const uint8_t* ptr = haystack + len;
+    __m128i needle1 = _mm_set1_epi8(n1);
+    __m128i needle2 = _mm_set1_epi8(n2);
+    __m128i needle3 = _mm_set1_epi8(n3);
 
     /* Handle unaligned suffix */
     while (ptr > haystack && ((uintptr_t)ptr & 15) != 0) {
@@ -376,16 +737,41 @@ static inline const uint8_t* memrchr3_sse2(uint8_t n1, uint8_t n2, uint8_t n3,
         if (*ptr == n1 || *ptr == n2 || *ptr == n3) return ptr;
     }
 
-    if (ptr <= haystack) return NULL;
+    /* Main loop: process 32 bytes per iteration (unrolled 2x) */
+    while (ptr >= haystack + 32) {
+        ptr -= 32;
 
-    /* SSE2 vectorized search */
-    __m128i needle1 = _mm_set1_epi8(n1);
-    __m128i needle2 = _mm_set1_epi8(n2);
-    __m128i needle3 = _mm_set1_epi8(n3);
+        /* Check second chunk first (rightmost) */
+        __m128i chunk1 = _mm_loadu_si128((const __m128i*)(ptr + 16));
+        __m128i cmp1_1 = _mm_cmpeq_epi8(chunk1, needle1);
+        __m128i cmp2_1 = _mm_cmpeq_epi8(chunk1, needle2);
+        __m128i cmp3_1 = _mm_cmpeq_epi8(chunk1, needle3);
+        __m128i result1 = _mm_or_si128(_mm_or_si128(cmp1_1, cmp2_1), cmp3_1);
+        int mask1 = _mm_movemask_epi8(result1);
 
+        if (mask1 != 0) {
+            int idx = 31 - __builtin_clz(mask1);
+            return ptr + 16 + idx;
+        }
+
+        /* Then check first chunk */
+        __m128i chunk0 = _mm_loadu_si128((const __m128i*)ptr);
+        __m128i cmp1_0 = _mm_cmpeq_epi8(chunk0, needle1);
+        __m128i cmp2_0 = _mm_cmpeq_epi8(chunk0, needle2);
+        __m128i cmp3_0 = _mm_cmpeq_epi8(chunk0, needle3);
+        __m128i result0 = _mm_or_si128(_mm_or_si128(cmp1_0, cmp2_0), cmp3_0);
+        int mask0 = _mm_movemask_epi8(result0);
+
+        if (mask0 != 0) {
+            int idx = 31 - __builtin_clz(mask0);
+            return ptr + idx;
+        }
+    }
+
+    /* Handle remaining 16 bytes */
     while (ptr >= haystack + 16) {
         ptr -= 16;
-        __m128i chunk = _mm_load_si128((const __m128i*)ptr);
+        __m128i chunk = _mm_loadu_si128((const __m128i*)ptr);
         __m128i cmp1 = _mm_cmpeq_epi8(chunk, needle1);
         __m128i cmp2 = _mm_cmpeq_epi8(chunk, needle2);
         __m128i cmp3 = _mm_cmpeq_epi8(chunk, needle3);
@@ -398,7 +784,7 @@ static inline const uint8_t* memrchr3_sse2(uint8_t n1, uint8_t n2, uint8_t n3,
         }
     }
 
-    /* Handle remaining bytes */
+    /* Scalar tail */
     while (ptr > haystack) {
         ptr--;
         if (*ptr == n1 || *ptr == n2 || *ptr == n3) return ptr;
@@ -988,6 +1374,10 @@ const uint8_t* memchr3_find(uint8_t n1, uint8_t n2, uint8_t n3,
  */
 const uint8_t* memrchr2_find(uint8_t n1, uint8_t n2, const uint8_t* haystack, size_t len) {
 #ifdef USE_X86_64
+    ENSURE_CPU_DETECTED();
+    if (has_avx2) {
+        return memrchr2_avx2(n1, n2, haystack, len);
+    }
     return memrchr2_sse2(n1, n2, haystack, len);
 #elif defined(USE_NEON)
     return memrchr2_neon(n1, n2, haystack, len);
@@ -1002,6 +1392,10 @@ const uint8_t* memrchr2_find(uint8_t n1, uint8_t n2, const uint8_t* haystack, si
 const uint8_t* memrchr3_find(uint8_t n1, uint8_t n2, uint8_t n3,
                              const uint8_t* haystack, size_t len) {
 #ifdef USE_X86_64
+    ENSURE_CPU_DETECTED();
+    if (has_avx2) {
+        return memrchr3_avx2(n1, n2, n3, haystack, len);
+    }
     return memrchr3_sse2(n1, n2, n3, haystack, len);
 #elif defined(USE_NEON)
     return memrchr3_neon(n1, n2, n3, haystack, len);
