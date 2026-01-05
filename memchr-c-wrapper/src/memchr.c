@@ -408,103 +408,133 @@ static inline const uint8_t* memrchr3_sse2(uint8_t n1, uint8_t n2, uint8_t n3,
 }
 
 /*
- * SIMD-accelerated memmem with Two-Way algorithm prefiltering
- * This uses SIMD to quickly find candidate positions, then verifies matches
+ * Packed Pair SIMD Algorithm for substring search
+ *
+ * This is the key algorithm from Rust's memchr library. Instead of searching
+ * for a single byte, we search for a PAIR of bytes: the first and last byte
+ * of the needle. This provides much better filtering because:
+ *
+ * 1. Two bytes matching at a specific distance is much rarer than one byte
+ * 2. No frequency table overhead - just use first/last bytes
+ * 3. The fixed offset (needle_len - 1) implicitly validates spacing
+ *
+ * For a needle "hello":
+ * - first_byte = 'h', last_byte = 'o', offset = 4
+ * - We search for positions where haystack[i] == 'h' AND haystack[i+4] == 'o'
+ * - This is much more selective than searching for just 'h'
  */
 
-/* Find a "rare" byte in the needle for prefiltering */
-static inline size_t find_rare_byte_index(const uint8_t* needle, size_t len) {
-    /* Frequency table for common ASCII bytes (approximate) */
-    static const uint8_t freq[256] = {
-        /* 0x00-0x0F */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 50, 0, 0, 50, 0, 0,
-        /* 0x10-0x1F */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        /* 0x20-0x2F (space, punctuation) */ 100, 10, 20, 5, 5, 5, 5, 20, 20, 20, 5, 5, 30, 30, 40, 20,
-        /* 0x30-0x3F (digits) */ 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 20, 20, 20, 20, 20, 20,
-        /* 0x40-0x4F */ 5, 40, 30, 40, 40, 60, 30, 30, 40, 50, 10, 20, 40, 40, 50, 50,
-        /* 0x50-0x5F */ 40, 5, 50, 50, 60, 40, 20, 20, 10, 20, 5, 10, 5, 10, 5, 30,
-        /* 0x60-0x6F */ 5, 80, 30, 50, 50, 90, 30, 30, 50, 70, 10, 20, 50, 50, 70, 70,
-        /* 0x70-0x7F */ 40, 5, 70, 70, 80, 50, 20, 20, 10, 30, 10, 10, 10, 10, 10, 0,
-        /* 0x80-0xFF (high bytes - rare in ASCII) */
-        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-    };
-
-    size_t rarest_idx = 0;
-    uint8_t rarest_freq = 255;
-
-    /* Prefer bytes near the end of the needle for better skip distance */
-    for (size_t i = len > 1 ? len - 1 : 0; i > 0; i--) {
-        if (freq[needle[i]] < rarest_freq) {
-            rarest_freq = freq[needle[i]];
-            rarest_idx = i;
-        }
-    }
-
-    /* Also check first byte */
-    if (freq[needle[0]] < rarest_freq) {
-        rarest_idx = 0;
-    }
-
-    return rarest_idx;
-}
-
 /*
- * AVX2-accelerated memmem with SIMD prefiltering
+ * AVX2 Packed Pair implementation - processes 32 bytes at a time
+ * Uses loop unrolling to process 64 bytes per iteration for better throughput
  */
 static inline const uint8_t* memmem_avx2(const uint8_t* needle, size_t needle_len,
                                           const uint8_t* haystack, size_t haystack_len) {
-    /* Find rare byte for prefiltering */
-    size_t rare_idx = find_rare_byte_index(needle, needle_len);
-    uint8_t rare_byte = needle[rare_idx];
-    uint8_t first_byte = needle[0];
+    const uint8_t first_byte = needle[0];
+    const uint8_t last_byte = needle[needle_len - 1];
+    const size_t offset = needle_len - 1;
 
     const uint8_t* ptr = haystack;
     const uint8_t* end = haystack + haystack_len - needle_len + 1;
 
-    /* Use AVX2 to find candidates */
-    __m256i rare_vec = _mm256_set1_epi8(rare_byte);
+    /* Broadcast first and last bytes to AVX2 vectors */
     __m256i first_vec = _mm256_set1_epi8(first_byte);
+    __m256i last_vec = _mm256_set1_epi8(last_byte);
 
-    while (ptr + 32 <= end) {
-        /* Load and search for rare byte at offset position */
-        __m256i chunk_rare = _mm256_loadu_si256((const __m256i*)(ptr + rare_idx));
-        __m256i cmp_rare = _mm256_cmpeq_epi8(chunk_rare, rare_vec);
-        int mask_rare = _mm256_movemask_epi8(cmp_rare);
+    /* Prefetch hint for upcoming data */
+    _mm_prefetch((const char*)(ptr + 256), _MM_HINT_T0);
 
-        if (mask_rare != 0) {
-            /* Also check first byte for additional filtering */
-            __m256i chunk_first = _mm256_loadu_si256((const __m256i*)ptr);
-            __m256i cmp_first = _mm256_cmpeq_epi8(chunk_first, first_vec);
-            int mask_first = _mm256_movemask_epi8(cmp_first);
+    /* Main loop: process 64 bytes per iteration (unrolled 2x) */
+    while (ptr + 64 <= end) {
+        _mm_prefetch((const char*)(ptr + 320), _MM_HINT_T0);
 
-            /* Combine: position must match both rare byte (at offset) and first byte */
-            int combined = mask_rare & mask_first;
+        /* First 32 bytes */
+        __m256i chunk_first0 = _mm256_loadu_si256((const __m256i*)ptr);
+        __m256i chunk_last0 = _mm256_loadu_si256((const __m256i*)(ptr + offset));
+        __m256i eq_first0 = _mm256_cmpeq_epi8(chunk_first0, first_vec);
+        __m256i eq_last0 = _mm256_cmpeq_epi8(chunk_last0, last_vec);
+        __m256i candidates0 = _mm256_and_si256(eq_first0, eq_last0);
+        int mask0 = _mm256_movemask_epi8(candidates0);
 
-            while (combined != 0) {
-                int idx = __builtin_ctz(combined);
-                const uint8_t* candidate = ptr + idx;
+        /* Second 32 bytes */
+        __m256i chunk_first1 = _mm256_loadu_si256((const __m256i*)(ptr + 32));
+        __m256i chunk_last1 = _mm256_loadu_si256((const __m256i*)(ptr + 32 + offset));
+        __m256i eq_first1 = _mm256_cmpeq_epi8(chunk_first1, first_vec);
+        __m256i eq_last1 = _mm256_cmpeq_epi8(chunk_last1, last_vec);
+        __m256i candidates1 = _mm256_and_si256(eq_first1, eq_last1);
+        int mask1 = _mm256_movemask_epi8(candidates1);
 
-                if (candidate + needle_len <= haystack + haystack_len) {
-                    if (memcmp(candidate, needle, needle_len) == 0) {
-                        return candidate;
-                    }
-                }
-                combined &= combined - 1;  /* Clear lowest bit */
+        /* Process candidates from first chunk */
+        while (mask0 != 0) {
+            int idx = __builtin_ctz(mask0);
+            const uint8_t* candidate = ptr + idx;
+            /* Already verified first and last bytes match, check middle */
+            if (needle_len <= 2 || memcmp(candidate + 1, needle + 1, needle_len - 2) == 0) {
+                return candidate;
             }
+            mask0 &= mask0 - 1;
+        }
+
+        /* Process candidates from second chunk */
+        while (mask1 != 0) {
+            int idx = __builtin_ctz(mask1);
+            const uint8_t* candidate = ptr + 32 + idx;
+            if (needle_len <= 2 || memcmp(candidate + 1, needle + 1, needle_len - 2) == 0) {
+                return candidate;
+            }
+            mask1 &= mask1 - 1;
+        }
+
+        ptr += 64;
+    }
+
+    /* Handle remaining 32+ bytes */
+    while (ptr + 32 <= end) {
+        __m256i chunk_first = _mm256_loadu_si256((const __m256i*)ptr);
+        __m256i chunk_last = _mm256_loadu_si256((const __m256i*)(ptr + offset));
+        __m256i eq_first = _mm256_cmpeq_epi8(chunk_first, first_vec);
+        __m256i eq_last = _mm256_cmpeq_epi8(chunk_last, last_vec);
+        __m256i candidates = _mm256_and_si256(eq_first, eq_last);
+        int mask = _mm256_movemask_epi8(candidates);
+
+        while (mask != 0) {
+            int idx = __builtin_ctz(mask);
+            const uint8_t* candidate = ptr + idx;
+            if (needle_len <= 2 || memcmp(candidate + 1, needle + 1, needle_len - 2) == 0) {
+                return candidate;
+            }
+            mask &= mask - 1;
         }
         ptr += 32;
     }
 
-    /* Handle remaining bytes with scalar search */
+    /* Handle remaining bytes with SSE2 */
+    __m128i first_vec_sse = _mm_set1_epi8(first_byte);
+    __m128i last_vec_sse = _mm_set1_epi8(last_byte);
+
+    while (ptr + 16 <= end) {
+        __m128i chunk_first = _mm_loadu_si128((const __m128i*)ptr);
+        __m128i chunk_last = _mm_loadu_si128((const __m128i*)(ptr + offset));
+        __m128i eq_first = _mm_cmpeq_epi8(chunk_first, first_vec_sse);
+        __m128i eq_last = _mm_cmpeq_epi8(chunk_last, last_vec_sse);
+        __m128i candidates = _mm_and_si128(eq_first, eq_last);
+        int mask = _mm_movemask_epi8(candidates);
+
+        while (mask != 0) {
+            int idx = __builtin_ctz(mask);
+            const uint8_t* candidate = ptr + idx;
+            if (needle_len <= 2 || memcmp(candidate + 1, needle + 1, needle_len - 2) == 0) {
+                return candidate;
+            }
+            mask &= mask - 1;
+        }
+        ptr += 16;
+    }
+
+    /* Scalar tail */
     while (ptr < end) {
-        if (*ptr == first_byte && ptr[rare_idx] == rare_byte) {
-            if (memcmp(ptr, needle, needle_len) == 0) {
+        if (*ptr == first_byte && ptr[offset] == last_byte) {
+            if (needle_len <= 2 || memcmp(ptr + 1, needle + 1, needle_len - 2) == 0) {
                 return ptr;
             }
         }
@@ -515,56 +545,87 @@ static inline const uint8_t* memmem_avx2(const uint8_t* needle, size_t needle_le
 }
 
 /*
- * SSE2-accelerated memmem with SIMD prefiltering
+ * SSE2 Packed Pair implementation - processes 16 bytes at a time
+ * With loop unrolling to process 32 bytes per iteration
  */
 static inline const uint8_t* memmem_sse2(const uint8_t* needle, size_t needle_len,
                                           const uint8_t* haystack, size_t haystack_len) {
-    /* Find rare byte for prefiltering */
-    size_t rare_idx = find_rare_byte_index(needle, needle_len);
-    uint8_t rare_byte = needle[rare_idx];
-    uint8_t first_byte = needle[0];
+    const uint8_t first_byte = needle[0];
+    const uint8_t last_byte = needle[needle_len - 1];
+    const size_t offset = needle_len - 1;
 
     const uint8_t* ptr = haystack;
     const uint8_t* end = haystack + haystack_len - needle_len + 1;
 
-    /* Use SSE2 to find candidates */
-    __m128i rare_vec = _mm_set1_epi8(rare_byte);
+    /* Broadcast first and last bytes to SSE2 vectors */
     __m128i first_vec = _mm_set1_epi8(first_byte);
+    __m128i last_vec = _mm_set1_epi8(last_byte);
 
-    while (ptr + 16 <= end) {
-        /* Load and search for rare byte at offset position */
-        __m128i chunk_rare = _mm_loadu_si128((const __m128i*)(ptr + rare_idx));
-        __m128i cmp_rare = _mm_cmpeq_epi8(chunk_rare, rare_vec);
-        int mask_rare = _mm_movemask_epi8(cmp_rare);
+    /* Main loop: process 32 bytes per iteration (unrolled 2x) */
+    while (ptr + 32 <= end) {
+        /* First 16 bytes */
+        __m128i chunk_first0 = _mm_loadu_si128((const __m128i*)ptr);
+        __m128i chunk_last0 = _mm_loadu_si128((const __m128i*)(ptr + offset));
+        __m128i eq_first0 = _mm_cmpeq_epi8(chunk_first0, first_vec);
+        __m128i eq_last0 = _mm_cmpeq_epi8(chunk_last0, last_vec);
+        __m128i candidates0 = _mm_and_si128(eq_first0, eq_last0);
+        int mask0 = _mm_movemask_epi8(candidates0);
 
-        if (mask_rare != 0) {
-            /* Also check first byte */
-            __m128i chunk_first = _mm_loadu_si128((const __m128i*)ptr);
-            __m128i cmp_first = _mm_cmpeq_epi8(chunk_first, first_vec);
-            int mask_first = _mm_movemask_epi8(cmp_first);
+        /* Second 16 bytes */
+        __m128i chunk_first1 = _mm_loadu_si128((const __m128i*)(ptr + 16));
+        __m128i chunk_last1 = _mm_loadu_si128((const __m128i*)(ptr + 16 + offset));
+        __m128i eq_first1 = _mm_cmpeq_epi8(chunk_first1, first_vec);
+        __m128i eq_last1 = _mm_cmpeq_epi8(chunk_last1, last_vec);
+        __m128i candidates1 = _mm_and_si128(eq_first1, eq_last1);
+        int mask1 = _mm_movemask_epi8(candidates1);
 
-            /* Combine masks */
-            int combined = mask_rare & mask_first;
-
-            while (combined != 0) {
-                int idx = __builtin_ctz(combined);
-                const uint8_t* candidate = ptr + idx;
-
-                if (candidate + needle_len <= haystack + haystack_len) {
-                    if (memcmp(candidate, needle, needle_len) == 0) {
-                        return candidate;
-                    }
-                }
-                combined &= combined - 1;
+        /* Process candidates from first chunk */
+        while (mask0 != 0) {
+            int idx = __builtin_ctz(mask0);
+            const uint8_t* candidate = ptr + idx;
+            if (needle_len <= 2 || memcmp(candidate + 1, needle + 1, needle_len - 2) == 0) {
+                return candidate;
             }
+            mask0 &= mask0 - 1;
+        }
+
+        /* Process candidates from second chunk */
+        while (mask1 != 0) {
+            int idx = __builtin_ctz(mask1);
+            const uint8_t* candidate = ptr + 16 + idx;
+            if (needle_len <= 2 || memcmp(candidate + 1, needle + 1, needle_len - 2) == 0) {
+                return candidate;
+            }
+            mask1 &= mask1 - 1;
+        }
+
+        ptr += 32;
+    }
+
+    /* Handle remaining 16 bytes */
+    while (ptr + 16 <= end) {
+        __m128i chunk_first = _mm_loadu_si128((const __m128i*)ptr);
+        __m128i chunk_last = _mm_loadu_si128((const __m128i*)(ptr + offset));
+        __m128i eq_first = _mm_cmpeq_epi8(chunk_first, first_vec);
+        __m128i eq_last = _mm_cmpeq_epi8(chunk_last, last_vec);
+        __m128i candidates = _mm_and_si128(eq_first, eq_last);
+        int mask = _mm_movemask_epi8(candidates);
+
+        while (mask != 0) {
+            int idx = __builtin_ctz(mask);
+            const uint8_t* candidate = ptr + idx;
+            if (needle_len <= 2 || memcmp(candidate + 1, needle + 1, needle_len - 2) == 0) {
+                return candidate;
+            }
+            mask &= mask - 1;
         }
         ptr += 16;
     }
 
-    /* Handle remaining bytes */
+    /* Scalar tail */
     while (ptr < end) {
-        if (*ptr == first_byte && ptr[rare_idx] == rare_byte) {
-            if (memcmp(ptr, needle, needle_len) == 0) {
+        if (*ptr == first_byte && ptr[offset] == last_byte) {
+            if (needle_len <= 2 || memcmp(ptr + 1, needle + 1, needle_len - 2) == 0) {
                 return ptr;
             }
         }
@@ -710,37 +771,77 @@ static inline const uint8_t* memrchr3_neon(uint8_t n1, uint8_t n2, uint8_t n3,
 }
 
 /*
- * NEON-accelerated memmem with SIMD prefiltering
+ * NEON Packed Pair implementation - processes 16 bytes at a time
  */
 static inline const uint8_t* memmem_neon(const uint8_t* needle, size_t needle_len,
                                           const uint8_t* haystack, size_t haystack_len) {
-    size_t rare_idx = find_rare_byte_index(needle, needle_len);
-    uint8_t rare_byte = needle[rare_idx];
-    uint8_t first_byte = needle[0];
+    const uint8_t first_byte = needle[0];
+    const uint8_t last_byte = needle[needle_len - 1];
+    const size_t offset = needle_len - 1;
 
     const uint8_t* ptr = haystack;
     const uint8_t* end = haystack + haystack_len - needle_len + 1;
 
-    uint8x16_t rare_vec = vdupq_n_u8(rare_byte);
     uint8x16_t first_vec = vdupq_n_u8(first_byte);
+    uint8x16_t last_vec = vdupq_n_u8(last_byte);
 
+    /* Main loop: process 32 bytes per iteration (unrolled 2x) */
+    while (ptr + 32 <= end) {
+        /* First 16 bytes */
+        uint8x16_t chunk_first0 = vld1q_u8(ptr);
+        uint8x16_t chunk_last0 = vld1q_u8(ptr + offset);
+        uint8x16_t eq_first0 = vceqq_u8(chunk_first0, first_vec);
+        uint8x16_t eq_last0 = vceqq_u8(chunk_last0, last_vec);
+        uint8x16_t candidates0 = vandq_u8(eq_first0, eq_last0);
+
+        /* Second 16 bytes */
+        uint8x16_t chunk_first1 = vld1q_u8(ptr + 16);
+        uint8x16_t chunk_last1 = vld1q_u8(ptr + 16 + offset);
+        uint8x16_t eq_first1 = vceqq_u8(chunk_first1, first_vec);
+        uint8x16_t eq_last1 = vceqq_u8(chunk_last1, last_vec);
+        uint8x16_t candidates1 = vandq_u8(eq_first1, eq_last1);
+
+        /* Check if any candidates in first chunk */
+        uint64x2_t cand64_0 = vreinterpretq_u64_u8(candidates0);
+        if (vgetq_lane_u64(cand64_0, 0) || vgetq_lane_u64(cand64_0, 1)) {
+            for (int i = 0; i < 16 && ptr + i < end; i++) {
+                if (ptr[i] == first_byte && ptr[i + offset] == last_byte) {
+                    if (needle_len <= 2 || memcmp(ptr + i + 1, needle + 1, needle_len - 2) == 0) {
+                        return ptr + i;
+                    }
+                }
+            }
+        }
+
+        /* Check if any candidates in second chunk */
+        uint64x2_t cand64_1 = vreinterpretq_u64_u8(candidates1);
+        if (vgetq_lane_u64(cand64_1, 0) || vgetq_lane_u64(cand64_1, 1)) {
+            for (int i = 0; i < 16 && ptr + 16 + i < end; i++) {
+                if (ptr[16 + i] == first_byte && ptr[16 + i + offset] == last_byte) {
+                    if (needle_len <= 2 || memcmp(ptr + 16 + i + 1, needle + 1, needle_len - 2) == 0) {
+                        return ptr + 16 + i;
+                    }
+                }
+            }
+        }
+
+        ptr += 32;
+    }
+
+    /* Handle remaining 16 bytes */
     while (ptr + 16 <= end) {
-        uint8x16_t chunk_rare = vld1q_u8(ptr + rare_idx);
-        uint8x16_t cmp_rare = vceqq_u8(chunk_rare, rare_vec);
+        uint8x16_t chunk_first = vld1q_u8(ptr);
+        uint8x16_t chunk_last = vld1q_u8(ptr + offset);
+        uint8x16_t eq_first = vceqq_u8(chunk_first, first_vec);
+        uint8x16_t eq_last = vceqq_u8(chunk_last, last_vec);
+        uint8x16_t candidates = vandq_u8(eq_first, eq_last);
 
-        uint64x2_t rare64 = vreinterpretq_u64_u8(cmp_rare);
-        if (vgetq_lane_u64(rare64, 0) || vgetq_lane_u64(rare64, 1)) {
-            uint8x16_t chunk_first = vld1q_u8(ptr);
-            uint8x16_t cmp_first = vceqq_u8(chunk_first, first_vec);
-            uint8x16_t combined = vandq_u8(cmp_rare, cmp_first);
-
-            uint64x2_t comb64 = vreinterpretq_u64_u8(combined);
-            if (vgetq_lane_u64(comb64, 0) || vgetq_lane_u64(comb64, 1)) {
-                for (int i = 0; i < 16 && ptr + i < end; i++) {
-                    if (ptr[i] == first_byte && ptr[i + rare_idx] == rare_byte) {
-                        if (memcmp(ptr + i, needle, needle_len) == 0) {
-                            return ptr + i;
-                        }
+        uint64x2_t cand64 = vreinterpretq_u64_u8(candidates);
+        if (vgetq_lane_u64(cand64, 0) || vgetq_lane_u64(cand64, 1)) {
+            for (int i = 0; i < 16 && ptr + i < end; i++) {
+                if (ptr[i] == first_byte && ptr[i + offset] == last_byte) {
+                    if (needle_len <= 2 || memcmp(ptr + i + 1, needle + 1, needle_len - 2) == 0) {
+                        return ptr + i;
                     }
                 }
             }
@@ -748,10 +849,10 @@ static inline const uint8_t* memmem_neon(const uint8_t* needle, size_t needle_le
         ptr += 16;
     }
 
-    /* Scalar remainder */
+    /* Scalar tail */
     while (ptr < end) {
-        if (*ptr == first_byte && ptr[rare_idx] == rare_byte) {
-            if (memcmp(ptr, needle, needle_len) == 0) {
+        if (*ptr == first_byte && ptr[offset] == last_byte) {
+            if (needle_len <= 2 || memcmp(ptr + 1, needle + 1, needle_len - 2) == 0) {
                 return ptr;
             }
         }

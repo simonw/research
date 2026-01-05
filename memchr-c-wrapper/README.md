@@ -20,10 +20,12 @@ This project reimplements the functionality of the BurntSushi/memchr Rust librar
 The C implementation uses:
 - **glibc's optimized memchr/memrchr** for single byte search
 - **Custom SSE2/AVX2/NEON SIMD code** for multi-byte search (memchr2, memchr3)
-- **SIMD-accelerated substring search** with Two-Way style prefiltering:
-  - Uses "rare byte" detection to find optimal prefilter character
-  - SIMD scans for first byte and rare byte simultaneously
-  - AVX2 processes 32 bytes at a time, SSE2 processes 16 bytes
+- **"Packed Pair" SIMD substring search** - the key algorithm from Rust's memchr:
+  - Searches for FIRST and LAST byte of needle simultaneously
+  - Much more selective than single-byte prefiltering
+  - AVX2 processes 64 bytes per iteration (loop unrolled 2x)
+  - SSE2 processes 32 bytes per iteration
+- **Software prefetching** for better cache utilization
 - **Runtime CPU feature detection** using CPUID on x86-64
 - **Python C API** for Python bindings
 - **setuptools** for building (compatible with uv, pip)
@@ -34,17 +36,17 @@ Benchmarks were run comparing the C implementation (pymemchr_c), the Rust implem
 
 ### Speedup vs Python (higher is better)
 
-| Operation | C vs Python | Rust vs Python |
-|-----------|-------------|----------------|
-| memchr (first byte) | 1.87x | 1.12x |
-| memrchr (last byte) | 1.37x | 1.65x |
-| memchr2 (first of 2) | 2.57x | 2.31x |
-| memchr3 (first of 3) | 4.84x | 5.53x |
-| memmem (short needle) | **7.91x** | 19.54x |
-| memmem (medium needle) | 3.94x | 9.02x |
-| memmem (long needle) | 1.75x | 5.29x |
-| memchr_iter (all bytes) | 4.18x | 4.46x |
-| memmem_find_iter | **5.27x** | 19.47x |
+| Operation | C vs Python | Rust vs Python | C vs Rust |
+|-----------|-------------|----------------|-----------|
+| memchr (first byte) | 1.39x | 1.34x | 1.04x faster |
+| memrchr (last byte) | 1.42x | 1.62x | 0.88x |
+| memchr2 (first of 2) | 2.60x | 2.54x | 1.02x faster |
+| memchr3 (first of 3) | 4.14x | 5.63x | 0.74x |
+| memmem (short needle) | **28.32x** | 19.33x | **1.47x faster** |
+| memmem (medium needle) | **14.37x** | 8.75x | **1.64x faster** |
+| memmem (long needle) | **7.42x** | 5.19x | **1.43x faster** |
+| memchr_iter (all bytes) | 4.09x | 4.42x | 0.93x |
+| memmem_find_iter | **28.25x** | 19.21x | **1.47x faster** |
 
 ### Benchmark Charts
 
@@ -58,23 +60,23 @@ Benchmarks were run comparing the C implementation (pymemchr_c), the Rust implem
 ## Key Findings
 
 ### 1. Single Byte Search (memchr, memrchr)
-Both C and Rust implementations perform similarly, with modest speedups (~1.4-1.9x) over Python's native `bytes.find()` and `bytes.rfind()`. This is because glibc's memchr is already highly optimized with SIMD.
+Both C and Rust implementations perform similarly, with modest speedups (~1.4x) over Python's native `bytes.find()` and `bytes.rfind()`. This is because glibc's memchr is already highly optimized with SIMD.
 
 ### 2. Multi-Byte Search (memchr2, memchr3)
 Significant speedups (~2.5-5x) over Python. Python has to make multiple separate `find()` calls, while the C/Rust implementations use a single SIMD-optimized pass. AVX2 provides additional benefit by processing 32 bytes at a time.
 
-### 3. Substring Search (memmem)
-**With SIMD prefiltering, C now achieves significant speedups:**
-- C: **7.9x faster** than Python for short needles (up from 1.95x)
-- C: 3.9x faster for medium needles
-- Rust: 19.5x faster for short needles (still faster due to more sophisticated algorithms)
+### 3. Substring Search (memmem) - **C BEATS RUST!**
+The "Packed Pair" algorithm makes C **significantly faster than Rust**:
+- C: **28.3x faster** than Python for short needles (**1.47x faster than Rust**)
+- C: **14.4x faster** for medium needles (**1.64x faster than Rust**)
+- C: **7.4x faster** for long needles (**1.43x faster than Rust**)
 
-The SIMD prefiltering approach uses a "rare byte" heuristic to quickly eliminate candidate positions before verification.
+The Packed Pair approach searches for first AND last byte simultaneously, providing much better filtering than single-byte prefiltering.
 
 ### 4. Iterator Functions
 Both implementations are ~4x faster than Python for finding all byte occurrences. For substring iteration:
-- C: **5.3x faster** than Python (up from 0.95x - was actually slower before!)
-- Rust: 19.5x faster than Python
+- C: **28.3x faster** than Python (**1.47x faster than Rust!**)
+- Rust: 19.2x faster than Python
 
 ## Installation
 
@@ -155,14 +157,14 @@ finder.find(b"bar foo baz")  # Returns 4
 ## When to Use This vs Rust Implementation
 
 **Use pymemchr_c (C) when:**
+- You need fastest substring search performance (**C is now 1.4-1.6x faster than Rust**)
+- You're doing heavy memmem_find or memmem_find_iter operations
 - You don't have Rust toolchain available
-- You need single-byte or multi-byte search functions
 - You prefer simpler build dependencies
 
 **Use pymemchr (Rust) when:**
-- You need fastest substring search performance
-- You're doing heavy memmem_find_iter operations
-- You already have Rust toolchain available
+- You need slightly faster memchr3 or memrchr operations
+- You already have Rust toolchain available and want to use the original library
 
 ## Running Tests
 
@@ -179,23 +181,25 @@ uv pip install pymemchr  # Install Rust version for comparison
 uv run python benchmark.py
 ```
 
-## Recent Improvements (v0.1.0)
+## Recent Improvements (v0.2.0)
 
-The following optimizations were implemented to significantly boost performance:
+The following optimizations were implemented to achieve **faster-than-Rust** performance:
 
-1. **SIMD prefiltering for substring search** - Uses "rare byte" detection and dual-byte SIMD scanning to quickly eliminate candidate positions
-2. **AVX2 support** - Processes 32 bytes at a time on modern x86_64 CPUs (vs 16 bytes for SSE2)
-3. **Runtime CPU feature detection** - Automatically detects and uses AVX2 when available via CPUID
+1. **"Packed Pair" algorithm** - Searches for first AND last byte of needle simultaneously, providing much better filtering than single-byte prefiltering
+2. **Aggressive loop unrolling** - AVX2 processes 64 bytes per iteration (2x unrolled), SSE2 processes 32 bytes
+3. **Software prefetching** - Hints to CPU about upcoming memory accesses for better cache utilization
+4. **Optimized verification** - Skips already-verified first/last bytes in memcmp
 
 These improvements resulted in:
-- **4x better** performance for short needle substring search (1.95x → 7.91x vs Python)
-- **5.5x better** performance for substring iteration (0.95x → 5.27x vs Python)
+- **14.5x better** substring search performance (1.95x → 28.32x vs Python)
+- **29.7x better** substring iteration (0.95x → 28.25x vs Python)
+- **C now 1.4-1.6x faster than Rust** for all substring operations!
 
 ## Potential Future Improvements
 
-1. More sophisticated Two-Way algorithm implementation for long needle patterns
-2. AVX-512 support for even wider SIMD operations
-3. Precomputed skip tables in Finder class for repeated searches
+1. AVX-512 support for even wider SIMD operations (128 bytes at a time)
+2. Precomputed skip tables in Finder class for repeated searches with long needles
+3. ARM SVE support for scalable vector operations
 
 ## License
 
