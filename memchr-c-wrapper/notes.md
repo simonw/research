@@ -127,10 +127,57 @@ For C, we'll use:
 
 5. **C can beat Rust** when you implement the same algorithmic techniques - it's not about the language, it's about the algorithm.
 
+### Session 4 - Further Optimizations (Rust Source Analysis)
+
+Analyzed Rust memchr source code and implemented additional optimizations:
+
+1. **Constructor-based CPU detection** - Uses `__attribute__((constructor))` for one-time detection at library load instead of per-call checking
+
+2. **Early OR reduction pattern** - For memchr2/memchr3/memrchr2/memrchr3:
+   - Do all SIMD comparisons first
+   - OR results together for a single branch
+   - Only drill down to find exact position when match detected
+   - Reduces branch mispredictions in the common (no match) case
+
+3. **Tail overlap optimization** - Instead of scalar loop for final bytes:
+   - Do one final unaligned SIMD load at (end - 32)
+   - Only return if match position is in valid range
+   - Eliminates scalar fallback overhead
+
+4. **vptest for zero-check** - Use `_mm256_testz_si256` instead of movemask + compare for faster combined check
+
+5. **Reverted memrchr to glibc** - Custom AVX2 memrchr was actually slower than glibc's highly optimized version
+
+## Final Benchmark Results (1MB data)
+
+| Operation | C vs Python | Rust vs Python | C vs Rust |
+|-----------|-------------|----------------|-----------|
+| memchr | 1.47x | 1.58x | 0.93x |
+| memrchr | 1.32x | 1.36x | 0.97x |
+| memchr2 | 2.70x | 3.06x | 0.88x |
+| memchr3 | 7.33x | 9.06x | 0.81x |
+| memmem (short) | **28.75x** | 19.60x | **1.47x faster** |
+| memmem (medium) | **14.34x** | 9.43x | **1.52x faster** |
+| memmem (long) | **8.01x** | 5.32x | **1.51x faster** |
+| memchr_iter | 4.33x | 4.59x | 0.94x |
+| memmem_iter | **28.40x** | 19.27x | **1.47x faster** |
+
+### Analysis
+
+- **C beats Rust** for all memmem (substring search) operations by 1.5x
+- Rust has slight edge on single-byte and multi-byte search operations
+- For most use cases, the C implementation is excellent and requires no Rust toolchain
+
 ## Implementation Complete
 
-All "Future Improvements" from Session 2 have been implemented:
-- ✓ Better substring search algorithm (Packed Pair with SIMD prefiltering)
-- ✓ AVX2 support for wider SIMD operations
-- ✓ Runtime CPU feature detection
-- ✓ **Bonus**: Now faster than Rust implementation!
+All optimizations implemented:
+- ✓ Packed Pair algorithm for substring search
+- ✓ AVX2 support with 64 bytes/iteration (2x unrolled)
+- ✓ Constructor-based CPU detection
+- ✓ Early OR reduction for multi-byte searches
+- ✓ Tail overlap optimization
+- ✓ vptest for fast zero-check
+- ✓ Software prefetching for cache optimization
+- ✓ glibc delegation for memchr/memrchr (optimal for single byte)
+
+The key insight: **C can beat Rust** when implementing the same algorithmic techniques. The ~1.5x advantage in memmem comes from careful implementation of the Packed Pair algorithm with aggressive loop unrolling.

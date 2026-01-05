@@ -38,15 +38,15 @@ Benchmarks were run comparing the C implementation (pymemchr_c), the Rust implem
 
 | Operation | C vs Python | Rust vs Python | C vs Rust |
 |-----------|-------------|----------------|-----------|
-| memchr (first byte) | 1.39x | 1.34x | 1.04x faster |
-| memrchr (last byte) | 1.42x | 1.62x | 0.88x |
-| memchr2 (first of 2) | 2.60x | 2.54x | 1.02x faster |
-| memchr3 (first of 3) | 4.14x | 5.63x | 0.74x |
-| memmem (short needle) | **28.32x** | 19.33x | **1.47x faster** |
-| memmem (medium needle) | **14.37x** | 8.75x | **1.64x faster** |
-| memmem (long needle) | **7.42x** | 5.19x | **1.43x faster** |
-| memchr_iter (all bytes) | 4.09x | 4.42x | 0.93x |
-| memmem_find_iter | **28.25x** | 19.21x | **1.47x faster** |
+| memchr (first byte) | 1.47x | 1.58x | 0.93x |
+| memrchr (last byte) | 1.32x | 1.36x | 0.97x |
+| memchr2 (first of 2) | 2.70x | 3.06x | 0.88x |
+| memchr3 (first of 3) | 7.33x | 9.06x | 0.81x |
+| memmem (short needle) | **28.75x** | 19.60x | **1.47x faster** |
+| memmem (medium needle) | **14.34x** | 9.43x | **1.52x faster** |
+| memmem (long needle) | **8.01x** | 5.32x | **1.51x faster** |
+| memchr_iter (all bytes) | 4.33x | 4.59x | 0.94x |
+| memmem_find_iter | **28.40x** | 19.27x | **1.47x faster** |
 
 ### Benchmark Charts
 
@@ -60,23 +60,23 @@ Benchmarks were run comparing the C implementation (pymemchr_c), the Rust implem
 ## Key Findings
 
 ### 1. Single Byte Search (memchr, memrchr)
-Both C and Rust implementations perform similarly, with modest speedups (~1.4x) over Python's native `bytes.find()` and `bytes.rfind()`. This is because glibc's memchr is already highly optimized with SIMD.
+Both C and Rust implementations perform similarly, with modest speedups (~1.3-1.6x) over Python's native `bytes.find()` and `bytes.rfind()`. This is because glibc's memchr is already highly optimized with SIMD. The C implementation delegates to glibc for optimal performance.
 
 ### 2. Multi-Byte Search (memchr2, memchr3)
-Significant speedups (~2.5-5x) over Python. Python has to make multiple separate `find()` calls, while the C/Rust implementations use a single SIMD-optimized pass. AVX2 provides additional benefit by processing 32 bytes at a time.
+Significant speedups (3-9x) over Python. Python has to make multiple separate `find()` calls, while the C/Rust implementations use a single SIMD-optimized pass. The C implementation uses AVX2 with early OR reduction and vptest for efficient zero-checking.
 
 ### 3. Substring Search (memmem) - **C BEATS RUST!**
 The "Packed Pair" algorithm makes C **significantly faster than Rust**:
-- C: **28.3x faster** than Python for short needles (**1.47x faster than Rust**)
-- C: **14.4x faster** for medium needles (**1.64x faster than Rust**)
-- C: **7.4x faster** for long needles (**1.43x faster than Rust**)
+- C: **28.8x faster** than Python for short needles (**1.47x faster than Rust**)
+- C: **14.3x faster** for medium needles (**1.52x faster than Rust**)
+- C: **8.0x faster** for long needles (**1.51x faster than Rust**)
 
 The Packed Pair approach searches for first AND last byte simultaneously, providing much better filtering than single-byte prefiltering.
 
 ### 4. Iterator Functions
 Both implementations are ~4x faster than Python for finding all byte occurrences. For substring iteration:
-- C: **28.3x faster** than Python (**1.47x faster than Rust!**)
-- Rust: 19.2x faster than Python
+- C: **28.4x faster** than Python (**1.47x faster than Rust!**)
+- Rust: 19.3x faster than Python
 
 ## Installation
 
@@ -189,11 +189,15 @@ The following optimizations were implemented to achieve **faster-than-Rust** per
 2. **Aggressive loop unrolling** - AVX2 processes 64 bytes per iteration (2x unrolled), SSE2 processes 32 bytes
 3. **Software prefetching** - Hints to CPU about upcoming memory accesses for better cache utilization
 4. **Optimized verification** - Skips already-verified first/last bytes in memcmp
+5. **Constructor-based CPU detection** - One-time detection at library load instead of per-call checking
+6. **Early OR reduction** - Combines all SIMD comparison results before branching for reduced branch mispredictions
+7. **Tail overlap optimization** - Uses final unaligned SIMD load instead of scalar loop for remaining bytes
+8. **vptest for zero-check** - Uses `_mm256_testz_si256` for faster combined match detection
 
 These improvements resulted in:
-- **14.5x better** substring search performance (1.95x → 28.32x vs Python)
-- **29.7x better** substring iteration (0.95x → 28.25x vs Python)
-- **C now 1.4-1.6x faster than Rust** for all substring operations!
+- **28.8x faster** than Python for substring search (short needles)
+- **28.4x faster** than Python for substring iteration
+- **C now 1.5x faster than Rust** for all substring operations!
 
 ## Potential Future Improvements
 
