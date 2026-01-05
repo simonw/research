@@ -54,19 +54,36 @@ For C, we'll use:
 - Built wheel with `uv build`
 - Ran benchmarks comparing C, Rust, and Python implementations
 
-## Benchmark Results (1MB data)
+### Session 2 - Performance Improvements
+- Implemented Two-Way style algorithm with SIMD prefiltering for memmem
+  - Uses "rare byte" detection to find optimal prefilter character
+  - SIMD scans for both first byte and rare byte simultaneously
+  - Only verifies full match on candidate positions
+- Added AVX2 support (32 bytes at a time vs 16 for SSE2)
+- Added runtime CPU feature detection using CPUID
+- Significant performance improvements for substring search
+
+## Benchmark Results (1MB data) - After Improvements
 
 | Operation | C vs Python | Rust vs Python |
 |-----------|-------------|----------------|
-| memchr | 1.37x | 1.27x |
-| memrchr | 1.37x | 1.55x |
-| memchr2 | 2.40x | 2.43x |
-| memchr3 | 4.74x | 5.60x |
-| memmem (short) | 1.95x | 19.45x |
-| memmem (medium) | 4.64x | 9.36x |
-| memmem (long) | 4.01x | 5.06x |
-| memchr_iter | 4.23x | 4.51x |
-| memmem_iter | 0.95x | 19.30x |
+| memchr | 1.87x | 1.12x |
+| memrchr | 1.37x | 1.65x |
+| memchr2 | 2.57x | 2.31x |
+| memchr3 | 4.84x | 5.53x |
+| memmem (short) | **7.91x** | 19.54x |
+| memmem (medium) | 3.94x | 9.02x |
+| memmem (long) | 1.75x | 5.29x |
+| memchr_iter | 4.18x | 4.46x |
+| memmem_iter | **5.27x** | 19.47x |
+
+### Previous Results (for comparison)
+
+| Operation | C vs Python (before) | C vs Python (after) | Improvement |
+|-----------|---------------------|---------------------|-------------|
+| memmem (short) | 1.95x | 7.91x | **4.1x better** |
+| memmem (medium) | 4.64x | 3.94x | similar |
+| memmem_iter | 0.95x | 5.27x | **5.5x better** |
 
 ## Key Findings
 

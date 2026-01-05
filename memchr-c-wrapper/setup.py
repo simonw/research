@@ -20,7 +20,8 @@ elif sys.platform == 'linux':
     # Linux - gcc or clang
     extra_compile_args = ['-O3', '-Wall', '-Wextra', '-D_GNU_SOURCE']
     if platform.machine() == 'x86_64':
-        extra_compile_args.extend(['-msse2', '-msse4.1'])
+        # Enable AVX2 and SSE2 - runtime detection will choose appropriate path
+        extra_compile_args.extend(['-msse2', '-msse4.1', '-mavx2'])
     elif platform.machine() == 'aarch64':
         extra_compile_args.append('-march=armv8-a+simd')
 elif sys.platform == 'win32':
