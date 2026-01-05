@@ -11,11 +11,7 @@ This package wraps the high-performance `memchr` Rust crate by Andrew Gallant (B
 
 ## Installation
 
-```bash
-pip install pymemchr
-```
-
-Or build from source with [maturin](https://github.com/PyO3/maturin):
+Build from source with [maturin](https://github.com/PyO3/maturin):
 
 ```bash
 git clone <repository>
