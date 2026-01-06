@@ -3,11 +3,65 @@ export interface Env {
   BROWSER_SESSION: DurableObjectNamespace;
   SESSION_REGISTRY: DurableObjectNamespace;
   API_KEY: string;
+  TWOCAPTCHA_API_KEY?: string;
+}
+
+export type CaptchaType = 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha' | 'turnstile';
+
+export interface SolveCaptchaOptions {
+  type?: CaptchaType;
+  sitekey?: string;
+  enterprise?: boolean;
+  action?: string;
+  invisible?: boolean;
+}
+
+export interface CaptchaInfo {
+  type: CaptchaType;
+  sitekey: string;
+  pageurl: string;
+  enterprise: boolean;
+  action?: string;
+  s?: string;
+  callbackName?: string;
+  widgetId?: string;
+  frameUrl?: string;
 }
 
 export type SessionStatus = 'idle' | 'starting' | 'running' | 'takeover' | 'done' | 'error';
 
 export type AutomationMode = 'idle' | 'automation' | 'user-input';
+export interface InputFieldSchema {
+  type: 'string' | 'boolean' | 'number';
+  title: string;
+  description?: string;
+  enum?: string[];
+  enumNames?: string[];
+  default?: string | boolean | number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+}
+
+export interface InputSchema {
+  schema: {
+    type: 'object';
+    required?: string[];
+    properties: Record<string, InputFieldSchema>;
+  };
+  uiSchema?: Record<string, {
+    'ui:widget'?: 'text' | 'password' | 'textarea' | 'radio' | 'select' | 'checkbox';
+    'ui:placeholder'?: string;
+    'ui:autofocus'?: boolean;
+    'ui:help'?: string;
+  }>;
+  title?: string;
+  description?: string;
+  submitLabel?: string;
+  cancelLabel?: string;
+  error?: string;
+  errors?: Record<string, string>;
+}
 
 export interface SessionState {
   status: SessionStatus;
@@ -91,7 +145,9 @@ export type ServerMessage =
   | { type: 'automation:state'; state: AutomationState }
   | { type: 'automation:data'; key: string; value: unknown }
   | { type: 'automation:cursor'; x: number; y: number; action: 'move' | 'click' }
-  | { type: 'viewport:ack'; width: number; height: number };
+  | { type: 'viewport:ack'; width: number; height: number }
+  | { type: 'input:request'; requestId: string; input: InputSchema }
+  | { type: 'input:cancelled'; requestId: string };
 
 export type ClientMessage =
   | { type: 'mouse'; action: string; x: number; y: number; button?: string }
@@ -100,7 +156,9 @@ export type ClientMessage =
   | { type: 'done' }
   | { type: 'scroll'; deltaX: number; deltaY: number; x: number; y: number }
   | { type: 'command'; commandId: string; method: string; args: unknown[] }
-  | { type: 'viewport'; width: number; height: number };
+  | { type: 'viewport'; width: number; height: number }
+  | { type: 'input:response'; requestId: string; values: Record<string, unknown> }
+  | { type: 'input:cancel'; requestId: string };
 
 export class LRUCache<K, V> {
   private maxSize: number;

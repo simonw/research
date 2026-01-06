@@ -1308,6 +1308,14 @@ export default function RootLayout({
 }
 ```
 
+### CAPTCHA Solving
+The system includes robust, multi-frame captcha solving (inspired by PEPR: https://github.com/berstend/puppeteer-extra/tree/master/packages/puppeteer-extra-plugin-recaptcha):
+- **Source of Truth Detection**: Inspects internal library configurations (`___grecaptcha_cfg`) rather than just DOM elements.
+- **Cross-Origin Support**: Automatically scans all iframes (including cross-origin ones like on Instagram) to find the captcha engine.
+- **Precision Injection**: Targets the specific widget and triggers the exact callback function.
+- **Visual Feedback**: Solved captchas are highlighted in the browser view.
+- **Fallback**: Automatically falls back to user takeover if solving fails.
+
 ---
 
 ## Deployment

@@ -13,6 +13,7 @@
     "wrangler": "^4.56.0"
   },
   "dependencies": {
-    "@cloudflare/playwright": "^1.0.0"
+    "@cloudflare/playwright": "^1.0.0",
+    "@2captcha/captcha-solver": "^1.2.0"
   }
 }

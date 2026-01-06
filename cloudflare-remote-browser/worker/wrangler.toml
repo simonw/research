@@ -27,6 +27,7 @@ new_classes = ["SessionRegistry"]
 
 [vars]
 API_KEY = "dev-api-key-12345"
+# TWOCAPTCHA_API_KEY set via: wrangler secret put TWOCAPTCHA_API_KEY
 
 [observability]
 [observability.logs]

@@ -1,4 +1,4 @@
-import { ClientMessage, ServerMessage } from './types';
+import { ClientMessage, ServerMessage, InputSchema } from './types';
 
 type CommandCallback = (commandId: string, result: unknown, error?: string) => void;
 
@@ -11,7 +11,7 @@ function trimTrailingUndefined(args: unknown[]): unknown[] {
 }
 
 function getCommandTimeoutMs(method: string, args: unknown[]): number {
-  if (method === 'promptUser') {
+  if (method === 'promptUser' || method === 'getInput' || method === 'solveCaptcha') {
     return 10 * 60 * 1000;
   }
 
@@ -35,7 +35,7 @@ function getCommandTimeoutMs(method: string, args: unknown[]): number {
     }
   }
 
-  return 30_000;
+  return 60_000;
 }
 
 export class PlaywrightProxy {
@@ -213,6 +213,55 @@ export class PlaywrightPageProxy {
     return result as (string | null)[];
   }
 
+  async exists(selector: string): Promise<boolean> {
+    const result = await this.execute('exists', [selector]);
+    return !!result;
+  }
+
+  async count(selector: string): Promise<number> {
+    const result = await this.execute('count', [selector]);
+    return (result as number) || 0;
+  }
+
+  async waitForURL(url: string | RegExp | ((url: string) => boolean), options?: { timeout?: number; waitUntil?: 'load' | 'domcontentloaded' | 'networkidle' | 'commit' }): Promise<void> {
+    if (typeof url === 'string') {
+      const timeout = options?.timeout || 30000;
+      const start = Date.now();
+      while (Date.now() - start < timeout) {
+        try {
+          const currentUrl = await this.url();
+          if (currentUrl.includes(url)) return;
+        } catch (e) {}
+        await this.sleep(1000);
+      }
+      throw new Error(`Timeout waiting for URL: ${url}`);
+    }
+    await this.sleep(2000);
+  }
+
+  async $(selector: string): Promise<any> {
+    const exists = await this.execute('exists', [selector]);
+    if (!exists) return null;
+    return {
+      textContent: () => this.execute('scrapeText', [selector]),
+      getAttribute: (name: string) => this.execute('scrapeAttribute', [selector, name]),
+      click: (options?: any) => this.execute('click', [selector, options]),
+      fill: (value: string, options?: any) => this.execute('fill', [selector, value, options]),
+    };
+  }
+
+  async $$(selector: string): Promise<any[]> {
+    const count = await this.execute('count', [selector]) as number;
+    const results = [];
+    for (let i = 0; i < count; i++) {
+      results.push({
+        textContent: () => this.execute('scrapeText', [`(${selector}) >> nth=${i}`]),
+        getAttribute: (name: string) => this.execute('scrapeAttribute', [`(${selector}) >> nth=${i}`, name]),
+      });
+    }
+    return results;
+  }
+
   async promptUser(message: string, ...args: unknown[]): Promise<void> {
     let conditionFn: (() => Promise<boolean>) | undefined;
     let pollInterval = 2000;
@@ -246,6 +295,19 @@ export class PlaywrightPageProxy {
     } else {
       await this.execute('promptUser', [message, options]);
     }
+  }
+
+  async getInput(inputSchema: InputSchema): Promise<Record<string, unknown>> {
+    return this.execute('getInput', [inputSchema]) as Promise<Record<string, unknown>>;
+  }
+
+  async solveCaptcha(options?: {
+    type?: 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha' | 'turnstile';
+    sitekey?: string;
+    enterprise?: boolean;
+    action?: string;
+  }): Promise<{ success: boolean; fallback?: boolean }> {
+    return this.execute('solveCaptcha', [options]) as Promise<{ success: boolean; fallback?: boolean }>;
   }
 }
 

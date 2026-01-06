@@ -1,4 +1,5 @@
 import { launch, Browser, Page, CDPSession } from '@cloudflare/playwright';
+import { Solver } from '@2captcha/captcha-solver';
 import { 
   Env, 
   SessionStatus, 
@@ -9,7 +10,8 @@ import {
   ResourceType,
   LRUCache,
   AutomationState,
-  AutomationMode
+  AutomationMode,
+  InputSchema
 } from './types';
 
 const NETWORK_CACHE_SIZE = 1000;
@@ -56,6 +58,9 @@ export class BrowserSession {
   private state: DurableObjectState;
   private env: Env;
   
+  private static readonly IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+  private lastActivityTime: number = Date.now();
+  
   private browser: Browser | null = null;
   private page: Page | null = null;
   private cdp: CDPSession | null = null;
@@ -67,6 +72,10 @@ export class BrowserSession {
   
   private wsConnections: Set<WebSocket> = new Set();
   private takeoverResolver: (() => void) | null = null;
+  private inputResolvers: Map<string, {
+    resolve: (values: Record<string, unknown>) => void;
+    reject: (error: Error) => void;
+  }> = new Map();
   
   private viewportWidth = 800;
   private viewportHeight = 600;
@@ -81,6 +90,34 @@ export class BrowserSession {
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
+  }
+
+  /**
+   * Durable Object alarm handler - automatically called by Cloudflare
+   * when the scheduled alarm time is reached.
+   */
+  async alarm(): Promise<void> {
+    const now = Date.now();
+    const idleTime = now - this.lastActivityTime;
+    
+    if (idleTime >= BrowserSession.IDLE_TIMEOUT_MS) {
+      console.log(`[alarm] Session idle for ${Math.round(idleTime / 1000)}s, cleaning up...`);
+      await this.cleanup();
+    } else {
+      // Session had activity since alarm was set, reschedule for remaining time
+      const remainingTime = BrowserSession.IDLE_TIMEOUT_MS - idleTime;
+      console.log(`[alarm] Session still active, rescheduling alarm for ${Math.round(remainingTime / 1000)}s`);
+      await this.state.storage.setAlarm(now + remainingTime);
+    }
+  }
+
+  /**
+   * Reset the idle timer on any activity. Schedules an alarm to clean up
+   * the session if there's no activity for IDLE_TIMEOUT_MS.
+   */
+  private async resetIdleTimer(): Promise<void> {
+    this.lastActivityTime = Date.now();
+    await this.state.storage.setAlarm(Date.now() + BrowserSession.IDLE_TIMEOUT_MS);
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -156,6 +193,9 @@ export class BrowserSession {
       console.log('[initSession] Starting browser session...');
       this.status = 'starting';
       this.broadcast({ type: 'status', status: 'starting' });
+
+      // Start idle timer when session is initialized
+      await this.resetIdleTimer();
 
       console.log('[initSession] Launching browser via BROWSER binding...');
       this.browser = await launch(this.env.BROWSER);
@@ -564,6 +604,16 @@ export class BrowserSession {
           }
         }
         result = results;
+      } else if (method === 'exists') {
+        const selector = args[0];
+        if (typeof selector !== 'string') throw new Error('exists(selector) requires a string');
+        const element = await page.$(selector);
+        result = !!element;
+      } else if (method === 'count') {
+        const selector = args[0];
+        if (typeof selector !== 'string') throw new Error('count(selector) requires a string');
+        const elements = await page.$$(selector);
+        result = elements.length;
       } else if (method === 'promptUser') {
         const message = args[0];
         const options = args[1] as { continueWhen?: string; timeout?: number; nonBlocking?: boolean } | undefined;
@@ -591,6 +641,18 @@ export class BrowserSession {
       } else if (method === 'completeTakeover') {
         this.completeTakeover();
         result = null;
+      } else if (method === 'getInput') {
+        const inputSchema = args[0] as InputSchema;
+        const requestId = `input_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        
+        this.broadcast({ type: 'input:request', requestId, input: inputSchema });
+        
+        result = await new Promise((resolve, reject) => {
+          this.inputResolvers.set(requestId, { resolve, reject });
+        });
+      } else if (method === 'solveCaptcha') {
+        const options = (args[0] || {}) as any;
+        result = await this.handleSolveCaptcha(page, options);
       } else if (method.includes('.')) {
         result = await this.executeLocatorCommand(page, method, args);
       } else {
@@ -831,6 +893,9 @@ export class BrowserSession {
   }
 
   private async handleClientMessage(message: ClientMessage): Promise<void> {
+    // Reset idle timer on any client activity
+    await this.resetIdleTimer();
+
     if (message.type === 'command') {
       await this.executeCommand(message.commandId, message.method, message.args);
       return;
@@ -838,6 +903,25 @@ export class BrowserSession {
 
     if (message.type === 'viewport') {
       await this.handleViewportResize(message.width, message.height);
+      return;
+    }
+
+    if (message.type === 'input:response') {
+      const resolver = this.inputResolvers.get(message.requestId);
+      if (resolver) {
+        this.inputResolvers.delete(message.requestId);
+        resolver.resolve(message.values);
+      }
+      return;
+    }
+
+    if (message.type === 'input:cancel') {
+      const resolver = this.inputResolvers.get(message.requestId);
+      if (resolver) {
+        this.inputResolvers.delete(message.requestId);
+        resolver.reject(new Error('User cancelled input'));
+      }
+      this.broadcast({ type: 'input:cancelled', requestId: message.requestId });
       return;
     }
 
@@ -913,6 +997,446 @@ export class BrowserSession {
     this.broadcast({ type: 'status', status: 'error', message: this.error });
   }
 
+  // Inspired by https://github.com/berstend/puppeteer-extra/tree/master/packages/puppeteer-extra-plugin-recaptcha
+  private async handleSolveCaptcha(page: Page, options: any): Promise<any> {
+    console.log('[solveCaptcha] ========== START ==========');
+    console.log('[solveCaptcha] Options:', JSON.stringify(options));
+    
+    try {
+      const currentUrl = page.url();
+      console.log('[solveCaptcha] Current URL:', currentUrl);
+      
+      console.log('[solveCaptcha] Detecting captcha...');
+      const captchaInfo = await this.detectCaptcha(page, options);
+      console.log('[solveCaptcha] Detection result:', JSON.stringify(captchaInfo));
+      
+      if (!captchaInfo) {
+        console.log('[solveCaptcha] No captcha detected, returning skipped');
+        return { success: true, skipped: true };
+      }
+
+      this.automationData['status'] = 'Solving security check...';
+      this.broadcast({ type: 'automation:data', key: 'status', value: 'Solving security check...' });
+      this.broadcast({ type: 'automation:data', key: 'captcha_debug', value: `Detected: ${captchaInfo.type}, sitekey: ${captchaInfo.sitekey?.substring(0, 20)}...` });
+
+      console.log('[solveCaptcha] Checking for TWOCAPTCHA_API_KEY...');
+      if (!this.env.TWOCAPTCHA_API_KEY) {
+        console.warn('[solveCaptcha] TWOCAPTCHA_API_KEY not set!');
+        this.broadcast({ type: 'automation:data', key: 'captcha_debug', value: 'ERROR: TWOCAPTCHA_API_KEY not configured' });
+        return await this.fallbackToPromptUser('Security check detected. Please solve the captcha manually.');
+      }
+      console.log('[solveCaptcha] API key is set (length:', this.env.TWOCAPTCHA_API_KEY.length, ')');
+
+      console.log('[solveCaptcha] Calling 2captcha API with:', JSON.stringify({
+        type: captchaInfo.type,
+        sitekey: captchaInfo.sitekey?.substring(0, 20) + '...',
+        pageurl: captchaInfo.pageurl,
+        enterprise: captchaInfo.enterprise
+      }));
+      this.broadcast({ type: 'automation:data', key: 'captcha_debug', value: 'Calling 2captcha API...' });
+      
+      const token = await this.callTwoCaptcha(captchaInfo);
+      console.log('[solveCaptcha] Got token (length:', token?.length, ')');
+      this.broadcast({ type: 'automation:data', key: 'captcha_debug', value: `Got token (${token?.length} chars)` });
+      
+      console.log('[solveCaptcha] Injecting token...');
+      this.broadcast({ type: 'automation:data', key: 'captcha_debug', value: 'Injecting token...' });
+      await this.injectCaptchaToken(page, token, captchaInfo);
+      console.log('[solveCaptcha] Token injected successfully');
+      
+      this.automationData['status'] = 'Security check solved';
+      this.broadcast({ type: 'automation:data', key: 'status', value: 'Security check solved' });
+      this.broadcast({ type: 'automation:data', key: 'captcha_debug', value: 'SUCCESS: Token injected' });
+      
+      console.log('[solveCaptcha] ========== SUCCESS ==========');
+      return { success: true, token: token?.substring(0, 20) + '...' };
+    } catch (error) {
+      console.error('[solveCaptcha] ========== ERROR ==========');
+      console.error('[solveCaptcha] Error type:', error?.constructor?.name);
+      console.error('[solveCaptcha] Error message:', error instanceof Error ? error.message : String(error));
+      console.error('[solveCaptcha] Error stack:', error instanceof Error ? error.stack : 'N/A');
+      
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.broadcast({ type: 'automation:data', key: 'captcha_debug', value: `ERROR: ${errorMsg}` });
+      
+      return await this.fallbackToPromptUser('Security check detected. Automatic solving failed. Please solve it manually.');
+    }
+  }
+
+  private async detectCaptcha(page: Page, options: any): Promise<any | null> {
+    console.log('[detectCaptcha] Starting detection with options:', JSON.stringify(options));
+    
+    // This script will be run in every frame
+    const findCaptchaInFrame = (opts: any) => {
+      const pageurl = window.location.href;
+      
+      // Simpler, more reliable search for keys in nested objects
+      const findValueByKey = (obj: any, targetKey: string, maxDepth = 5): any => {
+        if (!obj || maxDepth <= 0) return null;
+        if (Object.prototype.hasOwnProperty.call(obj, targetKey)) {
+          const val = obj[targetKey];
+          if (val !== undefined && val !== null) return val;
+        }
+        
+        for (const key in obj) {
+          if (typeof obj[key] === 'object' && obj[key] !== null) {
+            try {
+              const found = findValueByKey(obj[key], targetKey, maxDepth - 1);
+              if (found !== undefined && found !== null) return found;
+            } catch (e) {}
+          }
+        }
+        return null;
+      };
+
+      // 1. Google reCAPTCHA (The "Source of Truth")
+      const cfg = (window as any).___grecaptcha_cfg;
+      const clients = cfg?.clients;
+      if (clients) {
+        for (const id in clients) {
+          const client = clients[id];
+          const sitekey = opts.sitekey || findValueByKey(client, 'sitekey') || findValueByKey(client, 'googlekey');
+          
+          if (sitekey) {
+            const isEnterprise = opts.enterprise || 
+                               !!document.querySelector('script[src*="enterprise"]') || 
+                               !!document.querySelector('iframe[src*="/enterprise/"]') ||
+                               pageurl.includes('enterprise');
+
+            let callback = findValueByKey(client, 'callback');
+            let callbackName = opts.callbackName;
+            if (!callbackName && callback) {
+              callbackName = typeof callback === 'function' ? (callback.name || 'anonymous') : callback;
+            }
+
+            return {
+              type: 'recaptcha_v2',
+              sitekey,
+              pageurl,
+              enterprise: isEnterprise,
+              callbackName,
+              widgetId: id,
+              action: findValueByKey(client, 'action'),
+              s: findValueByKey(client, 's'),
+              frameUrl: pageurl
+            };
+          }
+        }
+      }
+
+      // 2. Fallback to DOM-based detection (for hCaptcha, Turnstile, or missed reCAPTCHA)
+      const findSiteKey = () => {
+        const el = document.querySelector('.g-recaptcha, [data-sitekey], [sitekey], .h-captcha, .cf-turnstile');
+        if (el) return el.getAttribute('data-sitekey') || el.getAttribute('sitekey');
+        
+        const iframe = document.querySelector('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="turnstile"]');
+        if (iframe) {
+          try {
+            const url = new URL((iframe as HTMLIFrameElement).src);
+            return url.searchParams.get('k') || url.searchParams.get('sitekey');
+          } catch (e) {}
+        }
+        return null;
+      };
+
+      const sitekey = opts.sitekey || findSiteKey();
+      if (sitekey) {
+        const isHcaptcha = !!document.querySelector('.h-captcha') || opts.type === 'hcaptcha';
+        const isTurnstile = !!document.querySelector('.cf-turnstile') || opts.type === 'turnstile';
+        
+        let type = 'recaptcha_v2';
+        if (isHcaptcha) type = 'hcaptcha';
+        else if (isTurnstile) type = 'turnstile';
+
+        return {
+          type,
+          sitekey,
+          pageurl,
+          enterprise: opts.enterprise || !!document.querySelector('script[src*="enterprise"]'),
+          frameUrl: pageurl
+        };
+      }
+
+      return null;
+    };
+
+    try {
+      // Iterate through all frames
+      const frames = page.frames();
+      console.log(`[detectCaptcha] Scanning ${frames.length} frames...`);
+      
+      for (const frame of frames) {
+        try {
+          const result = await frame.evaluate(findCaptchaInFrame, options);
+          if (result) {
+            console.log(`[detectCaptcha] Found captcha in frame: ${frame.url()}`);
+            return result;
+          }
+        } catch (e) {
+          // Some frames might be cross-origin or inaccessible
+          console.log(`[detectCaptcha] Frame scan failed for ${frame.url()}:`, (e as Error).message);
+        }
+      }
+      
+      console.log('[detectCaptcha] No captcha detected in any frame');
+      return null;
+    } catch (error) {
+      console.error('[detectCaptcha] Error during detection:', error);
+      throw error;
+    }
+  }
+
+  private async callTwoCaptcha(info: any): Promise<string> {
+    console.log('[callTwoCaptcha] ========== START ==========');
+    console.log('[callTwoCaptcha] Creating solver with API key (length:', this.env.TWOCAPTCHA_API_KEY?.length, ')');
+    
+    const solver = new Solver(this.env.TWOCAPTCHA_API_KEY!);
+    
+    console.log('[callTwoCaptcha] Captcha type:', info.type);
+    console.log('[callTwoCaptcha] Sitekey:', info.sitekey);
+    console.log('[callTwoCaptcha] Page URL:', info.pageurl);
+    console.log('[callTwoCaptcha] Enterprise:', info.enterprise);
+    
+    try {
+      if (info.type === 'recaptcha_v2') {
+        console.log('[callTwoCaptcha] Calling solver.recaptcha() with enterprise =', info.enterprise);
+        const startTime = Date.now();
+        
+        const result = await solver.recaptcha({
+          googlekey: info.sitekey,
+          pageurl: info.pageurl,
+          enterprise: info.enterprise
+        });
+        
+        const elapsed = Date.now() - startTime;
+        console.log('[callTwoCaptcha] solver.recaptcha() completed in', elapsed, 'ms');
+        console.log('[callTwoCaptcha] Result received:', {
+          hasData: !!result.data,
+          dataLength: result.data?.length,
+          id: result.id
+        });
+        
+        if (!result.data) {
+          throw new Error('2captcha returned empty token');
+        }
+        
+        console.log('[callTwoCaptcha] ========== SUCCESS ==========');
+        return result.data;
+      } else if (info.type === 'hcaptcha') {
+        console.log('[callTwoCaptcha] Calling solver.hcaptcha()...');
+        const startTime = Date.now();
+        
+        const result = await solver.hcaptcha({
+          sitekey: info.sitekey,
+          pageurl: info.pageurl
+        });
+        
+        const elapsed = Date.now() - startTime;
+        console.log('[callTwoCaptcha] solver.hcaptcha() completed in', elapsed, 'ms');
+        console.log('[callTwoCaptcha] Result received, data length:', result.data?.length);
+        
+        if (!result.data) {
+          throw new Error('2captcha returned empty token');
+        }
+        
+        console.log('[callTwoCaptcha] ========== SUCCESS ==========');
+        return result.data;
+      } else if (info.type === 'turnstile') {
+        console.log('[callTwoCaptcha] Calling solver.cloudflareTurnstile()...');
+        const startTime = Date.now();
+        
+        const result = await solver.cloudflareTurnstile({
+          sitekey: info.sitekey,
+          pageurl: info.pageurl
+        });
+        
+        const elapsed = Date.now() - startTime;
+        console.log('[callTwoCaptcha] solver.cloudflareTurnstile() completed in', elapsed, 'ms');
+        console.log('[callTwoCaptcha] Result received, data length:', result.data?.length);
+        
+        if (!result.data) {
+          throw new Error('2captcha returned empty token');
+        }
+        
+        console.log('[callTwoCaptcha] ========== SUCCESS ==========');
+        return result.data;
+      }
+      
+      throw new Error(`Unsupported captcha type: ${info.type}`);
+    } catch (error) {
+      console.error('[callTwoCaptcha] ========== ERROR ==========');
+      console.error('[callTwoCaptcha] Error type:', error?.constructor?.name);
+      console.error('[callTwoCaptcha] Error message:', error instanceof Error ? error.message : String(error));
+      console.error('[callTwoCaptcha] Error stack:', error instanceof Error ? error.stack : 'N/A');
+      throw error;
+    }
+  }
+
+  private async injectCaptchaToken(page: Page, token: string, info: any): Promise<void> {
+    console.log('[injectCaptchaToken] ========== START ==========');
+    console.log('[injectCaptchaToken] Token length:', token?.length);
+    console.log('[injectCaptchaToken] Captcha type:', info.type);
+    console.log('[injectCaptchaToken] Callback name:', info.callbackName);
+    console.log('[injectCaptchaToken] Widget ID:', info.widgetId);
+    
+    // Injection script to be run in the target frame
+    const injectInFrame = ({ token, info }: { token: string, info: any }) => {
+      const results = {
+        textareasFound: [] as string[],
+        textareasFilled: [] as string[],
+        callbackInvoked: false,
+        callbackName: null as string | null,
+        clientCallbacksInvoked: 0,
+        visualFeedbackApplied: false
+      };
+      
+      const selectors = [
+        '[name="g-recaptcha-response"]',
+        '#g-recaptcha-response',
+        '[name="h-captcha-response"]',
+        '#h-captcha-response',
+        '[name="cf-turnstile-response"]',
+        '#cf-turnstile-response'
+      ];
+      
+      // 1. Fill Textareas
+      selectors.forEach(sel => {
+        const el = document.querySelector(sel) as HTMLTextAreaElement;
+        if (el) {
+          results.textareasFound.push(sel);
+          el.innerHTML = token;
+          el.value = token;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          results.textareasFilled.push(sel);
+        }
+      });
+      
+      // 2. Trigger Callbacks
+      const triggerCallback = (cb: any) => {
+        try {
+          if (typeof cb === 'function') {
+            cb(token);
+            return true;
+          } else if (typeof cb === 'string') {
+            if ((window as any)[cb]) {
+              (window as any)[cb](token);
+              return true;
+            } else {
+              // Try eval if it's a string like "myFunction" or "obj.cb"
+              try {
+                const fn = eval(cb);
+                if (typeof fn === 'function') {
+                  fn(token);
+                  return true;
+                }
+              } catch (e) {}
+            }
+          }
+        } catch (e) {
+          console.error('[inject:browser] Callback execution failed:', e);
+        }
+        return false;
+      };
+
+      // 3. Try to use the grecaptcha object directly if available
+      const grecaptcha = (window as any).grecaptcha || (window as any).grecaptcha?.enterprise;
+      
+      // If we have a widgetId, try to find the specific callback in ___grecaptcha_cfg
+      if (info.widgetId !== null) {
+        const cfg = (window as any).___grecaptcha_cfg;
+        if (cfg?.clients && cfg.clients[info.widgetId]) {
+          const client = cfg.clients[info.widgetId];
+          for (const key in client) {
+            if (client[key]?.callback) {
+              if (triggerCallback(client[key].callback)) {
+                results.clientCallbacksInvoked++;
+              }
+            }
+          }
+        }
+      }
+
+      // Fallback to explicit callback name
+      if (results.clientCallbacksInvoked === 0 && info.callbackName) {
+        if (triggerCallback(info.callbackName)) {
+          results.callbackInvoked = true;
+          results.callbackName = info.callbackName;
+        }
+      }
+
+      // 3. Visual Feedback (Inspired by PEPR)
+      const applyFeedback = (iframe: HTMLIFrameElement) => {
+        iframe.style.filter = 'opacity(60%) hue-rotate(230deg)'; // Green-ish
+        results.visualFeedbackApplied = true;
+      };
+
+      const iframes = document.querySelectorAll('iframe');
+      for (let i = 0; i < iframes.length; i++) {
+        const iframe = iframes[i];
+        if (iframe.src.includes('recaptcha') || iframe.src.includes('hcaptcha') || iframe.src.includes('turnstile')) {
+          applyFeedback(iframe);
+        }
+      }
+      
+      return results;
+    };
+
+    try {
+      const frames = page.frames();
+      let success = false;
+      
+      console.log(`[injectCaptchaToken] Attempting injection in ${frames.length} frames...`);
+      
+      for (const frame of frames) {
+        // If we have a frameUrl hint, prioritize that frame
+        if (info.frameUrl && frame.url() !== info.frameUrl) continue;
+
+        try {
+          const result = await frame.evaluate(injectInFrame, { token, info });
+          if (result.textareasFilled.length > 0 || result.clientCallbacksInvoked > 0 || result.callbackInvoked) {
+            console.log(`[injectCaptchaToken] Success in frame: ${frame.url()}`, JSON.stringify(result));
+            success = true;
+            break; 
+          }
+        } catch (e) {
+          console.log(`[injectCaptchaToken] Injection failed for frame ${frame.url()}:`, (e as Error).message);
+        }
+      }
+
+      // If we prioritized a frame and failed, try all frames
+      if (!success && info.frameUrl) {
+        console.log('[injectCaptchaToken] Prioritized frame failed, trying all frames...');
+        for (const frame of frames) {
+          if (frame.url() === info.frameUrl) continue;
+          try {
+            const result = await frame.evaluate(injectInFrame, { token, info });
+            if (result.textareasFilled.length > 0 || result.clientCallbacksInvoked > 0 || result.callbackInvoked) {
+              console.log(`[injectCaptchaToken] Success in frame (fallback): ${frame.url()}`, JSON.stringify(result));
+              success = true;
+              break;
+            }
+          } catch (e) {}
+        }
+      }
+      
+      if (!success) {
+        console.warn('[injectCaptchaToken] No suitable frame found for injection');
+      }
+      
+      console.log('[injectCaptchaToken] ========== SUCCESS ==========');
+    } catch (error) {
+      console.error('[injectCaptchaToken] ========== ERROR ==========');
+      console.error('[injectCaptchaToken] Error:', error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
+  private async fallbackToPromptUser(message: string): Promise<any> {
+    await this.requestTakeover(message);
+    return { success: true, fallback: true };
+  }
+
   private async cleanup(): Promise<void> {
     if (this.cdp) {
       try {
@@ -936,6 +1460,11 @@ export class BrowserSession {
     this.capturePatterns.clear();
     this.capturedResponses.clear();
     this.automationData = {};
+    
+    for (const resolver of this.inputResolvers.values()) {
+      resolver.reject(new Error('Session closed'));
+    }
+    this.inputResolvers.clear();
     
     for (const ws of this.wsConnections) {
       try {

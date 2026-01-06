@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { SessionState, ServerMessage, ClientMessage, NetworkRequest, AutomationState } from '@/lib/types';
+import { SessionState, ServerMessage, ClientMessage, NetworkRequest, AutomationState, InputSchema } from '@/lib/types';
 import { PlaywrightProxy } from '@/lib/playwright-proxy';
 import * as api from '@/lib/api';
 
@@ -17,6 +17,10 @@ interface ExtendedSessionState extends SessionState {
   automationData: Record<string, unknown>;
   viewport: { width: number; height: number };
   agentCursor: CursorState | null;
+  inputRequest: {
+    requestId: string;
+    input: InputSchema;
+  } | null;
 }
 
 const INITIAL_STATE: ExtendedSessionState = {
@@ -29,7 +33,8 @@ const INITIAL_STATE: ExtendedSessionState = {
   networkRequests: [],
   automationData: {},
   viewport: { width: 800, height: 600 },
-  agentCursor: null
+  agentCursor: null,
+  inputRequest: null
 };
 
 export function useSession() {
@@ -144,6 +149,21 @@ export function useSession() {
           setState(s => ({
             ...s,
             viewport: { width: message.width, height: message.height }
+          }));
+          break;
+        case 'input:request':
+          setState(s => ({
+            ...s,
+            inputRequest: {
+              requestId: message.requestId,
+              input: message.input
+            }
+          }));
+          break;
+        case 'input:cancelled':
+          setState(s => ({
+            ...s,
+            inputRequest: null
           }));
           break;
       }
@@ -273,6 +293,29 @@ export function useSession() {
     setState(s => ({ ...s, networkRequests: [] }));
   }, []);
 
+  const submitInput = useCallback((values: Record<string, unknown>) => {
+    if (!state.inputRequest) return;
+    
+    sendMessage({
+      type: 'input:response',
+      requestId: state.inputRequest.requestId,
+      values
+    });
+    
+    setState(s => ({ ...s, inputRequest: null }));
+  }, [state.inputRequest, sendMessage]);
+
+  const cancelInput = useCallback(() => {
+    if (!state.inputRequest) return;
+    
+    sendMessage({
+      type: 'input:cancel',
+      requestId: state.inputRequest.requestId
+    });
+    
+    setState(s => ({ ...s, inputRequest: null }));
+  }, [state.inputRequest, sendMessage]);
+
   // Keep sessionId in a ref for polling to avoid stale closures
   const sessionIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -326,6 +369,8 @@ export function useSession() {
     destroySession,
     sendInput,
     setOnFrame,
-    clearNetworkRequests
+    clearNetworkRequests,
+    submitInput,
+    cancelInput
   };
 }
