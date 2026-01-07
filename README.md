@@ -9,7 +9,7 @@ import pathlib
 from datetime import datetime, timezone
 
 # Model to use for generating summaries
-MODEL = "github/Llama-3.3-70B-Instruct"
+MODEL = "gemini-3-flash-preview"
 
 # Get all subdirectories with their first commit dates
 research_dir = pathlib.Path.cwd()
@@ -113,7 +113,101 @@ for dirname, commit_date in subdirs_with_dates:
     print()  # Add blank line between entries
 
 ]]]-->
-## 1 research projects
+## 10 research projects
+
+### [cloudflare-remote-browser](https://github.com/Kahtaf/research/tree/main/cloudflare-remote-browser) (2025-12-23)
+
+This architecture bridges the gap between fully autonomous agents and human oversight by hosting Playwright-driven browsers on Cloudflare’s edge infrastructure. It leverages Cloudflare Workers and Durable Objects to maintain stateful sessions, streaming live browser frames to a Next.js frontend via the Chrome DevTools Protocol (CDP). The system’s primary innovation is a "user takeover" mechanism that pauses automated execution to allow for manual intervention during 2FA, logins, or complex captchas. Integration with [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/) and [Playwright](https://playwright.dev/) provides a managed environment capable of handling high-latency automation tasks without local resource overhead.
+
+**Key Features**
+* Live, low-latency browser streaming using CDP screencast frames and WebSockets.
+* Bi-directional input forwarding for remote mouse and keyboard control during takeover states.
+* Sophisticated captcha detection that inspects internal library configurations across cross-origin iframes.
+* Persistent session management through Durable Objects to prevent execution loss during human interaction.
+
+### [docker-chrome-neko](https://github.com/Kahtaf/research/tree/main/docker-chrome-neko) (2025-12-19)
+
+Docker Chrome Neko integrates high-performance WebRTC streaming with the Chrome DevTools Protocol to enable sophisticated remote browser manipulation. Users interact with a containerized Chromium instance through a Next.js control panel that supports real-time navigation, JavaScript injection, and network traffic monitoring. By leveraging the [neko](https://github.com/m1k1o/neko) framework for low-latency video delivery, the project ensures a responsive experience for complex automation and remote exploration tasks. The architecture combines an Express-based agent with persistent script capabilities to provide a robust environment for web testing and data capture via [CDP](https://chromedevtools.github.io/devtools-protocol/).
+
+* WebRTC-powered streaming for low-latency remote interaction.
+* Comprehensive API for network traffic capture and responsive viewport management.
+* Support for both one-time and persistent JavaScript injection.
+* Integrated Next.js dashboard for simplified session control.
+
+### [docker-chrome-analysis](https://github.com/Kahtaf/research/tree/main/docker-chrome-analysis) (2025-12-18)
+
+Integrating Chromium into a serverless-ready Docker environment enables high-performance remote automation and real-time network inspection. The architecture utilizes [Selkies GStreamer](https://github.com/selkies-project/selkies-gstreamer) for low-latency WebRTC streaming and a Node.js bridge to facilitate Chrome DevTools Protocol (CDP) interactions via [Playwright](https://playwright.dev/). Custom automation wrappers provide visual feedback and cursor animations for script execution, while stealth features like plugin spoofing and webdriver overrides help bypass bot detection. Optimized for deployment on Google Cloud Run, the system maintains session affinity and supports residential proxies for scalable, observable data extraction.
+
+**Key Architecture Features:**
+* Real-time network monitoring and response body capture via CDP domains.
+* Stealth-focused browser lockdown including user-agent randomization and context menu blocking.
+* Fixed iPhone SE viewport resolution to ensure consistent automation and streaming performance.
+* Multi-service orchestration using Supervisor to manage Xvfb, the bridge server, and WebRTC components.
+
+### [docker-chrome](https://github.com/Kahtaf/research/tree/main/docker-chrome) (2025-12-18)
+
+Docker Chrome Cloud provides a serverless-ready Chromium environment that enables remote browser automation and manual interaction via a low-latency WebRTC stream. Built on a containerized architecture using Playwright and the Chrome DevTools Protocol (CDP), the system facilitates stealthy web scraping with integrated bot-detection bypasses and full network traffic capture. Users can seamlessly switch between automated workflows and human intervention, making it ideal for tasks requiring complex logins or captcha resolution. This infrastructure is optimized for rapid deployment on Google Cloud Run or standalone virtual machines to support scalable, ephemeral browser sessions.
+
+*   CDP-based stealth mode to remove browser fingerprints and bypass bot detection.
+*   Decrypted HTTPS network capture for inspecting headers and request bodies.
+*   Remote control capabilities through KasmVNC for real-time human interaction.
+*   Stateless architecture designed for rapid deployment and on-demand session resets.
+
+- [Playwright](https://playwright.dev/)
+- [KasmVNC](https://github.com/kasmtech/KasmVNC)
+
+### [redroid](https://github.com/Kahtaf/research/tree/main/redroid) (2025-12-15)
+
+ReDroid Cloud automates the deployment of ephemeral Android emulators by leveraging serverless management and Google Compute Engine (GCE) infrastructure. The system allows users to provision high-performance Android 13 containers on demand, interact with them directly in a web browser, and terminate the instances to ensure resources are only paid for during active use. By combining Docker-based virtualization with WebSocket streaming, the project provides a scalable solution for testing and remote mobile access without the overhead of permanent hardware.
+
+*   Ephemeral VM lifecycle management via a Next.js control panel and GCP SDK.
+*   Low-latency visual streaming through ws-scrcpy and noVNC integrations.
+*   Zero-cost idle state with an estimated operating cost of $0.02 per 15-minute session.
+*   Support for GPU acceleration and nested virtualization on n1-standard-4 instances.
+
+Links:
+- ReDroid Project: https://github.com/remote-android/redroid-doc
+- ws-scrcpy: https://github.com/NetEase-Game/ws-scrcpy
+
+### [gcp-android-mitm-deployment](https://github.com/Kahtaf/research/tree/main/gcp-android-mitm-deployment) (2025-11-16)
+
+Engineers successfully deployed the [dockerify-android-mitm](https://github.com/sh4hin/dockerify-android-mitm) solution on a GCP virtual machine to facilitate automated network traffic analysis. This environment runs a root-enabled Android 11 emulator within a Docker container, utilizing [mitmproxy](https://mitmproxy.org/) and iptables for seamless, system-wide HTTPS interception. The system provides immediate access to live traffic logs and device interaction via web-based dashboards for both proxy monitoring and real-time screen mirroring.
+
+Key findings and features:
+* Verified capture of over 32,000 network flows including decrypted TLSv1.3 traffic.
+* Full device interaction enabled via ws-scrcpy on port 8000 and mitmproxy UI on port 8081.
+* Automated redirection architecture ensures all application traffic is routed through the proxy without manual configuration.
+* Stable deployment confirmed with healthy container status and complete Android boot verification.
+
+### [zk-tls](https://github.com/Kahtaf/research/tree/main/zk-tls) (2025-11-14)
+
+Moving beyond standard web-based attestation, this analysis proposes a hybrid architecture centered on self-hosted [TLSNotary](https://github.com/tlsnotary/tlsn) for its cryptographic flexibility and [Reclaim Protocol’s attestor-core](https://github.com/reclaimprotocol/attestor-core) for rapid mobile deployment. While existing solutions excel at static HTTPS request-response patterns, a significant technical gap remains regarding IoT protocols like MQTT and real-time WebSocket streaming. Developing custom protocol extensions on top of TLSNotary's MPC-based primitives provides the most viable path for long-term customization and sovereign data ingestion across diverse hardware and streaming sources.
+
+**Key Findings:**
+* No current zkTLS implementation supports persistent WebSocket connections or MQTT messaging.
+* TLSNotary provides the modular Rust foundation necessary to build custom IoT and streaming extensions.
+* Reclaim’s self-hosted infrastructure is the fastest route for scraping mobile WebView data like LinkedIn.
+* Native app traffic capture requires an OS-level VPN/Proxy layer to bypass certificate pinning before attestation.
+
+### [android-mitm-mvp-validation](https://github.com/Kahtaf/research/tree/main/android-mitm-mvp-validation) (2025-11-14)
+
+Validation of the Android MITM MVP container on Google Cloud Platform demonstrates successful emulator deployment and proxy integration, though a critical failure in the Frida server currently blocks automated end-to-end testing. While the Android 13 environment boots successfully and allows for user-level certificate installation, the inability to initialize Frida prevents necessary application hooks in Chrome. Developers must now investigate potential architecture mismatches or SELinux restrictions that led to the Frida startup error to restore full interception capabilities. This status highlights a functional infrastructure that is one component away from operational readiness for traffic analysis.
+
+*   Successful 84-second emulator boot and ADB connectivity.
+*   Working [mitmproxy](https://mitmproxy.org/) web UI and proxy configuration.
+*   [Frida](https://frida.re/) server startup failure (exit code 1) preventing E2E hooks.
+*   System partition read-only errors on Android 13 necessitating user-store certificate fallbacks.
+
+### [native-app-traffic-capture](https://github.com/Kahtaf/research/tree/main/native-app-traffic-capture) (2025-11-13)
+
+Navigating the security restrictions of modern mobile operating systems requires a strategic mix of local VPN interception and cloud-based emulation to capture encrypted HTTPS traffic. While iOS remains relatively accessible for man-in-the-middle attacks via user-installed certificates, Android 7+ fundamentally blocks this approach for most apps by ignoring user-trusted authorities by default. The most robust capture methodology involves utilizing cloud-hosted emulators with system-level certificate access to bypass local device limitations without modifying the application binary. Key implementations for this research include [ProxyPin](https://github.com/wanghongenpin/network_proxy_flutter) for cross-platform local interception and [PCAPdroid](https://github.com/emanuele-f/PCAPdroid) for non-invasive Android network analysis.
+
+**Key Findings**
+
+* Android 7+ security configurations prevent 80-90% of apps from trusting user-installed certificates.
+* iOS local VPN approaches provide approximately 70% traffic visibility, limited only by certificate pinning.
+* Cloud-based device farms are the only viable solution for high-coverage HTTPS body capture without app modification.
+* Metadata-only capture is the only zero-friction method currently available for modern Android devices.
 
 ### [data-ingestion](https://github.com/Kahtaf/research/tree/main/data-ingestion) (2025-11-12)
 
@@ -148,7 +242,7 @@ The script automatically:
 - If not, it generates a new summary using `llm -m <!--[[[cog
 print(MODEL, end='')
 ]]]-->
-github/Llama-3.3-70B-Instruct
+gemini-3-flash-preview
 <!--[[[end]]]-->` with a prompt that creates engaging descriptions with bullets and links
 - Creates markdown links to each project folder on GitHub
 - New summaries are saved to `_summary.md` to avoid regenerating them on every run

@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  models: read
 
 jobs:
   update-readme:
@@ -29,12 +28,13 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
+          llm install llm-gemini
 
       - name: Run cogapp to update README
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          cog -r -P README.md
+          python -m cogapp -r -P README.md
 
       - name: Commit and push if changed
         run: |
