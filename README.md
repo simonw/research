@@ -115,6 +115,16 @@ for dirname, commit_date in subdirs_with_dates:
 ]]]-->
 ## 10 research projects
 
+### [passkey-encryption-demo](https://github.com/Kahtaf/research/tree/main/passkey-encryption-demo) (2026-01-07)
+
+Leveraged via a minimal Next.js application, this project explores how the WebAuthn PRF extension can generate stable, hardware-backed keys for client-side data protection. By integrating HKDF to derive AES-GCM encryption keys from passkey outputs, the demo enables secure local encryption of text and files without ever exposing secrets to a server. The implementation serves as a functional proof-of-concept for zero-knowledge architectures, highlighting the seamless transition from biometric authentication to cryptographic operations within the browser.
+
+* Registers resident passkeys specifically utilizing the WebAuthn PRF extension.
+* Derives stable AES-GCM keys for local file and text encryption via HKDF.
+* Operates entirely client-side to ensure no sensitive key material reaches the backend.
+
+Key resources: [WebAuthn PRF Extension](https://w3c.github.io/webauthn/#prf-extension) and [Next.js Framework](https://nextjs.org/)
+
 ### [cloudflare-remote-browser](https://github.com/Kahtaf/research/tree/main/cloudflare-remote-browser) (2025-12-23)
 
 This architecture bridges the gap between fully autonomous agents and human oversight by hosting Playwright-driven browsers on Cloudflare’s edge infrastructure. It leverages Cloudflare Workers and Durable Objects to maintain stateful sessions, streaming live browser frames to a Next.js frontend via the Chrome DevTools Protocol (CDP). The system’s primary innovation is a "user takeover" mechanism that pauses automated execution to allow for manual intervention during 2FA, logins, or complex captchas. Integration with [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/) and [Playwright](https://playwright.dev/) provides a managed environment capable of handling high-latency automation tasks without local resource overhead.
@@ -133,16 +143,6 @@ Docker Chrome Neko integrates high-performance WebRTC streaming with the Chrome 
 * Comprehensive API for network traffic capture and responsive viewport management.
 * Support for both one-time and persistent JavaScript injection.
 * Integrated Next.js dashboard for simplified session control.
-
-### [docker-chrome-analysis](https://github.com/Kahtaf/research/tree/main/docker-chrome-analysis) (2025-12-18)
-
-Integrating Chromium into a serverless-ready Docker environment enables high-performance remote automation and real-time network inspection. The architecture utilizes [Selkies GStreamer](https://github.com/selkies-project/selkies-gstreamer) for low-latency WebRTC streaming and a Node.js bridge to facilitate Chrome DevTools Protocol (CDP) interactions via [Playwright](https://playwright.dev/). Custom automation wrappers provide visual feedback and cursor animations for script execution, while stealth features like plugin spoofing and webdriver overrides help bypass bot detection. Optimized for deployment on Google Cloud Run, the system maintains session affinity and supports residential proxies for scalable, observable data extraction.
-
-**Key Architecture Features:**
-* Real-time network monitoring and response body capture via CDP domains.
-* Stealth-focused browser lockdown including user-agent randomization and context menu blocking.
-* Fixed iPhone SE viewport resolution to ensure consistent automation and streaming performance.
-* Multi-service orchestration using Supervisor to manage Xvfb, the bridge server, and WebRTC components.
 
 ### [docker-chrome](https://github.com/Kahtaf/research/tree/main/docker-chrome) (2025-12-18)
 
