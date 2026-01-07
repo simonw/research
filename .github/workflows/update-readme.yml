@@ -32,7 +32,7 @@ jobs:
 
       - name: Run cogapp to update README
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          LLM_GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python -m cogapp -r -P README.md
 
