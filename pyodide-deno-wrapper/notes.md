@@ -75,7 +75,43 @@ All tests passing:
 
 ## Files Created
 
-- `pyodide_worker.js` - Deno worker script
+- `pyodide_worker.js` - Deno worker script (requires network)
 - `pyodidebox/__init__.py` - Package init
 - `pyodidebox/sync_box.py` - Synchronous implementation
 - `pyodidebox/async_box.py` - Asynchronous implementation
+
+## Offline/Cached Version
+
+### Challenge: Running Without Network
+
+Attempted several approaches to run Pyodide without network access:
+
+1. **Local file:// URLs**: Pyodide's bundled pyodide.mjs has issues with file:// URL resolution in Deno. It incorrectly concatenates paths.
+
+2. **Local HTTP server in Deno**: Created a minimal HTTP server inside the worker to serve Pyodide files from disk. Still had URL resolution issues.
+
+3. **Pre-cached npm:pyodide**: This approach works! Deno caches npm packages locally.
+
+### Solution: Pre-cache npm:pyodide
+
+The working solution uses Deno's npm cache:
+
+1. First, run with network to cache pyodide:
+   ```bash
+   deno run --allow-read --allow-net npm:pyodide -e "import {loadPyodide} from 'npm:pyodide'; await loadPyodide();"
+   ```
+   Or in environment with cert issues:
+   ```bash
+   deno run --allow-read --allow-net --unsafely-ignore-certificate-errors -e "..."
+   ```
+
+2. After caching, use `--cached-only` flag to run without network
+
+### Cached Version Files
+
+- `pyodide_cached_worker.js` - Worker using cached npm:pyodide
+- `pyodidebox_cached.py` - Python wrapper for cached version
+
+### Pyodide Download Location
+
+Downloaded pyodide-0.27.5.tar.bz2 to /tmp/pyodide-local/ for investigation. This ~370MB archive contains all packages but loading from local disk proved challenging due to Pyodide's URL handling assumptions.

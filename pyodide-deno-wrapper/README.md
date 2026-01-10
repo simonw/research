@@ -140,9 +140,41 @@ Both `PyodideBox` and `AsyncPyodideBox` accept these options:
 | Runtime | Deno | Deno + Pyodide |
 | Sandbox | Deno permissions | Deno + WASM isolation |
 
+## Offline / Cached Mode
+
+You can run PyodideBox without network access after caching Pyodide:
+
+### Step 1: Cache Pyodide (requires network once)
+
+```bash
+# Using deno from the denobox package
+deno run --allow-read --allow-net -e "
+import { loadPyodide } from 'npm:pyodide@0.27.5';
+const py = await loadPyodide();
+console.log('Cached Pyodide version:', py.version);
+"
+```
+
+### Step 2: Use the cached version
+
+```python
+from pyodidebox_cached import PyodideBox
+
+with PyodideBox() as box:
+    result = box.run("1 + 1")
+    print(result)  # 2
+```
+
+The cached version uses `--cached-only` flag with Deno, so it won't attempt any network access.
+
+### Files for Cached Mode
+
+- `pyodide_cached_worker.js` - Worker that uses cached npm:pyodide
+- `pyodidebox_cached.py` - Python wrapper for cached mode
+
 ## Limitations
 
-- First run downloads Pyodide (~20MB) and caches it
+- First run downloads Pyodide (~20MB) and caches it (or use cached mode)
 - Not all Python packages work in Pyodide (C extensions need to be compiled to WASM)
 - Performance overhead from WASM and JSON serialization
 - Results must be JSON-serializable
