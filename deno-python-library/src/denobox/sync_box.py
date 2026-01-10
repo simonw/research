@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 import threading
@@ -53,12 +54,14 @@ class WasmModule:
         if self._unloaded:
             raise DenoBoxError("WASM module has been unloaded")
 
-        response = self._box._send_request({
-            "type": "call_wasm",
-            "moduleId": self._module_id,
-            "func": func,
-            "args": list(args),
-        })
+        response = self._box._send_request(
+            {
+                "type": "call_wasm",
+                "moduleId": self._module_id,
+                "func": func,
+                "args": list(args),
+            }
+        )
 
         if "error" in response:
             raise DenoBoxError(response["error"])
@@ -70,10 +73,12 @@ class WasmModule:
         if self._unloaded:
             return
 
-        response = self._box._send_request({
-            "type": "unload_wasm",
-            "moduleId": self._module_id,
-        })
+        response = self._box._send_request(
+            {
+                "type": "unload_wasm",
+                "moduleId": self._module_id,
+            }
+        )
 
         if "error" in response:
             raise DenoBoxError(response["error"])
@@ -101,8 +106,10 @@ class DenoBox:
         if self._process is not None:
             raise DenoBoxError("DenoBox already started")
 
+        # Run Deno with no permissions - fully sandboxed
+        # The worker communicates via stdin/stdout only
         self._process = subprocess.Popen(
-            ["deno", "run", "--allow-all", str(self._worker_path)],
+            ["deno", "run", str(self._worker_path)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -178,26 +185,32 @@ class DenoBox:
 
         return response.get("result")
 
-    def load_wasm(self, path: str | None = None, url: str | None = None) -> WasmModule:
+    def load_wasm(
+        self, path: str | None = None, wasm_bytes: bytes | None = None
+    ) -> WasmModule:
         """Load a WebAssembly module.
 
         Args:
-            path: Path to the WASM file.
-            url: URL to fetch the WASM file from.
+            path: Path to the WASM file (read by Python, not Deno).
+            wasm_bytes: Raw WASM bytes to load directly.
 
         Returns:
             A WasmModule wrapper for calling exported functions.
 
         Raises:
             DenoBoxError: If loading the module fails.
+            FileNotFoundError: If the path doesn't exist.
         """
-        request: dict[str, Any] = {"type": "load_wasm"}
-        if path:
-            request["path"] = path
-        if url:
-            request["url"] = url
+        if wasm_bytes is None:
+            if path is None:
+                raise DenoBoxError("Either 'path' or 'wasm_bytes' must be provided")
+            # Read the file in Python - Deno has no file system access
+            wasm_bytes = Path(path).read_bytes()
 
-        response = self._send_request(request)
+        # Encode as base64 for JSON transport
+        bytes_b64 = base64.b64encode(wasm_bytes).decode("ascii")
+
+        response = self._send_request({"type": "load_wasm", "bytes": bytes_b64})
 
         if "error" in response:
             raise DenoBoxError(response["error"])

@@ -24,8 +24,10 @@ Each message is a JSON object on a single line:
 - Response: `{"id": 1, "result": 2}` or `{"id": 1, "error": "..."}`
 
 For WASM:
-- Load: `{"id": 1, "type": "load_wasm", "path": "/path/to/module.wasm"}`
-- Call: `{"id": 1, "type": "call_wasm", "module": "mod_id", "func": "add", "args": [1, 2]}`
+- Load: `{"id": 1, "type": "load_wasm", "bytes": "<base64-encoded-wasm>"}`
+- Call: `{"id": 1, "type": "call_wasm", "moduleId": "wasm_0", "func": "add", "args": [1, 2]}`
+
+Note: WASM bytes are base64-encoded and sent via JSON. Python reads files and encodes them, so Deno doesn't need file system access.
 
 #### Components
 1. `DenoBox` - sync wrapper class
@@ -73,4 +75,24 @@ For WASM:
 
 ### Final Test Run
 - 44 tests total
+- All passing
+
+### Step 7: Sandbox Lockdown
+- Removed `--allow-all` from Deno subprocess command
+- Changed WASM loading: Python now reads files and sends base64-encoded bytes to Deno
+- This means Deno runs with NO permissions:
+  - No file system access (`--allow-read`, `--allow-write`)
+  - No network access (`--allow-net`)
+  - No subprocess spawning (`--allow-run`)
+  - No environment variable access (`--allow-env`)
+- Added 10 sandbox tests that verify Deno cannot:
+  - Read files (`Deno.readTextFileSync`, `Deno.readTextFile`)
+  - Write files (`Deno.writeTextFileSync`, `Deno.writeTextFile`)
+  - Make network requests (`fetch`)
+  - Spawn subprocesses (`Deno.Command`)
+  - Access environment variables (`Deno.env.get`)
+- Pure JavaScript computation (Math, strings, arrays, JSON) still works
+
+### Final Test Count
+- 54 tests total (44 original + 10 sandbox)
 - All passing

@@ -22,15 +22,16 @@ async function handleRequest(request) {
             }
 
             case "load_wasm": {
-                const { path, url } = request;
-                let wasmSource;
-                if (url) {
-                    wasmSource = await fetch(url);
-                    wasmSource = await wasmSource.arrayBuffer();
-                } else if (path) {
-                    wasmSource = await Deno.readFile(path);
-                } else {
-                    throw new Error("Either 'path' or 'url' must be provided");
+                const { bytes } = request;
+                if (!bytes) {
+                    throw new Error("'bytes' (base64-encoded WASM) must be provided");
+                }
+
+                // Decode base64 to Uint8Array
+                const binaryString = atob(bytes);
+                const wasmSource = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    wasmSource[i] = binaryString.charCodeAt(i);
                 }
 
                 const wasmModule = await WebAssembly.compile(wasmSource);

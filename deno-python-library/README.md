@@ -8,12 +8,23 @@ A Python library for executing JavaScript and WebAssembly in a Deno sandbox.
 
 ## Features
 
-- Execute JavaScript code in a secure Deno sandbox
+- Execute JavaScript code in a **fully sandboxed** Deno environment
 - Load and call WebAssembly modules
 - Both synchronous and async APIs
 - JSON-based data exchange between Python and JavaScript
 - Promise resolution handled automatically
 - Thread-safe (sync) and concurrent (async) execution support
+
+## Security
+
+Deno runs with **zero permissions** - maximum sandboxing:
+
+- **No file system access** - WASM files are read by Python and sent as base64
+- **No network access** - cannot make HTTP requests or open sockets
+- **No subprocess spawning** - cannot execute shell commands
+- **No environment access** - cannot read environment variables
+
+The sandbox is enforced by Deno's permission system. Any attempt to access restricted resources will raise an error.
 
 ## Installation
 
@@ -102,11 +113,12 @@ asyncio.run(main())
 from denobox import DenoBox
 
 with DenoBox() as box:
-    # Load a WASM module from a file
+    # Load a WASM module from a file (Python reads and sends to Deno)
     module = box.load_wasm("path/to/module.wasm")
 
-    # Or from a URL
-    module = box.load_wasm(url="https://example.com/module.wasm")
+    # Or load from raw bytes
+    wasm_bytes = open("path/to/module.wasm", "rb").read()
+    module = box.load_wasm(wasm_bytes=wasm_bytes)
 
     # Check available exports
     print(module.exports)  # {'add': 'function', 'multiply': 'function'}
@@ -171,11 +183,13 @@ Communication between Python and the Deno subprocess uses newline-delimited JSON
 **Requests:**
 ```json
 {"id": 1, "type": "eval", "code": "1 + 1"}
-{"id": 2, "type": "load_wasm", "path": "/path/to/module.wasm"}
+{"id": 2, "type": "load_wasm", "bytes": "<base64-encoded-wasm>"}
 {"id": 3, "type": "call_wasm", "moduleId": "wasm_0", "func": "add", "args": [1, 2]}
 {"id": 4, "type": "unload_wasm", "moduleId": "wasm_0"}
 {"id": 5, "type": "shutdown"}
 ```
+
+Note: WASM modules are sent as base64-encoded bytes. Python reads the file and encodes it, so Deno doesn't need file system access.
 
 **Responses:**
 ```json
