@@ -60,7 +60,7 @@ All three implementations pass **121/123 tests** (98.4% pass rate).
 
 ## Interactive Demo
 
-The WAT implementation includes an interactive HTML playground. Open `wat/playground.html` in a browser to:
+The WAT implementation includes an [interactive HTML playground](https://simonw.github.io/research/whenwords-esoteric-langs/wat/playground.html). Open `wat/playground.html` in a browser to:
 
 - Test **timeago** - Convert timestamps to relative time ("3 hours ago")
 - Test **duration** - Format seconds as human-readable duration ("1 hour, 30 minutes")
