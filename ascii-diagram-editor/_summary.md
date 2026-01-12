@@ -1,0 +1,5 @@
+Exploring existing ASCII diagram editors reveals that robust, open-source solutions already exist, eliminating the need for a custom-built tool. These platforms allow users to import AI-generated text diagrams, manipulate them through a visual canvas with boxes and arrows, and export the results directly to markdown. [Cascii](https://cascii.app) stands out as the most capable option due to its explicit import functionality and layer management, while [ASCIIFlow](https://asciiflow.com) remains a reliable, industry-standard alternative for simpler workflows. Both tools operate entirely in the browser without requiring a signup, providing a frictionless bridge between text-based documentation and visual design.
+
+* Cascii: Features dedicated text import, layer support, and offline capabilities.
+* ASCIIFlow: Offers a clean interface with an infinite canvas and wide industry adoption.
+* Key Requirements: Both tools support visual editing, box/arrow drawing, and export to markdown without accounts.
