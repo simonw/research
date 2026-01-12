@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>whenwords WebAssembly Playground</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #00d4ff;
+            border-bottom: 2px solid #00d4ff;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #ff6b6b;
+            margin-top: 30px;
+        }
+        .description {
+            background: #16213e;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .section {
+            background: #0f3460;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #00d4ff;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 2px solid #00d4ff;
+            border-radius: 5px;
+            background: #1a1a2e;
+            color: #eee;
+            font-size: 16px;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #ff6b6b;
+        }
+        button {
+            background: #00d4ff;
+            color: #1a1a2e;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        button:hover {
+            background: #ff6b6b;
+        }
+        .result {
+            background: #e94560;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+            font-size: 20px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .info {
+            font-size: 12px;
+            color: #888;
+            margin-top: 5px;
+        }
+        code {
+            background: #16213e;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', monospace;
+        }
+        .wasm-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #654ff0, #00d4ff);
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        .examples {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        .example-btn {
+            background: #16213e;
+            color: #00d4ff;
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+        #status {
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .loading {
+            background: #ffa500;
+            color: #1a1a2e;
+        }
+        .ready {
+            background: #00ff88;
+            color: #1a1a2e;
+        }
+        .error {
+            background: #ff4444;
+        }
+    </style>
+</head>
+<body>
+    <h1>whenwords <span class="wasm-badge">WebAssembly</span></h1>
+
+    <div class="description">
+        <p>This playground demonstrates the <strong>whenwords</strong> library implemented in
+        <strong>WebAssembly Text Format (WAT)</strong> - a low-level stack-based esoteric language.</p>
+        <p>The WASM module computes time calculations natively, while JavaScript handles string formatting.</p>
+    </div>
+
+    <div id="status" class="loading">Loading WebAssembly module...</div>
+
+    <h2>timeago</h2>
+    <div class="section">
+        <p>Convert a timestamp to a human-readable relative time string.</p>
+
+        <label for="timestamp">Timestamp (Unix seconds):</label>
+        <input type="number" id="timestamp" placeholder="e.g., 1704067170">
+        <div class="examples">
+            <button class="example-btn" onclick="setExample('timestamp', Date.now()/1000 - 30)">30 sec ago</button>
+            <button class="example-btn" onclick="setExample('timestamp', Date.now()/1000 - 3600)">1 hour ago</button>
+            <button class="example-btn" onclick="setExample('timestamp', Date.now()/1000 - 86400)">1 day ago</button>
+            <button class="example-btn" onclick="setExample('timestamp', Date.now()/1000 + 7200)">2 hours from now</button>
+        </div>
+
+        <label for="reference">Reference (Unix seconds):</label>
+        <input type="number" id="reference" placeholder="Leave empty for current time">
+        <div class="info">Leave empty to use current time</div>
+
+        <button onclick="runTimeago()">Calculate timeago</button>
+        <div id="timeago-result" class="result" style="display:none;"></div>
+    </div>
+
+    <h2>duration</h2>
+    <div class="section">
+        <p>Format a number of seconds as a human-readable duration.</p>
+
+        <label for="seconds">Seconds:</label>
+        <input type="number" id="seconds" value="3661" placeholder="e.g., 3661">
+        <div class="examples">
+            <button class="example-btn" onclick="setExample('seconds', 45)">45 sec</button>
+            <button class="example-btn" onclick="setExample('seconds', 3661)">1h 1m 1s</button>
+            <button class="example-btn" onclick="setExample('seconds', 86400)">1 day</button>
+            <button class="example-btn" onclick="setExample('seconds', 31536000)">1 year</button>
+        </div>
+
+        <label for="compact">Format:</label>
+        <select id="compact">
+            <option value="false">Verbose (1 hour, 30 minutes)</option>
+            <option value="true">Compact (1h 30m)</option>
+        </select>
+
+        <label for="max_units">Max Units:</label>
+        <select id="max_units">
+            <option value="1">1</option>
+            <option value="2" selected>2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+        </select>
+
+        <button onclick="runDuration()">Calculate duration</button>
+        <div id="duration-result" class="result" style="display:none;"></div>
+    </div>
+
+    <h2>How it works</h2>
+    <div class="description">
+        <p><strong>WAT (WebAssembly Text Format)</strong> is the human-readable text representation of WebAssembly.</p>
+        <p>The core numeric logic (calculating time differences, thresholds, and values) runs entirely in
+        the WebAssembly module. The WASM returns codes and computed values, which JavaScript then
+        formats into human-readable strings.</p>
+        <p>WAT features used:</p>
+        <ul>
+            <li><code>(func ...)</code> - Function definitions</li>
+            <li><code>(param i32)</code> - 32-bit integer parameters</li>
+            <li><code>(local.get/set)</code> - Local variable access</li>
+            <li><code>(global.get/set)</code> - Global state management</li>
+            <li><code>i32.sub, i32.div_s, i32.rem_s</code> - Integer arithmetic</li>
+            <li><code>(if ... (then ...) (else ...))</code> - Conditional branching</li>
+            <li><code>(memory ...)</code> - Linear memory for data storage</li>
+            <li><code>i32.store, i32.load</code> - Memory operations</li>
+        </ul>
+    </div>
+
+    <script>
+        let wasmModule = null;
+        let memory = null;
+
+        // Time string templates based on WASM codes
+        const timeStrings = {
+            0: () => "just now",
+            1: (n, future) => future ? "in 1 minute" : "1 minute ago",
+            2: (n, future) => future ? `in ${n} minutes` : `${n} minutes ago`,
+            3: (n, future) => future ? "in 1 hour" : "1 hour ago",
+            4: (n, future) => future ? `in ${n} hours` : `${n} hours ago`,
+            5: (n, future) => future ? "in 1 day" : "1 day ago",
+            6: (n, future) => future ? `in ${n} days` : `${n} days ago`,
+            7: (n, future) => future ? "in 1 month" : "1 month ago",
+            8: (n, future) => future ? `in ${n} months` : `${n} months ago`,
+            9: (n, future) => future ? "in 1 year" : "1 year ago",
+            10: (n, future) => future ? `in ${n} years` : `${n} years ago`
+        };
+
+        // Load WASM module
+        async function loadWasm() {
+            try {
+                const response = await fetch('whenwords.wasm');
+                const bytes = await response.arrayBuffer();
+                const result = await WebAssembly.instantiate(bytes);
+                wasmModule = result.instance.exports;
+                memory = new Int32Array(wasmModule.memory.buffer);
+
+                document.getElementById('status').className = 'ready';
+                document.getElementById('status').textContent = 'WebAssembly module loaded! Ready to compute.';
+            } catch (e) {
+                document.getElementById('status').className = 'error';
+                document.getElementById('status').textContent = 'Error loading WASM: ' + e.message;
+            }
+        }
+
+        function setExample(fieldId, value) {
+            document.getElementById(fieldId).value = Math.floor(value);
+        }
+
+        function runTimeago() {
+            if (!wasmModule) {
+                alert('WASM module not loaded yet');
+                return;
+            }
+
+            const timestamp = parseInt(document.getElementById('timestamp').value);
+            let reference = document.getElementById('reference').value;
+            reference = reference ? parseInt(reference) : Math.floor(Date.now() / 1000);
+
+            if (isNaN(timestamp)) {
+                alert('Please enter a valid timestamp');
+                return;
+            }
+
+            // Call WASM function
+            const codeResult = wasmModule.timeago_code(timestamp, reference);
+            const code = codeResult & 0xFF;
+            const isFuture = (codeResult >> 8) & 1;
+            const value = wasmModule.timeago_value();
+
+            // Format result
+            const result = timeStrings[code](value, isFuture === 1);
+
+            const resultDiv = document.getElementById('timeago-result');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = result;
+        }
+
+        function runDuration() {
+            if (!wasmModule) {
+                alert('WASM module not loaded yet');
+                return;
+            }
+
+            const seconds = parseInt(document.getElementById('seconds').value);
+            const compact = document.getElementById('compact').value === 'true';
+            const maxUnits = parseInt(document.getElementById('max_units').value);
+
+            if (isNaN(seconds) || seconds < 0) {
+                alert('Please enter a valid non-negative number of seconds');
+                return;
+            }
+
+            if (seconds === 0) {
+                const resultDiv = document.getElementById('duration-result');
+                resultDiv.style.display = 'block';
+                resultDiv.textContent = compact ? '0s' : '0 seconds';
+                return;
+            }
+
+            // Call WASM function to compute parts
+            const unitsCount = wasmModule.duration_parts(seconds, maxUnits);
+
+            // Read parts from WASM memory
+            memory = new Int32Array(wasmModule.memory.buffer);
+            const years = memory[0];
+            const months = memory[1];
+            const days = memory[2];
+            const hours = memory[3];
+            const minutes = memory[4];
+            const secs = memory[5];
+
+            // Format result
+            const parts = [];
+            if (years > 0) parts.push(compact ? `${years}y` : (years === 1 ? '1 year' : `${years} years`));
+            if (months > 0) parts.push(compact ? `${months}mo` : (months === 1 ? '1 month' : `${months} months`));
+            if (days > 0) parts.push(compact ? `${days}d` : (days === 1 ? '1 day' : `${days} days`));
+            if (hours > 0) parts.push(compact ? `${hours}h` : (hours === 1 ? '1 hour' : `${hours} hours`));
+            if (minutes > 0) parts.push(compact ? `${minutes}m` : (minutes === 1 ? '1 minute' : `${minutes} minutes`));
+            if (secs > 0) parts.push(compact ? `${secs}s` : (secs === 1 ? '1 second' : `${secs} seconds`));
+
+            const result = parts.length > 0
+                ? (compact ? parts.join(' ') : parts.join(', '))
+                : (compact ? '0s' : '0 seconds');
+
+            const resultDiv = document.getElementById('duration-result');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = result;
+        }
+
+        // Load WASM on page load
+        loadWasm();
+    </script>
+</body>
+</html>
