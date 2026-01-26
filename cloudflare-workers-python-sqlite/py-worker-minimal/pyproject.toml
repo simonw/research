@@ -1,0 +1,5 @@
+[project]
+name = "minimal-python-worker"
+version = "0.1.0"
+requires-python = ">=3.12"
+# No dependencies - pure Python worker

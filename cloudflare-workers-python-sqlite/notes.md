@@ -163,3 +163,125 @@ await micropip.install("datasette")
 
 This browser-based approach differs from Cloudflare Python Workers which use
 server-side Pyodide embedded in the workerd runtime.
+
+---
+
+### Deep Investigation: workerd Package Caching (2026-01-26)
+
+#### Pyodide Bundle Cache - WORKS
+- The `--pyodide-bundle-disk-cache-dir` option successfully reads from cache
+- strace confirmed: workerd opens `/tmp/pyodide-cache` and reads `pyodide_0.26.0a2_2024-03-01_76.capnp.bin`
+- This is a "read-first" cache - if file exists, uses it; otherwise downloads
+
+#### Package Cache - DOES NOT WORK FOR PRE-POPULATION
+Extensive investigation revealed:
+
+1. **Manual package download** - Successfully downloaded all required packages via proxy:
+   ```
+   pydoc_data-1.0.0.tar.gz, pydecimal-1.0.0.tar.gz, hashlib-1.0.0.tar.gz,
+   lzma-1.0.0.tar.gz, sqlite3-1.0.0.tar.gz, test-1.0.0.tar.gz, ssl-1.0.0.tar.gz
+   ```
+   From: `https://storage.googleapis.com/cloudflare-edgeworker-python-packages/python-package-bucket/20240829.4/`
+
+2. **Cache directory structure** - Placed files at:
+   ```
+   /tmp/pyodide-cache/python-package-bucket/20240829.4/*.tar.gz
+   ```
+
+3. **strace analysis** - workerd NEVER reads from package cache directory
+   - Opens Pyodide bundle from cache: `openat(12, "pyodide_0.26.0a2...", O_RDONLY) = 17`
+   - Opens package cache dir: `openat(7, "tmp/pyodide-cache", O_RDONLY|O_DIRECTORY) = 13`
+   - **Never** opens any package files from fd 13
+
+4. **Conclusion**: The package cache appears to be **write-only on download success**
+   - Downloads are attempted first
+   - Cache is populated after successful downloads
+   - Cache is not consulted before download attempts
+   - Unlike bundle cache, package cache doesn't support pre-population
+
+#### workerd CLI Options Examined
+```
+--pyodide-bundle-disk-cache-dir=<path>   # WORKS - read-first cache
+--pyodide-package-disk-cache-dir=<path>  # WRITE-ONLY - post-download cache
+--python-load-snapshot=<path>            # Memory snapshots, different mechanism
+--python-save-baseline-snapshot          # Save snapshot to cache
+```
+
+#### Error Messages in Binary
+Found via `strings` on workerd binary:
+- `"Failed to download package", path, e, "attempt", retryCount + 1, "of", retryLimit, "will retry"`
+- `"Failed to download package after all retry attempts", path, e, "attempts", retryLimit`
+- `"Failed to read or process package from disk cache", path, e`
+- `"Failed to write package to disk cache", e`
+
+The "Failed to read from disk cache" message never appeared in logs, confirming cache lookup isn't attempted.
+
+#### Root Cause
+workerd's `DiskCache::get()` for packages is likely gated by some condition that prevents lookup before download. The bundle cache works differently because it's on the critical path - without the bundle, nothing works. Packages are fetched lazily and the cache is opportunistic.
+
+#### Future Options to Explore
+1. Memory snapshot approach (`--python-load-snapshot`) might bypass package downloads
+2. Embedded packages in worker binary (used in production)
+3. Patching workerd source code to check cache before download
+4. Using a transparent HTTPS proxy that workerd would trust (requires CA cert injection)
+
+---
+
+### BREAKTHROUGH: Minimal Python Worker Works! (2026-01-26)
+
+#### Key Discovery
+Python Workers WITHOUT external dependencies work perfectly locally!
+
+The failing packages (hashlib, ssl, sqlite3, etc.) are only needed when you import
+packages that depend on them. The core Python runtime with standard library works.
+
+#### Minimal Python Worker - SUCCESS
+Created `py-worker-minimal/` with:
+- Hello World route (`/hello`)
+- Form handling with POST (`/form`)
+- SQLite counter (`/counter`)
+- Status endpoint (`/status`)
+
+**All features working:**
+```bash
+$ curl http://localhost:8789/hello
+Hello World from Python Worker!
+
+$ curl http://localhost:8789/status
+Python Worker Status:
+- SQLite available: True
+
+$ curl -X POST -d "name=Claude&message=Testing" http://localhost:8789/form
+# Returns HTML with processed form data
+```
+
+#### SQLite IS Available!
+The `sqlite3` module is built into the Pyodide runtime:
+```python
+import sqlite3
+conn = sqlite3.connect(":memory:")
+cursor = conn.cursor()
+cursor.execute("CREATE TABLE ...")
+```
+
+Note: In-memory SQLite resets each request. For persistence, use D1.
+
+#### What Works Without Network Access
+- Basic Python standard library (urllib.parse, etc.)
+- sqlite3 module (in-memory databases)
+- workers module (Response, WorkerEntrypoint)
+- Form handling with POST requests
+- URL parsing and routing
+
+#### What Requires Network Access (External Packages)
+- Starlette, FastAPI, Flask (web frameworks)
+- Any package requiring hashlib/ssl extensions
+- Packages that import cryptographic modules
+
+#### Correct Python Worker Method Names
+Important: Use `on_fetch` not `fetch`:
+```python
+class Default(WorkerEntrypoint):
+    async def on_fetch(self, request):  # NOT "fetch"!
+        return Response("Hello World!")
+```
