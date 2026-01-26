@@ -160,7 +160,7 @@ for dirname, _ in subdirs_with_dates:
             readme_path.write_text('\n'.join(new_lines))
 
 ]]]-->
-## 52 research projects
+## 53 research projects
 
 ### [chatgpt-container-environment](https://github.com/simonw/research/tree/main/chatgpt-container-environment) (2026-01-26)
 
@@ -173,6 +173,16 @@ Experiments in the ChatGPT sandbox reveal that general outbound internet access 
 - Docker manifests and blobs can be fetched via registry endpoints, though no Docker runtime exists.
 - Registries for Go, Maven, Gradle, Cargo are configured but were not fully tested.
 - Practical access to external data is constrained to what registries and container.download allow, enforcing a strong sandbox model.
+
+### [cloudflare-workers-python-sqlite](https://github.com/simonw/research/tree/main/cloudflare-workers-python-sqlite) (2026-01-26)
+
+Exploring the intersection of Cloudflare Workers, Python (via [Pyodide](https://pyodide.org/)), and SQLite persistence, this project demonstrates practical techniques for building serverless applications with both JavaScript and Python runtimes on the Cloudflare platform. JavaScript Workers, paired with D1 for persistent SQLite storage, handled form input, basic routing, and a page view counter. Minimal Python Workers functioned reliably for standard libraries and in-memory SQLite, but advanced frameworks (like Starlette) are blocked locally due to `workerd`'s requirement for direct internet access to fetch external dependencies, stalling use of packages beyond those bundled in Pyodide. The findings aid in understanding [Cloudflare Workers with Python](https://developers.cloudflare.com/workers/languages/python/) and the practical limits of local emulation with external dependencies.
+
+**Key Findings:**
+- JavaScript Workers easily integrate with D1 for persistent SQLite, with clear database configuration and local dev workflows.
+- Pure Python Workers (no external packages) run perfectly locally, including in-memory SQLite.
+- Python Workers using external dependencies (e.g., hashlib, Starlette) are blocked without direct internet access; proxy support is not yet available in `workerd`.
+- Persistence, routing, and form handling are straightforward in both JavaScript and Python barebones Workers, but richer Python apps require network access for package installation.
 
 ### [duckdb-security](https://github.com/simonw/research/tree/main/duckdb-security) (2026-01-16)
 
