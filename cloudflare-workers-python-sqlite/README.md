@@ -37,15 +37,38 @@ Key learnings:
 - Use `prepare().run()` instead of `exec()` for D1 SQL statements
 - Persistence data stored in `.wrangler/state/v3/d1/miniflare-D1DatabaseObject/*.sqlite`
 
-### Python Worker - ⚠️ BLOCKED (Local Dev Only)
+### Python Worker (Minimal) - ✅ WORKS
 
-Created a Python Starlette worker (`py-worker/`), but local development is blocked:
+Successfully built a minimal Python Worker (`py-worker-minimal/`) with:
+1. **Hello World** - Basic text response
+2. **Form Processing** - HTML form with server-side POST handling
+3. **SQLite Counter** - In-memory SQLite counter (sqlite3 is built into Pyodide!)
+4. **Status Endpoint** - Shows available features
 
-**Issue**: `workerd` (the Workers runtime) requires direct internet access. It does NOT honor HTTP_PROXY environment variables for internal operations like downloading Pyodide bundles and Python packages.
+**Key discovery**: Python Workers WITHOUT external package dependencies work perfectly locally!
 
-**The code is correct** and would work when deployed to actual Cloudflare Workers.
+```bash
+cd py-worker-minimal
+pywrangler dev --port 8789
 
-See `py-worker/src/entry.py` for the implementation.
+# Test endpoints
+curl http://localhost:8789/hello          # Hello World
+curl http://localhost:8789/status         # Shows SQLite available
+curl http://localhost:8789/form           # HTML form
+curl -X POST -d "name=Test&message=Hi" http://localhost:8789/form
+```
+
+### Python Worker (Starlette) - ⚠️ BLOCKED (External Package Dependencies)
+
+The Starlette-based worker (`py-worker/`) is blocked because:
+
+**Issue**: `workerd` requires direct internet access to download Python packages (hashlib, ssl, etc.). It does NOT honor HTTP_PROXY environment variables.
+
+**The code is correct** and would work:
+- When deployed to actual Cloudflare Workers
+- In environments with direct internet access
+
+See `py-worker/src/entry.py` for the Starlette implementation.
 
 ## Project Structure
 
@@ -54,7 +77,11 @@ cloudflare-workers-python-sqlite/
 ├── js-worker/                 # Working JavaScript worker
 │   ├── wrangler.toml         # Cloudflare config with D1 database
 │   └── src/index.js          # Worker code with 3 routes
-├── py-worker/                # Python worker (untested locally)
+├── py-worker-minimal/        # Working minimal Python worker
+│   ├── wrangler.toml         # Python worker config
+│   ├── pyproject.toml        # No external dependencies
+│   └── src/entry.py          # Pure Python with sqlite3
+├── py-worker/                # Python Starlette worker (needs network)
 │   ├── wrangler.toml         # Python worker config
 │   ├── pyproject.toml        # Python dependencies (starlette)
 │   └── src/entry.py          # Starlette hello world
@@ -109,7 +136,54 @@ The SQLite database contains:
 - Your application tables (e.g., `page_views`)
 - `_cf_METADATA` table for Cloudflare internal bookkeeping
 
-## Python Worker Details
+## Minimal Python Worker Details
+
+### Working Code (py-worker-minimal/src/entry.py)
+
+```python
+from workers import WorkerEntrypoint, Response
+from urllib.parse import urlparse, parse_qs
+import sqlite3  # Built into Pyodide!
+
+class Default(WorkerEntrypoint):
+    async def on_fetch(self, request):  # Note: on_fetch, not fetch!
+        url = urlparse(request.url)
+        path = url.path
+
+        if path == "/" or path == "/hello":
+            return Response("Hello World from Python Worker!")
+
+        if path == "/form":
+            if request.method == "POST":
+                body = await request.text()
+                params = parse_qs(body)
+                name = params.get("name", [""])[0]
+                # Process form...
+            return Response(html, headers={"Content-Type": "text/html"})
+
+        if path == "/counter":
+            conn = sqlite3.connect(":memory:")
+            # SQLite operations...
+            return Response(f"SQLite Counter: {count}")
+
+        return Response("Not Found", status=404)
+```
+
+### What Works Without Network Access
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Basic Python stdlib | ✅ | urllib.parse, etc. |
+| sqlite3 module | ✅ | Built into Pyodide |
+| workers module | ✅ | Response, WorkerEntrypoint |
+| Form handling | ✅ | POST body parsing |
+| URL routing | ✅ | Manual path matching |
+| Web frameworks | ❌ | Starlette, FastAPI need network |
+| Crypto modules | ❌ | hashlib, ssl need network |
+
+---
+
+## Python Worker (Starlette) Details
 
 ### How Python Workers Work
 
