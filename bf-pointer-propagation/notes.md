@@ -152,8 +152,48 @@ from JIT compilation where:
 
 ## Build Status
 
-Nix build started to compile the interpreter with PyPy's JIT. The bootstrap PyPy
-build takes 1-2 hours. Once complete, run compiled benchmarks:
+### macOS (aarch64-darwin) Setup
+
+To run the JIT-compiled benchmarks on macOS (Apple Silicon), you need:
+
+1. **Install Nix** (requires sudo, must be run in a terminal):
+   ```bash
+   sh <(curl -L https://nixos.org/nix/install) --daemon
+   ```
+   This will:
+   - Create the nixbld group and users (UIDs 351-382)
+   - Create an APFS volume mounted at /nix
+   - Set up the nix-daemon LaunchDaemon
+   - Configure shell profiles
+
+2. **Restart your shell** or run:
+   ```bash
+   . /etc/bashrc  # or . /etc/zshrc
+   ```
+
+3. **Clone and build rpypkgs**:
+   ```bash
+   git clone https://github.com/rpypkgs/rpypkgs
+   cd rpypkgs
+   # Apply the patch
+   patch -p1 < /path/to/bf.py.diff
+   # Build (note: aarch64-darwin is "untested" in flake.nix)
+   nix build .#bf --impure
+   ```
+
+4. **Run benchmarks**:
+   ```bash
+   time ./result/bin/bf benches/mandel.b > /dev/null
+   ```
+
+**Note**: The rpypkgs `flake.nix` lists `aarch64-darwin` as an "untested system".
+The build may work but is not guaranteed. Fallback options:
+- Use an x86_64 Linux VM/container
+- Build on a Linux machine with aarch64 cross-compilation
+
+### Linux Build
+
+The bootstrap PyPy build takes 1-2 hours. Once complete, run compiled benchmarks:
 
 ```bash
 cd rpypkgs

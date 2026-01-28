@@ -82,10 +82,26 @@ $ python bf.py share/cell-size.b
 
 ## How to Build
 
+### Linux (tested)
+
 ```bash
 cd rpypkgs
 nix build .#bf
 ```
+
+### macOS (aarch64-darwin - untested)
+
+1. Install Nix (requires sudo, run in terminal):
+   ```bash
+   sh <(curl -L https://nixos.org/nix/install) --daemon
+   ```
+
+2. Build with impure flag:
+   ```bash
+   nix build .#bf --impure
+   ```
+
+**Note**: `aarch64-darwin` is listed as "untested" in the rpypkgs flake.nix.
 
 ## How to Run
 
