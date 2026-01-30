@@ -1,0 +1,13 @@
+[project]
+name = "eryx-binding-tests"
+version = "0.1.0"
+description = "Test suite for eryx Python bindings"
+requires-python = ">=3.12"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
