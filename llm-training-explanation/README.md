@@ -781,3 +781,115 @@ self._muon_lr_t.fill_(group["lr"])  # update value without creating new tensor
 ```
 
 This is because `torch.compile` would have to recompile the kernel every time a Python float value changes. By using the same tensor object and just changing its value, the compiled kernel remains valid across steps even as the learning rate changes according to the schedule.
+
+---
+
+## 8. The Training Loop — Putting It All Together
+
+Now we can see the complete training loop — the outer structure that ties together data loading, forward pass, loss computation, backpropagation, and optimization into a repeating cycle that gradually teaches the model to predict text.
+
+### How Many Steps?
+
+A fundamental question before training begins: how long should we train? nanochat uses **scaling laws** to determine the answer automatically. The key insight is the ratio between the number of training tokens and the number of model parameters:
+
+```python
+# Default: data-to-parameter ratio of 10.5
+target_tokens = target_param_data_ratio * num_scaling_params
+num_iterations = target_tokens // total_batch_size
+```
+
+For the speedrun's depth-24 model with about 350 million "scaling parameters" (transformer matrices plus the output head — embeddings are excluded from this count) and a ratio of 12, this gives roughly 4.2 billion tokens, or about 8,000 optimizer steps at a batch size of 524,288 tokens. This is slightly "overtrained" relative to the compute-optimal ratio of 10.5 (which itself is based on the Chinchilla scaling laws), but the extra training pushes the model to beat GPT-2's CORE score.
+
+### The Learning Rate Schedule
+
+The learning rate is not constant during training. nanochat uses a **warmup-constant-warmdown** schedule:
+
+```python
+def get_lr_multiplier(it):
+    warmup_iters = round(warmup_ratio * num_iterations)
+    warmdown_iters = round(warmdown_ratio * num_iterations)
+    if it < warmup_iters:
+        return (it + 1) / warmup_iters           # linear warmup
+    elif it <= num_iterations - warmdown_iters:
+        return 1.0                                 # constant
+    else:
+        progress = (num_iterations - it) / warmdown_iters
+        return progress * 1.0 + (1 - progress) * final_lr_frac  # linear decay
+```
+
+- **Warmup (first 0% by default — disabled for pretraining):** The learning rate ramps up linearly from near zero. This prevents the model from making huge, destructive updates when the gradients are most noisy (at the very start).
+- **Constant (first 50%):** The learning rate stays at its full value. This is where most of the learning happens.
+- **Warmdown (last 50%):** The learning rate decays linearly back toward zero. This is like gradually slowing down as you approach your destination — the coarse structure of knowledge has been learned, and now the model is refining details. Smaller updates prevent it from overshooting.
+
+In addition to the learning rate, Muon's momentum coefficient warms up from 0.85 to 0.95 over the first 300 steps, and weight decay decays linearly to zero over the entire run:
+
+```python
+def get_muon_momentum(it):
+    frac = min(it / 300, 1)
+    return (1 - frac) * 0.85 + frac * 0.95
+
+def get_weight_decay(it):
+    return weight_decay_scaled * (1 - it / num_iterations)
+```
+
+### The Complete Training Step
+
+Here is one complete training step, showing how all the pieces fit together:
+
+```python
+# For each micro-batch in the gradient accumulation
+for micro_step in range(grad_accum_steps):
+    with autocast_ctx:                          # enable bfloat16
+        loss = model(x, y)                      # forward pass -> loss
+    train_loss = loss.detach()                  # save for logging (no grad needed)
+    loss = loss / grad_accum_steps              # normalize for accumulation
+    loss.backward()                             # backward pass -> gradients accumulate
+    x, y, state = next(train_loader)            # prefetch next batch
+
+# Update hyperparameters for this step
+lrm = get_lr_multiplier(step)
+muon_momentum = get_muon_momentum(step)
+muon_weight_decay = get_weight_decay(step)
+for group in optimizer.param_groups:
+    group["lr"] = group["initial_lr"] * lrm
+    if group['kind'] == 'muon':
+        group["momentum"] = muon_momentum
+        group["weight_decay"] = muon_weight_decay
+
+# Apply the accumulated gradients
+optimizer.step()
+
+# Clear all gradients for the next step
+model.zero_grad(set_to_none=True)
+```
+
+The `set_to_none=True` flag in `zero_grad` is a performance optimization: instead of filling gradient tensors with zeros (which requires writing to all that memory), it deallocates them entirely. They will be re-allocated on the next `.backward()` call.
+
+### Distributed Training: Multiple GPUs
+
+When training on 8 GPUs, nanochat uses **DistributedDataParallel (DDP)** via `torchrun`. Each GPU runs an identical copy of the training loop on different data. The gradients need to be averaged across all GPUs before the optimizer step, so that all copies of the model stay in sync.
+
+nanochat's distributed optimizer (`DistMuonAdamW`) handles this with an overlapped three-phase communication pattern:
+
+**Phase 1 — Launch all reduces:** For each parameter group, kick off an asynchronous gradient reduction operation. For AdamW's large parameters and Muon's stacked matrices, this uses `reduce_scatter` (each GPU gets one slice of the averaged gradient). For AdamW's small parameters (scalars, biases), it uses `all_reduce` (every GPU gets the full averaged gradient).
+
+**Phase 2 — Compute updates as reduces finish:** Process each group in order: wait for its reduce to complete, compute the optimizer step on this GPU's slice, and immediately launch an `all_gather` to broadcast the updated parameters back to all GPUs.
+
+**Phase 3 — Wait for gathers, copy back:** Wait for all gathers to finish, then copy the updated parameters from the gathered buffer back to the model's parameter tensors.
+
+This overlapped design means that while one GPU is computing the Muon update for group A, it might simultaneously be receiving the gathered parameters for a group that finished earlier, and sending out the reduced gradients for a group that was launched later. The result is that communication and computation overlap, minimizing idle time.
+
+For Muon specifically, the distributed version shards the parameter stack across GPUs. If there are 24 weight matrices of the same shape and 8 GPUs, each GPU "owns" 3 matrices. It only computes the Muon update for those 3 (including maintaining momentum buffers only for those 3), then gathers the results back to all GPUs. This gives near-linear memory savings for the optimizer state — a form of **ZeRO-2 optimization**.
+
+### What Happens During a Three-Hour Run
+
+To give a concrete sense of scale, here is what the speedrun looks like on 8xH100:
+
+- **Model:** 24 layers, 1,536-dim, ~350M parameters
+- **Batch size:** 524,288 tokens (32 sequences per GPU times 2,048 tokens, times 8 GPUs — one gradient accumulation step)
+- **Steps:** ~8,300 optimizer steps
+- **Tokens processed:** ~4.3 billion
+- **Speed:** ~480,000 tokens/second, ~50% MFU (model FLOPS utilization)
+- **Time:** ~3 hours wall clock
+
+Every 250 steps the model is evaluated on a validation set, and every 2,000 steps it runs the full CORE benchmark. Sample generations are printed periodically so the operator can qualitatively see the model improving. At the end, a checkpoint is saved containing the model weights, optimizer state, and metadata for resumption.
