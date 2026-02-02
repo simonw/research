@@ -893,3 +893,206 @@ To give a concrete sense of scale, here is what the speedrun looks like on 8xH10
 - **Time:** ~3 hours wall clock
 
 Every 250 steps the model is evaluated on a validation set, and every 2,000 steps it runs the full CORE benchmark. Sample generations are printed periodically so the operator can qualitatively see the model improving. At the end, a checkpoint is saved containing the model weights, optimizer state, and metadata for resumption.
+
+---
+
+## 9. Supervised Fine-Tuning — Teaching the Model to Chat
+
+After pretraining, the model can predict text — but it does not know how to have a conversation. If you give it "What is the capital of France?" it might continue with "What is the capital of Germany? What is the capital of..." because in its training data, questions were often followed by more questions. It needs to learn the specific pattern of question-then-answer, or more generally, user-message-then-assistant-response.
+
+This is the job of **Supervised Fine-Tuning (SFT)**.
+
+### The Conversation Format
+
+SFT training data consists of conversations — pairs of user and assistant messages. nanochat renders these into tokens using the special tokens we saw in Section 1:
+
+```
+<|bos|>
+<|user_start|> Why is the sky blue? <|user_end|>
+<|assistant_start|> The sky appears blue because... <|assistant_end|>
+```
+
+The tokenizer's `render_conversation` method handles this, including multi-turn conversations and tool-use markup:
+
+```python
+def render_conversation(self, conversation, max_tokens=2048):
+    ids, mask = [], []
+    add_tokens(bos, 0)  # BOS is not trained on
+    for message in messages:
+        if message["role"] == "user":
+            add_tokens(user_start, 0)   # not trained on
+            add_tokens(encode(content), 0)  # not trained on
+            add_tokens(user_end, 0)     # not trained on
+        elif message["role"] == "assistant":
+            add_tokens(assistant_start, 0)  # not trained on
+            add_tokens(encode(content), 1)  # TRAINED ON (mask=1)
+            add_tokens(assistant_end, 1)    # TRAINED ON
+    return ids, mask
+```
+
+The critical detail is the **mask**. During SFT, the model is only trained on the assistant's tokens (mask=1). The user's tokens and all special tokens have mask=0, meaning they contribute to the forward pass context (the model can attend to them) but produce no gradient during backpropagation. This makes sense: we want the model to learn how to *respond*, not how to ask questions. The user's messages are given as context, not as targets.
+
+### The Training Data Mixture
+
+nanochat's SFT uses a carefully designed mixture of datasets:
+
+```python
+train_dataset = TaskMixture([
+    SmolTalk(split="train"),          # 460K general conversations
+    MMLU(subset="auxiliary_train"),    # 100K multiple choice problems
+    GSM8K(subset="main", split="train"),  # 8K math problems with tool use
+    GSM8K(subset="main", split="train"),  # 8K more (2 epochs of GSM8K)
+    CustomJSON(filepath=identity_file),   # 1K identity conversations
+    CustomJSON(filepath=identity_file),   # 1K more (2 epochs)
+    SimpleSpelling(size=200000),      # 200K spelling tasks
+    SpellingBee(size=80000),          # 80K letter-counting tasks
+])
+```
+
+Each component teaches different abilities:
+
+- **SmolTalk** (460K): The bulk of the data. General conversational ability — how to answer questions, maintain coherent dialogue, follow instructions.
+- **MMLU** (100K): Multiple-choice questions across many subjects. Teaches the model to select answers from options and format them correctly.
+- **GSM8K** (16K, double-epoch): Grade-school math problems with calculator tool use. Teaches arithmetic reasoning and the `<|python_start|>...<|python_end|>` tool-use pattern.
+- **Identity conversations** (2K, double-epoch): Synthetic conversations where the model describes itself — its name, its nature, its capabilities. This gives the chatbot a personality. These are up-weighted by running two epochs.
+- **Spelling tasks** (280K): Tasks like "spell the word 'apple'" and "how many 'r' are in 'strawberry'?" These teach the model character-level awareness that BPE tokenization normally obscures.
+
+The `TaskMixture` class concatenates all datasets and shuffles them randomly, ensuring the model sees a diverse mix of tasks in every training epoch.
+
+### Best-Fit Pad Packing (Not Crop Packing)
+
+SFT uses a different packing strategy than pretraining. During pretraining, when no document fits in the remaining space, the dataloader *crops* a document to fill it (discarding the rest). This is acceptable because the pretraining data is abundant — losing 35% of tokens barely matters when you have billions.
+
+During SFT, the data is much more scarce and structured. Cropping a conversation in the middle would produce a confusing training signal (a question with half an answer). So the SFT dataloader uses **pad packing** instead: when no conversation fits, it pads the remainder of the row with BOS tokens and masks those positions as -1 in the targets:
+
+```python
+if best_idx >= 0:
+    conv = conv_buffer.pop(best_idx)
+    row.extend(conv)  # conversation fits entirely
+else:
+    # No conversation fits — pad instead of cropping
+    row.extend([bos_token] * remaining)
+    # Targets at padded positions will be set to -1 (ignored in loss)
+    break
+```
+
+The `ignore_index=-1` in the cross-entropy loss function ensures padded positions contribute zero to the loss and zero gradient. The model learns nothing from padding — it is purely wasted compute, but it preserves the integrity of every conversation.
+
+### SFT Training Dynamics
+
+SFT runs for a single epoch over the entire training mixture (about 856K conversations), using the same MuonAdamW optimizer but with a simpler learning rate schedule:
+
+```python
+def get_lr_multiplier(progress):
+    return 1 if progress < 0.8 else 1 - (progress - 0.8) / 0.2
+```
+
+The learning rate stays constant for 80% of training, then linearly decays to zero over the final 20%. There is no warmup — the model is already pretrained and its weights are in a reasonable region.
+
+SFT is much faster than pretraining — typically completing in a few minutes on 8 GPUs — because the dataset is smaller and only one epoch is needed.
+
+---
+
+## 10. Reinforcement Learning — Learning from Trial and Error
+
+After SFT, the model can converse, but its reasoning abilities — especially for math — can be substantially improved through **Reinforcement Learning (RL)**. The idea is fundamentally different from supervised learning: instead of showing the model the correct answer and training it to reproduce it, we let the model *try* to answer, check whether it got it right, and reinforce behaviors that led to correct answers.
+
+### The RL Setup: GSM8K Math Problems
+
+nanochat's RL stage trains on **GSM8K** — a dataset of 8,000 grade-school math problems. Each problem has a question and a numerical answer. The model is given the question and must generate a solution, optionally using a calculator tool, and produce the correct number.
+
+The training loop works as follows:
+
+1. **Sample a question** from the training set.
+2. **Generate multiple candidate responses** (16 by default) by sampling from the model with temperature 1.0.
+3. **Score each response** using a simple binary reward: 1 if the extracted numerical answer matches the ground truth, 0 otherwise.
+4. **Compute advantages** and update the model to increase the probability of correct responses and decrease the probability of incorrect ones.
+
+### Generating Rollouts
+
+For each training question, the model generates 16 different completions. This is done using the inference engine with KV caching for efficiency:
+
+```python
+# Tokenize the question, priming the assistant for a completion
+tokens = tokenizer.render_for_completion(conversation)
+
+# Generate 16 samples using batched generation
+generated_sequences, masks = engine.generate_batch(
+    tokens,
+    num_samples=16,
+    max_tokens=256,
+    temperature=1.0,
+    top_k=50,
+)
+```
+
+During generation, the engine handles **tool use** automatically. When the model generates `<|python_start|>2+3<|python_end|>`, the engine intercepts this, evaluates `2+3` to get `5`, and injects `<|output_start|>5<|output_end|>` into the sequence. The model can then continue generating, incorporating the calculator's result into its reasoning.
+
+The forced tool-output tokens have their mask set to 0, meaning the model will not receive gradients for predicting them — they came from the calculator, not from the model's own choices.
+
+### The Reward Function
+
+The reward is about as simple as it gets:
+
+```python
+def reward(self, conversation, assistant_response):
+    is_correct = self.evaluate(conversation, assistant_response)
+    return float(is_correct)  # 1.0 if correct, 0.0 if wrong
+```
+
+The evaluation extracts the number after `####` in the response (following GSM8K's format) and compares it to the ground truth. Exact match gets reward 1, everything else gets 0.
+
+### The Policy Gradient: REINFORCE
+
+nanochat uses a simplified variant of **GRPO** (Group Relative Policy Optimization) that boils down to essentially **REINFORCE** — one of the simplest policy gradient algorithms in RL. The comment in the code explains the simplifications:
+
+```python
+# 1) Delete trust region — no KL regularization to a reference model
+# 2) We are on policy — no need for PPO ratio+clip
+# 3) DAPO-style token-level normalization, not sequence-level
+# 4) Instead of z-score (r - mu)/sigma, only use (r - mu) as advantage
+```
+
+The advantage for each sample is simply its reward minus the mean reward across all 16 samples for that question:
+
+```python
+mu = rewards.mean()
+advantages = rewards - mu
+```
+
+If the mean reward is 0.25 (4 out of 16 samples correct), then correct samples get an advantage of +0.75 and incorrect samples get an advantage of -0.25. This relative scoring is important: it means the model always gets both positive and negative signals, even if most or all samples are correct (or incorrect).
+
+### The Loss Computation
+
+The RL loss multiplies the log-probability of each generated token by the advantage of its parent sequence:
+
+```python
+# Calculate log probabilities for each token
+logp = -model(inputs, targets, loss_reduction='none')  # negative NLL = log prob
+
+# Policy gradient objective: sum of (log_prob * advantage) over valid tokens
+pg_obj = (logp * advantages.unsqueeze(-1)).sum()
+
+# Normalize by number of valid tokens
+num_valid = (targets >= 0).sum().clamp(min=1)
+pg_obj = pg_obj / (num_valid * num_passes * examples_per_rank)
+
+# We want to maximize the objective, so minimize its negation
+loss = -pg_obj
+loss.backward()
+```
+
+Let us unpack what this does. For a correct response (advantage > 0), the loss function pushes the model to increase the probability of every token in that response. For an incorrect response (advantage < 0), it pushes the model to decrease the probability of those tokens. The magnitude of the push is proportional to how much better or worse the response was compared to average.
+
+This is token-level normalization (DAPO-style): the gradient is normalized by the total number of valid tokens across all sequences, not by the number of sequences. This means longer sequences get proportionally more gradient signal, which makes sense — there were more decisions to reinforce or penalize.
+
+### Why RL Works for Math
+
+RL is particularly effective for math because:
+
+1. **Verification is easy:** Checking whether `42` equals `42` is trivial. The reward function does not need to understand the reasoning, just the answer.
+2. **Multiple solution paths exist:** There are many valid ways to solve a math problem. SFT can only teach the specific solution in the training data, but RL can discover and reinforce any path that reaches the correct answer.
+3. **Tool use emerges naturally:** The model learns that calling the calculator leads to correct answers more often. RL reinforces this behavior without explicitly teaching it.
+4. **Partial credit is not needed:** The binary reward (correct/incorrect) is sufficient because the model generates many samples. Even if only 1 out of 16 is correct, that one correct sample provides a strong positive signal relative to the 15 failures.
+
+The RL stage evaluates the model periodically on the test set using **pass@k**: for each test question, generate k samples and check if any of them are correct. Watching pass@1, pass@4, pass@8 increase over training gives a clear signal that the model is learning to solve math problems more reliably.
