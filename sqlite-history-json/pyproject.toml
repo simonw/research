@@ -1,0 +1,17 @@
+[project]
+name = "sqlite-history-json"
+version = "0.1.0"
+description = "SQLite table history tracking using a JSON audit log"
+readme = "README.md"
+authors = [
+    { name = "Claude", email = "noreply@anthropic.com" }
+]
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["uv_build>=0.8.17,<0.9.0"]
+build-backend = "uv_build"
