@@ -434,3 +434,198 @@ The key design choices here:
 - **Output projections start at zero.** This means at initialization, each Transformer block is effectively a no-op — it contributes nothing to the residual stream. The model starts as a simple lookup table (embedding -> lm_head) and gradually learns to use the Transformer blocks.
 - **The lm_head uses very small initial values** so that the model's initial predictions are close to uniform over the vocabulary. This prevents the model from being "overconfident" about random predictions before any learning has occurred.
 - **Uniform initialization** for the input projections avoids the outlier values that normal distributions occasionally produce, which can destabilize early training.
+
+---
+
+## 4. The Forward Pass — Making a Prediction
+
+Now that we understand the architecture, let us trace a single forward pass — the process of feeding tokens into the model and getting a prediction out. This is the heart of both training and inference.
+
+### Step by Step Through the Forward Pass
+
+Here is the full forward pass in nanochat, annotated:
+
+```python
+def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
+    B, T = idx.size()  # B=batch size, T=sequence length
+
+    # 1. Get rotary embeddings for this sequence length
+    cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T]
+
+    # 2. Embed the tokens and normalize
+    x = self.transformer.wte(idx)   # [B, T] -> [B, T, model_dim]
+    x = norm(x)                     # RMS normalize
+    x0 = x                          # save for x0 residual connections
+
+    # 3. Pass through each Transformer block
+    for i, block in enumerate(self.transformer.h):
+        x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
+        ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
+        x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+
+    # 4. Final normalization and projection to logits
+    x = norm(x)
+    logits = self.lm_head(x)
+    logits = logits[..., :self.config.vocab_size]
+    logits = logits.float()
+    logits = 15 * torch.tanh(logits / 15)  # softcap
+
+    # 5. If targets provided, compute loss; otherwise return logits
+    if targets is not None:
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
+                               targets.view(-1), ignore_index=-1)
+        return loss
+    else:
+        return logits
+```
+
+Let us trace what happens to a concrete example. Suppose our batch has one sequence: `[BOS, The, cat, sat]` (four token IDs).
+
+**Step 1:** The token IDs `[0, 412, 5765, 2143]` enter the model.
+
+**Step 2:** Each ID is looked up in the embedding table, producing four vectors of dimension 1,536. These are normalized by RMS norm.
+
+**Step 3:** The four vectors pass through 24 Transformer blocks. In each block:
+- The attention mechanism lets each token attend to all previous tokens (subject to the sliding window). The "sat" token can attend to "BOS," "The," and "cat." Through this mechanism, information flows between positions — "sat" can learn that the previous word was "cat," which is useful for predicting what comes next.
+- The MLP then transforms each position's representation independently, applying the model's learned knowledge.
+
+After 24 blocks of this, the four vectors have been thoroughly mixed and transformed. The vector at the "sat" position now encodes not just "the word 'sat'" but "the word 'sat' in the context of 'The cat sat.'"
+
+**Step 4:** The final vector at each position is projected to a 32,768-dimensional vector of logits. The logit for token "on" at the "sat" position should be high (since "The cat sat on" is a natural continuation), while the logit for token "quantum" should be low.
+
+**Step 5:** If we are training, these logits are compared to the actual target tokens using cross-entropy loss. If we are doing inference, the logits are returned directly so we can sample the next token.
+
+### Mixed Precision: bfloat16 and float32
+
+nanochat runs most of the forward pass in **bfloat16** (brain floating point 16-bit) precision. This format uses 16 bits instead of the standard 32 bits, which halves memory usage and roughly doubles computation speed on modern GPUs that have specialized hardware for it.
+
+However, certain operations are done in float32 for numerical stability:
+- The logit computation and softcapping are in float32
+- The cross-entropy loss is in float32
+- The embeddings are stored in bfloat16 (which is unusual — most models keep embeddings in float32, but nanochat found the optimizer can tolerate it)
+
+The autocast context manager handles this transparently:
+
+```python
+autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+with autocast_ctx:
+    loss = model(x, y)
+```
+
+### torch.compile: Making it Fast
+
+Before training begins, the model is compiled using PyTorch's JIT compiler:
+
+```python
+model = torch.compile(model, dynamic=False)
+```
+
+This analyzes the model's computation graph and fuses operations together, eliminates redundant memory accesses, and generates optimized GPU kernels. The `dynamic=False` flag tells the compiler that the input shapes will never change (which is true during training — every batch has the same shape), allowing more aggressive optimization.
+
+---
+
+## 5. The Loss Function — Measuring How Wrong the Prediction Was
+
+The forward pass produces logits — a score for every token in the vocabulary, at every position in the sequence. But how do we quantify how good or bad these predictions are? That is the job of the **loss function**.
+
+### Cross-Entropy Loss
+
+nanochat uses **cross-entropy loss**, the standard loss function for classification tasks. In the context of language modeling, at each position the model produces a probability distribution over the vocabulary (by applying softmax to the logits), and cross-entropy measures how far that distribution is from the "correct" distribution (which puts all probability on the single correct next token).
+
+In pseudocode, cross-entropy at a single position works like this:
+
+```
+Given:
+  logits = [2.1, -0.5, 0.3, ..., 1.7]  (one score per vocab token)
+  target = 445  (the correct next token ID)
+
+Step 1: Convert logits to probabilities via softmax
+  probs[i] = exp(logits[i]) / sum(exp(logits[j]) for all j)
+
+Step 2: The loss is the negative log of the probability assigned to the correct token
+  loss = -log(probs[target])
+```
+
+If the model assigned high probability to the correct token, the loss is low. If the model assigned low probability, the loss is high. A perfect model would assign probability 1.0 to the correct token, giving a loss of zero. A model that assigns probability 1/32768 (uniform random) gives a loss of about 10.4.
+
+In nanochat's code, this is a single PyTorch call:
+
+```python
+loss = F.cross_entropy(
+    logits.view(-1, logits.size(-1)),   # reshape to [B*T, vocab_size]
+    targets.view(-1),                    # reshape to [B*T]
+    ignore_index=-1,                     # skip masked positions
+    reduction='mean'                     # average over all positions
+)
+```
+
+The `ignore_index=-1` parameter is important: positions with a target of -1 (used for padding during SFT) are excluded from the loss. They contribute zero gradient, so the model does not try to learn from padded positions.
+
+### Why Cross-Entropy Works
+
+Cross-entropy is deeply connected to information theory. Minimizing cross-entropy is equivalent to maximizing the probability that the model assigns to the training data. It is also equivalent to minimizing the KL divergence between the model's predictions and the true data distribution. In simpler terms: a model with lower cross-entropy loss is one that would have been less "surprised" by the training data — it assigns higher probability to the sequences it actually saw.
+
+### Bits Per Byte: A Fairer Metric
+
+Raw cross-entropy loss depends on the vocabulary size — a model with 100,000 tokens has a harder prediction task than one with 32,000 tokens, even if both models are equally good at understanding language. To get a fair comparison across different tokenizers, nanochat uses **bits per byte (BPB)**.
+
+BPB normalizes the loss by the number of bytes the tokens represent:
+
+```python
+def evaluate_bpb(model, batches, steps, token_bytes):
+    total_nats = 0.0   # sum of all losses (in nats)
+    total_bytes = 0     # sum of all byte lengths
+    for x, y in batches:
+        loss2d = model(x, y, loss_reduction='none')  # per-position loss
+        num_bytes2d = token_bytes[y]                  # bytes per target token
+        total_nats += (loss2d * (num_bytes2d > 0)).sum()
+        total_bytes += num_bytes2d.sum()
+    bpb = total_nats / (log(2) * total_bytes)
+    return bpb
+```
+
+The conversion from nats (the natural unit of cross-entropy) to bits involves dividing by log(2). Special tokens (with zero byte length) are excluded. The result is a number like 0.89 BPB, meaning the model needs on average 0.89 bits to encode each byte of text. For reference, raw English text has an entropy of roughly 1.0-1.5 bits per byte, and GPT-2 achieves about 0.93 BPB on typical validation sets. Lower is better.
+
+---
+
+## 6. Backpropagation — Learning from Mistakes
+
+The forward pass produces a loss. Backpropagation is the algorithm that turns that loss into a signal telling every parameter in the model how it should change to make the loss smaller.
+
+### The Chain Rule in Action
+
+Backpropagation is, fundamentally, a systematic application of the chain rule of calculus. The loss depends on the logits, which depend on the final layer's weights, which depend on the previous layer's outputs, and so on all the way back to the embedding table. The chain rule lets us compute how much the loss would change if we wiggled each parameter by a tiny amount.
+
+In PyTorch, this is a single line of code:
+
+```python
+loss.backward()
+```
+
+This call traverses the computation graph in reverse (from loss back to parameters), computing the **gradient** of the loss with respect to every parameter that has `requires_grad=True`. After this call, every parameter tensor `p` has a `.grad` attribute containing its gradient.
+
+### What Gradients Mean
+
+A gradient is a direction — for each parameter, it tells you: "if you increase this parameter by a tiny amount, the loss will increase by this much." To reduce the loss, you want to move each parameter in the opposite direction of its gradient. The magnitude of the gradient tells you how sensitive the loss is to that parameter.
+
+For a model with 300 million parameters, backpropagation computes 300 million gradient values in a single pass. This is remarkably efficient — it costs roughly twice the compute of a forward pass (not 300 million separate forward passes, as a naive approach would require). This efficiency is why neural networks with billions of parameters are trainable at all.
+
+### Gradient Accumulation
+
+A critical practical consideration: the desired batch size may be too large to fit in GPU memory at once. nanochat's default total batch size is 524,288 tokens, but a single GPU might only handle 32 sequences of 2,048 tokens (65,536 tokens) at a time.
+
+The solution is **gradient accumulation**: run multiple forward-backward passes on smaller "micro-batches," accumulating the gradients, before performing a single optimizer step:
+
+```python
+grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd  # e.g., 8
+
+for micro_step in range(grad_accum_steps):
+    loss = model(x, y)           # forward pass
+    loss = loss / grad_accum_steps  # normalize so gradients average correctly
+    loss.backward()              # accumulate gradients (they sum by default)
+    x, y = next(train_loader)   # prefetch next batch during GPU work
+```
+
+The key detail is `loss = loss / grad_accum_steps`. Because PyTorch's `.backward()` adds gradients to any existing gradients (it does not replace them), running 8 micro-steps accumulates 8 times the gradient. Dividing the loss by 8 before backpropagation ensures the final accumulated gradient is the correct average, identical to what you would get from a single forward pass with 8 times the batch size.
+
+Notice also the clever overlapping: `next(train_loader)` is called *inside* the micro-step loop, right after `.backward()`. This prefetches the next batch of data from CPU to GPU while the GPU is busy computing gradients — overlapping data transfer with computation for better utilization.
