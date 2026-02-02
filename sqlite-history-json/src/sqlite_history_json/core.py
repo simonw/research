@@ -14,6 +14,11 @@ def _audit_table_name(table_name: str) -> str:
     return f"_history_json_{table_name}"
 
 
+def _audit_pk_col_name(source_col_name: str) -> str:
+    """Return the audit table column name for a source PK column."""
+    return f"pk_{source_col_name}"
+
+
 def _get_table_info(conn: sqlite3.Connection, table_name: str) -> list[dict]:
     """Return column info for a table via PRAGMA table_info."""
     rows = conn.execute(f"PRAGMA table_info([{table_name}])").fetchall()
@@ -47,7 +52,9 @@ def _build_insert_trigger_sql(
     non_pk_cols: list[dict],
 ) -> str:
     """Build the AFTER INSERT trigger SQL."""
-    pk_col_names = ", ".join(f"[{c['name']}]" for c in pk_cols)
+    audit_pk_col_names = ", ".join(
+        f"[{_audit_pk_col_name(c['name'])}]" for c in pk_cols
+    )
     pk_new_refs = ", ".join(f"NEW.[{c['name']}]" for c in pk_cols)
 
     # Build json_object arguments for all non-PK columns
@@ -73,7 +80,7 @@ def _build_insert_trigger_sql(
     return f"""CREATE TRIGGER IF NOT EXISTS [{audit_name}_insert]
 AFTER INSERT ON [{table_name}]
 BEGIN
-    INSERT INTO [{audit_name}] (timestamp, operation, {pk_col_names}, updated_values)
+    INSERT INTO [{audit_name}] (timestamp, operation, {audit_pk_col_names}, updated_values)
     VALUES (
         strftime('%Y-%m-%d %H:%M:%f', 'now'),
         'insert',
@@ -90,15 +97,14 @@ def _build_update_trigger_sql(
     non_pk_cols: list[dict],
 ) -> str:
     """Build the AFTER UPDATE trigger SQL using nested json_patch."""
-    pk_col_names = ", ".join(f"[{c['name']}]" for c in pk_cols)
+    audit_pk_col_names = ", ".join(
+        f"[{_audit_pk_col_name(c['name'])}]" for c in pk_cols
+    )
     pk_new_refs = ", ".join(f"NEW.[{c['name']}]" for c in pk_cols)
 
     if not non_pk_cols:
         json_expr = "'{}'"
     else:
-        # Build nested json_patch calls, one per column
-        # Start from innermost: json_patch('{}', case_for_first_col)
-        # Then wrap each subsequent column around it
         def case_for_col(col: dict) -> str:
             name = col["name"]
             if _is_blob_type(col["type"]):
@@ -134,7 +140,7 @@ def _build_update_trigger_sql(
     return f"""CREATE TRIGGER IF NOT EXISTS [{audit_name}_update]
 AFTER UPDATE ON [{table_name}]
 BEGIN
-    INSERT INTO [{audit_name}] (timestamp, operation, {pk_col_names}, updated_values)
+    INSERT INTO [{audit_name}] (timestamp, operation, {audit_pk_col_names}, updated_values)
     VALUES (
         strftime('%Y-%m-%d %H:%M:%f', 'now'),
         'update',
@@ -150,13 +156,15 @@ def _build_delete_trigger_sql(
     pk_cols: list[dict],
 ) -> str:
     """Build the AFTER DELETE trigger SQL."""
-    pk_col_names = ", ".join(f"[{c['name']}]" for c in pk_cols)
+    audit_pk_col_names = ", ".join(
+        f"[{_audit_pk_col_name(c['name'])}]" for c in pk_cols
+    )
     pk_old_refs = ", ".join(f"OLD.[{c['name']}]" for c in pk_cols)
 
     return f"""CREATE TRIGGER IF NOT EXISTS [{audit_name}_delete]
 AFTER DELETE ON [{table_name}]
 BEGIN
-    INSERT INTO [{audit_name}] (timestamp, operation, {pk_col_names}, updated_values)
+    INSERT INTO [{audit_name}] (timestamp, operation, {audit_pk_col_names}, updated_values)
     VALUES (
         strftime('%Y-%m-%d %H:%M:%f', 'now'),
         'delete',
@@ -166,15 +174,26 @@ BEGIN
 END;"""
 
 
-def enable_tracking(conn: sqlite3.Connection, table_name: str) -> None:
+def enable_tracking(
+    conn: sqlite3.Connection,
+    table_name: str,
+    *,
+    populate_table: bool = True,
+) -> None:
     """Create audit table and triggers for the given table.
 
     The audit table is named ``_history_json_{table_name}`` and contains:
     - id: auto-incrementing primary key
-    - timestamp: ISO-8601 datetime of the operation
+    - timestamp: ISO-8601 datetime with microsecond precision
     - operation: 'insert', 'update', or 'delete'
-    - one column per primary key column of the source table
+    - pk_{col} columns for each primary key column of the source table
     - updated_values: JSON text of changed column values
+
+    Args:
+        conn: SQLite connection.
+        table_name: Name of the table to track.
+        populate_table: If True (the default), snapshot all existing rows into
+            the audit log so history is complete from this point.
 
     This is idempotent: calling it twice has no additional effect.
     """
@@ -189,15 +208,10 @@ def enable_tracking(conn: sqlite3.Connection, table_name: str) -> None:
             "sqlite-history-json requires an explicit PRIMARY KEY."
         )
 
-    # Build audit table column definitions
-    # For single PK, we store it as "row_id" to keep a uniform interface;
-    # for compound PK, we keep original column names.
-    if len(pk_cols) == 1:
-        pk_col_defs = f"[row_id] {pk_cols[0]['type']}"
-    else:
-        pk_col_defs = ", ".join(
-            f"[{c['name']}] {c['type']}" for c in pk_cols
-        )
+    # Build audit table PK column definitions with pk_ prefix
+    pk_col_defs = ", ".join(
+        f"[{_audit_pk_col_name(c['name'])}] {c['type']}" for c in pk_cols
+    )
 
     create_audit = f"""CREATE TABLE IF NOT EXISTS [{audit_name}] (
     id INTEGER PRIMARY KEY,
@@ -210,29 +224,13 @@ def enable_tracking(conn: sqlite3.Connection, table_name: str) -> None:
     conn.execute(create_audit)
 
     # Build and create triggers
-    # For single PK tables, we map the PK column to "row_id" in the triggers
-    if len(pk_cols) == 1:
-        # Replace pk_cols entries to use "row_id" as the audit column name
-        pk_cols_for_triggers = [{"name": "row_id", "type": pk_cols[0]["type"], "pk": 1}]
-        # But we need the original name for OLD/NEW references
-        orig_pk_name = pk_cols[0]["name"]
-        insert_sql = _build_insert_trigger_for_single_pk(
-            table_name, audit_name, orig_pk_name, pk_cols_for_triggers[0], non_pk_cols
-        )
-        update_sql = _build_update_trigger_for_single_pk(
-            table_name, audit_name, orig_pk_name, pk_cols_for_triggers[0], non_pk_cols
-        )
-        delete_sql = _build_delete_trigger_for_single_pk(
-            table_name, audit_name, orig_pk_name
-        )
-    else:
-        insert_sql = _build_insert_trigger_sql(
-            table_name, audit_name, pk_cols, non_pk_cols
-        )
-        update_sql = _build_update_trigger_sql(
-            table_name, audit_name, pk_cols, non_pk_cols
-        )
-        delete_sql = _build_delete_trigger_sql(table_name, audit_name, pk_cols)
+    insert_sql = _build_insert_trigger_sql(
+        table_name, audit_name, pk_cols, non_pk_cols
+    )
+    update_sql = _build_update_trigger_sql(
+        table_name, audit_name, pk_cols, non_pk_cols
+    )
+    delete_sql = _build_delete_trigger_sql(table_name, audit_name, pk_cols)
 
     conn.execute(insert_sql)
     conn.execute(update_sql)
@@ -243,131 +241,21 @@ def enable_tracking(conn: sqlite3.Connection, table_name: str) -> None:
         f"CREATE INDEX IF NOT EXISTS [{audit_name}_timestamp] "
         f"ON [{audit_name}] (timestamp)"
     )
-    if len(pk_cols) == 1:
-        conn.execute(
-            f"CREATE INDEX IF NOT EXISTS [{audit_name}_row_id] "
-            f"ON [{audit_name}] (row_id)"
-        )
-    else:
-        pk_col_names_str = ", ".join(f"[{c['name']}]" for c in pk_cols)
-        conn.execute(
-            f"CREATE INDEX IF NOT EXISTS [{audit_name}_pk] "
-            f"ON [{audit_name}] ({pk_col_names_str})"
-        )
+    audit_pk_col_names_str = ", ".join(
+        f"[{_audit_pk_col_name(c['name'])}]" for c in pk_cols
+    )
+    conn.execute(
+        f"CREATE INDEX IF NOT EXISTS [{audit_name}_pk] "
+        f"ON [{audit_name}] ({audit_pk_col_names_str})"
+    )
 
-
-def _build_insert_trigger_for_single_pk(
-    table_name: str,
-    audit_name: str,
-    orig_pk_name: str,
-    audit_pk_col: dict,
-    non_pk_cols: list[dict],
-) -> str:
-    """Build INSERT trigger for single-PK tables (maps PK to row_id)."""
-    json_args = []
-    for col in non_pk_cols:
-        name = col["name"]
-        if _is_blob_type(col["type"]):
-            val_expr = (
-                f"CASE WHEN NEW.[{name}] IS NULL "
-                f"THEN json_object('null', 1) "
-                f"ELSE json_object('hex', hex(NEW.[{name}])) END"
-            )
-        else:
-            val_expr = (
-                f"CASE WHEN NEW.[{name}] IS NULL "
-                f"THEN json_object('null', 1) "
-                f"ELSE NEW.[{name}] END"
-            )
-        json_args.append(f"'{name}', {val_expr}")
-
-    json_obj = f"json_object({', '.join(json_args)})" if json_args else "'{{}}'"
-
-    return f"""CREATE TRIGGER IF NOT EXISTS [{audit_name}_insert]
-AFTER INSERT ON [{table_name}]
-BEGIN
-    INSERT INTO [{audit_name}] (timestamp, operation, row_id, updated_values)
-    VALUES (
-        strftime('%Y-%m-%d %H:%M:%f', 'now'),
-        'insert',
-        NEW.[{orig_pk_name}],
-        {json_obj}
-    );
-END;"""
-
-
-def _build_update_trigger_for_single_pk(
-    table_name: str,
-    audit_name: str,
-    orig_pk_name: str,
-    audit_pk_col: dict,
-    non_pk_cols: list[dict],
-) -> str:
-    """Build UPDATE trigger for single-PK tables (maps PK to row_id)."""
-    if not non_pk_cols:
-        json_expr = "'{}'"
-    else:
-        def case_for_col(col: dict) -> str:
-            name = col["name"]
-            if _is_blob_type(col["type"]):
-                return (
-                    f"CASE\n"
-                    f"                WHEN OLD.[{name}] IS NOT NEW.[{name}] THEN\n"
-                    f"                    CASE\n"
-                    f"                        WHEN NEW.[{name}] IS NULL THEN json_object('{name}', json_object('null', 1))\n"
-                    f"                        ELSE json_object('{name}', json_object('hex', hex(NEW.[{name}])))\n"
-                    f"                    END\n"
-                    f"                ELSE '{{}}'\n"
-                    f"            END"
-                )
-            else:
-                return (
-                    f"CASE\n"
-                    f"                WHEN OLD.[{name}] IS NOT NEW.[{name}] THEN\n"
-                    f"                    CASE\n"
-                    f"                        WHEN NEW.[{name}] IS NULL THEN json_object('{name}', json_object('null', 1))\n"
-                    f"                        ELSE json_object('{name}', NEW.[{name}])\n"
-                    f"                    END\n"
-                    f"                ELSE '{{}}'\n"
-                    f"            END"
-                )
-
-        expr = "'{}'"
-        for col in non_pk_cols:
-            case = case_for_col(col)
-            expr = f"json_patch(\n            {expr},\n            {case}\n        )"
-        json_expr = expr
-
-    return f"""CREATE TRIGGER IF NOT EXISTS [{audit_name}_update]
-AFTER UPDATE ON [{table_name}]
-BEGIN
-    INSERT INTO [{audit_name}] (timestamp, operation, row_id, updated_values)
-    VALUES (
-        strftime('%Y-%m-%d %H:%M:%f', 'now'),
-        'update',
-        NEW.[{orig_pk_name}],
-        {json_expr}
-    );
-END;"""
-
-
-def _build_delete_trigger_for_single_pk(
-    table_name: str,
-    audit_name: str,
-    orig_pk_name: str,
-) -> str:
-    """Build DELETE trigger for single-PK tables (maps PK to row_id)."""
-    return f"""CREATE TRIGGER IF NOT EXISTS [{audit_name}_delete]
-AFTER DELETE ON [{table_name}]
-BEGIN
-    INSERT INTO [{audit_name}] (timestamp, operation, row_id, updated_values)
-    VALUES (
-        strftime('%Y-%m-%d %H:%M:%f', 'now'),
-        'delete',
-        OLD.[{orig_pk_name}],
-        NULL
-    );
-END;"""
+    if populate_table:
+        # Only populate if audit table is empty (preserves idempotency)
+        count = conn.execute(
+            f"SELECT count(*) FROM [{audit_name}]"
+        ).fetchone()[0]
+        if count == 0:
+            populate(conn, table_name)
 
 
 def disable_tracking(conn: sqlite3.Connection, table_name: str) -> None:
@@ -404,16 +292,12 @@ def populate(conn: sqlite3.Connection, table_name: str) -> None:
         for i, col in enumerate(columns):
             row_dict[col["name"]] = row[i]
 
-        # Build the PK values
-        if len(pk_cols) == 1:
-            pk_val = row_dict[pk_cols[0]["name"]]
-            pk_insert_cols = "row_id"
-            pk_insert_params = "?"
-            pk_values = [pk_val]
-        else:
-            pk_insert_cols = ", ".join(f"[{c['name']}]" for c in pk_cols)
-            pk_insert_params = ", ".join("?" for _ in pk_cols)
-            pk_values = [row_dict[c["name"]] for c in pk_cols]
+        # Build the PK values with pk_ prefix column names
+        pk_insert_cols = ", ".join(
+            f"[{_audit_pk_col_name(c['name'])}]" for c in pk_cols
+        )
+        pk_insert_params = ", ".join("?" for _ in pk_cols)
+        pk_values = [row_dict[c["name"]] for c in pk_cols]
 
         # Build JSON for non-PK columns
         json_dict = {}
@@ -448,8 +332,8 @@ def _decode_json_value(val):
 def restore(
     conn: sqlite3.Connection,
     table_name: str,
-    timestamp: str | None = None,
     *,
+    timestamp: str | None = None,
     up_to_id: int | None = None,
     new_table_name: str | None = None,
     swap: bool = False,
@@ -482,14 +366,12 @@ def restore(
     target_name = new_table_name if not swap else f"_tmp_restore_{table_name}"
 
     # Create target table with same schema
-    # Get the original CREATE TABLE statement
     create_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
         (table_name,),
     ).fetchone()[0]
 
     # Replace the table name in the CREATE statement
-    # We need to handle both quoted and unquoted names
     target_create = create_sql.replace(
         f"CREATE TABLE {table_name}", f"CREATE TABLE [{target_name}]", 1
     )
@@ -505,9 +387,6 @@ def restore(
     # Drop if already exists
     conn.execute(f"DROP TABLE IF EXISTS [{target_name}]")
     conn.execute(target_create)
-
-    # Determine PK column name in audit table
-    is_single_pk = len(pk_cols) == 1
 
     # Read audit log entries up to the specified point
     conditions = []
@@ -533,13 +412,9 @@ def restore(
         row_dict = dict(zip(audit_col_names, audit_row))
         operation = row_dict["operation"]
 
-        # Get PK values
-        if is_single_pk:
-            pk_where = f"[{pk_cols[0]['name']}] = ?"
-            pk_values = [row_dict["row_id"]]
-        else:
-            pk_where = " AND ".join(f"[{c['name']}] = ?" for c in pk_cols)
-            pk_values = [row_dict[c["name"]] for c in pk_cols]
+        # Get PK values from audit row (pk_ prefixed columns)
+        pk_where = " AND ".join(f"[{c['name']}] = ?" for c in pk_cols)
+        pk_values = [row_dict[_audit_pk_col_name(c["name"])] for c in pk_cols]
 
         if operation == "insert":
             updated_values = json.loads(row_dict["updated_values"])
@@ -548,10 +423,7 @@ def restore(
             all_vals = []
             for col in pk_cols:
                 all_cols.append(f"[{col['name']}]")
-                if is_single_pk:
-                    all_vals.append(row_dict["row_id"])
-                else:
-                    all_vals.append(row_dict[col["name"]])
+                all_vals.append(row_dict[_audit_pk_col_name(col["name"])])
             for col in non_pk_cols:
                 all_cols.append(f"[{col['name']}]")
                 if col["name"] in updated_values:

@@ -9,7 +9,7 @@ Implementing the "updated values" approach from Simon Willison's TIL on JSON aud
 - **Second approach only**: Record new/updated values on INSERT and UPDATE. DELETE just records that a row was deleted.
 - **Interface**: Plain `sqlite3.Connection` objects
 - **Audit table naming**: `_history_json_{table_name}`
-- **Primary keys**: Required (no rowid), compound PKs supported. PK columns appear in audit table.
+- **Primary keys**: Required (no rowid), compound PKs supported. PK columns appear in audit table with `pk_` prefix.
 - **Restore**: Creates a new table by default. Optional `swap=True` atomically replaces the original.
 - **Populate**: Creates INSERT-style snapshot entries for all existing rows.
 
@@ -20,8 +20,8 @@ _history_json_{table_name}:
   id INTEGER PRIMARY KEY
   timestamp TEXT
   operation TEXT  -- 'insert', 'update', 'delete'
-  {pk_col1} {type}  -- PK columns from original table
-  {pk_col2} {type}  -- (if compound PK)
+  pk_{col1} {type}  -- PK columns from original table, prefixed with pk_
+  pk_{col2} {type}  -- (if compound PK)
   updated_values TEXT  -- JSON
 ```
 
@@ -33,10 +33,10 @@ _history_json_{table_name}:
 
 ### API
 
-- `enable_tracking(conn, table_name)` - creates audit table + triggers
+- `enable_tracking(conn, table_name, *, populate_table=True)` - creates audit table + triggers, auto-populates existing rows
 - `disable_tracking(conn, table_name)` - drops triggers (keeps audit table)
 - `populate(conn, table_name)` - snapshot current state into audit log
-- `restore(conn, table_name, timestamp, new_table_name=None, swap=False)` - replay audit log to point in time
+- `restore(conn, table_name, *, timestamp=None, up_to_id=None, new_table_name=None, swap=False)` - replay audit log to point in time
 
 ### TDD approach
 
@@ -58,3 +58,8 @@ Writing tests first (RED), then implementing (GREEN).
 - For single-PK tables, audit table uses `row_id` column name; for compound PKs, original column names are preserved
 - `restore()` works by replaying audit entries in order: INSERT creates rows, UPDATE modifies them, DELETE removes them
 - `swap=True` uses SQLite's ALTER TABLE RENAME for atomic replacement
+- Refactored PK columns in audit table to always use `pk_` prefix (e.g., `pk_id`, `pk_user_id`), eliminating the single-PK vs compound-PK special case
+- Added `populate_table=True` default parameter to `enable_tracking()` so existing rows are automatically snapshotted; idempotent (only populates if audit table is empty)
+- Made `timestamp` keyword-only in `restore()` signature for API clarity
+- Updated all tests to use keyword-only `timestamp=` and `populate_table=False` where explicit populate testing is needed
+- 65 tests still all passing after all refactors

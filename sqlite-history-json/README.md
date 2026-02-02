@@ -26,17 +26,17 @@ The audit log is self-contained: given only the audit table, you can fully recon
 
 ### Audit table schema
 
-For a table called `items` with a single primary key, the audit table `_history_json_items` looks like:
+For a table called `items` with primary key `id`, the audit table `_history_json_items` looks like:
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | INTEGER PRIMARY KEY | Auto-incrementing version number |
 | `timestamp` | TEXT | ISO-8601 datetime with microsecond precision |
 | `operation` | TEXT | `'insert'`, `'update'`, or `'delete'` |
-| `row_id` | (matches source PK type) | The primary key of the tracked row |
+| `pk_id` | (matches source PK type) | The primary key of the tracked row (prefixed with `pk_`) |
 | `updated_values` | TEXT | JSON object of changed columns (NULL for deletes) |
 
-For compound primary keys, the audit table has one column per PK column (using the original column names) instead of `row_id`.
+Primary key columns in the audit table are always prefixed with `pk_` to distinguish them from the audit table's own columns. For compound primary keys, each PK column gets its own `pk_`-prefixed column (e.g., `pk_user_id`, `pk_role_id`).
 
 Indexes are automatically created on `timestamp` and the PK column(s) for efficient querying.
 
@@ -83,21 +83,28 @@ conn.execute("DELETE FROM items WHERE id = 1")
 
 ### Snapshot existing data
 
-If the table already has data before you enable tracking, use `populate()` to create initial audit entries:
+By default, `enable_tracking()` automatically populates the audit log with a snapshot of all existing rows. This means the audit log is complete from the moment tracking starts:
 
 ```python
 # Table already has rows in it...
-enable_tracking(conn, "items")
-populate(conn, "items")
+enable_tracking(conn, "items")  # automatically snapshots existing rows
 
 # From this point on, the audit log has a complete record
+```
+
+You can opt out of auto-population if you want to control when the snapshot happens:
+
+```python
+enable_tracking(conn, "items", populate_table=False)
+# ... do something else ...
+populate(conn, "items")  # manually snapshot when ready
 ```
 
 ### Restore to a point in time
 
 ```python
 # Restore table state to a specific timestamp (creates a new table)
-restored_name = restore(conn, "items", "2024-06-15 14:30:00.000000")
+restored_name = restore(conn, "items", timestamp="2024-06-15 14:30:00.000000")
 
 # Query the restored table
 rows = conn.execute(f"SELECT * FROM [{restored_name}]").fetchall()
@@ -127,7 +134,7 @@ restore(conn, "items", up_to_id=42, swap=True)
 
 ```python
 restored_name = restore(
-    conn, "items", "2024-06-15 14:30:00",
+    conn, "items", timestamp="2024-06-15 14:30:00",
     new_table_name="items_backup"
 )
 ```
@@ -157,7 +164,7 @@ conn.execute("""
 enable_tracking(conn, "user_roles")
 
 # The audit table `_history_json_user_roles` will have
-# both `user_id` and `role_id` columns
+# `pk_user_id` and `pk_role_id` columns
 ```
 
 ### Tables with special characters in names
@@ -171,11 +178,13 @@ enable_tracking(conn, "order items")
 
 ## API reference
 
-### `enable_tracking(conn, table_name)`
+### `enable_tracking(conn, table_name, *, populate_table=True)`
 
 Creates the audit table `_history_json_{table_name}` and installs INSERT, UPDATE, and DELETE triggers on the source table. Also creates indexes on the audit table for timestamp and primary key columns.
 
-Idempotent: calling it twice has no additional effect.
+By default, snapshots all existing rows into the audit log (equivalent to calling `populate()` automatically). Pass `populate_table=False` to skip this.
+
+Idempotent: calling it twice has no additional effect (auto-populate only runs if the audit table is empty).
 
 **Requirements:** The table must have an explicit `PRIMARY KEY` (not just `rowid`).
 
@@ -187,11 +196,11 @@ Idempotent: calling it when no triggers exist is a no-op.
 
 ### `populate(conn, table_name)`
 
-Inserts one `'insert'` audit entry per existing row, creating a baseline snapshot. Call this after `enable_tracking()` if the table already has data.
+Inserts one `'insert'` audit entry per existing row, creating a baseline snapshot. Usually not needed directly since `enable_tracking()` calls this automatically, but useful if you passed `populate_table=False` and want to snapshot later.
 
-### `restore(conn, table_name, timestamp=None, *, up_to_id=None, new_table_name=None, swap=False)`
+### `restore(conn, table_name, *, timestamp=None, up_to_id=None, new_table_name=None, swap=False)`
 
-Replays audit log entries to reconstruct the table state.
+Replays audit log entries to reconstruct the table state. All parameters after `table_name` are keyword-only.
 
 - **`timestamp`**: Restore up to this ISO-8601 timestamp (inclusive)
 - **`up_to_id`**: Restore up to this audit entry ID (inclusive). More precise than timestamp for operations within the same second.
@@ -217,7 +226,7 @@ uv run pytest tests/ -v
 The UPDATE trigger uses nested `json_patch()` calls to build a JSON object containing only the columns that actually changed:
 
 ```sql
-INSERT INTO _history_json_items (timestamp, operation, row_id, updated_values)
+INSERT INTO _history_json_items (timestamp, operation, pk_id, updated_values)
 VALUES (
     strftime('%Y-%m-%d %H:%M:%f', 'now'),
     'update',

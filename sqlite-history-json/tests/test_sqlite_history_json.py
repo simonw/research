@@ -150,7 +150,6 @@ class TestEnableTracking:
 
     def test_audit_table_has_pk_columns(self, simple_table):
         enable_tracking(simple_table, "items")
-        # The audit table should have an 'id' column matching the source PK
         info = simple_table.execute(
             "PRAGMA table_info(_history_json_items)"
         ).fetchall()
@@ -158,7 +157,7 @@ class TestEnableTracking:
         assert "id" in col_names  # audit table's own PK
         assert "timestamp" in col_names
         assert "operation" in col_names
-        assert "row_id" in col_names  # source table's PK mapped
+        assert "pk_id" in col_names  # source table's PK with pk_ prefix
         assert "updated_values" in col_names
 
     def test_audit_table_compound_pk_columns(self, compound_pk_table):
@@ -167,8 +166,8 @@ class TestEnableTracking:
             "PRAGMA table_info(_history_json_user_roles)"
         ).fetchall()
         col_names = [r[1] for r in info]
-        assert "user_id" in col_names
-        assert "role_id" in col_names
+        assert "pk_user_id" in col_names
+        assert "pk_role_id" in col_names
 
     def test_creates_triggers(self, simple_table):
         enable_tracking(simple_table, "items")
@@ -221,7 +220,7 @@ class TestInsertTrigger:
         assert len(rows) == 1
         row = rows[0]
         assert row["operation"] == "insert"
-        assert row["row_id"] == 1
+        assert row["pk_id"] == 1
         vals = json.loads(row["updated_values"])
         assert vals["name"] == "Widget"
         assert vals["price"] == 9.99
@@ -252,8 +251,8 @@ class TestInsertTrigger:
         )
         rows = get_audit_rows(compound_pk_table, "user_roles")
         assert len(rows) == 1
-        assert rows[0]["user_id"] == 1
-        assert rows[0]["role_id"] == 2
+        assert rows[0]["pk_user_id"] == 1
+        assert rows[0]["pk_role_id"] == 2
         vals = json.loads(rows[0]["updated_values"])
         assert vals["granted_by"] == "admin"
         assert vals["active"] == 1
@@ -268,8 +267,8 @@ class TestInsertTrigger:
         )
         rows = get_audit_rows(simple_table, "items")
         assert len(rows) == 2
-        assert rows[0]["row_id"] == 1
-        assert rows[1]["row_id"] == 2
+        assert rows[0]["pk_id"] == 1
+        assert rows[1]["pk_id"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -358,8 +357,8 @@ class TestUpdateTrigger:
             "UPDATE user_roles SET active = 0 WHERE user_id = 1 AND role_id = 2"
         )
         rows = get_audit_rows(compound_pk_table, "user_roles")
-        assert rows[1]["user_id"] == 1
-        assert rows[1]["role_id"] == 2
+        assert rows[1]["pk_user_id"] == 1
+        assert rows[1]["pk_role_id"] == 2
         vals = json.loads(rows[1]["updated_values"])
         assert vals == {"active": 0}
 
@@ -380,7 +379,7 @@ class TestDeleteTrigger:
         assert len(rows) == 2  # insert + delete
         delete_row = rows[1]
         assert delete_row["operation"] == "delete"
-        assert delete_row["row_id"] == 1
+        assert delete_row["pk_id"] == 1
 
     def test_delete_updated_values_is_null_or_empty(self, simple_table):
         enable_tracking(simple_table, "items")
@@ -404,8 +403,8 @@ class TestDeleteTrigger:
         rows = get_audit_rows(compound_pk_table, "user_roles")
         delete_row = rows[1]
         assert delete_row["operation"] == "delete"
-        assert delete_row["user_id"] == 1
-        assert delete_row["role_id"] == 2
+        assert delete_row["pk_user_id"] == 1
+        assert delete_row["pk_role_id"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +456,7 @@ class TestDisableTracking:
 class TestPopulate:
     def test_populates_existing_rows(self, simple_table_with_data):
         conn = simple_table_with_data
-        enable_tracking(conn, "items")
+        enable_tracking(conn, "items", populate_table=False)
         populate(conn, "items")
         rows = get_audit_rows(conn, "items")
         assert len(rows) == 3
@@ -466,7 +465,7 @@ class TestPopulate:
 
     def test_populate_values_match_current_state(self, simple_table_with_data):
         conn = simple_table_with_data
-        enable_tracking(conn, "items")
+        enable_tracking(conn, "items", populate_table=False)
         populate(conn, "items")
         rows = get_audit_rows(conn, "items")
         vals = json.loads(rows[0]["updated_values"])
@@ -480,18 +479,18 @@ class TestPopulate:
             "INSERT INTO user_roles VALUES (?, ?, ?, ?)",
             [(1, 2, "admin", 1), (3, 4, "system", 0)],
         )
-        enable_tracking(conn, "user_roles")
+        enable_tracking(conn, "user_roles", populate_table=False)
         populate(conn, "user_roles")
         rows = get_audit_rows(conn, "user_roles")
         assert len(rows) == 2
-        pk_pairs = [(r["user_id"], r["role_id"]) for r in rows]
+        pk_pairs = [(r["pk_user_id"], r["pk_role_id"]) for r in rows]
         assert (1, 2) in pk_pairs
         assert (3, 4) in pk_pairs
 
     def test_populate_with_nulls(self, simple_table):
         conn = simple_table
         conn.execute("INSERT INTO items (id, name) VALUES (1, 'Widget')")
-        enable_tracking(conn, "items")
+        enable_tracking(conn, "items", populate_table=False)
         populate(conn, "items")
         rows = get_audit_rows(conn, "items")
         vals = json.loads(rows[0]["updated_values"])
@@ -503,7 +502,7 @@ class TestPopulate:
         conn.execute(
             "INSERT INTO files (id, name, content) VALUES (1, 'a.bin', x'CAFE')"
         )
-        enable_tracking(conn, "files")
+        enable_tracking(conn, "files", populate_table=False)
         populate(conn, "files")
         rows = get_audit_rows(conn, "files")
         vals = json.loads(rows[0]["updated_values"])
@@ -529,7 +528,7 @@ class TestRestore:
         conn.execute(
             "INSERT INTO items (id, name, price, quantity) VALUES (1, 'Widget', 9.99, 100)"
         )
-        result_name = restore(conn, "items", "9999-12-31 23:59:59")
+        result_name = restore(conn, "items", timestamp="9999-12-31 23:59:59")
         assert table_exists(conn, result_name)
         assert result_name != "items"
 
@@ -539,7 +538,7 @@ class TestRestore:
         conn.execute(
             "INSERT INTO items (id, name, price, quantity) VALUES (1, 'Widget', 9.99, 100)"
         )
-        result_name = restore(conn, "items", "9999-12-31 23:59:59")
+        result_name = restore(conn, "items", timestamp="9999-12-31 23:59:59")
         assert "items" in result_name
         assert result_name != "items"
 
@@ -550,7 +549,7 @@ class TestRestore:
             "INSERT INTO items (id, name, price, quantity) VALUES (1, 'Widget', 9.99, 100)"
         )
         result_name = restore(
-            conn, "items", "9999-12-31 23:59:59", new_table_name="items_copy"
+            conn, "items", timestamp="9999-12-31 23:59:59", new_table_name="items_copy"
         )
         assert result_name == "items_copy"
         assert table_exists(conn, "items_copy")
@@ -564,7 +563,7 @@ class TestRestore:
         conn.execute(
             "INSERT INTO items (id, name, price, quantity) VALUES (2, 'Gadget', 24.99, 50)"
         )
-        result_name = restore(conn, "items", "9999-12-31 23:59:59")
+        result_name = restore(conn, "items", timestamp="9999-12-31 23:59:59")
         rows = conn.execute(
             f"SELECT * FROM [{result_name}] ORDER BY id"
         ).fetchall()
@@ -579,7 +578,7 @@ class TestRestore:
             "INSERT INTO items (id, name, price, quantity) VALUES (1, 'Widget', 9.99, 100)"
         )
         conn.execute("UPDATE items SET name = 'Gizmo', price = 19.99 WHERE id = 1")
-        result_name = restore(conn, "items", "9999-12-31 23:59:59")
+        result_name = restore(conn, "items", timestamp="9999-12-31 23:59:59")
         row = conn.execute(
             f"SELECT * FROM [{result_name}] WHERE id = 1"
         ).fetchone()
@@ -597,7 +596,7 @@ class TestRestore:
             "INSERT INTO items (id, name, price, quantity) VALUES (2, 'Gadget', 24.99, 50)"
         )
         conn.execute("DELETE FROM items WHERE id = 1")
-        result_name = restore(conn, "items", "9999-12-31 23:59:59")
+        result_name = restore(conn, "items", timestamp="9999-12-31 23:59:59")
         rows = conn.execute(
             f"SELECT * FROM [{result_name}] ORDER BY id"
         ).fetchall()
@@ -626,7 +625,7 @@ class TestRestore:
         conn = simple_table
         enable_tracking(conn, "items")
         conn.execute("INSERT INTO items (id, name) VALUES (1, 'Widget')")
-        result_name = restore(conn, "items", "9999-12-31 23:59:59")
+        result_name = restore(conn, "items", timestamp="9999-12-31 23:59:59")
         row = conn.execute(
             f"SELECT * FROM [{result_name}] WHERE id = 1"
         ).fetchone()
@@ -640,7 +639,7 @@ class TestRestore:
             "INSERT INTO items (id, name, price, quantity) VALUES (1, 'Widget', 9.99, 100)"
         )
         conn.execute("UPDATE items SET price = NULL WHERE id = 1")
-        result_name = restore(conn, "items", "9999-12-31 23:59:59")
+        result_name = restore(conn, "items", timestamp="9999-12-31 23:59:59")
         row = conn.execute(
             f"SELECT * FROM [{result_name}] WHERE id = 1"
         ).fetchone()
@@ -652,7 +651,7 @@ class TestRestore:
         conn.execute(
             "INSERT INTO files (id, name, content) VALUES (1, 'a.bin', x'DEADBEEF')"
         )
-        result_name = restore(conn, "files", "9999-12-31 23:59:59")
+        result_name = restore(conn, "files", timestamp="9999-12-31 23:59:59")
         row = conn.execute(
             f"SELECT * FROM [{result_name}] WHERE id = 1"
         ).fetchone()
@@ -666,7 +665,7 @@ class TestRestore:
         conn.execute(
             "UPDATE user_roles SET active = 0 WHERE user_id = 1 AND role_id = 2"
         )
-        result_name = restore(conn, "user_roles", "9999-12-31 23:59:59")
+        result_name = restore(conn, "user_roles", timestamp="9999-12-31 23:59:59")
         row = conn.execute(
             f"SELECT * FROM [{result_name}] WHERE user_id = 1 AND role_id = 2"
         ).fetchone()
@@ -680,7 +679,7 @@ class TestRestore:
             "INSERT INTO items (id, name, price, quantity) VALUES (1, 'Widget', 9.99, 100)"
         )
         conn.execute("UPDATE items SET name = 'Gizmo' WHERE id = 1")
-        result_name = restore(conn, "items", "9999-12-31 23:59:59", swap=True)
+        result_name = restore(conn, "items", timestamp="9999-12-31 23:59:59", swap=True)
         assert result_name == "items"
         # The original table should now have the restored data
         row = conn.execute("SELECT * FROM items WHERE id = 1").fetchone()
@@ -705,7 +704,7 @@ class TestRestore:
     def test_restore_from_populated_data(self, simple_table_with_data):
         """Restore should work when audit log was populated from existing data."""
         conn = simple_table_with_data
-        enable_tracking(conn, "items")
+        enable_tracking(conn, "items", populate_table=False)
         populate(conn, "items")
         # Make some changes
         conn.execute("UPDATE items SET name = 'Changed' WHERE id = 1")
@@ -729,7 +728,7 @@ class TestRestore:
         """Restoring with no audit entries should yield an empty table."""
         conn = simple_table
         enable_tracking(conn, "items")
-        result_name = restore(conn, "items", "9999-12-31 23:59:59")
+        result_name = restore(conn, "items", timestamp="9999-12-31 23:59:59")
         rows = conn.execute(
             f"SELECT * FROM [{result_name}]"
         ).fetchall()
@@ -740,7 +739,7 @@ class TestRestore:
         enable_tracking(conn, "config")
         conn.execute("INSERT INTO config VALUES ('theme', 'dark')")
         conn.execute("UPDATE config SET value = 'light' WHERE key = 'theme'")
-        result_name = restore(conn, "config", "9999-12-31 23:59:59")
+        result_name = restore(conn, "config", timestamp="9999-12-31 23:59:59")
         row = conn.execute(
             f"SELECT * FROM [{result_name}] WHERE key = 'theme'"
         ).fetchone()
@@ -777,7 +776,7 @@ def test_restore_various_types(conn, col_def, sql_val, expected):
     conn.execute(f"CREATE TABLE typed (id INTEGER PRIMARY KEY, {col_def})")
     enable_tracking(conn, "typed")
     conn.execute(f"INSERT INTO typed (id, {col_name}) VALUES (1, {sql_val})")
-    result_name = restore(conn, "typed", "9999-12-31 23:59:59")
+    result_name = restore(conn, "typed", timestamp="9999-12-31 23:59:59")
     row = conn.execute(f"SELECT * FROM [{result_name}] WHERE id = 1").fetchone()
     assert dict(row)[col_name] == expected
 
@@ -827,7 +826,7 @@ class TestEdgeCases:
             'INSERT INTO "order items" (id, product, qty) VALUES (?, ?, ?)',
             [(1, "Widget", 10), (2, "Gadget", 5)],
         )
-        enable_tracking(conn, "order items")
+        enable_tracking(conn, "order items", populate_table=False)
         populate(conn, "order items")
         conn.execute('UPDATE "order items" SET qty = 20 WHERE id = 1')
         conn.execute('DELETE FROM "order items" WHERE id = 2')
@@ -906,7 +905,7 @@ class TestEdgeCases:
 
         # Restore after delete: should be empty
         r3 = restore(
-            conn, "items", "9999-12-31 23:59:59", new_table_name="r3"
+            conn, "items", timestamp="9999-12-31 23:59:59", new_table_name="r3"
         )
         rows = conn.execute("SELECT * FROM r3").fetchall()
         assert len(rows) == 0
@@ -922,7 +921,7 @@ class TestEdgeCases:
         conn.execute(
             "INSERT INTO items (id, name, price, quantity) VALUES (1, 'NewWidget', 5.99, 50)"
         )
-        result_name = restore(conn, "items", "9999-12-31 23:59:59")
+        result_name = restore(conn, "items", timestamp="9999-12-31 23:59:59")
         row = conn.execute(
             f"SELECT * FROM [{result_name}] WHERE id = 1"
         ).fetchone()
