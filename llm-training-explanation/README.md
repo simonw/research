@@ -629,3 +629,155 @@ for micro_step in range(grad_accum_steps):
 The key detail is `loss = loss / grad_accum_steps`. Because PyTorch's `.backward()` adds gradients to any existing gradients (it does not replace them), running 8 micro-steps accumulates 8 times the gradient. Dividing the loss by 8 before backpropagation ensures the final accumulated gradient is the correct average, identical to what you would get from a single forward pass with 8 times the batch size.
 
 Notice also the clever overlapping: `next(train_loader)` is called *inside* the micro-step loop, right after `.backward()`. This prefetches the next batch of data from CPU to GPU while the GPU is busy computing gradients — overlapping data transfer with computation for better utilization.
+
+---
+
+## 7. The Optimizer — Deciding How to Update the Weights
+
+After backpropagation, every parameter has a gradient — a direction in which the loss would decrease. But the gradient only tells you the direction, not how far to step. Choosing the step size and the exact update rule is the job of the **optimizer**, and nanochat uses a remarkable split optimizer called **MuonAdamW** that applies different algorithms to different kinds of parameters.
+
+### Why Not Just Follow the Gradient?
+
+The simplest optimizer is **Stochastic Gradient Descent (SGD)**: multiply each gradient by a small learning rate and subtract it from the parameter. This works, but it is slow to converge because:
+
+1. **Noisy gradients:** Each mini-batch gives a slightly different gradient. SGD jumps around noisily.
+2. **Ill-conditioned landscapes:** Some parameters are much more sensitive than others. A learning rate that works for sensitive parameters is too small for insensitive ones, and vice versa.
+3. **Saddle points and ravines:** The loss landscape has many directions where the gradient is small but the curvature is unfavorable. SGD gets stuck oscillating in these regions.
+
+Modern optimizers address these problems with various forms of momentum and adaptive learning rates.
+
+### AdamW: The Workhorse for Embeddings
+
+For embedding parameters, the unembedding head, value embeddings, and per-layer scalars, nanochat uses **AdamW** — the most popular optimizer in deep learning.
+
+AdamW maintains two running averages for each parameter:
+- **First moment (exp_avg):** An exponentially weighted moving average of past gradients. This is momentum — it smooths out noise and keeps the optimizer moving in directions that are consistently beneficial.
+- **Second moment (exp_avg_sq):** An exponentially weighted moving average of the squared gradients. This tracks how variable each parameter's gradient has been, and is used to set per-parameter learning rates.
+
+Here is nanochat's fused AdamW implementation, annotated:
+
+```python
+def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step, lr, beta1, beta2, eps, wd):
+    # 1. Weight decay: shrink the parameter slightly
+    #    This is "decoupled" weight decay (applied to the parameter directly,
+    #    not mixed into the gradient like in L2 regularization)
+    p.mul_(1 - lr * wd)
+
+    # 2. Update momentum (first moment)
+    #    New momentum = beta1 * old_momentum + (1 - beta1) * gradient
+    exp_avg.lerp_(grad, 1 - beta1)
+
+    # 3. Update squared momentum (second moment)
+    #    New sq_momentum = beta2 * old_sq_momentum + (1 - beta2) * gradient^2
+    exp_avg_sq.lerp_(grad.square(), 1 - beta2)
+
+    # 4. Bias correction (the running averages start at zero, so early
+    #    values are biased low; this corrects for that)
+    bias1 = 1 - beta1 ** step
+    bias2 = 1 - beta2 ** step
+
+    # 5. Compute the update: momentum / sqrt(squared_momentum)
+    #    Parameters with large historical gradients get smaller updates
+    #    Parameters with small historical gradients get larger updates
+    denom = (exp_avg_sq / bias2).sqrt() + eps
+    step_size = lr / bias1
+    p.add_(exp_avg / denom, alpha=-step_size)
+```
+
+The genius of Adam is in step 5: dividing the momentum by the square root of the squared momentum gives each parameter its own effective learning rate. A parameter whose gradients have been consistently large gets a smaller effective step (because its denominator is large), and vice versa. This automatic per-parameter scaling is what makes Adam so effective.
+
+nanochat uses `beta1=0.8` and `beta2=0.95` (compared to Adam's typical defaults of 0.9 and 0.999). The lower beta1 means less smoothing and faster response to gradient changes. The lower beta2 means the adaptive learning rate adjusts faster — useful for the relatively short training runs that nanochat performs.
+
+### Muon: A Radically Different Optimizer for Matrix Parameters
+
+For the 2D weight matrices in the Transformer blocks (attention projections, MLP layers), nanochat uses **Muon** — "Momentum Orthogonalized by Newton-Schulz." This is a fundamentally different approach to optimization that was developed in the modded-nanogpt project and has been shown to train faster than Adam for these specific kinds of parameters.
+
+The core idea behind Muon is: instead of using the raw gradient as the update direction, transform it into the nearest **orthogonal matrix**. An orthogonal matrix is one where all the row vectors are perpendicular to each other and have unit length. This has the effect of making updates more "balanced" across all directions — no single direction dominates the update.
+
+Here is how Muon works, step by step:
+
+**Step 1: Nesterov Momentum.** Like Adam, Muon uses momentum to smooth gradients. But it uses *Nesterov* momentum, which is a slightly different formulation that "looks ahead" — it evaluates the gradient at the point where momentum would take you, rather than at the current point:
+
+```python
+# Nesterov momentum update
+momentum_buffer.lerp_(stacked_grads, 1 - momentum)
+g = stacked_grads.lerp_(momentum_buffer, momentum)
+```
+
+The momentum coefficient starts at 0.85 and warms up to 0.95 over the first 300 steps, giving the optimizer more smoothing as training progresses.
+
+**Step 2: Polar Express Orthogonalization.** This is the distinctive step. The gradient matrix is orthogonalized using an iterative algorithm called the "Polar Express sign method" (a variant of Newton-Schulz iteration). The idea is to find the nearest orthogonal matrix to the gradient.
+
+In simplified pseudocode:
+
+```
+# Start with the gradient matrix, normalized
+X = gradient / norm(gradient)
+
+# Run 5 iterations of the Polar Express algorithm
+for each iteration:
+    if X is a tall matrix (more rows than columns):
+        A = X_transposed @ X
+        B = b * A + c * (A @ A)
+        X = a * X + X @ B
+    else:  # wide matrix
+        A = X @ X_transposed
+        B = b * A + c * (A @ A)
+        X = a * X + B @ X
+
+# X is now approximately orthogonal
+```
+
+The coefficients `a`, `b`, `c` are precomputed constants chosen to maximize convergence speed. After five iterations, the matrix X is approximately orthogonal — its singular values are all close to 1 (they end up roughly uniformly distributed between 0.5 and 1.5, which turns out to be good enough).
+
+Why does orthogonalization help? Think of a weight matrix as defining a transformation between two vector spaces. An orthogonal update ensures that the transformation changes "uniformly" in all directions — it does not collapse any dimension or amplify any dimension. This prevents the common problem where some weights grow much faster than others, leading to unbalanced representations.
+
+**Step 3: Adafactor-style Variance Reduction.** After orthogonalization, Muon applies an additional normalization step inspired by the Adafactor optimizer. It maintains a factored second-moment estimate (tracking variance per-row or per-column, not per-element, to save memory) and uses it to scale the update:
+
+```python
+# Track variance along the reduction dimension
+v_mean = g.float().square().mean(dim=red_dim, keepdim=True)
+second_momentum_buffer.lerp_(v_mean, 1 - beta2)
+step_size = second_momentum_buffer.clamp_min(1e-10).rsqrt()
+```
+
+This gives each row (or column) of the weight matrix its own learning rate, similar to how Adam gives each element its own rate — but with much less memory overhead.
+
+**Step 4: Cautious Weight Decay.** Finally, Muon applies weight decay — but with a twist called "cautious" weight decay. It only decays weights when the update and the weight point in the same direction:
+
+```python
+mask = (g * stacked_params) >= 0
+stacked_params.sub_(lr * g + lr * wd * stacked_params * mask)
+```
+
+The intuition: weight decay is supposed to prevent weights from growing too large. But if the optimizer is trying to push a weight in the opposite direction from its current value (trying to shrink it), applying weight decay on top of that would be counterproductive — you would be fighting yourself. Cautious decay only activates when the update is reinforcing the weight's current direction.
+
+### Why Two Different Optimizers?
+
+The split between Muon (for matrices) and AdamW (for everything else) is not arbitrary. It reflects a fundamental difference in the structure of these parameters:
+
+- **Embedding tables** are lookup tables — each row is essentially an independent vector. There is no spatial structure to exploit. AdamW's per-element adaptive learning rate is ideal here.
+- **Weight matrices** define linear transformations between vector spaces. They have rich structure — rows and columns interact, and the quality of the transformation depends on properties like the distribution of singular values. Muon's orthogonalization exploits this structure directly.
+- **Scalars** (like resid_lambdas and x0_lambdas) are individual numbers with no structure at all. AdamW handles these fine.
+
+nanochat also uses different learning rates for each group:
+- Embedding parameters: lr=0.3 (high, because embeddings can tolerate large steps)
+- Unembedding head: lr=0.004 (much lower, because the output projection is more sensitive)
+- Matrix parameters (Muon): lr=0.02
+- Scalar parameters: lr=0.5 (resid_lambdas) or lr=0.005 (x0_lambdas)
+
+All learning rates are further scaled by a factor proportional to `1/sqrt(model_dim)` for the AdamW groups, so that larger models automatically get smaller learning rates for their embeddings.
+
+### Fused Kernels and Zero-D Tensors
+
+Both optimizer steps are decorated with `@torch.compile`, which fuses all the element-wise operations into a single GPU kernel. Without this, each operation (multiply, add, square, etc.) would launch a separate GPU kernel, with overhead for each launch. Fusing them into one kernel eliminates this overhead.
+
+An additional trick: hyperparameters like learning rate and momentum are stored as zero-dimensional CPU tensors rather than Python floats:
+
+```python
+self._muon_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
+# ...
+self._muon_lr_t.fill_(group["lr"])  # update value without creating new tensor
+```
+
+This is because `torch.compile` would have to recompile the kernel every time a Python float value changes. By using the same tensor object and just changing its value, the compiled kernel remains valid across steps even as the learning rate changes according to the schedule.
