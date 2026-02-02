@@ -1096,3 +1096,228 @@ RL is particularly effective for math because:
 4. **Partial credit is not needed:** The binary reward (correct/incorrect) is sufficient because the model generates many samples. Even if only 1 out of 16 is correct, that one correct sample provides a strong positive signal relative to the 15 failures.
 
 The RL stage evaluates the model periodically on the test set using **pass@k**: for each test question, generate k samples and check if any of them are correct. Watching pass@1, pass@4, pass@8 increase over training gives a clear signal that the model is learning to solve math problems more reliably.
+
+---
+
+## 11. Evaluation — Measuring How Good the Model Is
+
+Training a model is only useful if you can measure how good it is. nanochat uses two primary evaluation approaches: the **CORE metric** for the pretrained base model, and **bits per byte** as a continuous measure of language modeling quality.
+
+### The CORE Metric
+
+CORE (from the DCLM paper) is an aggregate score across multiple benchmark tasks. It includes:
+
+- **Multiple-choice tasks** (like ARC and HellaSwag): The model is given a question and several possible answers. For each answer option, the model computes the average loss over that answer's tokens. The option with the lowest loss is the model's prediction.
+- **Schema tasks** (like WinoGrande): Similar to multiple choice, but the varying part is the context rather than the continuation.
+- **Language modeling tasks** (like LAMBADA): The model must predict a specific continuation given context. It is scored on whether its top prediction matches the expected tokens.
+
+The evaluation process for a single multiple-choice example looks like this:
+
+```python
+# Render all answer options as complete sequences
+prompts = render_prompts_mc(item, continuation_delimiter, fewshot_examples)
+
+# Tokenize and find where the answer portion begins
+tokens, start_idxs, end_idxs = batch_sequences_mc(tokenizer, prompts)
+
+# Forward through the model, get per-token losses
+losses, predictions = forward_model(model, input_ids)
+
+# Score each option by its average loss over the answer tokens
+mean_losses = [losses[i, si-1:ei-1].mean() for i, (si, ei) in ...]
+pred_idx = mean_losses.index(min(mean_losses))
+is_correct = pred_idx == item['gold']
+```
+
+The model is not "choosing" an answer in the way a human would. Instead, each possible answer is formatted as a complete text, and the model evaluates how likely it thinks each text is. The answer that the model finds most likely (lowest loss) is its implicit choice. This works because a model that understands the world will assign higher probability to factually correct completions.
+
+Few-shot examples (typically 0-5 examples of the task format) are prepended to each evaluation prompt, giving the model in-context demonstrations of the expected format.
+
+The CORE metric aggregates accuracy across all tasks into a single number. GPT-2 (1.6B parameters) achieves a CORE score of 0.2565. nanochat's depth-24 model beats this with 0.2585.
+
+### Bits Per Byte
+
+As discussed in Section 5, bits per byte is a tokenizer-independent measure of how well the model predicts text. It measures the average number of bits needed to encode each byte of text under the model's probability distribution. Lower BPB means better language modeling.
+
+BPB is evaluated on a held-out validation set (the last Parquet shard, which the training data loader always skips). The evaluation runs the model in inference mode (no gradient computation, using `torch.no_grad()`) over many batches and accumulates the total loss and total bytes.
+
+### Distributed Evaluation
+
+Both evaluation methods run on all GPUs simultaneously. For the CORE metric, the examples are striped across GPUs (GPU 0 evaluates examples 0, 8, 16, ...; GPU 1 evaluates 1, 9, 17, ...), and the results are gathered with `all_reduce`. For BPB, each GPU evaluates the same batches from the validation loader (since the loader already shards by rank), and the total nats and total bytes are summed across ranks.
+
+---
+
+## 12. Inference — Using the Trained Model
+
+Once the model is trained, you want to actually use it — to type a question and get an answer. This is **inference**, and it works fundamentally differently from training.
+
+### Autoregressive Generation
+
+During training, the model processes an entire sequence at once and produces predictions for all positions simultaneously (this is efficient because of the parallel nature of attention). During inference, the model generates one token at a time:
+
+1. Feed the prompt tokens into the model.
+2. Look at the output logits for the last position.
+3. Sample a token from the predicted distribution.
+4. Append that token to the sequence.
+5. Feed the extended sequence back into the model.
+6. Repeat until a stopping condition (max tokens, end-of-sequence token).
+
+This is inherently sequential — each token depends on all previous tokens, so there is no way to parallelize it.
+
+### KV Caching: Avoiding Redundant Computation
+
+A naive implementation would re-process the entire sequence from scratch for every new token. For a 500-token prompt generating 200 tokens, that would mean processing 500 + 501 + 502 + ... + 700 = ~120,000 token-positions — enormously wasteful.
+
+The solution is **KV caching**. Notice that when generating token N+1, the queries, keys, and values for tokens 1 through N have not changed. We can cache the keys and values from previous steps and reuse them:
+
+```python
+class KVCache:
+    def __init__(self, batch_size, num_heads, seq_len, head_dim, num_layers, device, dtype):
+        # Pre-allocate cache for all layers
+        self.k_cache = torch.zeros(num_layers, batch_size, seq_len, num_heads, head_dim)
+        self.v_cache = torch.zeros(num_layers, batch_size, seq_len, num_heads, head_dim)
+        self.cache_seqlens = torch.zeros(batch_size, dtype=torch.int32)
+```
+
+The inference process becomes:
+
+1. **Prefill:** Process the entire prompt in one forward pass, populating the KV cache for all positions.
+2. **Decode:** For each new token, process only that single token through the model, attending to all cached keys and values. Then update the cache with the new token's key and value.
+
+This reduces the work for each generation step from processing the full sequence to processing just one token — a dramatic speedup.
+
+nanochat's Engine class implements a further optimization: when generating multiple samples from the same prompt (as needed during RL), it runs the prefill once with batch size 1, then clones the KV cache to all samples:
+
+```python
+# 1) Single prefill for the prompt
+kv_cache_prefill = KVCache(batch_size=1, ...)
+logits = model.forward(ids, kv_cache=kv_cache_prefill)
+
+# 2) Clone the cache for all samples
+kv_cache_decode = KVCache(batch_size=num_samples, ...)
+kv_cache_decode.prefill(kv_cache_prefill)  # copy from single to all
+```
+
+### Sampling Strategies
+
+Given the logits at the last position, nanochat supports several sampling strategies:
+
+**Temperature:** Controls randomness. The logits are divided by the temperature before applying softmax. Temperature 0 gives greedy decoding (always pick the highest-probability token). Temperature 1.0 samples proportionally to the model's predicted probabilities. Higher temperatures produce more random text.
+
+**Top-k:** Only the k highest-probability tokens are considered; all others have their probability set to zero. This prevents the model from occasionally sampling very unlikely tokens:
+
+```python
+if top_k is not None and top_k > 0:
+    k = min(top_k, logits.size(-1))
+    vals, idx = torch.topk(logits, k, dim=-1)
+    vals = vals / temperature
+    probs = F.softmax(vals, dim=-1)
+    choice = torch.multinomial(probs, num_samples=1, generator=rng)
+    return idx.gather(1, choice)
+```
+
+### Tool Use During Inference
+
+The Engine implements a simple state machine for calculator tool use. When the model generates a `<|python_start|>` token, the engine starts collecting the following tokens as a Python expression. When it sees `<|python_end|>`, it evaluates the expression safely, and if it produces a result, it *forces* the tokens `<|output_start|>` result `<|output_end|>` into the sequence:
+
+```python
+if next_token == python_start:
+    state.in_python_block = True
+    state.python_expr_tokens = []
+elif next_token == python_end and state.in_python_block:
+    state.in_python_block = False
+    expr = tokenizer.decode(state.python_expr_tokens)
+    result = use_calculator(expr)
+    if result is not None:
+        state.forced_tokens.append(output_start)
+        state.forced_tokens.extend(tokenizer.encode(str(result)))
+        state.forced_tokens.append(output_end)
+```
+
+Forced tokens override the model's sampling — they are injected directly into the sequence regardless of what the model would have predicted. This is essential because the calculator's output is deterministic and comes from outside the model. The model then continues generating, able to attend to the calculator's result in subsequent tokens.
+
+The calculator itself is intentionally limited for safety: it only allows basic arithmetic and string `.count()` operations, with a timeout to prevent infinite loops.
+
+---
+
+## 13. Scaling Laws — How Size Affects Intelligence
+
+One of the most important discoveries in modern LLM research is that model performance follows remarkably predictable patterns as you scale up the model size and data. These patterns are called **scaling laws**, and nanochat is designed specifically to study them.
+
+### The Single Dial of Complexity: Depth
+
+nanochat's architecture uses depth as the single control parameter. Everything else follows automatically:
+
+- **Model dimension** = depth times 64 (constant aspect ratio)
+- **Number of heads** = model dimension divided by 128 (constant head dimension)
+- **Training tokens** = number of scaling parameters times the data ratio (default 10.5)
+- **Weight decay** scales as one over depth squared
+
+This means you can sweep a miniseries of models — depth 4, 8, 12, 16, 20, 24, 28, 32 — and get a clean progression from tiny to large, with each model trained for a compute-optimal amount of data.
+
+### What "Scaling Parameters" Means
+
+Not all parameters contribute equally to scaling laws. nanochat carefully distinguishes between "scaling parameters" (transformer matrices plus the output head) and non-scaling parameters (embeddings, value embeddings, per-layer scalars). The scaling parameter count is what gets used to determine the training budget:
+
+```python
+num_scaling_params = param_counts['transformer_matrices'] + param_counts['lm_head']
+target_tokens = target_param_data_ratio * num_scaling_params
+```
+
+This follows the convention of Kaplan et al. (the original scaling laws paper), which excluded embedding parameters from the count. The rationale is that embedding parameters are essentially lookup tables — they do not contribute to the computational "depth" of the network in the same way that matrix multiplications in the transformer do.
+
+### The Compute-Optimal Frontier
+
+The Chinchilla paper (2022) established that for any given compute budget, there is an optimal balance between model size and data size. Train too large a model on too little data, and you waste compute on parameters that do not get enough gradient signal. Train too small a model on too much data, and you waste compute on repeated updates that yield diminishing returns.
+
+The Chinchilla ratio is approximately 20 tokens per parameter. nanochat uses a ratio of 10.5 by default (closer to the earlier Kaplan estimate), with 12 for the speedrun. The lower ratio means the model is "undertrained" relative to Chinchilla — but since the goal is to beat GPT-2's CORE score within a wall-clock time budget (not a compute-optimal budget), slightly overtraining a smaller model turns out to be the right strategy.
+
+### FLOPs Estimation
+
+nanochat estimates the total floating-point operations (FLOPs) for training using a standard formula:
+
+```python
+def estimate_flops(self):
+    # Each matrix parameter: 6 FLOPs per token (2 forward + 4 backward)
+    # Attention computation: accounts for sliding window sizes
+    nparams = sum(p.numel() for p in self.parameters())
+    nparams_exclude = embeddings + value_embeds + scalars
+
+    attn_flops = 0
+    for window_size in self.window_sizes:
+        effective_seq = min(window, seq_len)
+        attn_flops += 12 * num_heads * head_dim * effective_seq
+
+    num_flops_per_token = 6 * (nparams - nparams_exclude) + attn_flops
+    return num_flops_per_token
+```
+
+The "6 FLOPs per parameter per token" rule comes from the fact that each matrix multiplication does 2 FLOPs per element in the forward pass (one multiply, one add), and the backward pass costs approximately twice the forward pass (computing gradients with respect to both the input and the weights). So 2 + 4 = 6. This is a widely used approximation in the field.
+
+For the speedrun model, the total training compute is about 4.3 times ten to the nineteenth FLOPs — a number that would have been staggeringly expensive a few years ago but is now achievable in three hours for $73.
+
+### Model FLOPS Utilization (MFU)
+
+nanochat tracks **MFU** — the percentage of the GPU's theoretical peak performance that is actually utilized. An H100 GPU can perform about 989 trillion bfloat16 operations per second (989 TFLOPS). If the training processes 480,000 tokens per second, and each token requires about 2.1 billion FLOPs, the actual throughput is about 1,000 TFLOPS across 8 GPUs, or about 125 TFLOPS per GPU. That gives an MFU of about 125/989 = 12.7%.
+
+Wait — nanochat reports around 50% MFU. The discrepancy is because the "theoretical peak" is for pure matrix multiplication, but real models also do attention (which is memory-bandwidth-bound), normalization, element-wise operations, and data transfer. An MFU of 50% on a mixed workload is actually excellent and indicates the code is well-optimized.
+
+---
+
+## 14. Conclusion
+
+We have traced the complete path from raw text to a conversational AI, through five major stages:
+
+1. **Tokenization:** Raw text is converted to integer token sequences using BPE, a compression algorithm that finds an efficient subword vocabulary.
+
+2. **Pretraining:** The model learns to predict the next token on billions of tokens of web text. The architecture — a modern Transformer with rotary embeddings, ReLU-squared MLPs, flash attention, sliding windows, value embeddings, and logit softcapping — processes these tokens through repeated cycles of attention (which routes information between positions) and MLP computation (which transforms information within each position). The MuonAdamW optimizer uses orthogonalization for weight matrices and adaptive learning rates for embeddings, running on multiple GPUs with overlapped communication.
+
+3. **Supervised Fine-Tuning:** The base model is adapted to the conversation format by training on a mixture of dialogue, math problems, multiple-choice questions, and identity data. A training mask ensures the model only learns from assistant responses, not from user messages.
+
+4. **Reinforcement Learning:** The model's math reasoning is improved by generating multiple solutions to each problem, scoring them for correctness, and using REINFORCE to increase the probability of successful reasoning chains and decrease unsuccessful ones.
+
+5. **Evaluation and Inference:** The trained model is measured against benchmarks like CORE (an aggregate of multiple-choice, schema, and language modeling tasks) and deployed for interactive conversation using KV-cached autoregressive generation with optional tool use.
+
+The remarkable thing about this pipeline is how much is driven by a single, simple objective: predict the next token. Pretraining is literally just next-token prediction. SFT is next-token prediction on curated conversations. Even RL is, at its core, adjusting the probabilities of tokens the model already knows how to generate. The entire sophistication of the system — its knowledge, its reasoning, its conversational ability — emerges from this one objective applied at sufficient scale.
+
+nanochat demonstrates that the essential complexity of training an LLM can be captured in roughly 3,000 lines of Python. The engineering challenges are real — efficient data loading, distributed optimization, mixed-precision arithmetic, KV caching — but the conceptual core is surprisingly compact. A BPE tokenizer, a Transformer, cross-entropy loss, and a good optimizer. That is all it takes to go from raw text to a model you can talk to — in three hours, for seventy-three dollars.
