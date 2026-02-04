@@ -1,0 +1,16 @@
+[project]
+name = "just-bash-py"
+version = "0.1.0"
+description = "Python client for the just-bash JSONL server"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "module"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
