@@ -68,8 +68,10 @@ Complete login in the opened browser window, then press ENTER in the terminal.
 ```bash
 pwa record \
   --url https://chatgpt.com/ \
-  --desc "Export/download the last 10 conversations from the sidebar (title + URL)" \
-  --auth-profile auth-profiles/chatgpt.com/default/storageState.json
+  --desc "Export/download the last 10 conversations from the sidebar (title + URL)"
+
+# (Optional) If you have multiple auth profiles, you can specify one explicitly:
+#   --auth-profile auth-profiles/chatgpt.com/default/storageState.json
 ```
 In the opened browser, click around as needed to ensure the sidebar/conversation list loads. Then press ENTER in the terminal.
 

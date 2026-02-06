@@ -13,6 +13,7 @@ import { createInterface } from 'node:readline';
 import { startRecording } from './recorder.js';
 import { generateScript, refineScript } from './gemini.js';
 import { captureLoginStorageState } from './login.js';
+import { discoverAuthProfileForUrl } from './auth-profile-discovery.js';
 import type { RecordingSession } from './types.js';
 
 const DEFAULT_OUTPUT_DIR = join(process.cwd(), 'runs');
@@ -138,7 +139,7 @@ OPTIONS:
   --output, -o <dir>       Output directory (default: ./runs)
   --headless               Run browser in headless mode
   --skip-generate          Only record, don't generate script
-  --auth-profile <path>    Load a Playwright storageState.json before recording (auth replay)
+  --auth-profile <path>    Load a Playwright storageState.json before recording (auth replay). If omitted, pwa will auto-pick the newest auth profile for the URL's domain if one exists.
   --run <dir>              (refine cmd) run/session directory
   --profile <name>         (login cmd) profile name (default: default)
   --notes <text>           (login cmd) notes for this auth profile
@@ -323,12 +324,22 @@ async function main() {
 
   // Step 1: Record
   console.log('\n📹 Step 1: Recording browser session...\n');
+  // If auth-profile not provided, try to auto-discover the newest auth profile for this domain
+  let storageStatePath = args.authProfile;
+  if (!storageStatePath) {
+    const discovered = discoverAuthProfileForUrl(url, process.cwd());
+    if (discovered) {
+      storageStatePath = discovered.storageStatePath;
+      console.log(`🔐 Using discovered auth profile: auth-profiles/${new URL(url).hostname}/${discovered.profileName}/storageState.json`);
+    }
+  }
+
   const session = await startRecording({
     url,
     description,
     outputDir,
     headless: args.headless,
-    storageStatePath: args.authProfile,
+    storageStatePath,
   });
 
   if (args.skipGenerate) {
