@@ -1,4 +1,4 @@
-# Playwright Automator
+# PWA
 
 Record browser actions and generate Playwright automation scripts using Gemini AI.
 
@@ -26,21 +26,21 @@ npm run build
 npm link
 
 # Run interactively
-playwright-automator
+pwa
 
 # Record (explicit)
-playwright-automator record --url https://example.com --desc "Get all messages"
+pwa record --url https://example.com --desc "Get all messages"
 
 # Capture reusable login/auth state (headed; supports 2FA)
-playwright-automator login --url https://example.com/login --profile default
+pwa login --url https://example.com/login --profile default
 
 # Record using an auth profile (loads storageState.json)
-playwright-automator record --url https://example.com --desc "Extract data" --auth-profile auth-profiles/example.com/default/storageState.json
+pwa record --url https://example.com --desc "Extract data" --auth-profile auth-profiles/example.com/default/storageState.json
 ```
 
 ## Installing as a CLI
 
-This repo is set up as a proper Node CLI with a `bin` entry (`playwright-automator → dist/index.js`).
+This repo is set up as a proper Node CLI with a `bin` entry (`pwa → dist/index.js`).
 
 ```bash
 # Option A: install globally from the repo (will run the build via npm "prepare")
@@ -54,12 +54,43 @@ npm run build
 npm link
 ```
 
+## Example: Create a script to download your last 10 ChatGPT conversations
+
+Goal: generate an automation that navigates ChatGPT, finds your most recent conversations, and writes the last 10 (title + URL) to `output.json`.
+
+1) Capture a reusable login profile (handles 2FA):
+```bash
+pwa login --url https://chatgpt.com/ --profile default
+```
+Complete login in the opened browser window, then press ENTER in the terminal.
+
+2) Record the flow and generate the script:
+```bash
+pwa record \
+  --url https://chatgpt.com/ \
+  --desc "Export/download the last 10 conversations from the sidebar (title + URL)" \
+  --auth-profile auth-profiles/chatgpt.com/default/storageState.json
+```
+In the opened browser, click around as needed to ensure the sidebar/conversation list loads. Then press ENTER in the terminal.
+
+3) Run the generated automation:
+```bash
+cd runs/run-<id>/
+npx tsx automation.ts
+```
+Your results will be written to `runs/run-<id>/output.json`.
+
+4) If it breaks, refine it:
+```bash
+pwa refine --run runs/run-<id> --feedback "Make it robust: prefer API interception/replay if possible; otherwise scrape sidebar reliably and stop at 10 conversations."
+```
+
 ## Usage
 
 ### Interactive Mode
 
 ```
-$ playwright-automator
+$ pwa
 
 ╔══════════════════════════════════════════════════╗
 ║           Playwright Automator v1.0              ║
@@ -93,13 +124,13 @@ Press ENTER to stop recording.
 
 ```bash
 # Full automation
-playwright-automator record --url https://example.com --desc "Scrape all articles" --key $GEMINI_API_KEY
+pwa record --url https://example.com --desc "Scrape all articles" --key $GEMINI_API_KEY
 
 # Record only (no script generation)
-playwright-automator record --url https://example.com --desc "Explore the site" --skip-generate
+pwa record --url https://example.com --desc "Explore the site" --skip-generate
 
 # Refine an existing script
-playwright-automator refine --run runs/run-123 --feedback "Add pagination for all pages"
+pwa refine --run runs/run-123 --feedback "Add pagination for all pages"
 ```
 
 ### Environment Variables

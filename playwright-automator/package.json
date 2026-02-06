@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "playwright-automator": "dist/index.js"
+    "pwa": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",
