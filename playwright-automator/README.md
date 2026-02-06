@@ -19,17 +19,39 @@ The tool prioritizes **API interception over DOM scraping**. It analyzes the HAR
 npm install
 npx playwright install chromium
 
-# Run interactively
-npx tsx src/index.ts
+# Build the CLI (creates ./dist)
+npm run build
 
-# Or with command-line args
-npx tsx src/index.ts --url https://example.com --desc "Get all messages" --key YOUR_GEMINI_KEY
+# (Dev) Install as a global CLI on your machine
+npm link
+
+# Run interactively
+playwright-automator
+
+# Record (explicit)
+playwright-automator record --url https://example.com --desc "Get all messages"
 
 # Capture reusable login/auth state (headed; supports 2FA)
-npx tsx src/index.ts login --url https://example.com/login --profile default
+playwright-automator login --url https://example.com/login --profile default
 
-# Use an auth profile when recording (loads storageState.json)
-npx tsx src/index.ts --url https://example.com --desc "Extract data" --auth-profile auth-profiles/example.com/default/storageState.json
+# Record using an auth profile (loads storageState.json)
+playwright-automator record --url https://example.com --desc "Extract data" --auth-profile auth-profiles/example.com/default/storageState.json
+```
+
+## Installing as a CLI
+
+This repo is set up as a proper Node CLI with a `bin` entry (`playwright-automator → dist/index.js`).
+
+```bash
+# Option A: install globally from the repo (will run the build via npm "prepare")
+cd playwright-automator
+npm install
+npm install -g .
+
+# Option B: dev workflow (symlink)
+npm install
+npm run build
+npm link
 ```
 
 ## Usage
@@ -37,7 +59,7 @@ npx tsx src/index.ts --url https://example.com --desc "Extract data" --auth-prof
 ### Interactive Mode
 
 ```
-$ npx tsx src/index.ts
+$ playwright-automator
 
 ╔══════════════════════════════════════════════════╗
 ║           Playwright Automator v1.0              ║
@@ -71,13 +93,13 @@ Press ENTER to stop recording.
 
 ```bash
 # Full automation
-npx tsx src/index.ts --url https://example.com --desc "Scrape all articles" --key $GEMINI_API_KEY
+playwright-automator record --url https://example.com --desc "Scrape all articles" --key $GEMINI_API_KEY
 
 # Record only (no script generation)
-npx tsx src/index.ts --url https://example.com --desc "Explore the site" --skip-generate
+playwright-automator record --url https://example.com --desc "Explore the site" --skip-generate
 
 # Refine an existing script
-npx tsx src/index.ts --refine runs/run-123 --feedback "Add pagination for all pages"
+playwright-automator refine --run runs/run-123 --feedback "Add pagination for all pages"
 ```
 
 ### Environment Variables

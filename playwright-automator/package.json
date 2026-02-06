@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "prepare": "npm run build",
     "start": "node --enable-source-maps dist/index.js",
     "dev": "tsx src/index.ts",
     "test-server": "tsx src/test-server.ts",

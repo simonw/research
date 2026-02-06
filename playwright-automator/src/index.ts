@@ -39,7 +39,10 @@ function parseArgs(): {
   description?: string;
   apiKey?: string;
   outputDir?: string;
+  /** Back-compat: `--refine <dir>` */
   refine?: string;
+  /** Preferred for `refine` subcommand: `--run <dir>` */
+  run?: string;
   feedback?: string;
   headless?: boolean;
   skipGenerate?: boolean;
@@ -51,7 +54,11 @@ function parseArgs(): {
   const result: Record<string, string | boolean> = {};
 
   // subcommand support (backwards compatible):
-  // `npx tsx src/index.ts login --url ...`
+  //   `playwright-automator login --url ...`
+  //   `playwright-automator record --url ... --desc ...`
+  //   `playwright-automator refine --run <dir> --feedback ...`
+  // Also still supports the old pattern:
+  //   `npx tsx src/index.ts login --url ...`
   if (args[0] && !args[0].startsWith('-')) {
     result.command = args[0];
     args.shift();
@@ -79,7 +86,12 @@ function parseArgs(): {
         break;
       case '--refine':
       case '-r':
+        // Back-compat: `--refine <dir>`
         result.refine = args[++i];
+        break;
+      case '--run':
+        // Preferred: `refine --run <dir>`
+        result.run = args[++i];
         break;
       case '--feedback':
       case '-f':
@@ -119,11 +131,12 @@ function printHelp() {
 Record browser actions and generate Playwright scripts using AI.
 
 USAGE:
-  npx tsx src/index.ts [command] [options]
+  playwright-automator [command] [options]
 
 COMMANDS:
-  (default)            Record + generate (current behavior)
+  record (default)     Record + generate (current behavior)
   login                Capture reusable auth storageState (headed; supports 2FA)
+  refine               Refine an existing run's automation.ts using feedback
 
 OPTIONS:
   --url, -u <url>          Target URL to automate
@@ -133,7 +146,8 @@ OPTIONS:
   --headless               Run browser in headless mode
   --skip-generate          Only record, don't generate script
   --auth-profile <path>    Load a Playwright storageState.json before recording (auth replay)
-  --refine, -r <dir>       Refine script in existing session dir
+  --refine, -r <dir>       Back-compat: refine script in existing session dir
+  --run <dir>              (refine cmd) run/session directory (preferred)
   --profile <name>         (login cmd) profile name (default: default)
   --notes <text>           (login cmd) notes for this auth profile
   --feedback, -f <text>    Feedback for refinement
@@ -149,19 +163,22 @@ WORKFLOW:
 
 EXAMPLES:
   # Interactive mode
-  npx tsx src/index.ts
+  playwright-automator
 
-  # Command-line mode
-  npx tsx src/index.ts --url https://example.com --desc "Scrape all articles"
+  # Record (explicit)
+  playwright-automator record --url https://example.com --desc "Scrape all articles"
 
   # Capture login state (for sites with 2FA)
-  npx tsx src/index.ts login --url https://example.com/login --profile default
+  playwright-automator login --url https://example.com/login --profile default
 
   # Record using an existing auth profile (storageState.json)
-  npx tsx src/index.ts --url https://example.com --desc "Extract data" --auth-profile auth-profiles/example.com/default/storageState.json
+  playwright-automator record --url https://example.com --desc "Extract data" --auth-profile auth-profiles/example.com/default/storageState.json
 
-  # Refine an existing script
-  npx tsx src/index.ts --refine runs/run-123 --feedback "Add pagination"
+  # Refine an existing script (preferred)
+  playwright-automator refine --run runs/run-123 --feedback "Add pagination"
+
+  # Back-compat refine flag
+  playwright-automator --refine runs/run-123 --feedback "Add pagination"
 `);
 }
 
@@ -212,15 +229,22 @@ async function runRefine(sessionDir: string, feedback: string, apiKey: string) {
 async function main() {
   const args = parseArgs();
 
-  // Handle refinement mode
-  if (args.refine) {
+  // Handle refinement mode (subcommand or legacy flag)
+  if (args.command === 'refine' || args.refine || args.run) {
     const apiKey = args.apiKey || process.env.GEMINI_API_KEY;
     if (!apiKey) {
       console.error('❌ Gemini API key required. Use --key or set GEMINI_API_KEY env.');
       process.exit(1);
     }
+
+    const runDir = args.run || args.refine;
+    if (!runDir) {
+      console.error('❌ Run directory required. Use `refine --run <dir>` (or legacy `--refine <dir>`).');
+      process.exit(1);
+    }
+
     const feedback = args.feedback || 'Please improve the script';
-    await runRefine(resolve(args.refine), feedback, apiKey);
+    await runRefine(resolve(runDir), feedback, apiKey);
     return;
   }
 
@@ -249,6 +273,18 @@ async function main() {
       cwd: process.cwd(),
     });
     return;
+  }
+
+  // `record` is the default behavior, so treat it as no-op.
+  if (args.command === 'record') {
+    args.command = undefined;
+  }
+
+  // Unknown subcommand → help.
+  if (args.command) {
+    console.error(`❌ Unknown command: ${args.command}`);
+    printHelp();
+    process.exit(1);
   }
 
   printBanner();
@@ -374,7 +410,8 @@ npx tsx automation.ts
     console.log(`   npx tsx automation.ts`);
     console.log('');
     console.log('🔧 To refine the script:');
-    console.log(`   npx tsx src/index.ts --refine ${sessionDir} --feedback "your feedback"`);
+    console.log(`   playwright-automator refine --run ${sessionDir} --feedback "your feedback"`);
+    console.log(`   (back-compat) playwright-automator --refine ${sessionDir} --feedback "your feedback"`);
     console.log('─────────────────────────────────────────────────\n');
 
   } catch (error: any) {
