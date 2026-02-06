@@ -77,4 +77,10 @@ export interface GenerationResult {
   explanation: string;
   apiEndpoints: string[];
   strategy: string;
+  /** Prompt template version used for generation (for determinism/replay). */
+  promptVersion?: string;
+  /** Hash of the deterministic IR used as input. */
+  irHash?: string;
+  /** Hash of request templates used as input. */
+  templatesHash?: string;
 }

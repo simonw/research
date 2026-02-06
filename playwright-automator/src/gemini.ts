@@ -7,9 +7,12 @@
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import crypto from 'node:crypto';
 import type { RecordingSession, GenerationResult } from './types.js';
 import { prepareHarSummaryForLLM } from './har-analyzer.js';
 import { buildIr, summarizeIrForLLM } from './ir-builder.js';
+import { buildRequestTemplates } from './request-templates.js';
+import { loadPrompt, PROMPT_VERSION } from './prompts.js';
 
 /**
  * Generate a Playwright automation script using Gemini.
@@ -35,6 +38,11 @@ export async function generateScript(
   });
   const irSummary = summarizeIrForLLM(ir, 25);
   const harSummary = prepareHarSummaryForLLM(session.apiRequests, 40);
+  const requestTemplates = buildRequestTemplates(session.apiRequests, 20);
+
+  const promptPreamble = loadPrompt('generate');
+  const irHash = crypto.createHash('sha256').update(JSON.stringify(ir)).digest('hex');
+  const templatesHash = crypto.createHash('sha256').update(JSON.stringify(requestTemplates)).digest('hex');
 
   // Prepare actions summary
   const actionsSummary = session.actions
@@ -62,7 +70,9 @@ export async function generateScript(
     `Key cookies: ${Object.keys(session.cookies).slice(0, 10).join(', ')}`,
   ].join('\n');
 
-  const prompt = `You are an expert Playwright automation engineer. Your task is to generate a standalone Playwright script that automates a browser task.
+  const prompt = `${promptPreamble}
+
+You are an expert Playwright automation engineer. Your task is to generate a standalone Playwright script that automates a browser task.
 
 ## Task Description
 The user wants to: **${session.description}**
@@ -83,6 +93,12 @@ ${harSummary || 'No API requests captured'}
 
 ## Authentication Info
 ${authSummary}
+
+## Request Templates (for API replay fallback)
+If interception doesn't fire, you may re-issue these requests using Playwright's request client (page.request.fetch) or in-page fetch().
+IMPORTANT: these templates omit sensitive headers (Authorization/Cookie). Use storageState/cookies for auth.
+Templates:
+${JSON.stringify(requestTemplates.slice(0, 8), null, 2)}
 
 ## Instructions
 
@@ -158,6 +174,9 @@ Do NOT include markdown code fences - output only raw TypeScript.`;
     explanation: strategy,
     apiEndpoints,
     strategy: apiEndpoints.length > 0 ? 'API Interception' : 'DOM Scraping',
+    promptVersion: PROMPT_VERSION,
+    irHash,
+    templatesHash,
   };
 }
 
@@ -179,9 +198,22 @@ export async function refineScript(
     },
   });
 
+  const ir = buildIr(session.url, session.apiRequests, {
+    authMethod: session.authMethod,
+    cookies: session.cookies,
+    authHeaders: session.authHeaders,
+  });
+  const irSummary = summarizeIrForLLM(ir, 25);
   const harSummary = prepareHarSummaryForLLM(session.apiRequests, 40);
+  const requestTemplates = buildRequestTemplates(session.apiRequests, 20);
 
-  const prompt = `You are an expert Playwright automation engineer. You need to fix/improve a previously generated script.
+  const promptPreamble = loadPrompt('refine');
+  const irHash = crypto.createHash('sha256').update(JSON.stringify(ir)).digest('hex');
+  const templatesHash = crypto.createHash('sha256').update(JSON.stringify(requestTemplates)).digest('hex');
+
+  const prompt = `${promptPreamble}
+
+You are an expert Playwright automation engineer. You need to fix/improve a previously generated script.
 
 ## Original Task
 The user wants to: **${session.description}**
@@ -195,8 +227,14 @@ ${previousScript}
 ## User Feedback
 ${feedback}
 
+## Derived Endpoint Catalog (IR)
+${irSummary}
+
 ## Available API Traffic (for reference)
 ${harSummary}
+
+## Request Templates (for API replay fallback)
+${JSON.stringify(requestTemplates.slice(0, 8), null, 2)}
 
 ## Auth Info
 Auth method: ${session.authMethod}
@@ -227,5 +265,8 @@ Output ONLY the TypeScript code (no markdown fences). The script should be compl
     explanation: 'Refined based on feedback',
     apiEndpoints,
     strategy: apiEndpoints.length > 0 ? 'API Interception' : 'DOM Scraping',
+    promptVersion: PROMPT_VERSION,
+    irHash,
+    templatesHash,
   };
 }

@@ -24,6 +24,12 @@ npx tsx src/index.ts
 
 # Or with command-line args
 npx tsx src/index.ts --url https://example.com --desc "Get all messages" --key YOUR_GEMINI_KEY
+
+# Capture reusable login/auth state (headed; supports 2FA)
+npx tsx src/index.ts login --url https://example.com/login --profile default
+
+# Use an auth profile when recording (loads storageState.json)
+npx tsx src/index.ts --url https://example.com --desc "Extract data" --auth-profile auth-profiles/example.com/default/storageState.json
 ```
 
 ## Usage

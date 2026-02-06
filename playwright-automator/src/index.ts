@@ -13,6 +13,7 @@ import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { startRecording } from './recorder.js';
 import { generateScript, refineScript } from './gemini.js';
+import { captureLoginStorageState } from './login.js';
 import type { RecordingSession } from './types.js';
 
 const DEFAULT_OUTPUT_DIR = join(process.cwd(), 'runs');
@@ -33,6 +34,7 @@ function question(rl: ReturnType<typeof createReadlineInterface>, prompt: string
 }
 
 function parseArgs(): {
+  command?: string;
   url?: string;
   description?: string;
   apiKey?: string;
@@ -41,9 +43,19 @@ function parseArgs(): {
   feedback?: string;
   headless?: boolean;
   skipGenerate?: boolean;
+  authProfile?: string;
+  profileName?: string;
+  notes?: string;
 } {
   const args = process.argv.slice(2);
   const result: Record<string, string | boolean> = {};
+
+  // subcommand support (backwards compatible):
+  // `npx tsx src/index.ts login --url ...`
+  if (args[0] && !args[0].startsWith('-')) {
+    result.command = args[0];
+    args.shift();
+  }
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -79,6 +91,15 @@ function parseArgs(): {
       case '--skip-generate':
         result.skipGenerate = true;
         break;
+      case '--auth-profile':
+        result.authProfile = args[++i];
+        break;
+      case '--profile':
+        result.profileName = args[++i];
+        break;
+      case '--notes':
+        result.notes = args[++i];
+        break;
       case '--help':
       case '-h':
         printHelp();
@@ -98,7 +119,11 @@ function printHelp() {
 Record browser actions and generate Playwright scripts using AI.
 
 USAGE:
-  npx tsx src/index.ts [options]
+  npx tsx src/index.ts [command] [options]
+
+COMMANDS:
+  (default)            Record + generate (current behavior)
+  login                Capture reusable auth storageState (headed; supports 2FA)
 
 OPTIONS:
   --url, -u <url>          Target URL to automate
@@ -107,7 +132,10 @@ OPTIONS:
   --output, -o <dir>       Output directory (default: ./runs)
   --headless               Run browser in headless mode
   --skip-generate          Only record, don't generate script
+  --auth-profile <path>    Load a Playwright storageState.json before recording (auth replay)
   --refine, -r <dir>       Refine script in existing session dir
+  --profile <name>         (login cmd) profile name (default: default)
+  --notes <text>           (login cmd) notes for this auth profile
   --feedback, -f <text>    Feedback for refinement
   --help, -h               Show this help
 
@@ -125,6 +153,12 @@ EXAMPLES:
 
   # Command-line mode
   npx tsx src/index.ts --url https://example.com --desc "Scrape all articles"
+
+  # Capture login state (for sites with 2FA)
+  npx tsx src/index.ts login --url https://example.com/login --profile default
+
+  # Record using an existing auth profile (storageState.json)
+  npx tsx src/index.ts --url https://example.com --desc "Extract data" --auth-profile auth-profiles/example.com/default/storageState.json
 
   # Refine an existing script
   npx tsx src/index.ts --refine runs/run-123 --feedback "Add pagination"
@@ -190,6 +224,33 @@ async function main() {
     return;
   }
 
+  // login subcommand
+  if (args.command === 'login') {
+    printBanner();
+    let url = args.url;
+    if (!url) {
+      const rl = createReadlineInterface();
+      url = await question(rl, '🌐 Enter the login URL: ');
+      rl.close();
+    }
+    if (!url) {
+      console.error('❌ URL is required');
+      process.exit(1);
+    }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'https://' + url;
+    const domain = new URL(url).hostname;
+    const profileName = args.profileName || 'default';
+    await captureLoginStorageState({
+      url,
+      domain,
+      profileName,
+      headless: args.headless,
+      notes: args.notes,
+      cwd: process.cwd(),
+    });
+    return;
+  }
+
   printBanner();
 
   let url = args.url;
@@ -239,6 +300,7 @@ async function main() {
     description,
     outputDir,
     headless: args.headless,
+    storageStatePath: args.authProfile,
   });
 
   if (args.skipGenerate) {
@@ -273,6 +335,9 @@ async function main() {
         apiEndpoints: result.apiEndpoints,
         explanation: result.explanation,
         generatedAt: new Date().toISOString(),
+        promptVersion: result.promptVersion,
+        irHash: result.irHash,
+        templatesHash: result.templatesHash,
       }, null, 2),
       'utf-8',
     );
