@@ -14,5 +14,5 @@
     "sourceMap": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "runs", "src/reddit-test.ts"]
+  "exclude": ["node_modules", "dist", "runs"]
 }
