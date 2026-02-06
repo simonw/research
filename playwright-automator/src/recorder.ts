@@ -16,6 +16,8 @@ import type { UserAction, RecordingSession, ParsedApiRequest } from './types.js'
 import { analyzeHar } from './har-analyzer.js';
 import { buildIr } from './ir-builder.js';
 import { buildRequestTemplates } from './request-templates.js';
+import { correlateActionsWithApis } from './action-api-correlator.js';
+import { analyzeWorkflow } from './workflow-analyzer.js';
 
 export interface RecorderOptions {
   url: string;
@@ -288,6 +290,14 @@ export async function startRecording(opts: RecorderOptions): Promise<RecordingSe
   // Sort actions by timestamp
   actions.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
+  // Correlate user actions with the API calls they triggered
+  const timeline = correlateActionsWithApis(actions, analysis.apiRequests);
+  writeFileSync(join(sessionDir, 'timeline.json'), JSON.stringify(timeline, null, 2), 'utf-8');
+
+  // Detect workflow patterns (list→detail, pagination, variable flow)
+  const workflowAnalysis = analyzeWorkflow(analysis.apiRequests);
+  writeFileSync(join(sessionDir, 'workflow-analysis.json'), JSON.stringify(workflowAnalysis, null, 2), 'utf-8');
+
   // Build session
   const session: RecordingSession = {
     id: sessionId,
@@ -303,6 +313,8 @@ export async function startRecording(opts: RecorderOptions): Promise<RecordingSe
     targetDomain: analysis.targetDomain,
     harFilePath: harPath,
     screenshotsDir,
+    timeline,
+    workflowAnalysis,
   };
 
   // Save session metadata

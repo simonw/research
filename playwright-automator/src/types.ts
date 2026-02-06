@@ -61,6 +61,64 @@ export interface RecordingSession {
   targetDomain: string;
   harFilePath: string;
   screenshotsDir?: string;
+  timeline?: ActionApiTimeline;
+  workflowAnalysis?: WorkflowAnalysis;
+  executionPlan?: ExecutionPlan;
+}
+
+/** An API call triggered by a user action. */
+export interface TriggeredApi {
+  method: string;
+  url: string;
+  path: string;
+  status: number;
+  delayMs: number;
+  responseContentType?: string;
+}
+
+/** A user action correlated with the API calls it triggered. */
+export interface CorrelatedAction {
+  index: number;
+  action: UserAction;
+  triggeredApis: TriggeredApi[];
+}
+
+/** Timeline of correlated actions + uncorrelated background API calls. */
+export interface ActionApiTimeline {
+  correlatedActions: CorrelatedAction[];
+  uncorrelatedApis: ParsedApiRequest[];
+}
+
+/** Detected workflow pattern. */
+export interface WorkflowPattern {
+  type: 'list-detail' | 'pagination' | 'variable-flow';
+  description: string;
+  confidence: 'high' | 'medium' | 'low';
+  details: Record<string, unknown>;
+}
+
+/** Full workflow analysis result. */
+export interface WorkflowAnalysis {
+  patterns: WorkflowPattern[];
+  summary: string;
+}
+
+/** A step in the execution plan. */
+export interface PlanStep {
+  step: number;
+  description: string;
+  endpoint: string;
+  purpose: string;
+  inputFrom?: number;
+  loopOver?: string;
+  /** UI action that triggers this API (e.g. "click conversation link in sidebar", "navigate to URL"). */
+  triggerAction?: string;
+}
+
+/** Structured execution plan from the planning phase. */
+export interface ExecutionPlan {
+  taskSummary: string;
+  steps: PlanStep[];
 }
 
 /** Configuration for the automator. */
@@ -83,4 +141,6 @@ export interface GenerationResult {
   irHash?: string;
   /** Hash of request templates used as input. */
   templatesHash?: string;
+  /** Execution plan from the planning phase (if available). */
+  executionPlan?: ExecutionPlan;
 }

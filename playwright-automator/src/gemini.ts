@@ -13,6 +13,9 @@ import { prepareHarSummaryForLLM } from './har-analyzer.js';
 import { buildIr, summarizeIrForLLM } from './ir-builder.js';
 import { buildRequestTemplates } from './request-templates.js';
 import { loadPrompt, PROMPT_VERSION } from './prompts.js';
+import { correlateActionsWithApis, renderTimeline } from './action-api-correlator.js';
+import { analyzeWorkflow } from './workflow-analyzer.js';
+import { generatePlan, renderPlanForPrompt } from './planner.js';
 
 /**
  * Generate a Playwright automation script using Gemini.
@@ -23,7 +26,7 @@ export async function generateScript(
 ): Promise<GenerationResult> {
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
-    model: 'gemini-2.0-flash',
+    model: 'gemini-3-pro-preview',
     generationConfig: {
       temperature: 0.2,
       maxOutputTokens: 16000,
@@ -44,7 +47,15 @@ export async function generateScript(
   const irHash = crypto.createHash('sha256').update(JSON.stringify(ir)).digest('hex');
   const templatesHash = crypto.createHash('sha256').update(JSON.stringify(requestTemplates)).digest('hex');
 
-  // Prepare actions summary
+  // Prepare correlated action-API timeline (or fall back to flat list)
+  const timeline = session.timeline ?? correlateActionsWithApis(session.actions, session.apiRequests);
+  const timelineSummary = renderTimeline(timeline);
+
+  // Prepare workflow analysis (list→detail, pagination, variable flow)
+  const workflow = session.workflowAnalysis ?? analyzeWorkflow(session.apiRequests);
+  const workflowSummary = workflow.summary;
+
+  // Also prepare flat actions summary as fallback
   const actionsSummary = session.actions
     .map((a, i) => {
       switch (a.type) {
@@ -71,6 +82,16 @@ export async function generateScript(
     `Note: auth.json contains "playwrightCookies" (Playwright Cookie[] array for addCookies()) and "cookies" (flat Record<string,string> — do NOT pass to addCookies).`,
   ].join('\n');
 
+  // Two-pass planning: generate a strategy plan first, then inject into code generation
+  const executionPlan = await generatePlan(
+    session.description,
+    irSummary,
+    workflowSummary,
+    timelineSummary,
+    apiKey,
+  );
+  const planSection = executionPlan ? '\n' + renderPlanForPrompt(executionPlan) + '\n' : '';
+
   const prompt = `${promptPreamble}
 
 You are an expert Playwright automation engineer. Your task is to generate a standalone Playwright script that automates a browser task.
@@ -80,13 +101,15 @@ The user wants to: **${session.description}**
 Target URL: ${session.url}
 Target domain: ${session.targetDomain}
 
-## Recorded User Actions
-The user performed these actions in the browser:
-${actionsSummary || 'No actions recorded (user may have only browsed)'}
+## Recorded User Actions (with correlated API calls)
+**The timeline below shows exactly which user actions triggered which API calls. Your script should replicate these actions (navigate, click) to trigger the same APIs, then intercept them with \`waitForResponse\`.**
+${timelineSummary || actionsSummary || 'No actions recorded (user may have only browsed)'}
 
 ## Derived Endpoint Catalog (IR)
 This is a deterministic, scored summary of endpoints extracted from the HAR (use this to pick the best APIs):
 ${irSummary}
+
+${workflowSummary}
 
 ## Captured API Traffic (from HAR recording)
 These API calls were made during the session:
@@ -95,36 +118,39 @@ ${harSummary || 'No API requests captured'}
 ## Authentication Info
 ${authSummary}
 
-## Request Templates (for API replay fallback)
-If interception doesn't fire, you may re-issue these requests using Playwright's request client (page.request.fetch) or in-page fetch().
+## Request Templates (for reference)
+These templates show the shape of API requests observed during recording. Use them to understand endpoints, not to call directly.
 IMPORTANT: these templates omit sensitive headers (Authorization/Cookie). Use storageState/cookies for auth.
 Templates:
 ${JSON.stringify(requestTemplates.slice(0, 8), null, 2)}
 
-**API replay fallback pattern** — set up listener BEFORE navigation, check status, fall back to direct fetch:
+**UI-driven detail collection pattern** — replicate user actions to trigger APIs, then intercept responses:
 \`\`\`
-let data: any;
-try {
-  // CRITICAL: set up waitForResponse BEFORE the navigation/click that triggers the API
-  const respPromise = page.waitForResponse(
-    r => r.url().includes('/api/endpoint') && r.status() === 200,
+// Step 1: Intercept the list API by navigating (same as user did during recording)
+const listPromise = page.waitForResponse(
+  r => r.url().includes('/api/items') && r.status() === 200,
+  { timeout: 15000 }
+);
+await page.goto('https://example.com/items');
+const listData = await (await listPromise).json();
+
+// Step 2: Click each item to trigger the detail API (same as user did during recording)
+const results: any[] = [];
+for (const item of items) {
+  const detailPromise = page.waitForResponse(
+    r => r.url().includes('/api/items/') && r.status() === 200,
     { timeout: 15000 }
   );
-  await page.goto('https://example.com'); // or page.click()
-  data = await (await respPromise).json();
-} catch {
-  console.log('⚠️  interception failed — falling back to direct fetch');
-  const authData = JSON.parse(readFileSync('./auth.json', 'utf-8'));
-  const headers = authData.authHeaders || {};
-  // NOTE: page.evaluate accepts at most ONE extra arg — wrap in object
-  data = await page.evaluate(async (args) => {
-    const r = await fetch('/api/endpoint?limit=50', { headers: args.headers });
-    return r.json();
-  }, { headers });
+  await page.click(\`[data-item-id="\${item.id}"]\`); // or text selector
+  const detail = await (await detailPromise).json();
+  results.push(detail);
+  await page.goBack();
+  await page.waitForLoadState('networkidle');
 }
 \`\`\`
+**Why UI-driven?** Many sites reject bare \`fetch()\` calls — CSRF tokens, sentinel headers, proof-of-work challenges all get stripped. Click the UI to trigger APIs through the browser's natural request pipeline.
 
-## Instructions
+${planSection}## Instructions
 
 Generate a complete, standalone Playwright script (TypeScript) that accomplishes the task described above.
 
@@ -238,6 +264,7 @@ Do NOT include markdown code fences - output only raw TypeScript.`;
     promptVersion: PROMPT_VERSION,
     irHash,
     templatesHash,
+    executionPlan: executionPlan ?? undefined,
   };
 }
 
@@ -252,7 +279,7 @@ export async function refineScript(
 ): Promise<GenerationResult> {
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
-    model: 'gemini-2.0-flash',
+    model: 'gemini-3-pro-preview',
     generationConfig: {
       temperature: 0.2,
       maxOutputTokens: 16000,
@@ -272,6 +299,12 @@ export async function refineScript(
   const irHash = crypto.createHash('sha256').update(JSON.stringify(ir)).digest('hex');
   const templatesHash = crypto.createHash('sha256').update(JSON.stringify(requestTemplates)).digest('hex');
 
+  // Prepare timeline and workflow for refine context
+  const refineTimeline = session.timeline ?? correlateActionsWithApis(session.actions, session.apiRequests);
+  const refineTimelineSummary = renderTimeline(refineTimeline);
+  const refineWorkflow = session.workflowAnalysis ?? analyzeWorkflow(session.apiRequests);
+  const refinePlanSection = session.executionPlan ? '\n' + renderPlanForPrompt(session.executionPlan) + '\n' : '';
+
   const prompt = `${promptPreamble}
 
 You are an expert Playwright automation engineer. You need to fix/improve a previously generated script.
@@ -288,8 +321,13 @@ ${previousScript}
 ## User Feedback
 ${feedback}
 
+## Recorded User Actions (with correlated API calls)
+${refineTimelineSummary}
+
 ## Derived Endpoint Catalog (IR)
 ${irSummary}
+
+${refineWorkflow.summary}
 
 ## Available API Traffic (for reference)
 ${harSummary}
@@ -309,7 +347,7 @@ Key cookies: ${Object.keys(session.cookies).slice(0, 10).join(', ')}
 - \`cookies\`: flat \`Record<string,string>\` — NEVER pass to \`addCookies()\`
 - \`authHeaders\`: object with auth header name→value (e.g. \`{ "authorization": "Bearer ..." }\`)
 - Prefer \`storageState.json\` when available: \`browser.newContext({ storageState: './storageState.json' })\`
-
+${refinePlanSection}
 ## Instructions
 Fix the script based on the user's feedback. Keep the same overall approach but address the issues mentioned.
 
@@ -317,7 +355,8 @@ Fix the script based on the user's feedback. Keep the same overall approach but 
 - \`waitForResponse('https://...')\` exact string match → use predicate form: \`waitForResponse(r => r.url().includes('/path'))\`
 - \`launchPersistentContext()\` → replace with \`chromium.launch()\` + \`browser.newContext()\`
 - Missing logging → add \`console.log\` at every major step + diagnostic \`page.on('response')\` logger for the target domain
-- No fallback → wrap \`waitForResponse\` in try/catch, fall back to \`page.evaluate(() => fetch(...))\`
+- No UI-driven iteration → if the plan includes a list→detail loop, click each item in the UI and intercept the detail API via \`waitForResponse\`, don't use \`page.evaluate(() => fetch(...))\` to iterate
+- \`page.evaluate(() => fetch(...))\` for iteration → replace with UI clicks + \`page.waitForResponse()\` interception. Many sites reject bare fetch() (missing CSRF, sentinel headers, proof-of-work)
 
 Output ONLY the TypeScript code (no markdown fences). The script should be complete and runnable.`;
 

@@ -460,6 +460,17 @@ async function main() {
       'utf-8',
     );
 
+    // Save execution plan if available
+    if (result.executionPlan) {
+      writeFileSync(
+        join(sessionDir, 'execution-plan.json'),
+        JSON.stringify(result.executionPlan, null, 2),
+        'utf-8',
+      );
+      // Attach to session for use during refinement
+      session.executionPlan = result.executionPlan;
+    }
+
     // Create a convenience run script
     const runScript = `#!/bin/bash
 # Run the generated Playwright automation script

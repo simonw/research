@@ -6,8 +6,9 @@ import crypto from 'node:crypto';
 import type { ParsedApiRequest } from './types.js';
 import type { EndpointGroup, EndpointVariant, RunIr, HttpMethod } from './ir.js';
 import { IR_VERSION } from './ir.js';
+import { extractResponseSchema, renderSchemaForLLM } from './response-schema.js';
 
-function normalizePath(pathWithQuery: string): string {
+export function normalizePath(pathWithQuery: string): string {
   const path = pathWithQuery.split('?')[0] ?? pathWithQuery;
   return path
     // UUID first — must run before numeric to avoid digit-starting UUIDs being mangled
@@ -216,8 +217,11 @@ export function summarizeIrForLLM(ir: RunIr, maxEndpoints=25): string {
   for (const [i, ep] of ir.endpoints.slice(0, maxEndpoints).entries()) {
     lines.push(`- score=${ep.score} calls=${ep.callCount} ${ep.method} ${ep.domain}${ep.pathPattern} json=${ep.isJsonLike} api=${ep.isApiLike} html=${ep.isHtmlLike}`);
 
-    // For top 10, include variant details so the LLM can see auth headers + response shape
-    if (i < 10 && ep.variants.length > 0) {
+    // Tiered truncation: top 5 get 8000 chars, 6-15 get 4000, 16+ get 2000
+    const charLimit = i < 5 ? 8000 : i < 15 ? 4000 : 2000;
+
+    // For top 15, include variant details so the LLM can see auth headers + response shape
+    if (i < 15 && ep.variants.length > 0) {
       const v = ep.variants[0];
       lines.push(`  url: ${v.exampleUrl?.slice(0, 200)}`);
 
@@ -229,7 +233,17 @@ export function summarizeIrForLLM(ir: RunIr, maxEndpoints=25): string {
       }
 
       if (v.responseBodySample) {
-        lines.push(`  response: ${v.responseBodySample.slice(0, 500)}${v.responseBodySample.length > 500 ? '...' : ''}`);
+        // For top 10 endpoints, try schema rendering for large responses
+        if (i < 10 && v.responseBodySample.length > 500) {
+          const schema = extractResponseSchema(v.responseBodySample);
+          if (schema) {
+            lines.push(`  response-schema:\n${renderSchemaForLLM(schema, 2)}`);
+          } else {
+            lines.push(`  response: ${v.responseBodySample.slice(0, charLimit)}${v.responseBodySample.length > charLimit ? '...' : ''}`);
+          }
+        } else {
+          lines.push(`  response: ${v.responseBodySample.slice(0, charLimit)}${v.responseBodySample.length > charLimit ? '...' : ''}`);
+        }
       }
     }
   }

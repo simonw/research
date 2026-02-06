@@ -31,34 +31,39 @@ CRITICAL PRIORITIES (in order)
    ```
    The same applies when clicking a link that triggers an API call — set up `waitForResponse` before the click.
 
-2) Best-effort fallback when interception fails:
-   - Wrap `waitForResponse` in try/catch. If it times out, fall back to calling the API directly via `page.evaluate(() => fetch(...))` so cookies/CSRF apply in-page.
-   - **IMPORTANT**: `page.evaluate()` accepts at most ONE extra argument. If you need to pass multiple values, wrap them in a single object:
+2) UI-driven interception — replicate user actions to trigger APIs.
+   The correlated timeline shows exactly which user actions (clicks, navigations) triggered which API calls during recording. Your script should **replicate those same actions** and intercept the API responses.
+
+   **For list→detail workflows** (the most common pattern): navigate to trigger the list API, then click each item in the UI to trigger the detail API. Do NOT call detail APIs directly via `fetch()`.
+
+   **UI-driven detail collection pattern:**
    ```
-   let data: any;
-   try {
-     const respPromise = page.waitForResponse(
-       r => r.url().includes('/api/conversations'),
+   // Step 1: Intercept the list API by navigating (same as user did during recording)
+   const listPromise = page.waitForResponse(
+     r => r.url().includes('/api/items') && r.status() === 200,
+     { timeout: 15000 }
+   );
+   await page.goto('https://example.com/items');
+   const listData = await (await listPromise).json();
+   const items = listData.items; // array of {id, title, ...}
+
+   // Step 2: Click each item to trigger the detail API (same as user did during recording)
+   const results: any[] = [];
+   for (const item of items) {
+     const detailPromise = page.waitForResponse(
+       r => r.url().includes(`/api/items/`) && r.status() === 200,
        { timeout: 15000 }
      );
-     await page.goto('https://example.com'); // or click/action that triggers the API
-     const resp = await respPromise;
-     if (resp.status() === 200) {
-       data = await resp.json();
-     } else {
-       throw new Error(`API returned ${resp.status()}`);
-     }
-   } catch {
-     console.log('⚠️  interception failed — falling back to direct fetch');
-     const authData = JSON.parse(readFileSync('./auth.json', 'utf-8'));
-     const headers = authData.authHeaders || {};
-     // MUST wrap multiple values in a single object
-     data = await page.evaluate(async (args) => {
-       const r = await fetch(`/api/conversations?limit=${args.limit}`, { headers: args.headers });
-       return r.json();
-     }, { limit: 50, headers });
+     await page.click(`[data-item-id="${item.id}"]`); // or text selector, etc.
+     const detail = await (await detailPromise).json();
+     results.push(detail);
+     await page.goBack(); // return to list for next item
+     await page.waitForLoadState('networkidle');
    }
    ```
+
+   **Why UI-driven?** Many sites (ChatGPT, etc.) require CSRF tokens, sentinel headers, proof-of-work challenges, and other protections that only the browser's natural request pipeline provides. `page.evaluate(() => fetch(...))` bypasses all of this and gets 403 Forbidden. Clicking the UI triggers the same request pipeline the user used during recording.
+
 3) Auth/2FA:
    - **NEVER use `launchPersistentContext()`** — it is incompatible with `storageState` and `addCookies()`.
    - Always start with `chromium.launch()` + `browser.newContext()`.
@@ -82,30 +87,12 @@ CRITICAL PRIORITIES (in order)
    }
    const page = await context.newPage();
    ```
-4) Bearer token + custom auth header handling:
-   - `page.evaluate(() => fetch(...))` sends cookies automatically but does NOT send Authorization or custom headers (e.g. `x-csrf-token`, site-specific device/client IDs).
-   - If the IR "auth-headers" field shows endpoints need Authorization or custom headers, read them from auth.json and pass ALL of them explicitly:
-   ```
-   const authData = JSON.parse(readFileSync('./auth.json', 'utf-8'));
-   const authHeaders = authData.authHeaders || {};
-   // Build a headers object with all auth-relevant headers
-   const fetchHeaders: Record<string, string> = {};
-   for (const [k, v] of Object.entries(authHeaders)) {
-     fetchHeaders[k] = v as string;
-   }
-   // ...
-   data = await page.evaluate(async (headers) => {
-     const r = await fetch('/api/endpoint', { headers });
-     return r.json();
-   }, fetchHeaders);
-   ```
-   - Check the "auth-headers" field in the IR endpoint details — pass ALL listed headers (not just Authorization) in every direct fetch call. Many sites require custom headers (device IDs, CSRF tokens, client versions, etc.) in addition to the bearer token.
-5) Deterministic output:
+4) Deterministic output:
    - Write `output.json`.
    - Avoid random sleeps; use explicit waits/timeouts.
-6) Pagination:
+5) Pagination:
    - If endpoint supports pagination, implement it with clear stop conditions.
-7) Verbose logging:
+6) Verbose logging:
    - Log every major step with `console.log` (e.g., "Navigating to...", "Waiting for API response...", "Got N items", "Writing output...").
    - Add a diagnostic response logger for the target domain at the top of the script:
    ```
@@ -116,6 +103,11 @@ CRITICAL PRIORITIES (in order)
    });
    ```
    This helps debug which API calls are actually firing when the script runs.
+7) Last-resort direct fetch (use ONLY when no UI action can trigger the API):
+   - If an API call has no corresponding UI trigger (rare background endpoint), you may fall back to `page.evaluate(() => fetch(...))`.
+   - **IMPORTANT**: `page.evaluate()` accepts at most ONE extra argument. If you need to pass multiple values, wrap them in a single object.
+   - If the IR "auth-headers" field shows endpoints need Authorization or custom headers, read them from auth.json and pass ALL of them explicitly.
+   - **NEVER use direct fetch for list→detail iteration** — always click items in the UI instead.
 
 IMPORTANT
 - Do NOT use `route.continue()` as if it returns a response.

@@ -6,6 +6,7 @@
  */
 
 import type { HarEntry, ParsedApiRequest } from './types.js';
+import { extractResponseSchema, renderSchemaForLLM } from './response-schema.js';
 
 /** Static asset extensions to skip. */
 const STATIC_EXTS = [
@@ -210,24 +211,16 @@ export function analyzeHar(
       cookies[cookie.name] = cookie.value;
     }
 
-    // Get response body
+    // Get response body — use schema-aware truncation for large responses
     let responseBody: string | undefined;
     if (response?.content?.text) {
       responseBody = response.content.text;
-      // Truncate very large responses for LLM context
       if (responseBody.length > 10000) {
-        try {
-          const parsed = JSON.parse(responseBody);
-          // For arrays, keep first 3 items
-          if (Array.isArray(parsed)) {
-            responseBody = JSON.stringify(
-              { _sample: parsed.slice(0, 3), _totalCount: parsed.length },
-              null, 2
-            );
-          } else {
-            responseBody = JSON.stringify(parsed, null, 2).slice(0, 5000) + '\n... [truncated]';
-          }
-        } catch {
+        const sizeKB = Math.round(responseBody.length / 1024);
+        const schema = extractResponseSchema(responseBody);
+        if (schema) {
+          responseBody = `[SCHEMA - ${sizeKB}KB response]\n${renderSchemaForLLM(schema)}`;
+        } else {
           responseBody = responseBody.slice(0, 5000) + '\n... [truncated]';
         }
       }

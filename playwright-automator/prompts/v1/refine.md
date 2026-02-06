@@ -8,8 +8,8 @@ You will be given:
 Your task: refine the script to address the feedback while keeping it runnable.
 
 Rules
-- API-first.
-- Add API replay fallback if interception is flaky.
+- API-first with UI-driven interception.
+- When the plan includes a list→detail loop, click each item in the UI and intercept the detail API — do NOT iterate via `page.evaluate(() => fetch(...))`.
 - Auth loading priority:
   1. `storageState.json` via `browser.newContext({ storageState: './storageState.json' })`
   2. `auth.json` → `context.addCookies(authData.playwrightCookies)` (Playwright `Cookie[]` array)
@@ -21,6 +21,6 @@ Common bugs checklist — fix these if present:
 - **Race condition**: `await page.goto(url)` followed by `await page.waitForResponse(...)` → the API fires DURING goto, so the listener misses it. Fix: set up `waitForResponse` BEFORE `goto`: `const p = page.waitForResponse(...); await page.goto(url); const resp = await p;`
 - `launchPersistentContext()` → replace with `chromium.launch()` + `browser.newContext()`
 - Missing logging → add `console.log` at every major step + diagnostic `page.on('response')` logger for the target domain
-- No fallback → wrap `waitForResponse` in try/catch, fall back to `page.evaluate(() => fetch(...))`
+- No UI-driven iteration → if the plan includes a list→detail loop, click each item in the UI and intercept the detail API via `waitForResponse`, don't use `page.evaluate(() => fetch(...))` to iterate
+- `page.evaluate(() => fetch(...))` for iteration → replace with UI clicks + `page.waitForResponse()` interception. Many sites reject bare `fetch()` calls (missing CSRF, sentinel headers, proof-of-work)
 - `page.evaluate(fn, arg1, arg2, ...)` with multiple arguments → wrap in single object: `page.evaluate(fn, { arg1, arg2 })`
-- `page.evaluate(() => fetch(...))` without auth headers → if IR shows bearer token or custom headers needed (Authorization, x-csrf-*, site-specific headers, etc.), read ALL auth headers from `authData.authHeaders` in auth.json and pass them as fetch headers: `page.evaluate(async (headers) => { fetch(url, { headers }) }, authHeaders)`
