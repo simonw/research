@@ -9,6 +9,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { RecordingSession, GenerationResult } from './types.js';
 import { prepareHarSummaryForLLM } from './har-analyzer.js';
+import { buildIr, summarizeIrForLLM } from './ir-builder.js';
 
 /**
  * Generate a Playwright automation script using Gemini.
@@ -26,7 +27,13 @@ export async function generateScript(
     },
   });
 
-  // Prepare HAR summary for the LLM
+  // Prepare IR + HAR summary for the LLM
+  const ir = buildIr(session.url, session.apiRequests, {
+    authMethod: session.authMethod,
+    cookies: session.cookies,
+    authHeaders: session.authHeaders,
+  });
+  const irSummary = summarizeIrForLLM(ir, 25);
   const harSummary = prepareHarSummaryForLLM(session.apiRequests, 40);
 
   // Prepare actions summary
@@ -66,6 +73,10 @@ Target domain: ${session.targetDomain}
 The user performed these actions in the browser:
 ${actionsSummary || 'No actions recorded (user may have only browsed)'}
 
+## Derived Endpoint Catalog (IR)
+This is a deterministic, scored summary of endpoints extracted from the HAR (use this to pick the best APIs):
+${irSummary}
+
 ## Captured API Traffic (from HAR recording)
 These API calls were made during the session:
 ${harSummary || 'No API requests captured'}
@@ -79,14 +90,18 @@ Generate a complete, standalone Playwright script (TypeScript) that accomplishes
 
 **CRITICAL PRIORITIES (in order):**
 
-1. **API Interception First**: Whenever possible, use \`page.route()\` or \`page.waitForResponse()\` to intercept API responses rather than scraping the DOM. API data is more reliable and structured.
+1. **API Interception First**: Whenever possible, use \`page.waitForResponse()\` and/or \`page.on('response')\` to capture API responses rather than scraping the DOM. API data is more reliable and structured.
+
+   **IMPORTANT**: Do NOT use \`route.continue()\` as if it returns a response (it returns void). If you need to actively re-issue requests, use either:
+   - \`page.request.fetch(...)\` (Playwright APIRequestContext), or
+   - \`page.evaluate(() => fetch(...))\` so cookies/CSRF apply in-page.
 
 2. **Identify the Best API Endpoints**: Look at the captured API traffic and identify which endpoints return the data the user needs. For example:
    - If the user wants DMs, look for endpoints returning message/thread data
    - If the user wants posts, look for feed/timeline endpoints
    - If the user wants contacts, look for user/contact list endpoints
 
-3. **Use Cookies for Auth**: The script should load saved cookies from an \`auth.json\` file to maintain the logged-in session. Include a step to inject cookies before navigating.
+3. **Use Cookies/Storage for Auth**: Prefer loading Playwright \`storageState.json\` (if present) to maintain a logged-in session. If not available, fall back to loading cookies from \`auth.json\`. Do not hardcode secrets.
 
 4. **Navigate to Trigger APIs**: Navigate to the right pages to trigger the API calls, then intercept the responses.
 

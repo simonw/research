@@ -11,7 +11,8 @@
     "build": "tsc",
     "start": "node --enable-source-maps dist/index.js",
     "dev": "tsx src/index.ts",
-    "test-server": "tsx src/test-server.ts"
+    "test-server": "tsx src/test-server.ts",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",

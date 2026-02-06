@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { UserAction, RecordingSession, ParsedApiRequest } from './types.js';
 import { analyzeHar } from './har-analyzer.js';
+import { buildIr } from './ir-builder.js';
 
 export interface RecorderOptions {
   url: string;
@@ -225,11 +226,18 @@ export async function startRecording(opts: RecorderOptions): Promise<RecordingSe
     });
   } catch { /* ignore screenshot errors */ }
 
-  // Get cookies before closing
+  // Get cookies + storage state before closing
   const browserCookies = await context.cookies();
   const cookieMap: Record<string, string> = {};
   for (const c of browserCookies) {
     cookieMap[c.name] = c.value;
+  }
+
+  const storageStatePath = join(sessionDir, 'storageState.json');
+  try {
+    await context.storageState({ path: storageStatePath });
+  } catch {
+    // ignore
   }
 
   // Close to flush HAR
@@ -249,6 +257,14 @@ export async function startRecording(opts: RecorderOptions): Promise<RecordingSe
   }
 
   const analysis = analyzeHar(harData, opts.url);
+
+  // Build deterministic IR for codegen (endpoint catalog + auth signals)
+  const ir = buildIr(opts.url, analysis.apiRequests, {
+    authMethod: analysis.authMethod,
+    cookies: { ...cookieMap, ...analysis.cookies },
+    authHeaders: analysis.authHeaders,
+  });
+  writeFileSync(join(sessionDir, 'ir.json'), JSON.stringify(ir, null, 2), 'utf-8');
 
   // Sort actions by timestamp
   actions.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());

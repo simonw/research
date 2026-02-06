@@ -90,6 +90,8 @@ runs/run-1234567890-abc12345/
 ├── session.json          # Full session metadata
 ├── actions.json          # Recorded user actions (clicks, typing, navigation)
 ├── auth.json             # Extracted auth data (cookies, headers, auth method)
+├── storageState.json     # Playwright storage state for auth/session replay (new)
+├── ir.json               # Deterministic endpoint catalog extracted from HAR (new)
 ├── automation.ts         # Generated Playwright script
 ├── generation-info.json  # Script generation metadata
 ├── run.sh                # Convenience script to run automation
