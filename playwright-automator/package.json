@@ -1,0 +1,25 @@
+{
+  "name": "playwright-automator",
+  "version": "1.0.0",
+  "description": "Record browser actions and generate Playwright automation scripts using Gemini LLM",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "playwright-automator": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node --enable-source-maps dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test-server": "tsx src/test-server.ts"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "playwright": "^1.56.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

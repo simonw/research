@@ -1,0 +1,99 @@
+[
+  {
+    "type": "navigate",
+    "timestamp": "2026-02-06T01:33:41.011Z",
+    "url": "https://news.ycombinator.com/",
+    "description": "Navigated to https://news.ycombinator.com/"
+  },
+  {
+    "type": "api-fetch",
+    "timestamp": "2026-02-06T01:33:44.693Z",
+    "description": "Fetched topstories (500 IDs)",
+    "url": "https://hacker-news.firebaseio.com/v0/topstories.json"
+  },
+  {
+    "type": "api-fetch",
+    "timestamp": "2026-02-06T01:33:45.230Z",
+    "description": "Fetched story 46902223: Claude Opus 4.6",
+    "url": "https://hacker-news.firebaseio.com/v0/item/46902223.json"
+  },
+  {
+    "type": "api-fetch",
+    "timestamp": "2026-02-06T01:33:45.765Z",
+    "description": "Fetched story 46905555: It's 2026, Just Use Postgres",
+    "url": "https://hacker-news.firebaseio.com/v0/item/46905555.json"
+  },
+  {
+    "type": "api-fetch",
+    "timestamp": "2026-02-06T01:33:46.307Z",
+    "description": "Fetched story 46902638: GPT-5.3-Codex",
+    "url": "https://hacker-news.firebaseio.com/v0/item/46902638.json"
+  },
+  {
+    "type": "api-fetch",
+    "timestamp": "2026-02-06T01:33:46.840Z",
+    "description": "Fetched story 46903558: My AI Adoption Journey",
+    "url": "https://hacker-news.firebaseio.com/v0/item/46903558.json"
+  },
+  {
+    "type": "api-fetch",
+    "timestamp": "2026-02-06T01:33:47.376Z",
+    "description": "Fetched story 46903616: We tasked Opus 4.6 using agent teams to build a C Compiler",
+    "url": "https://hacker-news.firebaseio.com/v0/item/46903616.json"
+  },
+  {
+    "type": "api-fetch",
+    "timestamp": "2026-02-06T01:33:47.908Z",
+    "description": "Fetched beststories (200 IDs)",
+    "url": "https://hacker-news.firebaseio.com/v0/beststories.json"
+  },
+  {
+    "type": "api-fetch",
+    "timestamp": "2026-02-06T01:33:48.445Z",
+    "description": "Fetched newstories (500 IDs)",
+    "url": "https://hacker-news.firebaseio.com/v0/newstories.json"
+  },
+  {
+    "type": "api-fetch",
+    "timestamp": "2026-02-06T01:33:49.516Z",
+    "description": "Fetched user HellsMaddy",
+    "url": "https://hacker-news.firebaseio.com/v0/user/HellsMaddy.json"
+  },
+  {
+    "type": "scroll",
+    "timestamp": "2026-02-06T01:33:49.539Z",
+    "description": "Scroll 1"
+  },
+  {
+    "type": "scroll",
+    "timestamp": "2026-02-06T01:33:50.544Z",
+    "description": "Scroll 2"
+  },
+  {
+    "type": "scroll",
+    "timestamp": "2026-02-06T01:33:51.547Z",
+    "description": "Scroll 3"
+  },
+  {
+    "type": "navigate",
+    "timestamp": "2026-02-06T01:33:52.690Z",
+    "url": "https://news.ycombinator.com/?p=2",
+    "description": "Navigated to https://news.ycombinator.com/?p=2"
+  },
+  {
+    "type": "click",
+    "timestamp": "2026-02-06T01:33:52.698Z",
+    "description": "Clicked \"More\" for page 2"
+  },
+  {
+    "type": "navigate",
+    "timestamp": "2026-02-06T01:33:55.920Z",
+    "url": "https://news.ycombinator.com/item?id=46902909",
+    "description": "Navigated to https://news.ycombinator.com/item?id=46902909"
+  },
+  {
+    "type": "click",
+    "timestamp": "2026-02-06T01:33:55.935Z",
+    "description": "Clicked comments: 7 hours ago"
+  }
+]
