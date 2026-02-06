@@ -1,0 +1,5 @@
+Playwright Automator leverages Google's [Gemini AI](https://deepmind.google/technologies/gemini/) to convert manual browser sessions into robust automation scripts by analyzing network traffic and user interactions. Unlike traditional scrapers that rely on fragile DOM structures, this tool focuses on API interception, extracting structured data from HTTP Archive (HAR) files to generate scripts that monitor specific network responses. Each recording session isolates credentials, request headers, and execution paths, allowing developers to refine automated workflows through an iterative feedback loop inspired by the [unbrowse-openclaw](https://github.com/lekt9/unbrowse-openclaw) architecture.
+
+* Prioritizes API-first automation using `page.waitForResponse()` for more reliable data extraction than DOM scraping.
+* Automatically captures and persists session metadata, including auth headers and cookies, in isolated per-run directories.
+* Supports a refinement workflow where existing scripts can be improved via natural language feedback to the LLM.
