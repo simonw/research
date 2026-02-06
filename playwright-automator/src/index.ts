@@ -5,7 +5,6 @@
  * Usage:
  *   npx tsx src/index.ts                    # Interactive mode
  *   npx tsx src/index.ts --url <url> --desc <description> --key <gemini-api-key>
- *   npx tsx src/index.ts --refine <session-dir> --feedback "fix the pagination"
  */
 
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -13,6 +12,8 @@ import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { startRecording } from './recorder.js';
 import { generateScript, refineScript } from './gemini.js';
+import { captureLoginStorageState } from './login.js';
+import { discoverAuthProfileForUrl } from './auth-profile-discovery.js';
 import type { RecordingSession } from './types.js';
 
 const DEFAULT_OUTPUT_DIR = join(process.cwd(), 'runs');
@@ -33,17 +34,30 @@ function question(rl: ReturnType<typeof createReadlineInterface>, prompt: string
 }
 
 function parseArgs(): {
+  command?: string;
   url?: string;
   description?: string;
   apiKey?: string;
   outputDir?: string;
-  refine?: string;
+  run?: string;
   feedback?: string;
   headless?: boolean;
   skipGenerate?: boolean;
+  authProfile?: string;
+  profileName?: string;
+  notes?: string;
 } {
   const args = process.argv.slice(2);
   const result: Record<string, string | boolean> = {};
+
+  // subcommand support:
+  //   `pwa login --url ...`
+  //   `pwa record --url ... --desc ...`
+  //   `pwa refine --run <dir> --feedback ...`
+  if (args[0] && !args[0].startsWith('-')) {
+    result.command = args[0];
+    args.shift();
+  }
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -67,7 +81,11 @@ function parseArgs(): {
         break;
       case '--refine':
       case '-r':
-        result.refine = args[++i];
+        console.error('❌ The --refine flag is no longer supported. Use: pwa refine --run <dir> --feedback "..."');
+        process.exit(1);
+      case '--run':
+        // Preferred: `refine --run <dir>`
+        result.run = args[++i];
         break;
       case '--feedback':
       case '-f':
@@ -78,6 +96,15 @@ function parseArgs(): {
         break;
       case '--skip-generate':
         result.skipGenerate = true;
+        break;
+      case '--auth-profile':
+        result.authProfile = args[++i];
+        break;
+      case '--profile':
+        result.profileName = args[++i];
+        break;
+      case '--notes':
+        result.notes = args[++i];
         break;
       case '--help':
       case '-h':
@@ -98,7 +125,12 @@ function printHelp() {
 Record browser actions and generate Playwright scripts using AI.
 
 USAGE:
-  npx tsx src/index.ts [options]
+  pwa [command] [options]
+
+COMMANDS:
+  record               Record + generate
+  login                Capture reusable auth storageState (headed; supports 2FA)
+  refine               Refine an existing run's automation.ts using feedback
 
 OPTIONS:
   --url, -u <url>          Target URL to automate
@@ -107,7 +139,10 @@ OPTIONS:
   --output, -o <dir>       Output directory (default: ./runs)
   --headless               Run browser in headless mode
   --skip-generate          Only record, don't generate script
-  --refine, -r <dir>       Refine script in existing session dir
+  --auth-profile <path>    Load a Playwright storageState.json before recording (auth replay). If omitted, pwa will auto-pick the newest auth profile for the URL's domain if one exists.
+  --run <dir>              (refine cmd) run/session directory
+  --profile <name>         (login cmd) profile name (default: default)
+  --notes <text>           (login cmd) notes for this auth profile
   --feedback, -f <text>    Feedback for refinement
   --help, -h               Show this help
 
@@ -121,13 +156,19 @@ WORKFLOW:
 
 EXAMPLES:
   # Interactive mode
-  npx tsx src/index.ts
+  pwa
 
-  # Command-line mode
-  npx tsx src/index.ts --url https://example.com --desc "Scrape all articles"
+  # Record (explicit)
+  pwa record --url https://example.com --desc "Scrape all articles"
+
+  # Capture login state (for sites with 2FA)
+  pwa login --url https://example.com/login --profile default
+
+  # Record using an existing auth profile (storageState.json)
+  pwa record --url https://example.com --desc "Extract data" --auth-profile auth-profiles/example.com/default/storageState.json
 
   # Refine an existing script
-  npx tsx src/index.ts --refine runs/run-123 --feedback "Add pagination"
+  pwa refine --run runs/run-123 --feedback "Add pagination"
 `);
 }
 
@@ -178,16 +219,65 @@ async function runRefine(sessionDir: string, feedback: string, apiKey: string) {
 async function main() {
   const args = parseArgs();
 
+  // Default command
+  if (!args.command) args.command = 'record';
+
   // Handle refinement mode
-  if (args.refine) {
+  if (args.command === 'refine' || args.run) {
     const apiKey = args.apiKey || process.env.GEMINI_API_KEY;
     if (!apiKey) {
       console.error('❌ Gemini API key required. Use --key or set GEMINI_API_KEY env.');
       process.exit(1);
     }
+
+    const runDir = args.run;
+    if (!runDir) {
+      console.error('❌ Run directory required. Use: pwa refine --run <dir> --feedback "..."');
+      process.exit(1);
+    }
+
     const feedback = args.feedback || 'Please improve the script';
-    await runRefine(resolve(args.refine), feedback, apiKey);
+    await runRefine(resolve(runDir), feedback, apiKey);
     return;
+  }
+
+  // login subcommand
+  if (args.command === 'login') {
+    printBanner();
+    let url = args.url;
+    if (!url) {
+      const rl = createReadlineInterface();
+      url = await question(rl, '🌐 Enter the login URL: ');
+      rl.close();
+    }
+    if (!url) {
+      console.error('❌ URL is required');
+      process.exit(1);
+    }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'https://' + url;
+    const domain = new URL(url).hostname;
+    const profileName = args.profileName || 'default';
+    await captureLoginStorageState({
+      url,
+      domain,
+      profileName,
+      headless: args.headless,
+      notes: args.notes,
+      cwd: process.cwd(),
+    });
+    return;
+  }
+
+  // `record` is the default behavior, so treat it as no-op.
+  if (args.command === 'record') {
+    args.command = undefined;
+  }
+
+  // Unknown subcommand → help.
+  if (args.command) {
+    console.error(`❌ Unknown command: ${args.command}`);
+    printHelp();
+    process.exit(1);
   }
 
   printBanner();
@@ -234,11 +324,22 @@ async function main() {
 
   // Step 1: Record
   console.log('\n📹 Step 1: Recording browser session...\n');
+  // If auth-profile not provided, try to auto-discover the newest auth profile for this domain
+  let storageStatePath = args.authProfile;
+  if (!storageStatePath) {
+    const discovered = discoverAuthProfileForUrl(url, process.cwd());
+    if (discovered) {
+      storageStatePath = discovered.storageStatePath;
+      console.log(`🔐 Using discovered auth profile: auth-profiles/${new URL(url).hostname}/${discovered.profileName}/storageState.json`);
+    }
+  }
+
   const session = await startRecording({
     url,
     description,
     outputDir,
     headless: args.headless,
+    storageStatePath,
   });
 
   if (args.skipGenerate) {
@@ -273,6 +374,9 @@ async function main() {
         apiEndpoints: result.apiEndpoints,
         explanation: result.explanation,
         generatedAt: new Date().toISOString(),
+        promptVersion: result.promptVersion,
+        irHash: result.irHash,
+        templatesHash: result.templatesHash,
       }, null, 2),
       'utf-8',
     );
@@ -309,7 +413,7 @@ npx tsx automation.ts
     console.log(`   npx tsx automation.ts`);
     console.log('');
     console.log('🔧 To refine the script:');
-    console.log(`   npx tsx src/index.ts --refine ${sessionDir} --feedback "your feedback"`);
+    console.log(`   pwa refine --run ${sessionDir} --feedback "your feedback"`);
     console.log('─────────────────────────────────────────────────\n');
 
   } catch (error: any) {

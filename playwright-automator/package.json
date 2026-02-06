@@ -5,13 +5,15 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "playwright-automator": "dist/index.js"
+    "pwa": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",
+    "prepare": "npm run build",
     "start": "node --enable-source-maps dist/index.js",
     "dev": "tsx src/index.ts",
-    "test-server": "tsx src/test-server.ts"
+    "test-server": "tsx src/test-server.ts",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",

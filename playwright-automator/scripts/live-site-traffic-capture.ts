@@ -7,8 +7,8 @@
  * Uses a local HTTP proxy bridge to work around Chromium's incompatibility
  * with JWT-authenticated egress proxies (ERR_TUNNEL_CONNECTION_FAILED).
  *
- * Reddit blocks datacenter IPs (403), so we use HN as a stand-in for
- * a "post listing" site with real API traffic.
+ * NOTE: This is a generic *live site* capture smoke-test used to validate
+ * HAR capture + analysis against a real site (currently Hacker News).
  */
 
 import { chromium } from 'playwright';

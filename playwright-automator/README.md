@@ -1,4 +1,4 @@
-# Playwright Automator
+# PWA
 
 Record browser actions and generate Playwright automation scripts using Gemini AI.
 
@@ -19,11 +19,72 @@ The tool prioritizes **API interception over DOM scraping**. It analyzes the HAR
 npm install
 npx playwright install chromium
 
-# Run interactively
-npx tsx src/index.ts
+# Build the CLI (creates ./dist)
+npm run build
 
-# Or with command-line args
-npx tsx src/index.ts --url https://example.com --desc "Get all messages" --key YOUR_GEMINI_KEY
+# (Dev) Install as a global CLI on your machine
+npm link
+
+# Run interactively
+pwa
+
+# Record (explicit)
+pwa record --url https://example.com --desc "Get all messages"
+
+# Capture reusable login/auth state (headed; supports 2FA)
+pwa login --url https://example.com/login --profile default
+
+# Record using an auth profile (loads storageState.json)
+pwa record --url https://example.com --desc "Extract data" --auth-profile auth-profiles/example.com/default/storageState.json
+```
+
+## Installing as a CLI
+
+This repo is set up as a proper Node CLI with a `bin` entry (`pwa → dist/index.js`).
+
+```bash
+# Option A: install globally from the repo (will run the build via npm "prepare")
+cd playwright-automator
+npm install
+npm install -g .
+
+# Option B: dev workflow (symlink)
+npm install
+npm run build
+npm link
+```
+
+## Example: Create a script to download your last 10 ChatGPT conversations
+
+Goal: generate an automation that navigates ChatGPT, finds your most recent conversations, and writes the last 10 (title + URL) to `output.json`.
+
+1) Capture a reusable login profile (handles 2FA):
+```bash
+pwa login --url https://chatgpt.com/ --profile default
+```
+Complete login in the opened browser window, then press ENTER in the terminal.
+
+2) Record the flow and generate the script:
+```bash
+pwa record \
+  --url https://chatgpt.com/ \
+  --desc "Export/download the last 10 conversations from the sidebar (title + URL)"
+
+# (Optional) If you have multiple auth profiles, you can specify one explicitly:
+#   --auth-profile auth-profiles/chatgpt.com/default/storageState.json
+```
+In the opened browser, click around as needed to ensure the sidebar/conversation list loads. Then press ENTER in the terminal.
+
+3) Run the generated automation:
+```bash
+cd runs/run-<id>/
+npx tsx automation.ts
+```
+Your results will be written to `runs/run-<id>/output.json`.
+
+4) If it breaks, refine it:
+```bash
+pwa refine --run runs/run-<id> --feedback "Make it robust: prefer API interception/replay if possible; otherwise scrape sidebar reliably and stop at 10 conversations."
 ```
 
 ## Usage
@@ -31,7 +92,7 @@ npx tsx src/index.ts --url https://example.com --desc "Get all messages" --key Y
 ### Interactive Mode
 
 ```
-$ npx tsx src/index.ts
+$ pwa
 
 ╔══════════════════════════════════════════════════╗
 ║           Playwright Automator v1.0              ║
@@ -65,13 +126,13 @@ Press ENTER to stop recording.
 
 ```bash
 # Full automation
-npx tsx src/index.ts --url https://example.com --desc "Scrape all articles" --key $GEMINI_API_KEY
+pwa record --url https://example.com --desc "Scrape all articles" --key $GEMINI_API_KEY
 
 # Record only (no script generation)
-npx tsx src/index.ts --url https://example.com --desc "Explore the site" --skip-generate
+pwa record --url https://example.com --desc "Explore the site" --skip-generate
 
 # Refine an existing script
-npx tsx src/index.ts --refine runs/run-123 --feedback "Add pagination for all pages"
+pwa refine --run runs/run-123 --feedback "Add pagination for all pages"
 ```
 
 ### Environment Variables
@@ -90,6 +151,8 @@ runs/run-1234567890-abc12345/
 ├── session.json          # Full session metadata
 ├── actions.json          # Recorded user actions (clicks, typing, navigation)
 ├── auth.json             # Extracted auth data (cookies, headers, auth method)
+├── storageState.json     # Playwright storage state for auth/session replay (new)
+├── ir.json               # Deterministic endpoint catalog extracted from HAR (new)
 ├── automation.ts         # Generated Playwright script
 ├── generation-info.json  # Script generation metadata
 ├── run.sh                # Convenience script to run automation
