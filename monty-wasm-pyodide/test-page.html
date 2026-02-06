@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Monty WASM Pyodide Test</title>
+    <script src="/pyodide/pyodide.js"></script>
+</head>
+<body>
+    <h1>Monty WASM Pyodide Test</h1>
+    <pre id="output"></pre>
+    <script>
+        const output = document.getElementById('output');
+        function log(msg) {
+            output.textContent += msg + '\n';
+            console.log(msg);
+        }
+
+        async function main() {
+            try {
+                log('Loading Pyodide...');
+                const pyodide = await loadPyodide({ indexURL: '/pyodide/' });
+                log('Pyodide loaded: Python ' + pyodide.runPython('import sys; sys.version'));
+
+                log('Loading micropip...');
+                await pyodide.loadPackage('micropip');
+
+                log('Installing pydantic-monty wheel...');
+                const micropip = pyodide.pyimport('micropip');
+                // The wheel is served from the same localhost as this page
+                const wheelUrl = new URL(
+                    'pydantic_monty-0.0.3-cp313-cp313-emscripten_4_0_9_wasm32.whl',
+                    window.location.href
+                ).href;
+                log('Wheel URL: ' + wheelUrl);
+                await micropip.install(wheelUrl);
+
+                log('Running test: import pydantic_monty...');
+                pyodide.runPython('import pydantic_monty');
+                log('PASS: import succeeded');
+
+                log('Running test: version check...');
+                const version = pyodide.runPython('pydantic_monty.__version__');
+                log('PASS: version = ' + version);
+
+                log('Running test: basic arithmetic...');
+                const result1 = pyodide.runPython(`
+import pydantic_monty
+m = pydantic_monty.Monty('1 + 2 * 3')
+m.run()
+`);
+                log('PASS: 1 + 2 * 3 = ' + result1);
+
+                log('Running test: input variables...');
+                const result2 = pyodide.runPython(`
+m = pydantic_monty.Monty('x + y', inputs=['x', 'y'])
+m.run(inputs={"x": 10, "y": 20})
+`);
+                log('PASS: x + y with x=10, y=20 = ' + result2);
+
+                log('Running test: string operations...');
+                const result3 = pyodide.runPython(`
+m = pydantic_monty.Monty('"hello " + "world"')
+m.run()
+`);
+                log('PASS: string concat = ' + result3);
+
+                log('Running test: list operations...');
+                const result4 = pyodide.runPython(`
+m = pydantic_monty.Monty('[1, 2, 3, 4, 5]')
+m.run()
+`);
+                log('PASS: list = ' + result4);
+
+                log('Running test: exception handling...');
+                const result5 = pyodide.runPython(`
+m = pydantic_monty.Monty('1 / 0')
+try:
+    m.run()
+    "no error"
+except ZeroDivisionError:
+    "caught ZeroDivisionError"
+`);
+                log('PASS: exception = ' + result5);
+
+                log('Running test: reuse with different inputs...');
+                const result6 = pyodide.runPython(`
+m = pydantic_monty.Monty('x * y', inputs=['x', 'y'])
+r1 = m.run(inputs={"x": 3, "y": 4})
+r2 = m.run(inputs={"x": 5, "y": 6})
+f"{r1}, {r2}"
+`);
+                log('PASS: reuse = ' + result6);
+
+                log('');
+                log('ALL TESTS PASSED');
+            } catch (e) {
+                log('ERROR: ' + e.message);
+                log('Stack: ' + e.stack);
+                throw e;
+            }
+        }
+
+        main();
+    </script>
+</body>
+</html>

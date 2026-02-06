@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monty - Sandboxed Python in WebAssembly</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 { margin-bottom: 10px; font-size: 28px; }
+        .description { margin-top: 0; color: #666; margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; font-weight: 600; color: #333; }
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 16px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+            min-height: 200px;
+            resize: vertical;
+            tab-size: 2;
+        }
+        textarea:focus { outline: none; border-color: #007bff; box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25); }
+        .button-group { display: flex; gap: 10px; margin-bottom: 20px; }
+        button {
+            padding: 12px 24px;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+        button:hover:not(:disabled) { background-color: #0056b3; }
+        button:disabled { background-color: #6c757d; cursor: wait; opacity: 0.7; }
+        button.secondary { background-color: #6c757d; }
+        button.secondary:hover:not(:disabled) { background-color: #545b62; }
+        #status {
+            padding: 12px; margin-bottom: 20px; border-radius: 4px; display: none;
+        }
+        #status.visible { display: block; }
+        #status.info { background-color: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        #status.error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        #status.success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        #output-section { display: none; }
+        #output-section.visible { display: block; }
+        .output-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .output-header h2 { margin: 0; font-size: 20px; }
+        #output {
+            background-color: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 4px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+            font-size: 14px; white-space: pre-wrap; word-wrap: break-word;
+            min-height: 100px; max-height: 500px; overflow-y: auto;
+        }
+        .execution-time { font-size: 12px; color: #666; margin-top: 8px; }
+        .examples-section { margin-bottom: 20px; }
+        .examples-section h3 { font-size: 14px; color: #666; margin: 0 0 10px 0; font-weight: 500; }
+        .examples-list { display: flex; flex-wrap: wrap; gap: 8px; }
+        .example-btn {
+            padding: 6px 12px; font-size: 13px; background: #f8f9fa; border: 1px solid #dee2e6;
+            border-radius: 20px; color: #495057; cursor: pointer; transition: all 0.15s ease;
+        }
+        .example-btn:hover { background: #e9ecef; border-color: #adb5bd; color: #212529; }
+    </style>
+</head>
+<body>
+    <h1>Monty - Sandboxed Python in WebAssembly</h1>
+    <p class="description">
+        Execute Python code in <a href="https://github.com/pydantic/monty">Monty</a>, a sandboxed Python interpreter written in Rust, compiled to WebAssembly.
+        Runs entirely in your browser. Code is saved in the URL for sharing.
+    </p>
+
+    <div id="status" class="info visible">Loading Monty WASM module...</div>
+
+    <div class="examples-section">
+        <h3>Examples:</h3>
+        <div class="examples-list">
+            <button class="example-btn" data-example="hello">Hello World</button>
+            <button class="example-btn" data-example="math">Math</button>
+            <button class="example-btn" data-example="fibonacci">Fibonacci</button>
+            <button class="example-btn" data-example="strings">Strings</button>
+            <button class="example-btn" data-example="lists">Lists</button>
+            <button class="example-btn" data-example="dict">Dictionaries</button>
+            <button class="example-btn" data-example="classes">Classes</button>
+            <button class="example-btn" data-example="loops">Loops</button>
+        </div>
+    </div>
+
+    <div class="input-group">
+        <label for="code">Python Code:</label>
+        <textarea id="code" placeholder="Enter Python code here...">print("Hello from Monty!")
+result = 0
+for i in range(10):
+    result = result + i
+print(f"Sum of 0..9 = {result}")</textarea>
+    </div>
+
+    <div class="button-group">
+        <button id="run-btn" disabled>Run Code</button>
+        <button id="clear-btn" class="secondary">Clear</button>
+    </div>
+
+    <div id="output-section">
+        <div class="output-header">
+            <h2>Output</h2>
+            <button id="copy-btn" class="secondary" style="padding: 6px 12px; font-size: 14px;">Copy</button>
+        </div>
+        <div id="output"></div>
+        <div class="execution-time" id="exec-time"></div>
+    </div>
+
+    <script type="module">
+        import init, { Monty } from './monty_wasm.js';
+
+        const EXAMPLES = {
+            hello: 'print("Hello from Monty!")\nprint("Running sandboxed Python in your browser!")',
+            math: '# Basic arithmetic\nresult = (2 ** 10) + (3 * 7) - 1\nprint(f"2^10 + 3*7 - 1 = {result}")\n\n# Float operations\npi_approx = 355 / 113\nprint(f"Pi approx: {pi_approx}")',
+            fibonacci: 'def fibonacci(n):\n    if n <= 1:\n        return n\n    a = 0\n    b = 1\n    for _ in range(2, n + 1):\n        a, b = b, a + b\n    return b\n\nfor i in range(15):\n    print(f"fib({i}) = {fibonacci(i)}")',
+            strings: "name = \"Monty\"\ngreeting = f\"Hello, {name}!\"\nprint(greeting)\nprint(greeting.upper())\nprint(greeting[::-1])\nprint(f\"Length: {len(greeting)}\")\n\nwords = \"the quick brown fox\".split()\nprint(f\"Words: {words}\")\nprint(f\"Title: {' '.join(w.capitalize() for w in words)}\")",
+            lists: '# List comprehensions\nsquares = [x ** 2 for x in range(10)]\nprint(f"Squares: {squares}")\n\nevens = [x for x in squares if x % 2 == 0]\nprint(f"Even squares: {evens}")\n\n# Nested lists\nmatrix = [[i * 3 + j for j in range(3)] for i in range(3)]\nfor row in matrix:\n    print(row)',
+            dict: '# Dictionary operations\ncounts = {}\nfor word in "hello world hello python hello world".split():\n    counts[word] = counts.get(word, 0) + 1\nprint(f"Word counts: {counts}")\n\n# Dict comprehension\nsquared = {k: v**2 for k, v in counts.items()}\nprint(f"Squared counts: {squared}")',
+            classes: 'class Point:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\n\n    def distance_to(self, other):\n        dx = self.x - other.x\n        dy = self.y - other.y\n        return (dx**2 + dy**2) ** 0.5\n\n    def __repr__(self):\n        return f"Point({self.x}, {self.y})"\n\np1 = Point(0, 0)\np2 = Point(3, 4)\nprint(f"{p1} -> {p2}")\nprint(f"Distance: {p1.distance_to(p2)}")',
+            loops: '# Various loop patterns\nfor i in range(5):\n    print("*" * (i + 1))\n\nprint()\n\n# While loop\nn = 1\nwhile n < 100:\n    n = n * 2\nprint(f"First power of 2 >= 100: {n}")\n\n# Nested loops\nfor i in range(1, 6):\n    line = ""\n    for j in range(1, 6):\n        line = line + f"{i*j:4}"\n    print(line)',
+        };
+
+        const codeEl = document.getElementById('code');
+        const runBtn = document.getElementById('run-btn');
+        const clearBtn = document.getElementById('clear-btn');
+        const copyBtn = document.getElementById('copy-btn');
+        const statusEl = document.getElementById('status');
+        const outputSection = document.getElementById('output-section');
+        const outputEl = document.getElementById('output');
+        const execTimeEl = document.getElementById('exec-time');
+
+        function setStatus(msg, type) {
+            statusEl.textContent = msg;
+            statusEl.className = type + ' visible';
+        }
+
+        // Load code from URL hash
+        if (window.location.hash) {
+            try {
+                codeEl.value = decodeURIComponent(window.location.hash.slice(1));
+            } catch {}
+        }
+
+        // Save code to URL hash on change
+        codeEl.addEventListener('input', () => {
+            history.replaceState(null, '', '#' + encodeURIComponent(codeEl.value));
+        });
+
+        // Tab support in textarea
+        codeEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const start = codeEl.selectionStart;
+                codeEl.value = codeEl.value.substring(0, start) + '  ' + codeEl.value.substring(codeEl.selectionEnd);
+                codeEl.selectionStart = codeEl.selectionEnd = start + 2;
+            }
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                runBtn.click();
+            }
+        });
+
+        // Example buttons
+        document.querySelectorAll('.example-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                codeEl.value = EXAMPLES[btn.dataset.example];
+                history.replaceState(null, '', '#' + encodeURIComponent(codeEl.value));
+            });
+        });
+
+        // Initialize WASM
+        try {
+            await init();
+            setStatus('Monty WASM loaded! Ready to run Python code.', 'success');
+            runBtn.disabled = false;
+        } catch (e) {
+            setStatus('Failed to load Monty WASM: ' + e.message, 'error');
+        }
+
+        runBtn.addEventListener('click', () => {
+            const code = codeEl.value;
+            if (!code.trim()) return;
+
+            try {
+                const start = performance.now();
+                const m = new Monty(code);
+
+                // Try to get print output
+                let printOutput = '';
+                try {
+                    printOutput = m.runCapturePrint();
+                } catch {}
+
+                // Get the result value
+                let resultJson;
+                try {
+                    resultJson = m.run();
+                } catch (e) {
+                    // If run fails, show the print output we got plus the error
+                    outputSection.className = 'visible';
+                    outputEl.textContent = printOutput + (printOutput ? '\n' : '') + 'Error: ' + e;
+                    execTimeEl.textContent = `Executed in ${(performance.now() - start).toFixed(1)}ms`;
+                    return;
+                }
+
+                const elapsed = performance.now() - start;
+
+                let display = '';
+                if (printOutput) display += printOutput;
+                if (resultJson && resultJson !== 'null') {
+                    if (display) display += '\n';
+                    display += '=> ' + resultJson;
+                }
+                if (!display) display = '(no output)';
+
+                outputSection.className = 'visible';
+                outputEl.textContent = display;
+                execTimeEl.textContent = `Executed in ${elapsed.toFixed(1)}ms`;
+                setStatus('Code executed successfully!', 'success');
+            } catch (e) {
+                outputSection.className = 'visible';
+                outputEl.textContent = 'Error: ' + e;
+                setStatus('Execution failed', 'error');
+            }
+        });
+
+        clearBtn.addEventListener('click', () => {
+            codeEl.value = '';
+            outputSection.className = '';
+            statusEl.className = '';
+            history.replaceState(null, '', window.location.pathname);
+        });
+
+        copyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(outputEl.textContent);
+            copyBtn.textContent = 'Copied!';
+            setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+        });
+    </script>
+</body>
+</html>
