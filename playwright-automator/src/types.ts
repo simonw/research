@@ -1,0 +1,80 @@
+/** Raw HAR entry from a HAR file. */
+export interface HarEntry {
+  request: {
+    method: string;
+    url: string;
+    headers: { name: string; value: string }[];
+    cookies?: { name: string; value: string }[];
+    queryString?: { name: string; value: string }[];
+    postData?: { mimeType?: string; text?: string };
+  };
+  response: {
+    status: number;
+    headers: { name: string; value: string }[];
+    content?: { size?: number; mimeType?: string; text?: string };
+  };
+  time?: number;
+  startedDateTime?: string;
+}
+
+/** Parsed API request extracted from HAR. */
+export interface ParsedApiRequest {
+  method: string;
+  url: string;
+  path: string;
+  domain: string;
+  status: number;
+  requestHeaders: Record<string, string>;
+  requestBody?: string;
+  responseContentType?: string;
+  responseBody?: string;
+  responseSize?: number;
+  queryParams?: Record<string, string>;
+  timestamp?: string;
+}
+
+/** Recorded user action in the browser. */
+export interface UserAction {
+  type: 'click' | 'type' | 'navigate' | 'scroll' | 'select' | 'press' | 'wait';
+  timestamp: string;
+  url: string;
+  selector?: string;
+  value?: string;
+  tagName?: string;
+  text?: string;
+  key?: string;
+  description?: string;
+}
+
+/** Full recording session data. */
+export interface RecordingSession {
+  id: string;
+  url: string;
+  description: string;
+  startTime: string;
+  endTime?: string;
+  actions: UserAction[];
+  apiRequests: ParsedApiRequest[];
+  cookies: Record<string, string>;
+  authHeaders: Record<string, string>;
+  authMethod: string;
+  targetDomain: string;
+  harFilePath: string;
+  screenshotsDir?: string;
+}
+
+/** Configuration for the automator. */
+export interface AutomatorConfig {
+  geminiApiKey: string;
+  outputDir: string;
+  headless?: boolean;
+  timeout?: number;
+}
+
+/** Result from Gemini script generation. */
+export interface GenerationResult {
+  script: string;
+  explanation: string;
+  apiEndpoints: string[];
+  strategy: string;
+}
