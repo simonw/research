@@ -7,6 +7,7 @@
  *   npx tsx src/index.ts --url <url> --desc <description> --key <gemini-api-key>
  */
 
+import 'dotenv/config';
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';

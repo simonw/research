@@ -68,6 +68,7 @@ export async function generateScript(
     `Auth headers: ${JSON.stringify(session.authHeaders, null, 2)}`,
     `Number of cookies: ${Object.keys(session.cookies).length}`,
     `Key cookies: ${Object.keys(session.cookies).slice(0, 10).join(', ')}`,
+    `Note: auth.json contains "playwrightCookies" (Playwright Cookie[] array for addCookies()) and "cookies" (flat Record<string,string> — do NOT pass to addCookies).`,
   ].join('\n');
 
   const prompt = `${promptPreamble}
@@ -100,6 +101,24 @@ IMPORTANT: these templates omit sensitive headers (Authorization/Cookie). Use st
 Templates:
 ${JSON.stringify(requestTemplates.slice(0, 8), null, 2)}
 
+**API replay fallback pattern** — if \`waitForResponse\` times out, fall back to calling the API directly:
+\`\`\`
+let data: any;
+try {
+  const resp = await page.waitForResponse(
+    r => r.url().includes('/api/endpoint'),
+    { timeout: 15000 }
+  );
+  data = await resp.json();
+} catch {
+  console.log('⚠️  waitForResponse timed out — falling back to direct fetch');
+  data = await page.evaluate(async () => {
+    const r = await fetch('/api/endpoint?limit=50');
+    return r.json();
+  });
+}
+\`\`\`
+
 ## Instructions
 
 Generate a complete, standalone Playwright script (TypeScript) that accomplishes the task described above.
@@ -107,6 +126,15 @@ Generate a complete, standalone Playwright script (TypeScript) that accomplishes
 **CRITICAL PRIORITIES (in order):**
 
 1. **API Interception First**: Whenever possible, use \`page.waitForResponse()\` and/or \`page.on('response')\` to capture API responses rather than scraping the DOM. API data is more reliable and structured.
+
+   **WARNING — waitForResponse predicate**: ALWAYS use predicate form, NEVER pass a full URL string:
+   \`\`\`
+   // CORRECT — matches by path substring
+   const resp = await page.waitForResponse(r => r.url().includes('/api/conversations'));
+   // WRONG — exact match will fail if query params differ
+   const resp = await page.waitForResponse('https://example.com/api/conversations?limit=20');
+   \`\`\`
+   Query parameters, pagination limits, and tokens change between sessions — exact string match WILL timeout.
 
    **IMPORTANT**: Do NOT use \`route.continue()\` as if it returns a response (it returns void). If you need to actively re-issue requests, use either:
    - \`page.request.fetch(...)\` (Playwright APIRequestContext), or
@@ -117,7 +145,25 @@ Generate a complete, standalone Playwright script (TypeScript) that accomplishes
    - If the user wants posts, look for feed/timeline endpoints
    - If the user wants contacts, look for user/contact list endpoints
 
-3. **Use Cookies/Storage for Auth**: Prefer loading Playwright \`storageState.json\` (if present) to maintain a logged-in session. If not available, fall back to loading cookies from \`auth.json\`. Do not hardcode secrets.
+3. **Use Cookies/Storage for Auth**: **NEVER use \`launchPersistentContext()\`** — it is incompatible with \`storageState\` and \`addCookies()\`. Always start with \`chromium.launch()\` + \`browser.newContext()\`.
+
+   **Auth loading code (use this exact pattern):**
+   \`\`\`
+   import { chromium } from 'playwright';
+   import { existsSync, readFileSync } from 'fs';
+
+   const browser = await chromium.launch({ headless: false });
+   let context;
+   if (existsSync('./storageState.json')) {
+     context = await browser.newContext({ storageState: './storageState.json' });
+   } else {
+     context = await browser.newContext();
+     const authData = JSON.parse(readFileSync('./auth.json', 'utf-8'));
+     if (authData.playwrightCookies) await context.addCookies(authData.playwrightCookies);
+   }
+   const page = await context.newPage();
+   \`\`\`
+   **NEVER** pass \`authData.cookies\` to \`addCookies()\` — it is a flat \`Record<string,string>\`, not a \`Cookie[]\` array.
 
 4. **Navigate to Trigger APIs**: Navigate to the right pages to trigger the API calls, then intercept the responses.
 
@@ -126,6 +172,16 @@ Generate a complete, standalone Playwright script (TypeScript) that accomplishes
 6. **Output the data**: The script should collect all the data and output it as JSON to a file called \`output.json\` in the same directory.
 
 7. **Pagination**: If the API supports pagination, implement pagination to get all data.
+
+8. **Verbose Logging**: Log every major step with \`console.log\` (e.g., "Navigating to...", "Waiting for API response...", "Got N items", "Writing output..."). Add a diagnostic response logger for the target domain at the top of the script:
+   \`\`\`
+   page.on('response', r => {
+     if (r.url().includes('${session.targetDomain}')) {
+       console.log(\`  [resp] \${r.status()} \${r.url().slice(0, 120)}\`);
+     }
+   });
+   \`\`\`
+   This helps debug which API calls fire and what status codes they return.
 
 ## Output Format
 
@@ -240,8 +296,19 @@ ${JSON.stringify(requestTemplates.slice(0, 8), null, 2)}
 Auth method: ${session.authMethod}
 Cookies available: ${Object.keys(session.cookies).length}
 
+**auth.json format:**
+- \`playwrightCookies\`: Playwright \`Cookie[]\` array — use with \`context.addCookies(authData.playwrightCookies)\`
+- \`cookies\`: flat \`Record<string,string>\` — NEVER pass to \`addCookies()\`
+- Prefer \`storageState.json\` when available: \`browser.newContext({ storageState: './storageState.json' })\`
+
 ## Instructions
 Fix the script based on the user's feedback. Keep the same overall approach but address the issues mentioned.
+
+**Common bugs checklist — fix these if present:**
+- \`waitForResponse('https://...')\` exact string match → use predicate form: \`waitForResponse(r => r.url().includes('/path'))\`
+- \`launchPersistentContext()\` → replace with \`chromium.launch()\` + \`browser.newContext()\`
+- Missing logging → add \`console.log\` at every major step + diagnostic \`page.on('response')\` logger for the target domain
+- No fallback → wrap \`waitForResponse\` in try/catch, fall back to \`page.evaluate(() => fetch(...))\`
 
 Output ONLY the TypeScript code (no markdown fences). The script should be complete and runnable.`;
 

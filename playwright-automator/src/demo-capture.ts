@@ -452,6 +452,7 @@ async function main() {
     writeFileSync(join(RUN_DIR, 'auth.json'), JSON.stringify({
       authHeaders: analysis.authHeaders,
       cookies: cookieMap,
+      playwrightCookies: cookies,
       authMethod: analysis.authMethod,
     }, null, 2));
 

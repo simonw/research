@@ -381,6 +381,7 @@ async function runTest() {
     writeFileSync(join(TEST_DIR, 'auth.json'), JSON.stringify({
       authHeaders: analysis.authHeaders,
       cookies: cookieMap,
+      playwrightCookies: browserCookies,
       authMethod: analysis.authMethod,
     }, null, 2));
     writeFileSync(join(TEST_DIR, 'actions.json'), JSON.stringify(session.actions, null, 2));

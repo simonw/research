@@ -314,6 +314,7 @@ export async function startRecording(opts: RecorderOptions): Promise<RecordingSe
     JSON.stringify({
       authHeaders: analysis.authHeaders,
       cookies: { ...cookieMap, ...analysis.cookies },
+      playwrightCookies: browserCookies,
       authMethod: analysis.authMethod,
       targetDomain: analysis.targetDomain,
     }, null, 2),

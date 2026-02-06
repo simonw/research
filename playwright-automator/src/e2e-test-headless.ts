@@ -237,7 +237,7 @@ async function main() {
     };
 
     writeFileSync(join(testDir, 'session.json'), JSON.stringify(session, null, 2));
-    writeFileSync(join(testDir, 'auth.json'), JSON.stringify({ authHeaders: analysis.authHeaders, cookies: cookieMap, authMethod: analysis.authMethod }, null, 2));
+    writeFileSync(join(testDir, 'auth.json'), JSON.stringify({ authHeaders: analysis.authHeaders, cookies: cookieMap, playwrightCookies: cookies, authMethod: analysis.authMethod }, null, 2));
     writeFileSync(join(testDir, 'actions.json'), JSON.stringify(session.actions, null, 2));
 
     check(existsSync(join(testDir, 'session.json')), 'session.json saved');
