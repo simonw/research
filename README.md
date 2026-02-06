@@ -160,7 +160,31 @@ for dirname, _ in subdirs_with_dates:
             readme_path.write_text('\n'.join(new_lines))
 
 ]]]-->
-## 55 research projects
+## 57 research projects
+
+### [monty-wasm-pyodide](https://github.com/simonw/research/tree/main/monty-wasm-pyodide) (2026-02-06)
+
+Monty WASM + Pyodide explores compiling [Monty](https://github.com/pydantic/monty)—a Rust-based, sandboxed Python interpreter—into WebAssembly for seamless browser access. It provides two integration paths: a standalone WASM module accessible directly from JavaScript, and a Pyodide-compatible wheel for usage in Python-in-the-browser environments. The project enables safe, dependency-free Python code execution with features like variable injection, output capturing (including print statements), and robust error handling. Developers can quickly leverage Monty via simple APIs, as demonstrated in the [live browser demos](https://simonw.github.io/research/monty-wasm-pyodide/demo.html), making in-browser Python useful for education, prototyping, or interactive documentation.
+
+**Key Features and Findings:**
+- Two deployment modes: Standalone WASM ES module and Pyodide wheel ([demo links](https://simonw.github.io/research/monty-wasm-pyodide/demo.html), [Pyodide demo](https://simonw.github.io/research/monty-wasm-pyodide/pyodide-demo.html)).
+- Supports variable inputs, print output capture, error detection, and returns native JavaScript/Python types.
+- Straightforward installation and testing workflows for both WASM and Pyodide contexts.
+- Enables secure Python execution in browsers with minimal infrastructure or dependencies.
+
+### [pyo3-pyodide-wasm](https://github.com/simonw/research/tree/main/pyo3-pyodide-wasm) (2026-02-06)
+
+Compiling Rust-based Python extension modules (via PyO3 and maturin) into WebAssembly wheels for Pyodide involves precise coordination of toolchain versions and build flags to ensure compatibility. The process relies on maturin (≥1.0) for packaging, the Emscripten SDK (with the exact version used by Pyodide), and a Rust nightly toolchain matching Pyodide's ABI, particularly the `-Z emscripten-wasm-eh` flag and a compatible sysroot for Python 3.13 (Pyodide 0.28+). Wheels must be served with correct ABI and platform tags, and can be loaded in Pyodide using `micropip.install()` or `pyodide.loadPackage()` if CORS headers are set. PyPI does not currently support uploading wasm wheels, so alternatives like GitHub Releases are used.
+
+Key tools and references:
+- [PyO3](https://github.com/PyO3/pyo3): Rust bindings for Python.
+- [rust-emscripten-wasm-eh-sysroot](https://github.com/pyodide/rust-emscripten-wasm-eh-sysroot): Prebuilt sysroot for the required Rust/Emscripten versions.
+
+Key takeaways:
+- The exact Emscripten, Rust nightly, and sysroot versions must match Pyodide's Python/ABI.
+- Use `-sSIDE_MODULE=2` and avoid `-pthread` or `-sSIDE_MODULE=1` for Rust builds.
+- Wheels must be manually hosted and loaded due to PyPI support wait; CORS is required for browser fetches.
+- [micropip](https://micropip.pyodide.org/en/stable/project/api.html) enables runtime wheel installation from URLs.
 
 ### [just-bash-deno-python](https://github.com/simonw/research/tree/main/just-bash-deno-python) (2026-02-04)
 
