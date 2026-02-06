@@ -1,0 +1,18 @@
+{
+  "name": "monty-wasm-pyodide",
+  "version": "1.0.0",
+  "description": "Monty (pydantic sandboxed Python interpreter) compiled to WebAssembly for Pyodide",
+  "scripts": {
+    "setup": "bash setup-pyodide.sh",
+    "test": "npx playwright test tests/monty-wasm.spec.js tests/monty-pyodide.spec.js",
+    "test:wasm": "npx playwright test tests/monty-wasm.spec.js",
+    "test:pyodide": "npx playwright test tests/monty-pyodide.spec.js",
+    "serve": "node serve.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "^1.56.1"
+  }
+}
