@@ -54,10 +54,32 @@ const AUTH_PATTERNS = [
   'session', 'csrf', 'xsrf', 'cookie',
 ];
 
+/** Standard browser headers that are NOT site-specific API headers. */
+const STANDARD_HEADERS = new Set([
+  'accept', 'accept-encoding', 'accept-language',
+  'content-type', 'content-length',
+  'cookie', 'host', 'origin', 'referer',
+  'user-agent', 'connection', 'keep-alive',
+  'cache-control', 'pragma', 'priority',
+  'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform',
+  'sec-fetch-dest', 'sec-fetch-mode', 'sec-fetch-site', 'sec-fetch-user',
+  'upgrade-insecure-requests', 'dnt', 'te',
+  'if-match', 'if-modified-since', 'if-none-match', 'if-range', 'if-unmodified-since',
+]);
+
 function isAuthHeader(name: string): boolean {
   const lower = name.toLowerCase();
   if (AUTH_HEADER_NAMES.has(lower)) return true;
   return AUTH_PATTERNS.some(p => lower.includes(p));
+}
+
+/** Check if a header is a non-standard, site-specific API header (e.g. x-device-id, x-client-version). */
+function isCustomApiHeader(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (lower.startsWith(':')) return false; // pseudo-headers
+  if (lower.startsWith('sec-')) return false; // browser security headers
+  if (STANDARD_HEADERS.has(lower)) return false;
+  return true;
 }
 
 function isStaticAsset(url: string): boolean {
@@ -164,7 +186,7 @@ export function analyzeHar(
 
     if (!isRelated && !isJson && !isApiPath && !isMutating) continue;
 
-    // Extract auth headers
+    // Extract auth headers + custom API headers from first-party requests
     const reqHeaders: Record<string, string> = {};
     for (const header of request.headers ?? []) {
       const name = header.name;
@@ -176,6 +198,9 @@ export function analyzeHar(
       reqHeaders[name] = header.value;
 
       if (isAuthHeader(lowerName)) {
+        authHeaders[lowerName] = header.value;
+      } else if (isRelated && isCustomApiHeader(lowerName)) {
+        // Capture site-specific API headers from first-party requests (device IDs, client versions, etc.)
         authHeaders[lowerName] = header.value;
       }
     }
@@ -341,6 +366,19 @@ export function prepareHarSummaryForLLM(
     lines.push(`\n### ${pattern} (${requests.length} calls)`);
     lines.push(`Status: ${sample.status}`);
     lines.push(`Content-Type: ${sample.responseContentType ?? 'unknown'}`);
+
+    // Show auth-relevant request headers (non-standard headers that may be needed for API calls)
+    if (sample.requestHeaders) {
+      const authHdrs: string[] = [];
+      for (const [k, v] of Object.entries(sample.requestHeaders)) {
+        const kl = k.toLowerCase();
+        if (kl === 'authorization') authHdrs.push(`${k}: ${v.slice(0, 40)}...`);
+        else if (isAuthHeader(kl) || isCustomApiHeader(kl)) authHdrs.push(`${k}: ${v.slice(0, 60)}`);
+      }
+      if (authHdrs.length > 0) {
+        lines.push(`Auth headers: ${authHdrs.join(', ')}`);
+      }
+    }
 
     if (sample.queryParams) {
       lines.push(`Query params: ${JSON.stringify(sample.queryParams)}`);

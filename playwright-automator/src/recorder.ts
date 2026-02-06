@@ -203,11 +203,16 @@ export async function startRecording(opts: RecorderOptions): Promise<RecordingSe
   console.log('Interact with the browser to perform your task.');
   console.log('The tool is recording all network traffic and actions.');
   console.log('');
-  console.log('When done, come back here and press ENTER to stop recording.');
+  console.log('Close the browser or press ENTER to stop recording.');
   console.log('─────────────────────────────────────────────────\n');
 
-  // Wait for user to press Enter
-  await waitForEnter();
+  // Wait for user to press Enter OR close the browser
+  await Promise.race([
+    waitForEnter(),
+    new Promise<void>((resolve) => {
+      page.on('close', () => resolve());
+    }),
+  ]);
 
   console.log('\n⏹️  Stopping recording...');
 
@@ -231,7 +236,13 @@ export async function startRecording(opts: RecorderOptions): Promise<RecordingSe
   } catch { /* ignore screenshot errors */ }
 
   // Get cookies + storage state before closing
-  const browserCookies = await context.cookies();
+  // These may fail if the user closed the browser — fall back gracefully.
+  let browserCookies: Awaited<ReturnType<typeof context.cookies>> = [];
+  try {
+    browserCookies = await context.cookies();
+  } catch {
+    // Browser already closed
+  }
   const cookieMap: Record<string, string> = {};
   for (const c of browserCookies) {
     cookieMap[c.name] = c.value;
@@ -241,12 +252,12 @@ export async function startRecording(opts: RecorderOptions): Promise<RecordingSe
   try {
     await context.storageState({ path: storageStatePath });
   } catch {
-    // ignore
+    // ignore — browser may already be closed
   }
 
-  // Close to flush HAR
-  await context.close();
-  await browser.close();
+  // Close to flush HAR — may already be closed if user closed the browser
+  try { await context.close(); } catch { /* already closed */ }
+  try { await browser.close(); } catch { /* already closed */ }
 
   console.log('✅ Browser closed. Processing recording data...\n');
 

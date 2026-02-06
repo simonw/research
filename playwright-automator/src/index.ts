@@ -15,6 +15,7 @@ import { startRecording } from './recorder.js';
 import { generateScript, refineScript } from './gemini.js';
 import { captureLoginStorageState } from './login.js';
 import { discoverAuthProfileForUrl } from './auth-profile-discovery.js';
+import { runAgentLoop } from './runner.js';
 import type { RecordingSession } from './types.js';
 
 const DEFAULT_OUTPUT_DIR = join(process.cwd(), 'runs');
@@ -47,9 +48,11 @@ function parseArgs(): {
   authProfile?: string;
   profileName?: string;
   notes?: string;
+  maxIterations?: number;
+  scriptTimeout?: number;
 } {
   const args = process.argv.slice(2);
-  const result: Record<string, string | boolean> = {};
+  const result: Record<string, string | boolean | number> = {};
 
   // subcommand support:
   //   `pwa login --url ...`
@@ -107,6 +110,13 @@ function parseArgs(): {
       case '--notes':
         result.notes = args[++i];
         break;
+      case '--max-iterations':
+      case '-n':
+        result.maxIterations = parseInt(args[++i], 10);
+        break;
+      case '--script-timeout':
+        result.scriptTimeout = parseInt(args[++i], 10);
+        break;
       case '--help':
       case '-h':
         printHelp();
@@ -129,7 +139,8 @@ USAGE:
   pwa [command] [options]
 
 COMMANDS:
-  record               Record + generate
+  record               Record + generate + validate (auto-refines until script works)
+  run                  Re-run validation loop on an existing session
   login                Capture reusable auth storageState (headed; supports 2FA)
   refine               Refine an existing run's automation.ts using feedback
 
@@ -141,7 +152,9 @@ OPTIONS:
   --headless               Run browser in headless mode
   --skip-generate          Only record, don't generate script
   --auth-profile <path>    Load a Playwright storageState.json before recording (auth replay). If omitted, pwa will auto-pick the newest auth profile for the URL's domain if one exists.
-  --run <dir>              (refine cmd) run/session directory
+  --run <dir>              (run/refine) session directory
+  --max-iterations, -n N   Max validation iterations (default: 5)
+  --script-timeout <ms>    Script execution timeout in ms (default: 120000)
   --profile <name>         (login cmd) profile name (default: default)
   --notes <text>           (login cmd) notes for this auth profile
   --feedback, -f <text>    Feedback for refinement
@@ -150,10 +163,11 @@ OPTIONS:
 WORKFLOW:
   1. Run the tool and provide a URL + task description
   2. A browser opens — perform the task manually
-  3. Press ENTER when done to stop recording
+  3. Close the browser or press ENTER when done to stop recording
   4. The tool captures HAR traffic, actions, and cookies
   5. Gemini AI generates a Playwright script
-  6. The script is saved in a per-run folder
+  6. The script is automatically run and validated
+  7. If it fails, Gemini refines it (up to N iterations)
 
 EXAMPLES:
   # Interactive mode
@@ -168,7 +182,13 @@ EXAMPLES:
   # Record using an existing auth profile (storageState.json)
   pwa record --url https://example.com --desc "Extract data" --auth-profile auth-profiles/example.com/default/storageState.json
 
-  # Refine an existing script
+  # Re-run validation loop on an existing session
+  pwa run --run runs/run-123
+
+  # Re-run with more iterations
+  pwa run --run runs/run-123 --max-iterations 10
+
+  # Refine an existing script with manual feedback
   pwa refine --run runs/run-123 --feedback "Add pagination"
 `);
 }
@@ -224,7 +244,7 @@ async function main() {
   if (!args.command) args.command = 'record';
 
   // Handle refinement mode
-  if (args.command === 'refine' || args.run) {
+  if (args.command === 'refine') {
     const apiKey = args.apiKey || process.env.GEMINI_API_KEY;
     if (!apiKey) {
       console.error('❌ Gemini API key required. Use --key or set GEMINI_API_KEY env.');
@@ -239,6 +259,64 @@ async function main() {
 
     const feedback = args.feedback || 'Please improve the script';
     await runRefine(resolve(runDir), feedback, apiKey);
+    return;
+  }
+
+  // run subcommand — re-run validation loop on an existing session
+  if (args.command === 'run') {
+    const apiKey = args.apiKey || process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.error('❌ Gemini API key required. Use --key or set GEMINI_API_KEY env.');
+      process.exit(1);
+    }
+
+    const runDir = args.run;
+    if (!runDir) {
+      console.error('❌ Session directory required. Use: pwa run --run <dir>');
+      process.exit(1);
+    }
+
+    const sessionDir = resolve(runDir);
+    if (!existsSync(join(sessionDir, 'session.json'))) {
+      console.error(`❌ session.json not found in ${sessionDir}`);
+      process.exit(1);
+    }
+    if (!existsSync(join(sessionDir, 'automation.ts'))) {
+      console.error(`❌ automation.ts not found in ${sessionDir}`);
+      process.exit(1);
+    }
+
+    console.log('\n🔄 Running validation loop...\n');
+
+    const loopResult = await runAgentLoop({
+      sessionDir,
+      apiKey,
+      maxIterations: args.maxIterations,
+      scriptTimeout: args.scriptTimeout,
+    });
+
+    if (loopResult.success) {
+      console.log('\n─────────────────────────────────────────────────');
+      console.log('✅ AUTOMATION COMPLETE');
+      console.log('─────────────────────────────────────────────────');
+      console.log(`   Iterations: ${loopResult.iterations}/${args.maxIterations || 5}`);
+      console.log(`   Output:     ${join(sessionDir, 'output.json')} (${loopResult.outputItemCount} items)`);
+      console.log(`   Script:     ${join(sessionDir, 'automation.ts')}`);
+      console.log(`   History:    ${join(sessionDir, 'agent-loop-result.json')}`);
+      console.log('─────────────────────────────────────────────────\n');
+    } else {
+      console.log('\n─────────────────────────────────────────────────');
+      console.log('❌ VALIDATION FAILED');
+      console.log('─────────────────────────────────────────────────');
+      console.log(`   Iterations: ${loopResult.iterations}/${args.maxIterations || 5}`);
+      console.log(`   History:    ${join(sessionDir, 'agent-loop-result.json')}`);
+      console.log('');
+      console.log('🔧 To retry or provide manual feedback:');
+      console.log(`   pwa run --run ${runDir}`);
+      console.log(`   pwa refine --run ${runDir} --feedback "your feedback"`);
+      console.log('─────────────────────────────────────────────────\n');
+      process.exit(1);
+    }
     return;
   }
 
@@ -391,31 +469,48 @@ npx tsx automation.ts
 `;
     writeFileSync(join(sessionDir, 'run.sh'), runScript, { mode: 0o755 });
 
-    console.log('─────────────────────────────────────────────────');
-    console.log('✅ AUTOMATION SCRIPT GENERATED!');
-    console.log('─────────────────────────────────────────────────');
     console.log(`   Strategy: ${result.strategy}`);
     if (result.apiEndpoints.length > 0) {
-      console.log(`   API endpoints targeted:`);
-      for (const ep of result.apiEndpoints) {
-        console.log(`     - ${ep}`);
-      }
+      console.log(`   API endpoints: ${result.apiEndpoints.join(', ')}`);
     }
-    console.log('');
-    console.log('📁 Output files:');
-    console.log(`   Session dir:  ${sessionDir}`);
-    console.log(`   Script:       ${scriptPath}`);
-    console.log(`   HAR file:     ${session.harFilePath}`);
-    console.log(`   Actions:      ${join(sessionDir, 'actions.json')}`);
-    console.log(`   Auth data:    ${join(sessionDir, 'auth.json')}`);
-    console.log('');
-    console.log('🚀 To run the automation:');
-    console.log(`   cd ${sessionDir}`);
-    console.log(`   npx tsx automation.ts`);
-    console.log('');
-    console.log('🔧 To refine the script:');
-    console.log(`   pwa refine --run ${sessionDir} --feedback "your feedback"`);
-    console.log('─────────────────────────────────────────────────\n');
+
+    // Step 3: Validate & refine loop
+    const maxIter = args.maxIterations || 5;
+    console.log(`\n🔄 Step 3: Validating script...\n`);
+
+    const loopResult = await runAgentLoop({
+      sessionDir,
+      apiKey,
+      maxIterations: maxIter,
+      scriptTimeout: args.scriptTimeout,
+    });
+
+    if (loopResult.success) {
+      console.log('\n─────────────────────────────────────────────────');
+      console.log('✅ AUTOMATION COMPLETE');
+      console.log('─────────────────────────────────────────────────');
+      console.log(`   Iterations: ${loopResult.iterations}/${maxIter}`);
+      console.log(`   Strategy:   ${result.strategy}`);
+      console.log(`   Output:     ${join(sessionDir, 'output.json')} (${loopResult.outputItemCount} items)`);
+      console.log(`   Script:     ${scriptPath}`);
+      console.log(`   History:    ${join(sessionDir, 'agent-loop-result.json')}`);
+      console.log('');
+      console.log('🔧 To re-run or further refine:');
+      console.log(`   pwa run --run ${sessionDir}`);
+      console.log(`   pwa refine --run ${sessionDir} --feedback "your feedback"`);
+      console.log('─────────────────────────────────────────────────\n');
+    } else {
+      console.log('\n─────────────────────────────────────────────────');
+      console.log('❌ VALIDATION FAILED after ' + loopResult.iterations + ' iterations');
+      console.log('─────────────────────────────────────────────────');
+      console.log(`   Script:     ${scriptPath}`);
+      console.log(`   History:    ${join(sessionDir, 'agent-loop-result.json')}`);
+      console.log('');
+      console.log('🔧 To retry or provide manual feedback:');
+      console.log(`   pwa run --run ${sessionDir}`);
+      console.log(`   pwa refine --run ${sessionDir} --feedback "your feedback"`);
+      console.log('─────────────────────────────────────────────────\n');
+    }
 
   } catch (error: any) {
     console.error(`\n❌ Script generation failed: ${error.message}`);

@@ -10,8 +10,9 @@ import { IR_VERSION } from './ir.js';
 function normalizePath(pathWithQuery: string): string {
   const path = pathWithQuery.split('?')[0] ?? pathWithQuery;
   return path
-    .replace(/\/[0-9]+/g, '/{id}')
+    // UUID first — must run before numeric to avoid digit-starting UUIDs being mangled
     .replace(/\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi, '/{uuid}')
+    .replace(/\/[0-9]+/g, '/{id}')
     .replace(/\/[A-Za-z0-9_-]{20,}/g, '/{token}')
     ;
 }
@@ -53,7 +54,13 @@ function trunc(s?: string, n=2000): string | undefined {
   return s.slice(0, n) + '\n... [truncated]';
 }
 
-function scoreEndpoint(group: {method: string; callCount: number; isJsonLike: boolean; isHtmlLike: boolean; isApiLike: boolean; sample?: ParsedApiRequest}): {score: number; reasons: string[]} {
+/** Paths that are telemetry/analytics noise — not useful for data extraction. */
+const TELEMETRY_PATTERNS = [
+  '/collect', '/track', '/rgstr', '/analytics', '/log/', '/beacon',
+  '/ping', '/metrics', '/telemetry', '/sentry', '/error-report',
+];
+
+function scoreEndpoint(group: {method: string; pathPattern: string; callCount: number; isJsonLike: boolean; isHtmlLike: boolean; isApiLike: boolean; sample?: ParsedApiRequest}): {score: number; reasons: string[]} {
   let score = 0;
   const reasons: string[] = [];
 
@@ -70,6 +77,22 @@ function scoreEndpoint(group: {method: string; callCount: number; isJsonLike: bo
     if (t.startsWith('[')) { score += 10; reasons.push('array_response:+10'); }
     if (t.includes('edges') && t.includes('page_info')) { score += 10; reasons.push('graphql_pagination_hints:+10'); }
     if (t.includes('next') && t.includes('cursor')) { score += 5; reasons.push('cursor_hints:+5'); }
+    // reward rich responses with items/data arrays
+    if (t.includes('"items"') || t.includes('"data"') || t.includes('"results"')) { score += 15; reasons.push('data_list:+15'); }
+  }
+
+  // penalize trivial responses (telemetry, fire-and-forget)
+  if (body) {
+    const t = body.trim();
+    if (t === '{"success":true}' || t === '{}' || t === 'ok' || t === '""') {
+      score -= 40; reasons.push('trivial_response:-40');
+    }
+  }
+
+  // penalize known telemetry/analytics paths
+  const pathLower = group.pathPattern.toLowerCase();
+  if (TELEMETRY_PATTERNS.some(p => pathLower.includes(p))) {
+    score -= 30; reasons.push('telemetry_path:-30');
   }
 
   return { score, reasons };
@@ -105,6 +128,7 @@ export function buildIr(seedUrl: string, apiRequests: ParsedApiRequest[], auth: 
 
     const { score, reasons } = scoreEndpoint({
       method,
+      pathPattern,
       callCount: reqs.length,
       isJsonLike: jsonLike,
       isHtmlLike: htmlLike,
@@ -152,13 +176,62 @@ export function buildIr(seedUrl: string, apiRequests: ParsedApiRequest[], auth: 
   };
 }
 
+/** Standard browser headers to exclude from auth-header extraction. */
+const STANDARD_HEADERS = new Set([
+  'accept', 'accept-encoding', 'accept-language',
+  'content-type', 'content-length',
+  'cookie', 'host', 'origin', 'referer',
+  'user-agent', 'connection', 'keep-alive',
+  'cache-control', 'pragma', 'priority',
+  'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform',
+  'sec-fetch-dest', 'sec-fetch-mode', 'sec-fetch-site', 'sec-fetch-user',
+  'upgrade-insecure-requests', 'dnt', 'te',
+]);
+
+/**
+ * Extract auth-relevant headers from a request headers sample.
+ * Picks out authorization (truncated), cookie (prefix only), and any non-standard headers.
+ */
+function extractAuthHeaders(headers: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    const kl = k.toLowerCase();
+    if (kl.startsWith(':') || kl.startsWith('sec-') || STANDARD_HEADERS.has(kl)) continue;
+    if (kl === 'authorization') {
+      out[k] = v.slice(0, 60) + (v.length > 60 ? '...' : '');
+    } else {
+      // Any non-standard header (site-specific device IDs, CSRF tokens, custom prefixes, etc.)
+      out[k] = v.slice(0, 80) + (v.length > 80 ? '...' : '');
+    }
+  }
+  return out;
+}
+
 export function summarizeIrForLLM(ir: RunIr, maxEndpoints=25): string {
   const lines: string[] = [];
   lines.push(`IR v${ir.irVersion} seed=${ir.seedDomain}`);
-  lines.push(`AuthMethod=${ir.auth.authMethod} cookies=${ir.auth.cookieNames.length} authHeaders=${ir.auth.authHeaderNames.length}`);
+  lines.push(`AuthMethod=${ir.auth.authMethod} cookies=${ir.auth.cookieNames.length} authHeaders=[${ir.auth.authHeaderNames.join(', ')}]`);
   lines.push('Top endpoints:');
-  for (const ep of ir.endpoints.slice(0, maxEndpoints)) {
+
+  for (const [i, ep] of ir.endpoints.slice(0, maxEndpoints).entries()) {
     lines.push(`- score=${ep.score} calls=${ep.callCount} ${ep.method} ${ep.domain}${ep.pathPattern} json=${ep.isJsonLike} api=${ep.isApiLike} html=${ep.isHtmlLike}`);
+
+    // For top 10, include variant details so the LLM can see auth headers + response shape
+    if (i < 10 && ep.variants.length > 0) {
+      const v = ep.variants[0];
+      lines.push(`  url: ${v.exampleUrl?.slice(0, 200)}`);
+
+      if (v.requestHeadersSample) {
+        const authHdrs = extractAuthHeaders(v.requestHeadersSample);
+        if (Object.keys(authHdrs).length > 0) {
+          lines.push(`  auth-headers: ${JSON.stringify(authHdrs)}`);
+        }
+      }
+
+      if (v.responseBodySample) {
+        lines.push(`  response: ${v.responseBodySample.slice(0, 500)}${v.responseBodySample.length > 500 ? '...' : ''}`);
+      }
+    }
   }
   return lines.join('\n');
 }

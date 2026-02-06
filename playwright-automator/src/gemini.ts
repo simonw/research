@@ -101,21 +101,26 @@ IMPORTANT: these templates omit sensitive headers (Authorization/Cookie). Use st
 Templates:
 ${JSON.stringify(requestTemplates.slice(0, 8), null, 2)}
 
-**API replay fallback pattern** — if \`waitForResponse\` times out, fall back to calling the API directly:
+**API replay fallback pattern** — set up listener BEFORE navigation, check status, fall back to direct fetch:
 \`\`\`
 let data: any;
 try {
-  const resp = await page.waitForResponse(
-    r => r.url().includes('/api/endpoint'),
+  // CRITICAL: set up waitForResponse BEFORE the navigation/click that triggers the API
+  const respPromise = page.waitForResponse(
+    r => r.url().includes('/api/endpoint') && r.status() === 200,
     { timeout: 15000 }
   );
-  data = await resp.json();
+  await page.goto('https://example.com'); // or page.click()
+  data = await (await respPromise).json();
 } catch {
-  console.log('⚠️  waitForResponse timed out — falling back to direct fetch');
-  data = await page.evaluate(async () => {
-    const r = await fetch('/api/endpoint?limit=50');
+  console.log('⚠️  interception failed — falling back to direct fetch');
+  const authData = JSON.parse(readFileSync('./auth.json', 'utf-8'));
+  const headers = authData.authHeaders || {};
+  // NOTE: page.evaluate accepts at most ONE extra arg — wrap in object
+  data = await page.evaluate(async (args) => {
+    const r = await fetch('/api/endpoint?limit=50', { headers: args.headers });
     return r.json();
-  });
+  }, { headers });
 }
 \`\`\`
 
@@ -294,11 +299,15 @@ ${JSON.stringify(requestTemplates.slice(0, 8), null, 2)}
 
 ## Auth Info
 Auth method: ${session.authMethod}
-Cookies available: ${Object.keys(session.cookies).length}
+Target domain: ${session.targetDomain}
+Auth headers: ${JSON.stringify(session.authHeaders, null, 2)}
+Number of cookies: ${Object.keys(session.cookies).length}
+Key cookies: ${Object.keys(session.cookies).slice(0, 10).join(', ')}
 
 **auth.json format:**
 - \`playwrightCookies\`: Playwright \`Cookie[]\` array — use with \`context.addCookies(authData.playwrightCookies)\`
 - \`cookies\`: flat \`Record<string,string>\` — NEVER pass to \`addCookies()\`
+- \`authHeaders\`: object with auth header name→value (e.g. \`{ "authorization": "Bearer ..." }\`)
 - Prefer \`storageState.json\` when available: \`browser.newContext({ storageState: './storageState.json' })\`
 
 ## Instructions
