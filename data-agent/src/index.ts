@@ -11,6 +11,8 @@
  *   npx data-agent mcp                                        # Start MCP server
  */
 
+import 'dotenv/config';
+
 import { parseArgs } from 'node:util';
 import { resolve } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';

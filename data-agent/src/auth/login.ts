@@ -4,7 +4,7 @@
  * Saves the resulting storage state for future replay.
  */
 
-import { chromium } from 'playwright';
+import { chromium } from '../browser/stealth.js';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';

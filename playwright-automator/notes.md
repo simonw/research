@@ -43,7 +43,7 @@ Each recording creates a folder with:
 - `run.sh` — Convenience script to run the automation
 
 ### Gemini Integration
-- Uses `gemini-2.0-flash` for fast, cost-effective script generation
+- Uses `gemini-3-pro-preview` for fast, cost-effective script generation
 - Temperature set to 0.2 for deterministic code output
 - Prompt includes: task description, recorded actions, HAR API summary, auth info
 - Supports refinement: feed back errors and the script gets improved

@@ -8,7 +8,7 @@
  * Inspired by Skyvern's agent_step() loop: plan → act → observe → record → evaluate.
  */
 
-import { chromium } from 'playwright';
+import { chromium } from '../browser/stealth.js';
 import { readFileSync } from 'node:fs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
