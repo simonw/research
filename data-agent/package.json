@@ -1,0 +1,27 @@
+{
+  "name": "data-agent",
+  "version": "0.1.0",
+  "description": "AI-powered data extractor with explore/replay — extract structured data from any website",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "data-agent": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build",
+    "start": "node --enable-source-maps dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@google/generative-ai": "^0.21.0",
+    "@modelcontextprotocol/sdk": "^1.11.0",
+    "playwright": "^1.56.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
