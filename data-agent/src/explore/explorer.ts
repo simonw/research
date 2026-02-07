@@ -8,7 +8,7 @@
  * Inspired by Skyvern's agent_step() loop: plan → act → observe → record → evaluate.
  */
 
-import { chromium } from '../browser/stealth.js';
+import { launchProfile } from '../browser/stealth.js';
 import { readFileSync } from 'node:fs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -29,7 +29,6 @@ interface ExploreOptions {
   llm: LlmProvider;
   chromePath?: string;
   headless?: boolean;
-  authStatePath?: string;
   sessionsDir: string;
 }
 
@@ -87,7 +86,7 @@ function loadExplorePrompt(): string {
  * Launches browser → navigates → agent loop (snapshot → LLM → act → record) → close.
  */
 export async function explore(options: ExploreOptions): Promise<ExploreResult> {
-  const { task, url, llm, chromePath, headless = false, authStatePath, sessionsDir } = options;
+  const { task, url, llm, chromePath, headless = false, sessionsDir } = options;
 
   // Create session directory
   const sessionId = `session-${Date.now()}`;
@@ -99,23 +98,12 @@ export async function explore(options: ExploreOptions): Promise<ExploreResult> {
   console.log(`  Session: ${sessionDir}`);
   console.log(`  HAR: ${harPath}`);
 
-  // Launch browser
-  const launchOptions: Record<string, unknown> = { headless };
-  if (chromePath) {
-    launchOptions.executablePath = chromePath;
-  }
-
-  const browser = await chromium.launch(launchOptions);
-
-  const contextOptions: Record<string, unknown> = {
+  // Launch browser with persistent profile
+  const { context, page, close } = await launchProfile({
+    headless,
+    chromePath,
     recordHar: { path: harPath, mode: 'full' },
-  };
-  if (authStatePath) {
-    contextOptions.storageState = authStatePath;
-  }
-
-  const context = await browser.newContext(contextOptions);
-  const page = await context.newPage();
+  });
 
   const actions: ActionWithIntent[] = [];
   const apisSeen: ObservedApiCall[] = [];
@@ -217,8 +205,7 @@ export async function explore(options: ExploreOptions): Promise<ExploreResult> {
   }
 
   // Close browser and save HAR
-  await context.close();
-  await browser.close();
+  await close();
 
   // Save session metadata
   const sessionMeta = {

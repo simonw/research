@@ -167,20 +167,8 @@ async function runAutoMode(description: string, options: AutoModeOptions): Promi
   // (TODO: registry lookup — for now, always explore)
 
   // 3. Auth check
-  let authStatePath: string | undefined;
   if (intent.requiresAuth) {
-    const { discoverAuthProfile } = await import('./auth/profiles.js');
-    const profile = discoverAuthProfile(intent.domain);
-    if (profile) {
-      console.log(`\nUsing saved auth profile: ${profile.profileName}`);
-      authStatePath = profile.storageStatePath;
-    } else {
-      console.log('\nAuth required — launching browser for login...');
-      authStatePath = await login(intent.url, {
-        chromePath: options.chromePath,
-        headless: false,
-      });
-    }
+    console.log('  Auth: Using persistent browser profile');
   }
 
   // 4. Explore
@@ -191,7 +179,6 @@ async function runAutoMode(description: string, options: AutoModeOptions): Promi
     llm,
     chromePath: options.chromePath,
     headless: options.headless,
-    authStatePath,
     sessionsDir: SESSIONS_DIR,
   });
   console.log(`  Actions: ${exploreResult.actions.length}`);

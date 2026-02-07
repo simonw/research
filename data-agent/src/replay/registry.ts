@@ -58,18 +58,6 @@ export async function publishToRegistry(opts: {
   const scriptDest = join(extractorDir, 'automation.ts');
   copyFileSync(scriptSrc, scriptDest);
 
-  // Copy storageState if present
-  const storageSrc = join(sessionDir, 'storageState.json');
-  if (existsSync(storageSrc)) {
-    copyFileSync(storageSrc, join(extractorDir, 'storageState.json'));
-  }
-
-  // Copy auth.json if present
-  const authSrc = join(sessionDir, 'auth.json');
-  if (existsSync(authSrc)) {
-    copyFileSync(authSrc, join(extractorDir, 'auth.json'));
-  }
-
   // Update registry
   const existingIdx = registry.entries.findIndex(e => e.domain === domain);
   const entry: RegistryEntry = {

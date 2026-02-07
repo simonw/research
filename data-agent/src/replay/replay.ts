@@ -6,8 +6,11 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { findExtractor, updateRegistryAfterRun } from './registry.js';
+
+/** Resolve data-agent's node_modules so replay scripts can find dependencies. */
+const PROJECT_NODE_MODULES = resolve(import.meta.dirname, '../../node_modules');
 
 /**
  * Replay a saved extractor for a domain.
@@ -41,6 +44,10 @@ export async function replay(domain: string): Promise<void> {
     encoding: 'utf-8',
     maxBuffer: 10 * 1024 * 1024,
     stdio: ['inherit', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      NODE_PATH: PROJECT_NODE_MODULES,
+    },
   });
 
   const durationMs = Date.now() - start;

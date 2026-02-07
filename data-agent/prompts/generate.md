@@ -14,6 +14,11 @@ CRITICAL PRIORITIES (in order)
    ```
    NEVER pass a full URL string to `waitForResponse()`.
 
+   **CRITICAL — Exclude sub-endpoints**: When intercepting a detail API like `/api/items/{id}`,
+   substring matching will also match sub-paths like `/api/items/{id}/status` or `/api/items/{id}/metadata`.
+   These auxiliary endpoints often fire first and return minimal data. Use `r.url().endsWith(id)` or
+   add exclusions for any sub-paths you see in the HAR/traffic log.
+
    **CRITICAL — Race condition**: API responses triggered by navigation fire DURING `page.goto()`. Set up the response promise BEFORE the navigation:
    ```
    // CORRECT — listener set up before navigation
@@ -55,24 +60,29 @@ CRITICAL PRIORITIES (in order)
    }
    ```
 
-3) Auth/2FA:
-   - **NEVER use `launchPersistentContext()`** — incompatible with `storageState`.
-   - Always use `chromium.launch()` + `browser.newContext()`.
-   - **Preferred**: Load via `browser.newContext({ storageState: './storageState.json' })`.
-   - **Fallback**: Load `auth.json` and use `context.addCookies(authData.playwrightCookies)`.
+3) Auth/2FA + stealth:
+   - Use `playwright-extra` with `puppeteer-extra-plugin-stealth` to avoid bot detection (Cloudflare, etc.).
+   - Use `launchPersistentContext()` with the shared automation profile at `~/.data-agent/browser-profile/`.
+   - This gives the script access to real Chrome cookies and localStorage — no `storageState.json` needed.
    Example:
    ```
-   const browser = await chromium.launch({ headless: false });
-   let context;
-   if (existsSync('./storageState.json')) {
-     context = await browser.newContext({ storageState: './storageState.json' });
-   } else {
-     context = await browser.newContext();
-     const authData = JSON.parse(readFileSync('./auth.json', 'utf-8'));
-     if (authData.playwrightCookies) await context.addCookies(authData.playwrightCookies);
-   }
-   const page = await context.newPage();
+   import { chromium } from 'playwright-extra';
+   import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+   import { join } from 'node:path';
+   import { homedir } from 'node:os';
+
+   chromium.use(StealthPlugin());
+
+   const context = await chromium.launchPersistentContext(
+     join(homedir(), '.data-agent', 'browser-profile'),
+     {
+       headless: false,
+       executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+     }
+   );
+   const page = context.pages()[0] || await context.newPage();
    ```
+   **ALWAYS** use `playwright-extra` with `StealthPlugin` — NEVER use vanilla `playwright`. Sites like ChatGPT use Cloudflare which blocks vanilla Playwright.
 
 4) Deterministic output:
    - Write `output.json`.

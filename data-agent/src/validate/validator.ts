@@ -6,9 +6,11 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { RunResult, LlmProvider, AnalysisResult } from '../types.js';
 import { refineScript } from '../generate/script-generator.js';
+
+const PROJECT_NODE_MODULES = resolve(import.meta.dirname, '../../node_modules');
 
 interface ValidateOptions {
   sessionDir: string;
@@ -120,6 +122,10 @@ function executeScript(sessionDir: string, timeoutMs: number = 120_000): RunResu
     timeout: timeoutMs,
     encoding: 'utf-8',
     maxBuffer: 10 * 1024 * 1024,
+    env: {
+      ...process.env,
+      NODE_PATH: PROJECT_NODE_MODULES,
+    },
   });
 
   const durationMs = Date.now() - start;

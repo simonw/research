@@ -1,13 +1,10 @@
 /**
- * Login — Open a headed browser for user to log in manually.
+ * Login — Open a persistent-profile browser for user to log in manually.
  *
- * Saves the resulting storage state for future replay.
+ * Auth persists in ~/.data-agent/browser-profile/ automatically.
  */
 
-import { chromium } from '../browser/stealth.js';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { launchProfile } from '../browser/stealth.js';
 
 interface LoginOptions {
   chromePath?: string;
@@ -15,47 +12,35 @@ interface LoginOptions {
 }
 
 /**
- * Open a headed browser for the user to log in.
- * Returns the path to the saved storageState.json.
+ * Open a persistent-profile browser for the user to log in.
+ * Cookies and storage persist in the automation profile directory.
  */
-export async function login(url: string, options: LoginOptions = {}): Promise<string> {
+export async function login(url: string, options: LoginOptions = {}): Promise<void> {
   const { chromePath, headless = false } = options;
 
-  let domain: string;
   try {
-    domain = new URL(url).hostname;
+    new URL(url);
   } catch {
     throw new Error(`Invalid URL: ${url}`);
   }
 
-  // Storage location
-  const authDir = join(homedir(), '.data-agent', 'auth', domain.replace(/[^a-zA-Z0-9.-]/g, '_'));
-  if (!existsSync(authDir)) mkdirSync(authDir, { recursive: true });
-  const storageStatePath = join(authDir, 'storageState.json');
-
   console.log(`Opening browser for login at ${url}...`);
   console.log('Please log in, complete any 2FA, and close the browser when done.\n');
 
-  const launchOptions: Record<string, unknown> = { headless };
-  if (chromePath) launchOptions.executablePath = chromePath;
-
-  const browser = await chromium.launch(launchOptions);
-  const context = await browser.newContext();
-  const page = await context.newPage();
+  const { context, page, close } = await launchProfile({ chromePath, headless });
 
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
-  // Wait for the user to close the browser
+  // Wait for the user to close all pages (persistent contexts stay alive)
   await new Promise<void>((resolve) => {
-    browser.on('disconnected', () => resolve());
+    context.on('close', () => resolve());
 
-    // Also check periodically if the page was closed
-    const interval = setInterval(async () => {
+    // Poll for all pages closed — persistent contexts don't auto-close
+    const interval = setInterval(() => {
       try {
-        const pages = context.pages();
-        if (pages.length === 0) {
+        if (context.pages().length === 0) {
           clearInterval(interval);
-          resolve();
+          close().then(() => resolve(), () => resolve());
         }
       } catch {
         clearInterval(interval);
@@ -64,24 +49,5 @@ export async function login(url: string, options: LoginOptions = {}): Promise<st
     }, 1000);
   });
 
-  // Save storage state before close
-  try {
-    const state = await context.storageState();
-    writeFileSync(storageStatePath, JSON.stringify(state, null, 2));
-    console.log(`\nAuth saved to ${storageStatePath}`);
-  } catch {
-    console.log('\nCould not save storage state (browser already closed)');
-  }
-
-  try { await browser.close(); } catch { /* already closed */ }
-
-  // Save metadata
-  const metaPath = join(authDir, 'meta.json');
-  writeFileSync(metaPath, JSON.stringify({
-    profileName: 'default',
-    domain,
-    createdAt: new Date().toISOString(),
-  }, null, 2));
-
-  return storageStatePath;
+  console.log('\nAuth saved to persistent browser profile.');
 }
