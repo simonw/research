@@ -14,7 +14,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"krunsh/krun"
@@ -84,18 +83,10 @@ func run(commands []string, cpus, mem uint, root, workdir, shell string, verbose
 		}
 	}
 
-	// Write the commands to a temporary script file that the VM can execute.
-	script := "#!/bin/sh\nset -e\n" + strings.Join(commands, "\n") + "\n"
-	tmpDir, err := os.MkdirTemp("", "krunsh-*")
-	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	scriptPath := filepath.Join(tmpDir, "run.sh")
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
-		return fmt.Errorf("write script: %w", err)
-	}
+	// Build a single command string to pass via sh -c.
+	// Commands are joined with && so execution stops on first failure.
+	// This avoids needing a temp file visible to the VM's rootfs.
+	cmdStr := strings.Join(commands, " && ")
 
 	fmt.Fprintf(os.Stderr, "krunsh: running %d command(s) in microVM (cpus=%d, mem=%dMiB, root=%s)\n",
 		len(commands), cpus, mem, root)
@@ -119,12 +110,17 @@ func run(commands []string, cpus, mem uint, root, workdir, shell string, verbose
 	}
 
 	// Execute the script inside the VM using the chosen shell.
+	// Note: libkrun's krun_set_exec argv is NOT the same as execve argv.
+	// The exec path specifies the binary. The argv elements are passed as
+	// command-line arguments (i.e., argv[0] here becomes $1 inside the
+	// process, NOT the process name). So we pass ["-c", cmdStr] rather
+	// than ["sh", "-c", cmdStr].
 	env := []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"HOME=/root",
 		"TERM=xterm-256color",
 	}
-	if err := ctx.SetExec(shell, []string{shell, scriptPath}, env); err != nil {
+	if err := ctx.SetExec(shell, []string{"-c", cmdStr}, env); err != nil {
 		return fmt.Errorf("set exec: %w", err)
 	}
 
