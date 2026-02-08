@@ -1,0 +1,46 @@
+[?7lSeaBIOS (version 1.16.3-debian-1.16.3-2)
+
+
+iPXE (https://ipxe.org) 00:03.0 CA00 PCI2.10 PnP PMM+7EFCAE00+7EF0AE00 CA00
+Press Ctrl-B to configure iPXE (PCI 00:03.0)...                                                                               
+
+
+Booting from ROM...
+[?7l
+=== QEMU VM booted ===
+Kernel: Linux (none) 6.12.13-0-virt #1-Alpine SMP PREEMPT_DYNAMIC 2025-02-10 21:47:33 x86_64 Linux
+
+=== Loading KVM modules ===
+SUCCESS: /dev/kvm exists!
+
+=== Test 1: krunsh help ===
+Usage of /usr/local/bin/krunsh:
+  -cpus uint
+    	number of vCPUs (default 1)
+  -mem uint
+    	RAM in MiB (default 256)
+  -root string
+    	root filesystem path for the VM (default "/")
+  -shell string
+    	shell to use for executing commands (default "/bin/sh")
+  -verbose
+    	enable libkrun info logging
+  -workdir string
+    	working directory inside the VM (default "/")
+
+=== Test 2: single echo via krunsh ===
+krunsh: running 1 command(s) in microVM (cpus=1, mem=128MiB, root=/)
+hello-from-microvm
+[2026-02-08T01:16:23Z INFO  vmm] Vmm is stopping.
+exit: 0
+
+=== Test 3: multiple commands via krunsh ===
+krunsh: running 3 command(s) in microVM (cpus=1, mem=128MiB, root=/)
+hello world
+Linux localhost 6.12.68 #1 SMP PREEMPT_DYNAMIC Mon Feb  2 09:49:04 CET 2026 x86_64 Linux
+root
+[2026-02-08T01:16:28Z INFO  vmm] Vmm is stopping.
+exit: 0
+
+=== All tests done ===
+[   18.060757] reboot: Power down
