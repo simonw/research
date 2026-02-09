@@ -278,21 +278,19 @@ func cmdStart(args []string) {
 		}
 	}
 
-	chromeBin := "/usr/bin/google-chrome"
-	if bin := os.Getenv("ROD_CHROME_BIN"); bin != "" {
-		chromeBin = bin
-	}
-
 	dataDir := filepath.Join(stateDir(), "chrome-data")
 	os.MkdirAll(dataDir, 0755)
 
 	l := launcher.New().
-		Bin(chromeBin).
 		Set("no-sandbox").
 		Set("disable-gpu").
 		Headless(true).
 		Leakless(false). // Keep Chrome alive after CLI exits
 		UserDataDir(dataDir)
+
+	if bin := os.Getenv("ROD_CHROME_BIN"); bin != "" {
+		l = l.Bin(bin)
+	}
 
 	debugURL := l.MustLaunch()
 
