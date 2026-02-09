@@ -1,9 +1,15 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -22,6 +28,8 @@ type State struct {
 	ChromePID   int    `json:"chrome_pid"`
 	ActivePage  int    `json:"active_page"`  // index into pages list
 	DataDir     string `json:"data_dir"`
+	ProxyPID    int    `json:"proxy_pid,omitempty"`  // PID of auth proxy helper
+	ProxyPort   int    `json:"proxy_port,omitempty"` // local port of auth proxy
 }
 
 func stateDir() string {
@@ -156,6 +164,8 @@ func main() {
 	args := os.Args[2:]
 
 	switch cmd {
+	case "_proxy":
+		cmdInternalProxy(args) // hidden: runs the auth proxy helper
 	case "start":
 		cmdStart(args)
 	case "stop":
@@ -292,6 +302,39 @@ func cmdStart(args []string) {
 		l = l.Bin(bin)
 	}
 
+	// Detect authenticated proxy and launch helper if needed
+	var proxyPID, proxyPort int
+	if server, user, pass, needed := detectProxy(); needed {
+		authHeader := "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+pass))
+
+		// Find a free port for the local proxy
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			fatal("failed to find free port for proxy: %v", err)
+		}
+		proxyPort = ln.Addr().(*net.TCPAddr).Port
+		ln.Close()
+
+		// Launch ourselves as the proxy helper in the background
+		exe, _ := os.Executable()
+		cmd := exec.Command(exe, "_proxy",
+			strconv.Itoa(proxyPort), server, authHeader)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := cmd.Start(); err != nil {
+			fatal("failed to start proxy helper: %v", err)
+		}
+		proxyPID = cmd.Process.Pid
+		// Detach so it survives after we exit
+		cmd.Process.Release()
+
+		// Wait for the proxy to be ready
+		time.Sleep(500 * time.Millisecond)
+
+		l.Set("proxy-server", fmt.Sprintf("http://127.0.0.1:%d", proxyPort))
+		l.Set("ignore-certificate-errors")
+		fmt.Printf("Auth proxy started (PID %d, port %d) -> %s\n", proxyPID, proxyPort, server)
+	}
+
 	debugURL := l.MustLaunch()
 
 	// Get Chrome PID from the launcher
@@ -302,6 +345,8 @@ func cmdStart(args []string) {
 		ChromePID:  pid,
 		ActivePage: 0,
 		DataDir:    dataDir,
+		ProxyPID:   proxyPID,
+		ProxyPort:  proxyPort,
 	}
 
 	if err := saveState(state); err != nil {
@@ -326,11 +371,15 @@ func cmdStop(args []string) {
 				proc.Signal(syscall.SIGTERM)
 			}
 		}
-		removeState()
-		fmt.Println("Chrome stopped (killed by PID)")
-		return
+	} else {
+		browser.MustClose()
 	}
-	browser.MustClose()
+	// Also kill the proxy helper if running
+	if s.ProxyPID > 0 {
+		if proc, err := os.FindProcess(s.ProxyPID); err == nil {
+			proc.Signal(syscall.SIGTERM)
+		}
+	}
 	removeState()
 	fmt.Println("Chrome stopped")
 }
@@ -959,4 +1008,141 @@ func cmdVisible(args []string) {
 // Ignore SIGPIPE for piped output
 func init() {
 	signal.Ignore(syscall.SIGPIPE)
+}
+
+// --- Auth proxy for environments with authenticated HTTP proxies ---
+
+// detectProxy checks for HTTPS_PROXY/HTTP_PROXY with credentials.
+// Returns (proxyServer, username, password, true) if auth proxy is needed.
+func detectProxy() (server, user, pass string, needed bool) {
+	proxyEnv := os.Getenv("HTTPS_PROXY")
+	if proxyEnv == "" {
+		proxyEnv = os.Getenv("https_proxy")
+	}
+	if proxyEnv == "" {
+		proxyEnv = os.Getenv("HTTP_PROXY")
+	}
+	if proxyEnv == "" {
+		proxyEnv = os.Getenv("http_proxy")
+	}
+	if proxyEnv == "" {
+		return "", "", "", false
+	}
+	parsed, err := url.Parse(proxyEnv)
+	if err != nil || parsed.User == nil {
+		return "", "", "", false
+	}
+	user = parsed.User.Username()
+	pass, _ = parsed.User.Password()
+	if user == "" {
+		return "", "", "", false
+	}
+	server = parsed.Hostname() + ":" + parsed.Port()
+	return server, user, pass, true
+}
+
+// cmdInternalProxy is a hidden subcommand: rod-cli _proxy <port> <upstream> <authHeader>
+// It runs a local auth proxy that forwards to the upstream proxy with credentials.
+func cmdInternalProxy(args []string) {
+	if len(args) < 3 {
+		fatal("usage: rod-cli _proxy <port> <upstream> <authHeader>")
+	}
+	port := args[0]
+	upstream := args[1]
+	authHeader := args[2]
+
+	listener, err := net.Listen("tcp", "127.0.0.1:"+port)
+	if err != nil {
+		fatal("proxy listen failed: %v", err)
+	}
+
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodConnect {
+				proxyConnect(w, r, upstream, authHeader)
+			} else {
+				proxyHTTP(w, r, upstream, authHeader)
+			}
+		}),
+	}
+	server.Serve(listener) // blocks forever
+}
+
+func proxyConnect(w http.ResponseWriter, r *http.Request, upstream, authHeader string) {
+	upstreamConn, err := net.DialTimeout("tcp", upstream, 30*time.Second)
+	if err != nil {
+		http.Error(w, "upstream dial failed", http.StatusBadGateway)
+		return
+	}
+
+	connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: %s\r\n\r\n",
+		r.Host, r.Host, authHeader)
+	if _, err := upstreamConn.Write([]byte(connectReq)); err != nil {
+		upstreamConn.Close()
+		http.Error(w, "upstream write failed", http.StatusBadGateway)
+		return
+	}
+
+	buf := make([]byte, 4096)
+	n, err := upstreamConn.Read(buf)
+	if err != nil {
+		upstreamConn.Close()
+		http.Error(w, "upstream read failed", http.StatusBadGateway)
+		return
+	}
+	response := string(buf[:n])
+	if len(response) < 12 || response[9:12] != "200" {
+		upstreamConn.Close()
+		http.Error(w, "upstream rejected CONNECT", http.StatusBadGateway)
+		return
+	}
+
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		upstreamConn.Close()
+		http.Error(w, "hijack not supported", http.StatusInternalServerError)
+		return
+	}
+	clientConn, _, err := hijacker.Hijack()
+	if err != nil {
+		upstreamConn.Close()
+		return
+	}
+
+	clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+
+	go func() {
+		io.Copy(upstreamConn, clientConn)
+		upstreamConn.Close()
+	}()
+	go func() {
+		io.Copy(clientConn, upstreamConn)
+		clientConn.Close()
+	}()
+}
+
+func proxyHTTP(w http.ResponseWriter, r *http.Request, upstream, authHeader string) {
+	proxyURL, _ := url.Parse("http://" + upstream)
+	transport := &http.Transport{
+		Proxy: http.ProxyURL(proxyURL),
+		ProxyConnectHeader: http.Header{
+			"Proxy-Authorization": {authHeader},
+		},
+	}
+	r.Header.Set("Proxy-Authorization", authHeader)
+
+	resp, err := transport.RoundTrip(r)
+	if err != nil {
+		http.Error(w, "upstream request failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	for k, vv := range resp.Header {
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }

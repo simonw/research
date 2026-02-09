@@ -152,14 +152,28 @@ rod-cli stop
 |---|---|---|
 | `ROD_CHROME_BIN` | `/usr/bin/google-chrome` | Path to Chrome/Chromium binary |
 | `ROD_TIMEOUT` | `30` | Default timeout in seconds for element queries |
+| `HTTPS_PROXY` / `HTTP_PROXY` | (none) | Authenticated proxy auto-detected on start |
 
 State is stored in `~/.rod-cli/state.json`. Chrome user data is stored in `~/.rod-cli/chrome-data/`.
+
+## Proxy support
+
+In environments with authenticated HTTP proxies (e.g., `HTTPS_PROXY=http://user:pass@host:port`), `rod-cli start` automatically:
+
+1. Detects the proxy credentials from environment variables
+2. Launches a local forwarding proxy that injects `Proxy-Authorization` headers into CONNECT requests
+3. Configures Chrome to use the local proxy
+
+This is necessary because Chrome cannot natively authenticate to proxies during HTTPS tunnel (CONNECT) establishment. The local proxy runs as a background process and is automatically cleaned up by `rod-cli stop`.
+
+See [claude-code-chrome-proxy.md](claude-code-chrome-proxy.md) for detailed technical notes.
 
 ## How it works
 
 The tool uses the [rod](https://github.com/go-rod/rod) Go library which communicates with Chrome via the DevTools Protocol (CDP) over WebSocket. Key implementation details:
 
 - **`start`** uses rod's `launcher` package to start Chrome with `Leakless(false)` so Chrome survives after the CLI exits
+- **Proxy auth** handled via a local forwarding proxy that bridges Chrome to authenticated upstream proxies
 - **State persistence** via a JSON file containing the WebSocket debug URL and Chrome PID
 - **Each command** creates a new rod `Browser` connection to the same Chrome instance, executes the operation, and disconnects
 - **Element queries** use rod's built-in auto-wait with a configurable timeout (default 30s)
