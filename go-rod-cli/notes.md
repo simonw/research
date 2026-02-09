@@ -92,6 +92,17 @@ This is much simpler than a daemon architecture while still providing statefulne
 - The `js` command with automatic function wrapping makes it easy to run arbitrary JS
 - Exit codes for boolean queries (exists, visible) enable use in shell scripts
 
+### Proxy authentication breakthrough
+- Environment has JWT-authenticated HTTP proxy (HTTPS_PROXY with user:jwt@host:port)
+- `curl` works fine (reads env vars), but Chrome cannot handle proxy auth natively
+- Error without proxy support: `net::ERR_TUNNEL_CONNECTION_FAILED`
+- Chrome's `--proxy-server` flag doesn't support `user:pass@host:port`
+- CDP `Fetch` domain (HandleAuth) doesn't help - operates above the CONNECT tunnel layer
+- **Solution**: local forwarding proxy that injects `Proxy-Authorization` into CONNECT requests
+- The rod-cli binary acts as its own proxy helper via hidden `_proxy` subcommand
+- Also needed `--ignore-certificate-errors` due to cert issues through the proxy
+- See `claude-code-chrome-proxy.md` for full details
+
 ### What could be improved
 - No XPath support yet (rod supports it via `page.ElementX()`)
 - No cookie management
