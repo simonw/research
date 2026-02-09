@@ -703,10 +703,27 @@ func cmdSleep(args []string) {
 	time.Sleep(time.Duration(secs * float64(time.Second)))
 }
 
+// nextAvailableFile returns "base+ext" if it doesn't exist,
+// otherwise "base-2+ext", "base-3+ext", etc.
+func nextAvailableFile(base, ext string) string {
+	name := base + ext
+	if _, err := os.Stat(name); os.IsNotExist(err) {
+		return name
+	}
+	for i := 2; ; i++ {
+		name = fmt.Sprintf("%s-%d%s", base, i, ext)
+		if _, err := os.Stat(name); os.IsNotExist(err) {
+			return name
+		}
+	}
+}
+
 func cmdScreenshot(args []string) {
-	file := "screenshot.png"
+	var file string
 	if len(args) > 0 {
 		file = args[0]
+	} else {
+		file = nextAvailableFile("screenshot", ".png")
 	}
 	_, _, page := withPage()
 	data, err := page.Screenshot(true, nil)
@@ -716,7 +733,7 @@ func cmdScreenshot(args []string) {
 	if err := os.WriteFile(file, data, 0644); err != nil {
 		fatal("failed to write screenshot: %v", err)
 	}
-	fmt.Printf("Saved %s (%d bytes)\n", file, len(data))
+	fmt.Println(file)
 }
 
 func cmdScreenshotEl(args []string) {
