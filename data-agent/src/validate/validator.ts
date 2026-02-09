@@ -2,6 +2,14 @@
  * Validator — Execute generated scripts, validate output, provide error feedback.
  *
  * Implements the execute → validate → diagnose → refine → validate loop (up to 5x).
+ *
+ * Error classification enhanced with patterns from:
+ * @see https://github.com/Skyvern-AI/skyvern/blob/main/skyvern/forge/agent.py
+ * Lines L3962–L4010 — Step-level retries as a first-class state machine
+ * Lines L4012–L4060 — Failure summarization that detects provider errors
+ *
+ * @see https://github.com/browserbase/stagehand/blob/main/packages/core/lib/v3/handlers/actHandler.ts
+ * Timeout guard discipline — createTimeoutGuard() usage
  */
 
 import { spawnSync } from 'node:child_process';
@@ -9,6 +17,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { RunResult, LlmProvider, AnalysisResult } from '../types.js';
 import { refineScript } from '../generate/script-generator.js';
+import { appendRunLog } from '../browser/artifacts.js';
 
 const PROJECT_NODE_MODULES = resolve(import.meta.dirname, '../../node_modules');
 
@@ -17,6 +26,8 @@ interface ValidateOptions {
   llm: LlmProvider;
   maxIterations?: number;
   scriptTimeout?: number;
+  /** When true, auto-install Playwright Chromium if missing browser is detected. */
+  autoInstall?: boolean;
 }
 
 interface ValidateResult {
@@ -27,10 +38,169 @@ interface ValidateResult {
 }
 
 /**
+ * Error classification categories with actionable hints.
+ *
+ * Pattern from Skyvern: classify failures deterministically before calling LLM
+ * to avoid "LLM-blame loops".
+ * @see https://github.com/Skyvern-AI/skyvern/blob/main/skyvern/forge/agent.py L4012–L4060
+ */
+export type ErrorClass =
+  | 'missing_browser'
+  | 'blocked_page'
+  | 'navigation_timeout'
+  | 'selector_timeout'
+  | 'auth_required'
+  | 'rate_limited'
+  | 'captcha'
+  | 'json_parse'
+  | 'unknown';
+
+export interface ClassifiedError {
+  errorClass: ErrorClass;
+  message: string;
+  hint: string;
+  autoFixable: boolean;
+}
+
+/**
+ * Classify an error from script execution output into an actionable category.
+ */
+export function classifyError(stderr: string, stdout: string): ClassifiedError[] {
+  const combined = stderr + '\n' + stdout;
+  const errors: ClassifiedError[] = [];
+
+  // Missing Playwright browser executable
+  if (
+    /Executable doesn't exist/i.test(combined) ||
+    /browserType\.launch/i.test(combined) ||
+    /No usable browser/i.test(combined) ||
+    /PLAYWRIGHT_BROWSERS_PATH/i.test(combined)
+  ) {
+    errors.push({
+      errorClass: 'missing_browser',
+      message: 'Playwright browser executable not found',
+      hint: 'Run: npx playwright install chromium',
+      autoFixable: true,
+    });
+  }
+
+  // Navigation timeout
+  if (
+    /Navigation timeout/i.test(combined) ||
+    /page\.goto.*timed?\s*out/i.test(combined) ||
+    /ERR_CONNECTION_REFUSED/i.test(combined) ||
+    /ERR_NAME_NOT_RESOLVED/i.test(combined)
+  ) {
+    errors.push({
+      errorClass: 'navigation_timeout',
+      message: 'Page navigation timed out or connection refused',
+      hint: 'Check URL validity and network connectivity. The target site may be down.',
+      autoFixable: false,
+    });
+  }
+
+  // Selector timeout
+  if (
+    /waiting for (selector|locator)/i.test(combined) ||
+    /strict mode violation/i.test(combined) ||
+    /locator\.click.*timeout/i.test(combined) ||
+    /locator\.fill.*timeout/i.test(combined)
+  ) {
+    errors.push({
+      errorClass: 'selector_timeout',
+      message: 'Element selector not found or matched multiple elements',
+      hint: 'Page structure may have changed. Use more specific selectors or waitForSelector.',
+      autoFixable: false,
+    });
+  }
+
+  // Blocked page (403)
+  if (/HTTP 403/i.test(combined) || /403 Forbidden/i.test(combined)) {
+    errors.push({
+      errorClass: 'blocked_page',
+      message: 'Site returned 403 Forbidden',
+      hint: 'Site is blocking automation. Try: data-agent login <url> to authenticate first.',
+      autoFixable: false,
+    });
+  }
+
+  // Auth required (401)
+  if (/HTTP 401/i.test(combined) || /401 Unauthorized/i.test(combined)) {
+    errors.push({
+      errorClass: 'auth_required',
+      message: 'Authentication required (401)',
+      hint: 'Run: data-agent login <url> — to save authentication state.',
+      autoFixable: false,
+    });
+  }
+
+  // Rate limited (429)
+  if (/HTTP 429/i.test(combined) || /429 Too Many/i.test(combined) || /rate.?limit/i.test(combined)) {
+    errors.push({
+      errorClass: 'rate_limited',
+      message: 'Rate limited (429 Too Many Requests)',
+      hint: 'Add delays between requests or use --proxy for IP rotation.',
+      autoFixable: false,
+    });
+  }
+
+  // CAPTCHA detected
+  if (/captcha/i.test(combined) || /challenge.*required/i.test(combined) || /hcaptcha/i.test(combined)) {
+    errors.push({
+      errorClass: 'captcha',
+      message: 'CAPTCHA or challenge detected',
+      hint: 'Manual intervention required. Run: data-agent login <url> to solve CAPTCHA in browser.',
+      autoFixable: false,
+    });
+  }
+
+  // JSON parse error (got HTML instead of JSON)
+  if (/Unexpected token\s*[<']/i.test(combined) || /SyntaxError.*JSON/i.test(combined)) {
+    errors.push({
+      errorClass: 'json_parse',
+      message: 'JSON parse error — API returned HTML instead of JSON',
+      hint: 'Check authentication and URL correctness. The API endpoint may require auth cookies.',
+      autoFixable: false,
+    });
+  }
+
+  if (errors.length === 0) {
+    errors.push({
+      errorClass: 'unknown',
+      message: 'Script failed with no recognized error pattern',
+      hint: 'Check the raw stderr output for details.',
+      autoFixable: false,
+    });
+  }
+
+  return errors;
+}
+
+/**
+ * Attempt to auto-install Playwright Chromium.
+ * Returns true if installation succeeded.
+ */
+function tryAutoInstallPlaywright(): boolean {
+  console.log('  Auto-installing Playwright Chromium...');
+  const result = spawnSync('npx', ['playwright', 'install', 'chromium'], {
+    shell: true,
+    timeout: 120_000,
+    encoding: 'utf-8',
+    stdio: ['inherit', 'pipe', 'pipe'],
+  });
+  if (result.status === 0) {
+    console.log('  Playwright Chromium installed successfully.');
+    return true;
+  }
+  console.error('  Failed to install Playwright Chromium:', result.stderr?.slice(0, 200));
+  return false;
+}
+
+/**
  * Run the validate-and-refine loop.
  */
 export async function validate(options: ValidateOptions): Promise<ValidateResult> {
-  const { sessionDir, llm, maxIterations = 5, scriptTimeout = 120_000 } = options;
+  const { sessionDir, llm, maxIterations = 5, scriptTimeout = 120_000, autoInstall } = options;
 
   // Load analysis and session for refinement context
   let analysis: AnalysisResult | undefined;
@@ -69,6 +239,14 @@ export async function validate(options: ValidateOptions): Promise<ValidateResult
     const feedback = extractErrorFeedback(result, sessionDir);
     const shortSummary = feedback.split('\n').slice(0, 3).join(' ').slice(0, 120);
 
+    // Classify the error for structured diagnostics
+    const classified = classifyError(result.stderr, result.stdout);
+    for (const err of classified) {
+      if (err.errorClass !== 'unknown') {
+        console.log(`  [${err.errorClass}] ${err.hint}`);
+      }
+    }
+
     if (result.exitCode !== 0) {
       console.log(`  Failed (exit ${result.exitCode}, ${durationStr}s) — ${shortSummary}`);
     } else {
@@ -76,7 +254,19 @@ export async function validate(options: ValidateOptions): Promise<ValidateResult
       console.log(`  Exit 0 but ${reason || 'output invalid'} (${durationStr}s)`);
     }
 
+    // Log to run.log artifact
+    appendRunLog(sessionDir, `Iteration ${i}: exit=${result.exitCode} errors=[${classified.map(e => e.errorClass).join(',')}]`);
+
     finalExitCode = result.exitCode;
+
+    // Auto-install Playwright if missing browser detected
+    const hasMissingBrowser = classified.some(e => e.errorClass === 'missing_browser');
+    if (hasMissingBrowser && autoInstall && i === 1) {
+      if (tryAutoInstallPlaywright()) {
+        console.log('  Retrying after auto-install...');
+        continue; // retry immediately without refining
+      }
+    }
 
     // Don't refine after last iteration
     if (i === maxIterations) break;

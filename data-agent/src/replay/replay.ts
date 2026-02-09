@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { findExtractor, updateRegistryAfterRun } from './registry.js';
+import { getChromePath } from '../browser/detect.js';
 
 /** Resolve data-agent's node_modules so replay scripts can find dependencies. */
 const PROJECT_NODE_MODULES = resolve(import.meta.dirname, '../../node_modules');
@@ -37,6 +38,10 @@ export async function replay(domain: string): Promise<void> {
 
   const start = Date.now();
 
+  // Prefer system Chrome/Chromium so replay works cross-platform.
+  // Many generated scripts default to a macOS Chrome path.
+  const chromePath = getChromePath();
+
   const result = spawnSync('npx', ['tsx', 'automation.ts'], {
     cwd: scriptDir,
     shell: true,
@@ -47,6 +52,8 @@ export async function replay(domain: string): Promise<void> {
     env: {
       ...process.env,
       NODE_PATH: PROJECT_NODE_MODULES,
+      // If the script uses CHROME_PATH, ensure it's set.
+      ...(chromePath ? { CHROME_PATH: chromePath } : {}),
     },
   });
 

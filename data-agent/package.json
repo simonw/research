@@ -11,7 +11,8 @@
     "build": "tsc",
     "prepare": "npm run build",
     "start": "node --enable-source-maps dist/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "test:integration": "tsx src/test/integration.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
