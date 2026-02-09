@@ -133,7 +133,7 @@ Waiting:
   rod-cli sleep <seconds>          Sleep for N seconds
 
 Screenshots:
-  rod-cli screenshot [file]        Take page screenshot
+  rod-cli screenshot [-w N] [-h N] [file]  Take page screenshot
   rod-cli screenshot-el <sel> [f]  Screenshot an element
 
 Tabs:
@@ -769,13 +769,63 @@ func nextAvailableFile(base, ext string) string {
 
 func cmdScreenshot(args []string) {
 	var file string
-	if len(args) > 0 {
-		file = args[0]
+	width := 1280
+	height := 0
+	fullPage := true
+
+	// Parse flags and positional args
+	var positional []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-w", "--width":
+			i++
+			if i >= len(args) {
+				fatal("missing value for %s", args[i-1])
+			}
+			v, err := strconv.Atoi(args[i])
+			if err != nil {
+				fatal("invalid width: %v", err)
+			}
+			width = v
+		case "-h", "--height":
+			i++
+			if i >= len(args) {
+				fatal("missing value for %s", args[i-1])
+			}
+			v, err := strconv.Atoi(args[i])
+			if err != nil {
+				fatal("invalid height: %v", err)
+			}
+			height = v
+			fullPage = false
+		default:
+			positional = append(positional, args[i])
+		}
+	}
+
+	if len(positional) > 0 {
+		file = positional[0]
 	} else {
 		file = nextAvailableFile("screenshot", ".png")
 	}
+
 	_, _, page := withPage()
-	data, err := page.Screenshot(true, nil)
+
+	// Set viewport size
+	viewportHeight := height
+	if viewportHeight == 0 {
+		viewportHeight = 720
+	}
+	err := proto.EmulationSetDeviceMetricsOverride{
+		Width:             width,
+		Height:            viewportHeight,
+		DeviceScaleFactor: 1,
+	}.Call(page)
+	if err != nil {
+		fatal("failed to set viewport: %v", err)
+	}
+
+	data, err := page.Screenshot(fullPage, nil)
 	if err != nil {
 		fatal("screenshot failed: %v", err)
 	}
