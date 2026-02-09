@@ -41,9 +41,12 @@ export async function waitForNetworkSettle(
   } = options;
 
   return new Promise<void>((resolve) => {
-    const inflight = new Map<string, number>(); // url → start timestamp
+    // Track by Playwright Request identity (object ref), not URL,
+    // so concurrent requests to the same URL don't overwrite each other.
+    const inflight = new Map<object, number>(); // request → start timestamp
     let quietTimer: ReturnType<typeof setTimeout> | null = null;
     let hardTimer: ReturnType<typeof setTimeout> | null = null;
+    let sweepInterval: ReturnType<typeof setInterval> | null = null;
     let settled = false;
 
     const cleanup = () => {
@@ -51,6 +54,7 @@ export async function waitForNetworkSettle(
       settled = true;
       if (quietTimer) clearTimeout(quietTimer);
       if (hardTimer) clearTimeout(hardTimer);
+      if (sweepInterval) clearInterval(sweepInterval);
       page.removeListener('request', onRequest);
       page.removeListener('requestfinished', onRequestDone);
       page.removeListener('requestfailed', onRequestDone);
@@ -59,9 +63,9 @@ export async function waitForNetworkSettle(
 
     const sweepStalled = () => {
       const now = Date.now();
-      for (const [url, startTime] of inflight) {
+      for (const [req, startTime] of inflight) {
         if (now - startTime > stallThresholdMs) {
-          inflight.delete(url);
+          inflight.delete(req);
         }
       }
     };
@@ -94,7 +98,7 @@ export async function waitForNetworkSettle(
       if (isIgnored(url)) return;
       // Ignore websocket resource type (Playwright marks them)
       if (request.resourceType() === 'websocket' || request.resourceType() === 'eventsource') return;
-      inflight.set(url, Date.now());
+      inflight.set(request, Date.now());
       if (quietTimer) {
         clearTimeout(quietTimer);
         quietTimer = null;
@@ -102,7 +106,7 @@ export async function waitForNetworkSettle(
     };
 
     const onRequestDone = (request: { url: () => string }) => {
-      inflight.delete(request.url());
+      inflight.delete(request);
       checkQuiet();
     };
 
@@ -112,6 +116,10 @@ export async function waitForNetworkSettle(
 
     // Hard timeout — never wait forever
     hardTimer = setTimeout(cleanup, timeoutMs);
+
+    // Periodic stall sweeper — runs even if no request events fire,
+    // so hung requests that never finish/fail still get cleaned up.
+    sweepInterval = setInterval(checkQuiet, stallThresholdMs);
 
     // If network is already quiet, start the quiet timer immediately
     checkQuiet();
