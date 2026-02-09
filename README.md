@@ -160,7 +160,31 @@ for dirname, _ in subdirs_with_dates:
             readme_path.write_text('\n'.join(new_lines))
 
 ]]]-->
-## 58 research projects
+## 60 research projects
+
+### [go-rod-cli](https://github.com/simonw/research/tree/main/go-rod-cli) (2026-02-09)
+
+Leveraging the [rod](https://github.com/go-rod/rod) browser automation library, rod-cli provides a lightweight Go-based command-line tool for scripting persistent headless Chrome sessions. Each CLI command connects to and manipulates the same long-running Chrome instance via DevTools Protocol, enabling seamless multi-step browser automation in shell scripts or interactive use. State and session data are managed transparently, offering granular control over navigation, DOM extraction, element interaction, tab management, and JavaScript evaluation. The architecture is modular: Chrome persists independently, while individual commands execute as short-lived processes, supporting robust shell scripting and conditional logic.
+
+**Key features:**
+- Persistent headless Chrome controlled via CLI for streamlined automation
+- Supports navigation, DOM queries, element interaction, screenshots, and PDF export
+- Easy scripting in bash: run stepwise browser procedures outside a GUI
+- Built with Go; relies on modern Chrome/Chromium and the [rod library](https://github.com/go-rod/rod)
+- Maintains session state via JSON and enables advanced tab management
+
+For hands-on usage and examples, see: [rod-cli Project](https://github.com/go-rod/rod-cli)
+
+### [rod-library-research](https://github.com/simonw/research/tree/main/rod-library-research) (2026-02-09)
+
+Rod is an advanced Go library designed to automate Chrome browsers using the Chrome DevTools Protocol, providing a comprehensive API for web scraping, browser control, element interaction, and robust waiting strategies. With high-level convenience methods (such as Must-prefixed methods for fast scripting) and direct protocol access, Rod enables streamlined workflows from simple scraping to complex automation scenarios, all without third-party drivers. Its method chaining, auto-waiting, fine-grained event handling, and built-in error management distinguish Rod as both developer-friendly and production-ready. The library also offers native concurrency support, customizable browser launch configurations, and tools for screenshots, PDFs, network interception, and JavaScript injection. Explore the [GitHub repository](https://github.com/go-rod/rod) and [documentation](https://go-rod.github.io/#/) for detailed guides and API references.
+
+**Key features and findings:**
+- Minimal setup: no Selenium or drivers, auto-downloads Chromium on first launch.
+- Supports both rapid scripting and error-safe production code via Must/non-Must API patterns.
+- Extensive, auto-waited element queries (CSS, XPath, regex, JS), robust interaction methods (mouse, keyboard, forms).
+- Built-in timeout/cancellation controls, event-driven synchronization, and full thread safety for concurrent goroutines.
+- Includes utilities for screenshots, PDFs, network hijacking, and exposing Go functions in page JS.
 
 ### [libkrun-go-cli-tool](https://github.com/simonw/research/tree/main/libkrun-go-cli-tool) (2026-02-08)
 
