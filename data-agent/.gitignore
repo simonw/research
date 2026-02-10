@@ -3,3 +3,6 @@ dist/
 sessions/
 *.backup-*.ts
 .env
+# Local integration test artifacts
+test-artifacts/
+output.json

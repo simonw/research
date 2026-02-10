@@ -9,10 +9,12 @@
  */
 
 import { launchProfile } from '../browser/stealth.js';
-import { readFileSync } from 'node:fs';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { getEnhancedSnapshot, getSnapshotStats } from '../browser/snapshot.js';
+import { waitForNetworkSettle } from '../browser/network-settle.js';
+import { getPageStats, formatPageStats } from '../browser/page-stats.js';
+import { initArtifactBundle, recordPageStats, appendRunLog } from '../browser/artifacts.js';
 import type {
   ActionWithIntent,
   ExploreDecision,
@@ -88,15 +90,16 @@ function loadExplorePrompt(): string {
 export async function explore(options: ExploreOptions): Promise<ExploreResult> {
   const { task, url, llm, chromePath, headless = false, sessionsDir } = options;
 
-  // Create session directory
+  // Create session directory with artifact bundle
   const sessionId = `session-${Date.now()}`;
   const sessionDir = join(sessionsDir, sessionId);
-  mkdirSync(sessionDir, { recursive: true });
+  initArtifactBundle(sessionDir);
 
   const harPath = join(sessionDir, 'recording.har');
 
   console.log(`  Session: ${sessionDir}`);
   console.log(`  HAR: ${harPath}`);
+  appendRunLog(sessionDir, `Explore started: task="${task}" url="${url}"`);
 
   // Launch browser with persistent profile
   const { context, page, close } = await launchProfile({
@@ -126,11 +129,17 @@ export async function explore(options: ExploreOptions): Promise<ExploreResult> {
   });
 
   // Navigate to starting URL
+  // Use network-settle instead of waitForLoadState('networkidle')
+  // Adapted from Stagehand's waitForDomNetworkQuiet():
+  // @see https://github.com/browserbase/stagehand/blob/main/packages/core/lib/v3/handlers/handlerUtils/actHandlerUtils.ts L537–L679
   console.log(`  Navigating to ${url}...`);
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-  await page.waitForLoadState('networkidle').catch(() => {});
+  await waitForNetworkSettle(page, { quietMs: 500, timeoutMs: 5000 });
 
   const systemPrompt = loadExplorePrompt();
+
+  /** Count consecutive blocked-page detections for early bail. */
+  let consecutiveBlocked = 0;
 
   // Agent loop
   for (let step = 0; step < MAX_STEPS; step++) {
@@ -142,11 +151,33 @@ export async function explore(options: ExploreOptions): Promise<ExploreResult> {
         compact: true,
       });
 
-      const stats = getSnapshotStats(snapshot, refMap);
-      console.log(`  Step ${step + 1}: snapshot ${stats.refs} refs, ~${stats.tokens} tokens`);
+      const snapshotStats = getSnapshotStats(snapshot, refMap);
+
+      // Collect page stats for blocked-page detection
+      // Inspired by browser-use _extract_page_statistics():
+      // @see https://github.com/browser-use/browser-use/blob/main/browser_use/agent/prompts.py
+      const pageStats = await getPageStats(page);
+      recordPageStats(sessionDir, step, pageStats);
+
+      const statsStr = formatPageStats(pageStats);
+      console.log(`  Step ${step + 1}: snapshot ${snapshotStats.refs} refs, ~${snapshotStats.tokens} tokens ${statsStr}`);
+
+      // Blocked-page early bail
+      if (pageStats.isLikelyBlocked) {
+        consecutiveBlocked++;
+        appendRunLog(sessionDir, `Step ${step + 1}: blocked detection — ${pageStats.blockReason}`);
+        if (consecutiveBlocked >= 2) {
+          console.log(`  Blocked page detected (${consecutiveBlocked}x consecutive): ${pageStats.blockReason}`);
+          console.log('  Stopping exploration — site appears to be blocking automation.');
+          appendRunLog(sessionDir, 'Exploration stopped: consecutive blocked page detections');
+          break;
+        }
+      } else {
+        consecutiveBlocked = 0;
+      }
 
       // 2. PLAN: Ask LLM what to do next
-      const userPrompt = buildExplorePrompt(task, snapshot, actions, apisSeen);
+      const userPrompt = buildExplorePrompt(task, snapshot, actions, apisSeen, statsStr);
       const decision = await llm.generateJson<ExploreDecision>(systemPrompt, userPrompt);
 
       console.log(`    Action: ${decision.done ? 'DONE' : decision.action} — ${decision.reasoning.slice(0, 80)}`);
@@ -182,9 +213,8 @@ export async function explore(options: ExploreOptions): Promise<ExploreResult> {
         await page.keyboard.press(decision.key);
       }
 
-      // Wait for network to settle after action
-      await page.waitForLoadState('networkidle').catch(() => {});
-      await page.waitForTimeout(500);
+      // Wait for network to settle after action (Stagehand pattern)
+      await waitForNetworkSettle(page, { quietMs: 500, timeoutMs: 5000 });
 
       // 4. RECORD: Store action with intent metadata
       actions.push({
@@ -218,6 +248,7 @@ export async function explore(options: ExploreOptions): Promise<ExploreResult> {
   };
   writeFileSync(join(sessionDir, 'session.json'), JSON.stringify(sessionMeta, null, 2));
 
+  appendRunLog(sessionDir, `Explore complete: ${actions.length} actions, ${apisSeen.length} APIs observed`);
   console.log(`  Explore complete: ${actions.length} actions, ${apisSeen.length} APIs observed`);
 
   return { harPath, actions, apisSeen, sessionDir };
@@ -231,10 +262,16 @@ function buildExplorePrompt(
   snapshot: string,
   actions: ActionWithIntent[],
   apisSeen: ObservedApiCall[],
+  pageStatsStr?: string,
 ): string {
   const parts: string[] = [];
 
   parts.push(`## Task\n${task}\n`);
+
+  // Inject page stats for LLM context (browser-use pattern)
+  if (pageStatsStr) {
+    parts.push(`## Page Statistics\n${pageStatsStr}\n`);
+  }
 
   parts.push(`## Current Page Snapshot\n${snapshot}\n`);
 
