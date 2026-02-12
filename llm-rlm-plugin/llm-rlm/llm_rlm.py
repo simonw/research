@@ -1,4 +1,5 @@
 import json
+import pathlib
 from typing import Optional
 
 import eryx
@@ -20,16 +21,22 @@ class RLMToolbox(llm.Toolbox):
     def __init__(
         self,
         context: Optional[str] = None,
+        context_file: Optional[str] = None,
         sub_model: Optional[str] = None,
         max_output_chars: int = 8192,
         execution_timeout_ms: int = 120_000,
     ):
+        if context_file is not None and context is None:
+            context = pathlib.Path(context_file).read_text()
         self._context = context
         self._sub_model_id = sub_model
         self._max_output_chars = max_output_chars
         self._execution_timeout_ms = execution_timeout_ms
         self._session: Optional[eryx.Session] = None
         self._sub_model: Optional[llm.Model] = None
+        self._total_input_tokens = 0
+        self._total_output_tokens = 0
+        self._sub_llm_call_count = 0
 
     def _get_sub_model(self) -> llm.Model:
         if self._sub_model is None:
@@ -37,20 +44,33 @@ class RLMToolbox(llm.Toolbox):
             self._sub_model = llm.get_model(model_id)
         return self._sub_model
 
-    def _llm_query(self, prompt: str) -> dict:
+    def _track_usage(self, response):
+        """Accumulate token usage from a sub-LLM response."""
+        self._sub_llm_call_count += 1
+        usage = response.usage()
+        if usage.input is not None:
+            self._total_input_tokens += usage.input
+        if usage.output is not None:
+            self._total_output_tokens += usage.output
+
+    def _llm_query(self, prompt: str) -> str:
         """Host-side callback: query a sub-LLM with a prompt."""
         model = self._get_sub_model()
         response = model.prompt(prompt)
-        return {"response": response.text()}
+        text = response.text()
+        self._track_usage(response)
+        return text
 
-    def _llm_batch(self, prompts: list) -> dict:
+    def _llm_batch(self, prompts: list) -> list:
         """Host-side callback: query a sub-LLM with multiple prompts."""
         model = self._get_sub_model()
         responses = []
         for prompt in prompts:
             response = model.prompt(prompt)
-            responses.append(response.text())
-        return {"responses": responses}
+            text = response.text()
+            self._track_usage(response)
+            responses.append(text)
+        return responses
 
     def _ensure_session(self) -> eryx.Session:
         if self._session is None:
@@ -62,7 +82,7 @@ class RLMToolbox(llm.Toolbox):
                         "fn": self._llm_query,
                         "description": (
                             "Query a sub-LLM with a text prompt. "
-                            "Returns {'response': '...'}. "
+                            "Returns the response as a plain string. "
                             "Use for semantic analysis of text chunks."
                         ),
                     },
@@ -72,7 +92,7 @@ class RLMToolbox(llm.Toolbox):
                         "description": (
                             "Query a sub-LLM with multiple prompts in batch. "
                             "Pass prompts as a list of strings. "
-                            "Returns {'responses': ['...', '...']}."
+                            "Returns a list of response strings."
                         ),
                     },
                 ],
@@ -114,13 +134,23 @@ class RLMToolbox(llm.Toolbox):
         except Exception:
             return None
 
+    def _usage_summary(self) -> str:
+        """Return a token usage summary string."""
+        return (
+            f"Sub-LLM token usage: "
+            f"{self._total_input_tokens:,} input, "
+            f"{self._total_output_tokens:,} output "
+            f"({self._sub_llm_call_count} calls)"
+        )
+
     def execute_python(self, code: str) -> str:
         """Execute Python code in the RLM sandbox environment.
 
         The sandbox maintains state across calls. If context was provided,
         it is available as the `context` variable (a string). You can also use
         `await llm_query(prompt='...')` and `await llm_batch(prompts=[...])`
-        to spawn sub-LLM calls for recursive reasoning.
+        to spawn sub-LLM calls for recursive reasoning. llm_query returns a
+        plain string. llm_batch returns a list of strings.
 
         IMPORTANT: Use print() to see output. Bare expressions produce no output.
         Example: print(context[:500]) to peek at the first 500 chars of context.
@@ -159,9 +189,9 @@ class RLMToolbox(llm.Toolbox):
             value = self._read_variable(variable_name)
             if value is None:
                 return f"Error: variable '{variable_name}' not found in session"
-            return f"FINAL ANSWER: {value}"
+            return f"FINAL ANSWER: {value}\n\n{self._usage_summary()}"
         elif answer is not None:
-            return f"FINAL ANSWER: {answer}"
+            return f"FINAL ANSWER: {answer}\n\n{self._usage_summary()}"
         else:
             return "Error: provide either 'answer' or 'variable_name'"
 

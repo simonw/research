@@ -164,3 +164,36 @@ Tested with `llm -m gpt-5.2 -T RLMToolbox --td`:
 
 Both tasks completed successfully - the model uses tool calls naturally and
 adapts when sandbox doesn't have expected libraries.
+
+### Token Tracking
+
+Added token tracking for sub-LLM calls. Each `_llm_query` and `_llm_batch` callback
+accumulates `input_tokens` and `output_tokens` from the LLM response's `usage()` method.
+The totals are included in the `submit_answer` response as a usage summary.
+
+### context_file Support
+
+Added `context_file` parameter to `RLMToolbox.__init__()` so the CLI can load context:
+```
+llm -m gpt-5.2 -T 'RLMToolbox(context_file="/path/to/data.txt")' --td "prompt..."
+```
+
+### Simplified Callback Return Types
+
+Changed `llm_query` to return a plain string (not a dict), and `llm_batch` to return
+a list of strings. This makes usage in the sandbox much more natural:
+```python
+result = await llm_query(prompt="classify this")  # returns "Positive"
+```
+Previously returned `{"response": "Positive"}` which models often forgot to unwrap.
+
+### CLI Test with llm_query() Calls
+
+Tested full RLM pipeline via CLI with 5 reports classified via `llm_query()`:
+```
+$ llm -m gpt-5.2 -T 'RLMToolbox(context_file="/tmp/rlm_test_context.txt")' --td \
+  "classify each report..."
+```
+Result: Model split context by lines, called `await llm_query()` 5 times, printed
+classifications, and submitted answer. Token usage reported:
+`Sub-LLM token usage: 219 input, 20 output (5 calls)`

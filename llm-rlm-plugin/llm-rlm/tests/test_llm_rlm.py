@@ -133,6 +133,65 @@ class TestLLMQueryCallback:
         )
         assert "function" in result.lower() or "coroutine" in result.lower()
 
+class TestContextFile:
+    """Test loading context from a file path."""
+
+    def test_context_file(self, tmp_path):
+        """context_file should load file contents as context."""
+        p = tmp_path / "data.txt"
+        p.write_text("file content here")
+        toolbox = RLMToolbox(context_file=str(p))
+        result = toolbox.execute_python(code="print(context)")
+        assert "file content here" in result
+
+    def test_context_overrides_context_file(self, tmp_path):
+        """Explicit context should take priority over context_file."""
+        p = tmp_path / "data.txt"
+        p.write_text("from file")
+        toolbox = RLMToolbox(context="from arg", context_file=str(p))
+        result = toolbox.execute_python(code="print(context)")
+        assert "from arg" in result
+
+
+class TestTokenTracking:
+    """Test that sub-LLM token usage is tracked and reported."""
+
+    def test_initial_counts_zero(self):
+        """Token counters start at zero."""
+        toolbox = RLMToolbox()
+        assert toolbox._total_input_tokens == 0
+        assert toolbox._total_output_tokens == 0
+        assert toolbox._sub_llm_call_count == 0
+
+    def test_usage_summary_format(self):
+        """Usage summary should have the expected format."""
+        toolbox = RLMToolbox()
+        # Simulate some usage
+        toolbox._total_input_tokens = 1234
+        toolbox._total_output_tokens = 567
+        toolbox._sub_llm_call_count = 3
+        summary = toolbox._usage_summary()
+        assert "1,234 input" in summary
+        assert "567 output" in summary
+        assert "3 calls" in summary
+
+    def test_submit_answer_includes_usage(self):
+        """submit_answer should include token usage in its response."""
+        toolbox = RLMToolbox()
+        result = toolbox.submit_answer(answer="42")
+        assert "Sub-LLM token usage:" in result
+        assert "0 input" in result
+        assert "0 output" in result
+        assert "0 calls" in result
+
+    def test_submit_answer_variable_includes_usage(self):
+        """submit_answer with variable_name should also include usage."""
+        toolbox = RLMToolbox()
+        toolbox.execute_python(code="answer = 'yes'")
+        result = toolbox.submit_answer(variable_name="answer")
+        assert "FINAL ANSWER: yes" in result
+        assert "Sub-LLM token usage:" in result
+
 
 class TestContextNeverInPrompt:
     """Verify context is ONLY in the sandbox, never in model context."""
