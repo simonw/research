@@ -81,18 +81,18 @@ class RLMToolbox(llm.Toolbox):
                         "name": "llm_query",
                         "fn": self._llm_query,
                         "description": (
-                            "Query a sub-LLM with a text prompt. "
-                            "Returns the response as a plain string. "
-                            "Use for semantic analysis of text chunks."
+                            "Query a sub-LLM. Call with top-level await: "
+                            "result = await llm_query(prompt='...') "
+                            "Returns a plain string. Do NOT use asyncio.run()."
                         ),
                     },
                     {
                         "name": "llm_batch",
                         "fn": self._llm_batch,
                         "description": (
-                            "Query a sub-LLM with multiple prompts in batch. "
-                            "Pass prompts as a list of strings. "
-                            "Returns a list of response strings."
+                            "Query a sub-LLM with multiple prompts. Call with top-level await: "
+                            "results = await llm_batch(prompts=['...', '...']) "
+                            "Returns a list of strings. Do NOT use asyncio.run()."
                         ),
                     },
                 ],
@@ -147,10 +147,13 @@ class RLMToolbox(llm.Toolbox):
         """Execute Python code in the RLM sandbox environment.
 
         The sandbox maintains state across calls. If context was provided,
-        it is available as the `context` variable (a string). You can also use
-        `await llm_query(prompt='...')` and `await llm_batch(prompts=[...])`
-        to spawn sub-LLM calls for recursive reasoning. llm_query returns a
-        plain string. llm_batch returns a list of strings.
+        it is available as the `context` variable (a string).
+
+        Sub-LLM calls: use top-level `await` directly (do NOT use asyncio.run):
+          result = await llm_query(prompt="Summarize: " + chunk)
+          print(result)  # result is a plain string
+          results = await llm_batch(prompts=["Classify: " + c for c in chunks])
+          print(results)  # results is a list of strings
 
         IMPORTANT: Use print() to see output. Bare expressions produce no output.
         Example: print(context[:500]) to peek at the first 500 chars of context.
