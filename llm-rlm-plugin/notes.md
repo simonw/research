@@ -146,3 +146,21 @@ Tested three scenarios:
    searching for keyword "feline", correctly returns 10.
 
 All integration tests pass with gpt-5.2.
+
+### CLI Exercise
+
+Verified plugin works via `llm` CLI:
+
+```
+$ uv run llm plugins  # Shows llm-rlm with register_tools hook
+$ uv run llm tools    # Shows RLMToolbox_execute_python and RLMToolbox_submit_answer
+```
+
+Tested with `llm -m gpt-5.2 -T RLMToolbox --td`:
+1. **Sum of first 100 primes**: Model tried sympy (unavailable in sandbox),
+   then wrote its own is_prime function. Correctly computed 24133.
+2. **Context search**: Loaded 200-line log file as context. Model used
+   regex/grep in sandbox to find WARNING entry and extract secret password.
+
+Both tasks completed successfully - the model uses tool calls naturally and
+adapts when sandbox doesn't have expected libraries.
