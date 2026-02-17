@@ -1,10 +1,9 @@
 # SQLite Hamming Distance Extension: Scalar vs Virtual Table
 
-An investigation into implementing Hamming distance for binary embedding search
-in SQLite, comparing a scalar function approach with a virtual table approach
-that uses a preloaded cache and max-heap for top-k selection.
+Based on ["Hamming Distance for Hybrid Search in SQLite"](https://notnotp.com/notes/hamming-distance-for-hybrid-search-in-sqlite/) by [notnotp.com](https://notnotp.com/). The original article implements a `hamming_distance()` scalar function as a SQLite extension for binary embedding search and suggests that a virtual table could improve performance by maintaining a top-k heap during scanning instead of sorting all results.
 
-Based on the article ["Hamming Distance for Hybrid Search in SQLite"](https://notnotp.com/notes/hamming-distance-for-hybrid-search-in-sqlite/).
+This investigation recreates the scalar function, benchmarks it, then builds
+and benchmarks the virtual table concept to see how much faster it can go.
 
 ## Background
 

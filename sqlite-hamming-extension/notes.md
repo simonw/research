@@ -1,10 +1,11 @@
 # SQLite Hamming Distance Extension - Investigation Notes
 
+Based on ["Hamming Distance for Hybrid Search in SQLite"](https://notnotp.com/notes/hamming-distance-for-hybrid-search-in-sqlite/) by [notnotp.com](https://notnotp.com/). The original article describes implementing binary embedding search in SQLite using a scalar `hamming_distance()` function and suggests that a virtual table could improve performance by using a heap instead of a full sort.
+
 ## Goal
-Recreate the hamming distance SQLite extension from the article at
-https://notnotp.com/notes/hamming-distance-for-hybrid-search-in-sqlite/
-then benchmark it, and build a virtual table variant to see if top-k
-heap selection can beat full-sort performance.
+Recreate the hamming distance SQLite extension from the article, benchmark it,
+and build a virtual table variant to see if top-k heap selection can beat
+full-sort performance.
 
 ## Plan
 1. Implement the scalar `hamming_distance()` function as a loadable SQLite extension in C
