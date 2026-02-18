@@ -1,5 +1,10 @@
 # pymemchr-c: C Implementation of memchr Library
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 A Python C extension implementing the same API as the Rust-based [pymemchr](https://github.com/BurntSushi/memchr) library, providing high-performance byte and substring search functions.
 
 ## Overview

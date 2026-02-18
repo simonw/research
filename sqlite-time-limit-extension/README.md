@@ -1,5 +1,10 @@
 # SQLite Time Limit Extension
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 ## Overview
 This folder contains a small Python C extension that exposes a single function,
 `execute_with_timeout`, which executes SQL against a SQLite database and enforces

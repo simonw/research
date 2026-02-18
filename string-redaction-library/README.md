@@ -1,5 +1,10 @@
 # String Redaction Library
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 A Python library for detecting potential secrets in text using statistical analysis of character patterns that deviate from normal English words.
 
 ## Overview

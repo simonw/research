@@ -1,5 +1,10 @@
 # just-bash: Deno JSONL Server + Python Client
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 Investigation into using [just-bash](https://github.com/vercel-labs/just-bash) (a sandboxed bash emulator) from Deno, wrapping it as a JSONL-over-stdio process, and building a Python client library.
 
 ## What is just-bash?

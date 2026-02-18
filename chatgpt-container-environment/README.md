@@ -1,5 +1,10 @@
 # What we learned today about this ChatGPT “container” environment
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 _Date: 2026-01-26 (America/Los_Angeles)_
 
 These notes summarize what we observed by actually running commands and code inside the ChatGPT container/sandbox environment.

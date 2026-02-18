@@ -1,5 +1,10 @@
 # Building PyO3/Maturin Rust Extension Modules as WebAssembly Wheels for Pyodide
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 A comprehensive guide to compiling Rust Python extensions (via PyO3 and maturin) to WebAssembly for use in Pyodide.
 
 ---

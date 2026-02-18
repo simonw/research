@@ -1,5 +1,10 @@
 # cysqlite WebAssembly Wheel
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 A pre-built WebAssembly wheel of [cysqlite](https://github.com/coleifer/cysqlite) (v0.1.4) that runs in [Pyodide](https://pyodide.org/) in the browser.
 
 cysqlite is a fast Cython-based SQLite3 binding by Charles Leifer. This project cross-compiles it to WebAssembly using Emscripten so it can be loaded in Pyodide without any native dependencies.

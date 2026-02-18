@@ -1,5 +1,10 @@
 # Cloudflare Workers with Python and SQLite
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 Investigation of Cloudflare Workers development using JavaScript and Python (via Pyodide/WASM), with focus on SQLite persistence using Cloudflare D1.
 
 ## Quick Start - JavaScript Worker

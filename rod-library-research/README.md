@@ -1,5 +1,10 @@
 # Rod: Go Library for Chrome Automation -- Comprehensive API Reference
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 Rod is a high-level Go driver for the Chrome DevTools Protocol, designed for web automation and scraping. It provides both high-level convenience methods and low-level protocol access.
 
 - **Repository**: https://github.com/go-rod/rod

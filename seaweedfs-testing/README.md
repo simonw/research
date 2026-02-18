@@ -1,5 +1,10 @@
 # SeaweedFS 4.12 Feature Testing
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 *2026-02-13T12:48:05Z*
 
 This document explores and tests the features of [SeaweedFS](https://github.com/seaweedfs/seaweedfs), a simple and highly scalable distributed file system. We use SeaweedFS version 4.12 running on Linux x86_64, exercising the blob store API, filer, S3 compatibility, WebDAV, web UIs, TTL, collections, compression, image resizing, and volume management.
@@ -507,11 +512,13 @@ cat /tmp/s3-download.txt
 ```output
 make_bucket: test-bucket
 ---
-Completed 19 Bytes/19 Bytes (89 Bytes/s) with 1 file(s) remainingupload: ../../../../tmp/s3-test.txt to s3://test-bucket/hello.txt
+Completed 19 Bytes/19 Bytes (89 Bytes/s) with 1 file(s) remaining
+upload: ../../../../tmp/s3-test.txt to s3://test-bucket/hello.txt
 ---
 2026-02-13 13:00:05         19 hello.txt
 ---
-Completed 19 Bytes/19 Bytes (2.5 KiB/s) with 1 file(s) remainingdownload: s3://test-bucket/hello.txt to ../../../../tmp/s3-download.txt
+Completed 19 Bytes/19 Bytes (2.5 KiB/s) with 1 file(s) remaining
+download: s3://test-bucket/hello.txt to ../../../../tmp/s3-download.txt
 Hello from S3 API!
 ```
 

@@ -1,5 +1,10 @@
 # Vibium Python Client Investigation
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 This investigation explores the [Vibium](https://github.com/VibiumDev/vibium) browser automation project and implements a Python client library compatible with the existing Go binary and Node.js client.
 
 ## Overview
