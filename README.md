@@ -76,7 +76,7 @@ for dirname, commit_date in subdirs_with_dates:
         pass
 
     if github_url:
-        print(f"### [{dirname}]({github_url}) ({date_formatted})\n")
+        print(f"### [{dirname}]({github_url}#readme) ({date_formatted})\n")
     else:
         print(f"### {dirname} ({date_formatted})\n")
 
