@@ -1,5 +1,10 @@
 # Header Alignment Investigation - simonwillison.net
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 *2026-02-19T21:05:14Z by Showboat 0.6.0*
 <!-- showboat-id: 61801ded-9e24-4f4c-a11d-a26a5b7e9275 -->
 
