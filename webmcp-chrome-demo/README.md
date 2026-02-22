@@ -1,5 +1,10 @@
 # WebMCP + Chrome DevTools Protocol Demo
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 An investigation into WebMCP — the W3C draft standard that lets websites expose structured tools to AI agents via `navigator.modelContext` — and how to interact with it programmatically over the Chrome DevTools Protocol (CDP).
 
 ## What is WebMCP?
