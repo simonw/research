@@ -6,6 +6,8 @@ See [Code research projects with async coding agents like Claude Code and Codex]
 
 I try to include prompts and links to transcripts in [the PRs](https://github.com/simonw/research/pulls?q=is%3Apr+is%3Aclosed) that added each report, or in [the commits](https://github.com/simonw/research/commits/main/).
 
+*Times shown are in UTC.*
+
 <!--[[[cog
 import os
 import re
@@ -53,7 +55,7 @@ for dirname, commit_date in subdirs_with_dates:
     readme_path = folder_path / "README.md"
     summary_path = folder_path / "_summary.md"
 
-    date_formatted = commit_date.strftime('%Y-%m-%d %H:%M')
+    date_formatted = commit_date.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M')
 
     # Get GitHub repo URL
     github_url = None
