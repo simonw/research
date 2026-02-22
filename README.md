@@ -75,10 +75,19 @@ for dirname, commit_date in subdirs_with_dates:
     except Exception:
         pass
 
+    # Extract title from first H1 header in README, fallback to dirname
+    title = dirname
+    if readme_path.exists():
+        with open(readme_path, 'r') as f:
+            for readme_line in f:
+                if readme_line.startswith('# '):
+                    title = readme_line[2:].strip()
+                    break
+
     if github_url:
-        print(f"### [{dirname}]({github_url}#readme) ({date_formatted})\n")
+        print(f"### [{title}]({github_url}#readme) ({date_formatted})\n")
     else:
-        print(f"### {dirname} ({date_formatted})\n")
+        print(f"### {title} ({date_formatted})\n")
 
     # Check if summary already exists
     if summary_path.exists():
