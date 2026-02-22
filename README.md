@@ -53,7 +53,7 @@ for dirname, commit_date in subdirs_with_dates:
     readme_path = folder_path / "README.md"
     summary_path = folder_path / "_summary.md"
 
-    date_formatted = commit_date.strftime('%Y-%m-%d')
+    date_formatted = commit_date.strftime('%Y-%m-%d %H:%M')
 
     # Get GitHub repo URL
     github_url = None
