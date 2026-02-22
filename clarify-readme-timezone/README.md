@@ -1,5 +1,10 @@
 # README Timezone Clarification
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 ## Problem
 
 The times shown in the root README.md project headings (e.g., `2026-02-22 10:20`) did not specify a timezone and were inconsistent — some were in UTC and others in US Pacific time, depending on how each commit was authored.
