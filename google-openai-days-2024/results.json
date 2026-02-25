@@ -1,0 +1,361 @@
+{
+  "total_days": 18,
+  "days": [
+    {
+      "date": "2024-12-31",
+      "google_items": [
+        {
+          "type": "entry",
+          "id": 8685,
+          "title": "Things we learned about LLMs in 2024"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "entry",
+          "id": 8685,
+          "title": "Things we learned about LLMs in 2024"
+        }
+      ]
+    },
+    {
+      "date": "2024-12-20",
+      "google_items": [
+        {
+          "type": "entry",
+          "id": 8681,
+          "title": "December in LLMs has been a lot"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "blogmark",
+          "id": 8388,
+          "title": "OpenAI o3 breakthrough high score on ARC-AGI-PUB"
+        },
+        {
+          "type": "entry",
+          "id": 8681,
+          "title": "December in LLMs has been a lot"
+        },
+        {
+          "type": "entry",
+          "id": 8682,
+          "title": "Live blog: the 12th day of OpenAI - \"Early evals for OpenAI o3\""
+        },
+        {
+          "type": "quotation",
+          "id": 1558,
+          "title": "OpenAI's new o3 system - trained on the ARC-AGI-1 "
+        }
+      ]
+    },
+    {
+      "date": "2024-12-16",
+      "google_items": [
+        {
+          "type": "blogmark",
+          "id": 8377,
+          "title": "Veo 2"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "blogmark",
+          "id": 8376,
+          "title": "WebDev Arena"
+        }
+      ]
+    },
+    {
+      "date": "2024-12-13",
+      "google_items": [
+        {
+          "type": "blogmark",
+          "id": 8369,
+          "title": "<model-viewer> Web Component by Google"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "blogmark",
+          "id": 8368,
+          "title": "OpenAI's postmortem for API, ChatGPT & Sora Facing Issues"
+        },
+        {
+          "type": "blogmark",
+          "id": 8370,
+          "title": "OpenAI: Voice mode FAQ"
+        }
+      ]
+    },
+    {
+      "date": "2024-12-04",
+      "google_items": [
+        {
+          "type": "blogmark",
+          "id": 8347,
+          "title": "Genie 2: A large-scale foundation world model"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "entry",
+          "id": 8645,
+          "title": "First impressions of the new Amazon Nova LLMs (via a new llm-bedrock plugin)"
+        }
+      ]
+    },
+    {
+      "date": "2024-11-21",
+      "google_items": [
+        {
+          "type": "quotation",
+          "id": 1532,
+          "title": "When we started working on what became NotebookLM "
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "blogmark",
+          "id": 8314,
+          "title": "A warning about tiktoken, BPE, and OpenAI models"
+        },
+        {
+          "type": "blogmark",
+          "id": 8316,
+          "title": "OK, I can partly explain the LLM chess weirdness now"
+        }
+      ]
+    },
+    {
+      "date": "2024-11-19",
+      "google_items": [
+        {
+          "type": "blogmark",
+          "id": 8306,
+          "title": "Preview: Gemini API Additional Terms of Service"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "entry",
+          "id": 8611,
+          "title": "Notes from Bing Chat\u2014Our First Encounter With Manipulative AI"
+        }
+      ]
+    },
+    {
+      "date": "2024-10-23",
+      "google_items": [
+        {
+          "type": "blogmark",
+          "id": 8247,
+          "title": "Running prompts against images and PDFs with Google Gemini"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "quotation",
+          "id": 1504,
+          "title": "OpenAI\u2019s monthly revenue hit $300 million in Augus"
+        }
+      ]
+    },
+    {
+      "date": "2024-10-03",
+      "google_items": [
+        {
+          "type": "blogmark",
+          "id": 8155,
+          "title": "Gemini 1.5 Flash-8B is now production ready"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "blogmark",
+          "id": 8155,
+          "title": "Gemini 1.5 Flash-8B is now production ready"
+        }
+      ]
+    },
+    {
+      "date": "2024-08-24",
+      "google_items": [
+        {
+          "type": "blogmark",
+          "id": 8081,
+          "title": "SQL Has Problems. We Can Fix Them: Pipe Syntax In SQL"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "blogmark",
+          "id": 8080,
+          "title": "Musing about OAuth and LLMs on Mastodon"
+        }
+      ]
+    },
+    {
+      "date": "2024-08-08",
+      "google_items": [
+        {
+          "type": "blogmark",
+          "id": 8041,
+          "title": "Gemini 1.5 Flash price drop"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "blogmark",
+          "id": 8041,
+          "title": "Gemini 1.5 Flash price drop"
+        },
+        {
+          "type": "blogmark",
+          "id": 8042,
+          "title": "GPT-4o System Card"
+        }
+      ]
+    },
+    {
+      "date": "2024-07-16",
+      "google_items": [
+        {
+          "type": "quotation",
+          "id": 1350,
+          "title": "OpenAI and Anthropic focused on building models an"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "quotation",
+          "id": 1350,
+          "title": "OpenAI and Anthropic focused on building models an"
+        }
+      ]
+    },
+    {
+      "date": "2024-07-09",
+      "google_items": [
+        {
+          "type": "blogmark",
+          "id": 7943,
+          "title": "hangout_services/thunk.js"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "quotation",
+          "id": 1335,
+          "title": "Inside the labs we have these capable models, and "
+        }
+      ]
+    },
+    {
+      "date": "2024-05-24",
+      "google_items": [
+        {
+          "type": "blogmark",
+          "id": 7825,
+          "title": "Some goofy results from \u2018AI Overviews\u2019 in Google Search"
+        },
+        {
+          "type": "quotation",
+          "id": 1251,
+          "title": "I just left Google last month. The \"AI Projects\" I"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "blogmark",
+          "id": 7826,
+          "title": "Nilay Patel reports a hallucinated ChatGPT summary of his own article"
+        }
+      ]
+    },
+    {
+      "date": "2024-05-17",
+      "google_items": [
+        {
+          "type": "blogmark",
+          "id": 7813,
+          "title": "Understand errors and warnings better with Gemini"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "quotation",
+          "id": 1243,
+          "title": "I have seen the extremely restrictive off-boarding"
+        }
+      ]
+    },
+    {
+      "date": "2024-05-15",
+      "google_items": [
+        {
+          "type": "blogmark",
+          "id": 7808,
+          "title": "PaliGemma model README"
+        },
+        {
+          "type": "quotation",
+          "id": 1241,
+          "title": "But where the company once limited itself to gathe"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "blogmark",
+          "id": 7807,
+          "title": "OpenAI: Managing your work in the API platform with Projects"
+        },
+        {
+          "type": "entry",
+          "id": 8342,
+          "title": "ChatGPT in \"4o\" mode is not running the new features yet"
+        }
+      ]
+    },
+    {
+      "date": "2024-05-14",
+      "google_items": [
+        {
+          "type": "blogmark",
+          "id": 7803,
+          "title": "How developers are using Gemini 1.5 Pro\u2019s 1 million token context window"
+        },
+        {
+          "type": "blogmark",
+          "id": 7805,
+          "title": "Context caching for Google Gemini"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "blogmark",
+          "id": 7802,
+          "title": "Why your voice assistant might be sexist"
+        }
+      ]
+    },
+    {
+      "date": "2024-04-10",
+      "google_items": [
+        {
+          "type": "blogmark",
+          "id": 7670,
+          "title": "Gemini 1.5 Pro public preview"
+        }
+      ],
+      "openai_items": [
+        {
+          "type": "entry",
+          "id": 8336,
+          "title": "Three major LLM releases in 24 hours (plus weeknotes)"
+        }
+      ]
+    }
+  ]
+}
