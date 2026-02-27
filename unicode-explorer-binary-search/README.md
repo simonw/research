@@ -1,5 +1,10 @@
 # Unicode Explorer — Binary Search Over HTTP
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 A demo that performs **binary search via HTTP Range requests** against a single static file. No backend, no database, no dependencies. Every step of the binary search is a real network fetch — the browser reads one 256-byte record at a time, compares, narrows the range, and fetches again.
 
 ## How It Works
