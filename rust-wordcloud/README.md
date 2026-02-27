@@ -9,7 +9,7 @@ A command-line tool that generates word cloud PNG images from text input. Built 
 
 Inspired by Max Woolf's description of building a Rust word cloud generator: https://minimaxir.com/2026/02/ai-agent-coding/
 
-See [walkthrough.md](walkthrough.md) for a walkthrough of the Rust code.
+See [walkthrough.md](walkthrough.md) for a walkthrough of the Rust code, and [animated-word-cloud](https://tools.simonwillison.net/animated-word-cloud) for an animated demo.
 
 ## Features
 
