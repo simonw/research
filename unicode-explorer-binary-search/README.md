@@ -7,6 +7,8 @@
 
 A demo that performs **binary search via HTTP Range requests** against a single static file. No backend, no database, no dependencies. Every step of the binary search is a real network fetch — the browser reads one 256-byte record at a time, compares, narrows the range, and fetches again.
 
+Try it out here: https://tools.simonwillison.net/unicode-binary-search
+
 ## How It Works
 
 1. **`build.py`** downloads Unicode character data and produces a 76MB binary file where every character is a fixed-width 256-byte JSON record, sorted by codepoint
