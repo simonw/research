@@ -1,5 +1,10 @@
 # Rust Word Cloud CLI
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 A command-line tool that generates word cloud PNG images from text input. Built in Rust with a custom layout algorithm — only external crates are used for PNG generation (`image`/`imageproc`) and font rendering (`ab_glyph`).
 
 Inspired by Max Woolf's description of building a Rust word cloud generator: https://minimaxir.com/2026/02/ai-agent-coding/
