@@ -2,7 +2,7 @@
 
 A command-line tool that generates word cloud PNG images from text input. Built in Rust with a custom layout algorithm — only external crates are used for PNG generation (`image`/`imageproc`) and font rendering (`ab_glyph`).
 
-Inspired by Max Woolf's work on building a Rust word cloud generator with AI agents: https://minimaxir.com/2026/02/ai-agent-coding/
+Inspired by Max Woolf's description of building a Rust word cloud generator: https://minimaxir.com/2026/02/ai-agent-coding/
 
 ## Features
 
