@@ -14,136 +14,33 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Allow running directly: python3 scripts/run_benchmark.py
 BASE = Path(__file__).resolve().parents[1]
-ART = BASE / "artifacts"
-RES = BASE / "results"
-AB_SOCKET_DIR = Path("/tmp/ab-bench")
-RUNTIME_DIR = Path("/tmp/ab-runtime")
-CAMOUFOX_BIN = Path.home() / ".cache" / "camoufox" / "camoufox-bin"
+sys.path.insert(0, str(BASE / "scripts"))
 
-ART.mkdir(parents=True, exist_ok=True)
-RES.mkdir(parents=True, exist_ok=True)
-AB_SOCKET_DIR.mkdir(parents=True, exist_ok=True)
-RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-
-URLS = {
-    "x": {
-        "page_type": "post",
-        "url": "https://x.com/jack/status/20",
-        "expected": ["post_text", "author_handle", "timestamp", "canonical_url"],
-    },
-    "reddit": {
-        "page_type": "post",
-        "url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
-        "expected": ["post_title", "post_body", "subreddit", "author", "timestamp", "canonical_url"],
-    },
-    "linkedin": {
-        "page_type": "company",
-        "url": "https://www.linkedin.com/company/microsoft/",
-        "expected": ["title_or_company", "location", "page_url", "key_metadata"],
-    },
-    "instagram": {
-        "page_type": "profile",
-        "url": "https://www.instagram.com/instagram/",
-        "expected": ["username", "timestamp", "canonical_url"],
-    },
-}
-
-COOKIES_RAW = {
-    "x": """.x.com\tTRUE\t/\tTRUE\t1804045794\tnight_mode\t2
-.x.com\tTRUE\t/\tFALSE\t1807066194\t__cuid\t275a9d3ceb3640b1995368556e0e8f1b
-x.com\tFALSE\t/\tFALSE\t0\tlang\ten
-.x.com\tTRUE\t/\tTRUE\t1804913448\tpersonalization_id\t\"v1_lI2PyebYalOAhBfGH3Rsfw==\"
-.x.com\tTRUE\t/\tTRUE\t1806505040\tdnt\t1
-.x.com\tTRUE\t/\tTRUE\t1806505040\tkdt\tSiZbooJQPqWiC4mYFLvUcqv47oC8kbZXCSPWlYTK
-.x.com\tTRUE\t/\tTRUE\t1807069795\tauth_multi\t\"1677220568:d10163a806db01f8b460378cefc72968ed0ef76d\"
-.x.com\tTRUE\t/\tTRUE\t1806505040\tauth_token\tb905351bfaff2001231b9ce43e16b9a020ea4a7d
-.x.com\tTRUE\t/\tTRUE\t1807069800\tguest_id_ads\tv1%3A177194504045419875
-.x.com\tTRUE\t/\tTRUE\t1807069800\tguest_id_marketing\tv1%3A177194504045419875
-.x.com\tTRUE\t/\tTRUE\t1806505041\tguest_id\tv1%3A177194504045419875
-.x.com\tTRUE\t/\tTRUE\t1804045800\ttwid\tu%3D1481080264730288129
-.x.com\tTRUE\t/\tTRUE\t1806505041\tct0\t2e1df0c00c40f84751c8193f43e9f97f441b98c588f1550b756237542325325bb951d2a74947c7b32d0abb66d3fd7b1988c4d8c281f4933da2d7592245e8a47c351e1a4f1dcd749e11293a52ddc2e4c8
-""",
-    "linkedin": """.linkedin.com\tTRUE\t/\tTRUE\t1803697695\tbcookie\t\"v=2&9765043f-0558-4286-8aa3-de7c49100928\"
-.www.linkedin.com\tTRUE\t/\tTRUE\t1803697695\tbscookie\t\"v=1&20241223214557c8a2393d-1dad-4ebe-86b8-03f258783920AQFmLjr_--OxwvWkz-67Rt9fYk65vXmc\"
-.www.linkedin.com\tTRUE\t/\tTRUE\t1791581959\tli_rm\tAQEk5nVIAGbLrAAAAZP1fEsLj4fYYeuIJfZqzz2SLtQyO82Do_9PCerZNOjv7yC4LSYNxqZ5ccFk7lveh6mcr6TfZvmbpW5vBXTgloeIuE9pJQjNLAs6RBQXhUjUVBq6H5j3rZa6ZWVNKxjJrvWBTU5EfGGJeVWJ42YgMcHXVJK1CvrZV7Und0F5MDt-mPc1ZuJxmvBRUau4TJsZh80QzmYqsyB_F_xYxb1sdkJDe1J8_3kyh0mwayaWD-0-6sXZf4uBlzKs9ii--OLLxZ1C7vLT9wFHGuhGS9O_ZFKO5HOWc3tYMeB52omoXsQg6sBDi2g14fnFtjKQVSjUX3I
-.www.linkedin.com\tTRUE\t/\tTRUE\t1803697695\tJSESSIONID\t\"ajax:1957846287504080487\"
-.linkedin.com\tTRUE\t/\tTRUE\t1803697695\tliap\ttrue
-.www.linkedin.com\tTRUE\t/\tTRUE\t1803697695\tli_at\tAQEDARDtRBUEyys_AAABmcrqBeMAAAGcwR3_6E0AnmjJXw7xTRcC33KHAxzBp7OfsN6zEjMPPRLW8akBqTJHqN1KXtRku1NIBVtnRgpfDUsBZorj2lAJxi4fynv3-tjGEP0FZy_7feEwTNDkmS-uueub
-""",
-    "instagram": """.instagram.com\tTRUE\t/\tTRUE\t1774480946\tdatr\tMha1Z9A5p_QlLjwHV3MLECiA
-.instagram.com\tTRUE\t/\tTRUE\t1774480947\tmid\tZ7UWMgAEAAFmoKDVkfGZj_YuoYV1
-.instagram.com\tTRUE\t/\tTRUE\t1803526655\tig_did\t09CD82BC-DDF7-4565-9C65-6283461A74DB
-.instagram.com\tTRUE\t/\tTRUE\t1780285828\tds_user_id\t79028106685
-.instagram.com\tTRUE\t/\tTRUE\t1807069828\tcsrftoken\tCqBXIT8gwzwFYZXxjW3F26bHeJhibSfN
-.instagram.com\tTRUE\t/\tTRUE\t1804045828\tsessionid\t79028106685%3AoIAFrJKUG0TRYj%3A13%3AAYj8V_hmLbkJ84ckqo-XzOAYtFUxABhCoiNymghShg
-""",
-}
-
-BLOCK_PAT = re.compile(
-    r"captcha|challenge|suspicious|unusual traffic|verify|log in|sign in|access denied|temporarily unavailable",
-    re.I,
+from config import (
+    ART,
+    BASE,
+    RES,
+    AB_SOCKET_DIR,
+    RUNTIME_DIR,
+    CAMOUFOX_BIN,
+    URLS,
+    COOKIES_RAW,
+    BLOCK_PAT,
+    SOFT_BLOCK_INDICATORS,
+    LOGIN_REDIRECT_PAT,
+    SETUP_PATTERNS,
+    STARTUP_PATTERNS,
+    TIMEOUT_PATTERNS,
+    GROUND_TRUTH,
 )
-SETUP_PATTERNS = [
-    (
-        re.compile(r"Socket directory .* is not writable", re.I),
-        "setup",
-        "socket-dir-permission",
-        "runtime",
-    ),
-    (
-        re.compile(r"Session name .* is too long", re.I),
-        "setup",
-        "session-name-too-long",
-        "runtime",
-    ),
-    (
-        re.compile(r"Executable doesn't exist at .*ms-playwright", re.I),
-        "setup",
-        "missing-browser-binary",
-        "preflight",
-    ),
-    (
-        re.compile(r"Please run the following command to download new browsers", re.I),
-        "setup",
-        "missing-browser-binary",
-        "preflight",
-    ),
-    (
-        re.compile(r"No module named|ModuleNotFoundError|ImportError", re.I),
-        "setup",
-        "missing-python-module",
-        "preflight",
-    ),
-]
-STARTUP_PATTERNS = [
-    (
-        re.compile(r"Daemon failed to start", re.I),
-        "startup",
-        "daemon-start-failed",
-        "browser-startup",
-    ),
-    (
-        re.compile(r"Firefox is already running, but is not responding", re.I),
-        "startup",
-        "profile-lock",
-        "browser-startup",
-    ),
-    (
-        re.compile(r"Target page, context or browser has been closed", re.I),
-        "startup",
-        "browser-closed",
-        "browser-startup",
-    ),
-]
-TIMEOUT_PATTERNS = [
-    (
-        re.compile(r"Timeout \d+ms exceeded|timeout", re.I),
-        "timeout",
-        "navigation-timeout",
-        "navigation",
-    )
-]
+from extractors import extract, validate_ground_truth
+
+# Detect if a display is available for headed mode
+HAS_DISPLAY = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+if not HAS_DISPLAY:
+    print("WARNING: No DISPLAY detected, falling back to headless mode", flush=True)
 
 
 def parse_cookies(site: str) -> List[Dict[str, Any]]:
@@ -198,42 +95,6 @@ def log_cookie_import(adir: Path, tool: str, site: str, cookies: List[Dict[str, 
     if extra:
         payload.update(extra)
     append_log(adir / "commands.log", "cookie-import", json.dumps(payload, indent=2))
-
-
-def extract(site: str, text: str, url: str) -> Dict[str, str]:
-    t = text or ""
-    e: Dict[str, str] = {}
-    if site == "x":
-        e["post_text"] = next(iter(re.findall(r'"text":"([^"]{10,280})"', t)), "") or next(
-            iter(re.findall(r"\n(.{20,280})\n.*?@", t)),
-            "",
-        )
-        e["author_handle"] = next(iter(re.findall(r"@([A-Za-z0-9_]{1,15})", t)), "")
-        e["timestamp"] = next(
-            iter(re.findall(r"\d{1,2}:\d{2}\s?(?:AM|PM)?.*?\d{4}|\d{4}-\d{2}-\d{2}T[^\s\"]+", t)),
-            "",
-        )
-        e["canonical_url"] = url if "x.com" in (url or "") else ""
-    elif site == "reddit":
-        e["post_title"] = next(iter(re.findall(r"<title>(.*?)</title>", t, re.I | re.S)), "").strip()
-        e["post_body"] = next(iter(re.findall(r"<shreddit-post[\s\S]*?>", t, re.I)), "")[:300]
-        e["subreddit"] = next(iter(re.findall(r"r/([A-Za-z0-9_]+)", t)), "")
-        e["author"] = next(iter(re.findall(r"u/([A-Za-z0-9_\-]+)", t)), "")
-        e["timestamp"] = next(
-            iter(re.findall(r"\d+\s+(?:hours?|days?|minutes?)\s+ago|\d{4}-\d{2}-\d{2}T[^\s\"]+", t)),
-            "",
-        )
-        e["canonical_url"] = url if "reddit.com" in (url or "") else ""
-    elif site == "linkedin":
-        e["title_or_company"] = next(iter(re.findall(r"Microsoft|Company|LinkedIn", t, re.I)), "")
-        e["location"] = next(iter(re.findall(r"Redmond|United States|Toronto|Remote", t, re.I)), "")
-        e["page_url"] = url if "linkedin.com" in (url or "") else ""
-        e["key_metadata"] = next(iter(re.findall(r"\d+[+,]?\s+employees|Information Technology", t, re.I)), "")
-    elif site == "instagram":
-        e["username"] = next(iter(re.findall(r"instagram", t, re.I)), "")
-        e["timestamp"] = next(iter(re.findall(r"\d{4}-\d{2}-\d{2}T[^\s\"]+", t)), "")
-        e["canonical_url"] = url if "instagram.com" in (url or "") else ""
-    return e
 
 
 def json_dump(path: Path, payload: Any) -> None:
@@ -347,8 +208,19 @@ def classify_runtime_failure(tool: str, stdout: str, stderr: str, error: str) ->
     return {"failure_category": "unknown", "failure_reason": "unclassified-error", "failure_stage": "unknown"}
 
 
-def classify_page(text: str, extracted: Dict[str, str], expected: List[str]) -> Dict[str, str]:
+def classify_page(text: str, extracted: Dict[str, str], expected: List[str],
+                   site: str = "", final_url: str = "") -> Dict[str, str]:
     t = (text or "")[:30000]
+
+    # Check for login redirects
+    if final_url and LOGIN_REDIRECT_PAT.search(final_url):
+        return {
+            "outcome": "blocked/challenged",
+            "failure_category": "site",
+            "failure_reason": "login-redirect",
+            "failure_stage": "page",
+        }
+
     if BLOCK_PAT.search(t):
         return {
             "outcome": "blocked/challenged",
@@ -356,6 +228,23 @@ def classify_page(text: str, extracted: Dict[str, str], expected: List[str]) -> 
             "failure_reason": "anti-bot-challenge",
             "failure_stage": "page",
         }
+
+    # Check for soft blocks (page loaded but content missing/degraded)
+    if site and site in SOFT_BLOCK_INDICATORS:
+        indicators = SOFT_BLOCK_INDICATORS[site]
+        page_size = len(t)
+        min_size = indicators.get("min_page_size", 0)
+        required = indicators.get("required_elements", [])
+        if page_size < min_size and required:
+            missing_elements = [el for el in required if el.lower() not in t.lower()]
+            if missing_elements:
+                return {
+                    "outcome": "blocked/challenged",
+                    "failure_category": "site",
+                    "failure_reason": "soft-block",
+                    "failure_stage": "page",
+                }
+
     found = sum(1 for key in expected if extracted.get(key))
     if found == len(expected) and found > 0:
         return {"outcome": "success", "failure_category": "", "failure_reason": "", "failure_stage": ""}
@@ -399,6 +288,7 @@ def build_record(
     failure_stage: str = "",
     remediation: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
+    gt = validate_ground_truth(site, extracted)
     return {
         "tool": tool,
         "site": site,
@@ -419,6 +309,7 @@ def build_record(
         "failure_reason": failure_reason,
         "failure_stage": failure_stage,
         "remediation": remediation or [],
+        "ground_truth": gt,
     }
 
 
@@ -559,10 +450,11 @@ def run_agent_browser(site: str, cfg: Dict[str, Any], attempt: int, cold: bool, 
     failure_stage = "unknown"
     rec: Optional[Dict[str, Any]] = None
 
+    headed_flag = ["--headed"] if HAS_DISPLAY else []
     steps = [
-        ("prime-state", ["agent-browser", "--headed", "--session", session, "--state", str(state_path), "open", "about:blank"], 30),
+        ("prime-state", ["agent-browser"] + headed_flag + ["--session", session, "--state", str(state_path), "open", "about:blank"], 30),
         ("cookies", ["agent-browser", "--session", session, "--json", "cookies"], 15),
-        ("open", ["agent-browser", "--headed", "--session", session, "open", cfg["url"]], 45),
+        ("open", ["agent-browser"] + headed_flag + ["--session", session, "open", cfg["url"]], 45),
         ("wait", ["agent-browser", "--session", session, "wait", "6000"], 15),
         ("snapshot", ["agent-browser", "--session", session, "snapshot"], 30),
         ("title", ["agent-browser", "--session", session, "get", "title"], 15),
@@ -607,7 +499,7 @@ def run_agent_browser(site: str, cfg: Dict[str, Any], attempt: int, cold: bool, 
         text = read_text(adir / "page.html") or read_text(adir / "snapshot.txt")
         extracted = extract(site, text, final_url)
         if not first_error:
-            classified = classify_page(text, extracted, cfg["expected"])
+            classified = classify_page(text, extracted, cfg["expected"], site=site, final_url=final_url)
             outcome = classified["outcome"]
             failure_category = classified["failure_category"]
             failure_reason = classified["failure_reason"]
@@ -700,13 +592,12 @@ def run_camoufox(site: str, cfg: Dict[str, Any], attempt: int, cold: bool, check
 from pathlib import Path
 import json
 import os
-from playwright.sync_api import sync_playwright
+from camoufox.sync_api import Camoufox
 
 url = {cfg['url']!r}
 cookies = {cookies!r}
 state_path = Path({str(state_path)!r})
 out = Path({str(adir)!r})
-bin_path = Path({str(CAMOUFOX_BIN)!r})
 os.environ["MOZ_ENABLE_WAYLAND"] = "0"
 
 print(json.dumps({{
@@ -717,12 +608,9 @@ print(json.dumps({{
     "import_mode": "context.add_cookies",
 }}))
 
-with sync_playwright() as p:
-    browser = p.firefox.launch(executable_path=str(bin_path), headless=False)
-    context_kwargs = {{}}
-    if state_path.exists():
-        context_kwargs["storage_state"] = str(state_path)
-    context = browser.new_context(**context_kwargs)
+headless = {not HAS_DISPLAY!r}
+with Camoufox(headless=headless, humanize=not headless) as browser:
+    context = browser.new_context()
     if cookies:
         context.add_cookies(cookies)
     page = context.new_page()
@@ -734,7 +622,6 @@ with sync_playwright() as p:
     page.screenshot(path=str(out / "screen.png"), full_page=True)
     context.storage_state(path=str(state_path))
     context.close()
-    browser.close()
 """
     result = run_inline_python("camoufox", script, adir, timeout=85)
     text = read_text(adir / "page.html")
@@ -756,7 +643,7 @@ with sync_playwright() as p:
         failure_reason = classified["failure_reason"]
         failure_stage = classified["failure_stage"]
     else:
-        classified = classify_page(text, extracted, cfg["expected"])
+        classified = classify_page(text, extracted, cfg["expected"], site=site, final_url=final_url)
         outcome = classified["outcome"]
         failure_category = classified["failure_category"]
         failure_reason = classified["failure_reason"]
@@ -810,11 +697,12 @@ def run_scrapling(site: str, cfg: Dict[str, Any], attempt: int, cold: bool, chec
     )
     script = f"""
 import json
+from pathlib import Path
 from scrapling.fetchers import StealthySession
 
 url = {cfg['url']!r}
 profile = {str(profile)!r}
-out = {str(adir)!r}
+out = Path({str(adir)!r})
 cookies = {cookies!r}
 
 print(json.dumps({{
@@ -825,10 +713,30 @@ print(json.dumps({{
     "import_mode": "StealthySession(cookies=...)",
 }}))
 
+captured_html = ""
+
+def page_action(page):
+    global captured_html
+    page.wait_for_timeout(6000)
+    captured_html = page.content()
+    page.screenshot(path=str(out / "screen.png"), full_page=True)
+
 with StealthySession(user_data_dir=profile, cookies=cookies) as session:
-    response = session.fetch(url, headless=False, timeout=45000, wait=3000)
-    open(f"{{out}}/page.html", "w").write(response.text)
-    open(f"{{out}}/url.txt", "w").write(getattr(response, "url", url))
+    response = session.fetch(url, headless={not HAS_DISPLAY!r}, timeout=45000, wait=6000,
+                             page_action=page_action)
+    # Try multiple ways to get HTML content
+    html = response.text or ""
+    if not html:
+        html = getattr(response, "html", "") or ""
+    if not html:
+        html = getattr(response, "body", b"")
+        if isinstance(html, bytes):
+            html = html.decode("utf-8", errors="ignore")
+    # Use page_action capture as fallback
+    if not html and captured_html:
+        html = captured_html
+    (out / "page.html").write_text(html)
+    (out / "url.txt").write_text(getattr(response, "url", url))
 """
     result = run_inline_python("scrapling", script, adir, timeout=90)
     text = read_text(adir / "page.html")
@@ -849,7 +757,7 @@ with StealthySession(user_data_dir=profile, cookies=cookies) as session:
         failure_reason = classified["failure_reason"]
         failure_stage = classified["failure_stage"]
     else:
-        classified = classify_page(text, extracted, cfg["expected"])
+        classified = classify_page(text, extracted, cfg["expected"], site=site, final_url=final_url)
         outcome = classified["outcome"]
         failure_category = classified["failure_category"]
         failure_reason = classified["failure_reason"]
@@ -894,12 +802,15 @@ def summarize(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         p95 = statistics.quantiles(succ_times, n=20)[-1] if len(succ_times) >= 2 else (succ_times[0] if succ_times else None)
 
         completeness = []
-        correctness = []
+        gt_correctness = []
         for row in rows:
             expected = len(row["expected"])
             got = sum(1 for field in row["expected"] if row["extracted"].get(field))
             completeness.append(100 * got / expected if expected else 0)
-            correctness.append(100 * got / expected if expected else 0)
+            gt = row.get("ground_truth", {})
+            gt_pct = gt.get("correctness_pct")
+            if gt_pct is not None:
+                gt_correctness.append(gt_pct)
 
         failure_reasons = Counter(row.get("failure_reason") for row in rows if row.get("failure_reason"))
         setup_failures = sum(1 for row in rows if row.get("failure_category") == "setup")
@@ -924,7 +835,7 @@ def summarize(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "avg_success_time_s": round(sum(succ_times) / len(succ_times), 3) if succ_times else None,
                 "p95_success_time_s": round(p95, 3) if p95 else None,
                 "data_completeness_pct": round(sum(completeness) / len(completeness), 2),
-                "correctness_spotcheck_pct": round(sum(correctness) / len(correctness), 2),
+                "correctness_pct": round(sum(gt_correctness) / len(gt_correctness), 2) if gt_correctness else None,
                 "stability_score": round(stability, 2),
                 "setup_failures": setup_failures,
                 "startup_failures": startup_failures,
@@ -936,15 +847,8 @@ def summarize(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return summary
 
 
-def attempt_plan(mode: str) -> List[Dict[str, Any]]:
-    if mode == "sanity":
-        return [{"attempt": 1, "cold": True}]
-    return [{"attempt": 1, "cold": True}] + [{"attempt": i, "cold": False} for i in range(1, 11)]
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run browser automation benchmark")
-    parser.add_argument("--mode", choices=["sanity", "full"], default="full")
     parser.add_argument("--tools", nargs="*", choices=["agent-browser", "camofox-browser", "Scrapling"])
     parser.add_argument("--sites", nargs="*", choices=sorted(URLS))
     args = parser.parse_args()
@@ -964,14 +868,13 @@ def main() -> None:
     for tool in tool_order:
         for site in site_order:
             cfg = URLS[site]
-            for plan in attempt_plan(args.mode):
-                records.append(fn_by_tool[tool](site, cfg, plan["attempt"], plan["cold"], checks))
+            records.append(fn_by_tool[tool](site, cfg, 1, True, checks))
             print(f"done {tool} {site}", flush=True)
 
     json_dump(RES / "attempts.json", records)
     summary = summarize(records)
     json_dump(RES / "summary.json", summary)
-    print(f"completed benchmark mode={args.mode}, attempts={len(records)}", flush=True)
+    print(f"completed benchmark, attempts={len(records)}", flush=True)
 
 
 if __name__ == "__main__":

@@ -5,15 +5,14 @@
     "page_type": "post",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T16:49:13.189009+00:00",
+    "ts": "2026-03-03T20:47:34.034354+00:00",
     "run_id": "agent-browser_x_1_cold",
-    "duration_s": 79.617,
-    "outcome": "timeout",
+    "duration_s": 14.764,
+    "outcome": "partial",
     "extracted": {
-      "post_text": "",
-      "author_handle": "twitter",
-      "timestamp": "2022-01-12T01:47:18.000Z",
-      "canonical_url": "https://x.com/jack/status/20"
+      "canonical_url": "https://x.com/jack/status/20",
+      "author_handle": "feta_verse",
+      "timestamp": "3:50 PM \u00b7 Mar 21, 2006"
     },
     "expected": [
       "post_text",
@@ -21,14 +20,34 @@
       "timestamp",
       "canonical_url"
     ],
-    "error": "\u001b[31m\u2717\u001b[0m page.goto: Timeout 25000ms exceeded.\nCall log:\n  - navigating to \"https://x.com/jack/status/20\", waiting until \"load\"",
+    "error": "",
     "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_1_cold",
     "final_url": "https://x.com/jack/status/20",
-    "title": "",
-    "failure_category": "timeout",
-    "failure_reason": "navigation-timeout",
-    "failure_stage": "navigation",
-    "remediation": []
+    "title": "jack on X: \"just setting up my twttr\" / X",
+    "failure_category": "extraction",
+    "failure_reason": "missing-fields",
+    "failure_stage": "extraction",
+    "remediation": [],
+    "ground_truth": {
+      "checks": {
+        "post_text_contains": {
+          "expected": "just setting up my twttr",
+          "actual": "",
+          "pass": false
+        },
+        "author_handle": {
+          "expected": "jack",
+          "actual": "feta_verse",
+          "pass": false
+        },
+        "canonical_url_contains": {
+          "expected": "x.com/jack/status/20",
+          "actual": "https://x.com/jack/status/20",
+          "pass": true
+        }
+      },
+      "correctness_pct": 33.33
+    }
   },
   {
     "tool": "agent-browser",
@@ -36,17 +55,14 @@
     "page_type": "post",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T16:49:25.362774+00:00",
+    "ts": "2026-03-03T20:47:43.624133+00:00",
     "run_id": "agent-browser_reddit_1_cold",
-    "duration_s": 11.384,
+    "duration_s": 9.356,
     "outcome": "partial",
     "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "qRbF",
-      "author": "2hlK8BNfPHGTwMNc8gJhZnatmRe2rWdOHqdtKR7wPFrQgLCAQAAAExSufJ3bnjvKNdV",
-      "timestamp": "",
-      "canonical_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/"
+      "canonical_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
+      "subreddit": "3",
+      "author": "ptHWtd0IbnutlQh5r6y4CsdK3Tlh7l2bbq5raA3Vbf1ZF9w"
     },
     "expected": [
       "post_title",
@@ -59,11 +75,31 @@
     "error": "",
     "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_reddit_1_cold",
     "final_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
-    "title": "Reddit - Prove your humanity",
+    "title": "",
     "failure_category": "extraction",
     "failure_reason": "missing-fields",
     "failure_stage": "extraction",
-    "remediation": []
+    "remediation": [],
+    "ground_truth": {
+      "checks": {
+        "subreddit": {
+          "expected": "Python",
+          "actual": "3",
+          "pass": false
+        },
+        "post_title_contains": {
+          "expected": "working on this week",
+          "actual": "",
+          "pass": false
+        },
+        "canonical_url_contains": {
+          "expected": "reddit.com/r/Python",
+          "actual": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
+          "pass": true
+        }
+      },
+      "correctness_pct": 33.33
+    }
   },
   {
     "tool": "agent-browser",
@@ -71,14 +107,14 @@
     "page_type": "company",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T16:49:47.604636+00:00",
+    "ts": "2026-03-03T20:47:57.595066+00:00",
     "run_id": "agent-browser_linkedin_1_cold",
-    "duration_s": 21.936,
+    "duration_s": 13.751,
     "outcome": "success",
     "extracted": {
+      "page_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
       "title_or_company": "linkedin",
       "location": "United States",
-      "page_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
       "key_metadata": "Information Technology"
     },
     "expected": [
@@ -90,11 +126,26 @@
     "error": "",
     "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_linkedin_1_cold",
     "final_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
-    "title": "(21) Microsoft: Posts | LinkedIn",
+    "title": "Microsoft: Posts | LinkedIn",
     "failure_category": "",
     "failure_reason": "",
     "failure_stage": "",
-    "remediation": []
+    "remediation": [],
+    "ground_truth": {
+      "checks": {
+        "title_or_company_contains": {
+          "expected": "Microsoft",
+          "actual": "linkedin",
+          "pass": false
+        },
+        "page_url_contains": {
+          "expected": "linkedin.com/company/microsoft",
+          "actual": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
+          "pass": true
+        }
+      },
+      "correctness_pct": 50.0
+    }
   },
   {
     "tool": "agent-browser",
@@ -102,14 +153,13 @@
     "page_type": "profile",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T16:50:05.823039+00:00",
+    "ts": "2026-03-03T20:48:10.196971+00:00",
     "run_id": "agent-browser_instagram_1_cold",
-    "duration_s": 17.84,
+    "duration_s": 12.286,
     "outcome": "partial",
     "extracted": {
-      "username": "instagram",
-      "timestamp": "",
-      "canonical_url": "https://www.instagram.com/instagram/"
+      "canonical_url": "https://www.instagram.com/instagram/",
+      "username": "instagram"
     },
     "expected": [
       "username",
@@ -123,7 +173,22 @@
     "failure_category": "extraction",
     "failure_reason": "missing-fields",
     "failure_stage": "extraction",
-    "remediation": []
+    "remediation": [],
+    "ground_truth": {
+      "checks": {
+        "username_contains": {
+          "expected": "instagram",
+          "actual": "instagram",
+          "pass": true
+        },
+        "canonical_url_contains": {
+          "expected": "instagram.com/instagram",
+          "actual": "https://www.instagram.com/instagram/",
+          "pass": true
+        }
+      },
+      "correctness_pct": 100.0
+    }
   },
   {
     "tool": "camofox-browser",
@@ -131,15 +196,15 @@
     "page_type": "post",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T16:50:17.751306+00:00",
+    "ts": "2026-03-03T20:48:22.703546+00:00",
     "run_id": "camofox-browser_x_1_cold",
-    "duration_s": 11.596,
+    "duration_s": 12.171,
     "outcome": "success",
     "extracted": {
-      "post_text": "  font-display: 'swap';",
-      "author_handle": "font",
-      "timestamp": "3:50 PM \u00b7 Mar 21, 2006",
-      "canonical_url": "https://x.com/jack/status/20"
+      "post_text": "just setting up my twttr",
+      "author_handle": "jack",
+      "canonical_url": "https://x.com/jack/status/20",
+      "timestamp": "3:50 PM \u00b7 Mar 21, 2006"
     },
     "expected": [
       "post_text",
@@ -154,7 +219,27 @@
     "failure_category": "",
     "failure_reason": "",
     "failure_stage": "",
-    "remediation": []
+    "remediation": [],
+    "ground_truth": {
+      "checks": {
+        "post_text_contains": {
+          "expected": "just setting up my twttr",
+          "actual": "just setting up my twttr",
+          "pass": true
+        },
+        "author_handle": {
+          "expected": "jack",
+          "actual": "jack",
+          "pass": true
+        },
+        "canonical_url_contains": {
+          "expected": "x.com/jack/status/20",
+          "actual": "https://x.com/jack/status/20",
+          "pass": true
+        }
+      },
+      "correctness_pct": 100.0
+    }
   },
   {
     "tool": "camofox-browser",
@@ -162,17 +247,15 @@
     "page_type": "post",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T16:50:27.964640+00:00",
+    "ts": "2026-03-03T20:48:33.279242+00:00",
     "run_id": "camofox-browser_reddit_1_cold",
-    "duration_s": 10.213,
+    "duration_s": 10.575,
     "outcome": "blocked/challenged",
     "extracted": {
       "post_title": "Reddit - The heart of the internet",
-      "post_body": "",
+      "canonical_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
       "subreddit": "python",
-      "author": "",
-      "timestamp": "2026-03-03T15:24Z~fbcb1c8e",
-      "canonical_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/"
+      "timestamp": "2026-03-03T18:11Z~fa3bc1e1"
     },
     "expected": [
       "post_title",
@@ -189,7 +272,27 @@
     "failure_category": "site",
     "failure_reason": "anti-bot-challenge",
     "failure_stage": "page",
-    "remediation": []
+    "remediation": [],
+    "ground_truth": {
+      "checks": {
+        "subreddit": {
+          "expected": "Python",
+          "actual": "python",
+          "pass": true
+        },
+        "post_title_contains": {
+          "expected": "working on this week",
+          "actual": "Reddit - The heart of the internet",
+          "pass": false
+        },
+        "canonical_url_contains": {
+          "expected": "reddit.com/r/Python",
+          "actual": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
+          "pass": true
+        }
+      },
+      "correctness_pct": 66.67
+    }
   },
   {
     "tool": "camofox-browser",
@@ -197,14 +300,14 @@
     "page_type": "company",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T16:50:42.247671+00:00",
+    "ts": "2026-03-03T20:48:47.978151+00:00",
     "run_id": "camofox-browser_linkedin_1_cold",
-    "duration_s": 14.283,
+    "duration_s": 14.699,
     "outcome": "blocked/challenged",
     "extracted": {
-      "title_or_company": "linkedin",
-      "location": "United States",
+      "title_or_company": "Microsoft: Posts | LinkedIn",
       "page_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
+      "location": "United States",
       "key_metadata": "Information Technology"
     },
     "expected": [
@@ -216,11 +319,26 @@
     "error": "",
     "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_1_cold",
     "final_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
-    "title": "(21) Microsoft: Posts | LinkedIn",
+    "title": "Microsoft: Posts | LinkedIn",
     "failure_category": "site",
     "failure_reason": "anti-bot-challenge",
     "failure_stage": "page",
-    "remediation": []
+    "remediation": [],
+    "ground_truth": {
+      "checks": {
+        "title_or_company_contains": {
+          "expected": "Microsoft",
+          "actual": "Microsoft: Posts | LinkedIn",
+          "pass": true
+        },
+        "page_url_contains": {
+          "expected": "linkedin.com/company/microsoft",
+          "actual": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
+          "pass": true
+        }
+      },
+      "correctness_pct": 100.0
+    }
   },
   {
     "tool": "camofox-browser",
@@ -228,13 +346,12 @@
     "page_type": "profile",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T16:50:54.158127+00:00",
+    "ts": "2026-03-03T20:48:59.798521+00:00",
     "run_id": "camofox-browser_instagram_1_cold",
-    "duration_s": 11.91,
+    "duration_s": 11.82,
     "outcome": "partial",
     "extracted": {
-      "username": "instagram",
-      "timestamp": "",
+      "username": "Instagram (@instagram) \u2022 Instagram photos and videos",
       "canonical_url": "https://www.instagram.com/instagram/"
     },
     "expected": [
@@ -249,7 +366,22 @@
     "failure_category": "extraction",
     "failure_reason": "missing-fields",
     "failure_stage": "extraction",
-    "remediation": []
+    "remediation": [],
+    "ground_truth": {
+      "checks": {
+        "username_contains": {
+          "expected": "instagram",
+          "actual": "Instagram (@instagram) \u2022 Instagram photos and videos",
+          "pass": true
+        },
+        "canonical_url_contains": {
+          "expected": "instagram.com/instagram",
+          "actual": "https://www.instagram.com/instagram/",
+          "pass": true
+        }
+      },
+      "correctness_pct": 100.0
+    }
   },
   {
     "tool": "Scrapling",
@@ -257,15 +389,15 @@
     "page_type": "post",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T16:51:00.472073+00:00",
+    "ts": "2026-03-03T20:49:19.538817+00:00",
     "run_id": "scrapling_x_1_cold",
-    "duration_s": 6.314,
-    "outcome": "partial",
+    "duration_s": 19.74,
+    "outcome": "success",
     "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": "https://x.com/jack/status/20"
+      "post_text": "just setting up my twttr",
+      "author_handle": "jack",
+      "canonical_url": "https://x.com/jack/status/20",
+      "timestamp": "3:50 PM \u00b7 Mar 21, 2006"
     },
     "expected": [
       "post_text",
@@ -277,10 +409,30 @@
     "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_1_cold",
     "final_url": "https://x.com/jack/status/20",
     "title": "",
-    "failure_category": "extraction",
-    "failure_reason": "missing-fields",
-    "failure_stage": "extraction",
-    "remediation": []
+    "failure_category": "",
+    "failure_reason": "",
+    "failure_stage": "",
+    "remediation": [],
+    "ground_truth": {
+      "checks": {
+        "post_text_contains": {
+          "expected": "just setting up my twttr",
+          "actual": "just setting up my twttr",
+          "pass": true
+        },
+        "author_handle": {
+          "expected": "jack",
+          "actual": "jack",
+          "pass": true
+        },
+        "canonical_url_contains": {
+          "expected": "x.com/jack/status/20",
+          "actual": "https://x.com/jack/status/20",
+          "pass": true
+        }
+      },
+      "correctness_pct": 100.0
+    }
   },
   {
     "tool": "Scrapling",
@@ -288,17 +440,15 @@
     "page_type": "post",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T16:51:05.667460+00:00",
+    "ts": "2026-03-03T20:49:34.037655+00:00",
     "run_id": "scrapling_reddit_1_cold",
-    "duration_s": 5.195,
-    "outcome": "partial",
+    "duration_s": 14.498,
+    "outcome": "blocked/challenged",
     "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/"
+      "post_title": "Reddit - The heart of the internet",
+      "canonical_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
+      "subreddit": "python",
+      "timestamp": "2026-03-03T18:11Z~fa3bc1e1"
     },
     "expected": [
       "post_title",
@@ -312,10 +462,30 @@
     "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_1_cold",
     "final_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
     "title": "",
-    "failure_category": "extraction",
-    "failure_reason": "missing-fields",
-    "failure_stage": "extraction",
-    "remediation": []
+    "failure_category": "site",
+    "failure_reason": "anti-bot-challenge",
+    "failure_stage": "page",
+    "remediation": [],
+    "ground_truth": {
+      "checks": {
+        "subreddit": {
+          "expected": "Python",
+          "actual": "python",
+          "pass": true
+        },
+        "post_title_contains": {
+          "expected": "working on this week",
+          "actual": "Reddit - The heart of the internet",
+          "pass": false
+        },
+        "canonical_url_contains": {
+          "expected": "reddit.com/r/Python",
+          "actual": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
+          "pass": true
+        }
+      },
+      "correctness_pct": 66.67
+    }
   },
   {
     "tool": "Scrapling",
@@ -323,15 +493,15 @@
     "page_type": "company",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T16:51:12.499573+00:00",
+    "ts": "2026-03-03T20:49:52.216343+00:00",
     "run_id": "scrapling_linkedin_1_cold",
-    "duration_s": 6.832,
-    "outcome": "partial",
+    "duration_s": 18.178,
+    "outcome": "blocked/challenged",
     "extracted": {
-      "title_or_company": "",
-      "location": "",
+      "title_or_company": "Microsoft: Posts | LinkedIn",
       "page_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
-      "key_metadata": ""
+      "location": "United States",
+      "key_metadata": "Information Technology"
     },
     "expected": [
       "title_or_company",
@@ -343,10 +513,25 @@
     "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_1_cold",
     "final_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
     "title": "",
-    "failure_category": "extraction",
-    "failure_reason": "missing-fields",
-    "failure_stage": "extraction",
-    "remediation": []
+    "failure_category": "site",
+    "failure_reason": "anti-bot-challenge",
+    "failure_stage": "page",
+    "remediation": [],
+    "ground_truth": {
+      "checks": {
+        "title_or_company_contains": {
+          "expected": "Microsoft",
+          "actual": "Microsoft: Posts | LinkedIn",
+          "pass": true
+        },
+        "page_url_contains": {
+          "expected": "linkedin.com/company/microsoft",
+          "actual": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
+          "pass": true
+        }
+      },
+      "correctness_pct": 100.0
+    }
   },
   {
     "tool": "Scrapling",
@@ -354,13 +539,12 @@
     "page_type": "profile",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T16:51:17.678444+00:00",
+    "ts": "2026-03-03T20:50:08.233724+00:00",
     "run_id": "scrapling_instagram_1_cold",
-    "duration_s": 5.179,
+    "duration_s": 16.017,
     "outcome": "partial",
     "extracted": {
-      "username": "",
-      "timestamp": "",
+      "username": "Instagram (@instagram) \u2022 Instagram photos and videos",
       "canonical_url": "https://www.instagram.com/instagram/"
     },
     "expected": [
@@ -375,6 +559,21 @@
     "failure_category": "extraction",
     "failure_reason": "missing-fields",
     "failure_stage": "extraction",
-    "remediation": []
+    "remediation": [],
+    "ground_truth": {
+      "checks": {
+        "username_contains": {
+          "expected": "instagram",
+          "actual": "Instagram (@instagram) \u2022 Instagram photos and videos",
+          "pass": true
+        },
+        "canonical_url_contains": {
+          "expected": "instagram.com/instagram",
+          "actual": "https://www.instagram.com/instagram/",
+          "pass": true
+        }
+      },
+      "correctness_pct": 100.0
+    }
   }
 ]
