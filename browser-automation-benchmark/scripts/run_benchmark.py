@@ -19,9 +19,8 @@ BASE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE / "scripts"))
 
 from config import (
-    ART,
     BASE,
-    RES,
+    RUNS_DIR,
     AB_SOCKET_DIR,
     RUNTIME_DIR,
     CAMOUFOX_BIN,
@@ -35,7 +34,12 @@ from config import (
     TIMEOUT_PATTERNS,
     GROUND_TRUTH,
 )
+
 from extractors import extract, validate_ground_truth
+
+# Per-run output directories, set in main()
+ART: Path = RUNS_DIR
+RES: Path = RUNS_DIR
 
 # Detect if a display is available for headed mode
 HAS_DISPLAY = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
@@ -848,10 +852,21 @@ def summarize(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def main() -> None:
+    global ART, RES
+
     parser = argparse.ArgumentParser(description="Run browser automation benchmark")
     parser.add_argument("--tools", nargs="*", choices=["agent-browser", "camofox-browser", "Scrapling"])
     parser.add_argument("--sites", nargs="*", choices=sorted(URLS))
+    parser.add_argument("--name", help="Custom name for this run (default: timestamp)")
     args = parser.parse_args()
+
+    run_name = args.name or datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    run_dir = RUNS_DIR / run_name
+    ART = run_dir / "artifacts"
+    RES = run_dir / "results"
+    ART.mkdir(parents=True, exist_ok=True)
+    RES.mkdir(parents=True, exist_ok=True)
+    print(f"Run directory: {run_dir}", flush=True)
 
     checks = preflight(verbose=True)
     json_dump(RES / "preflight.json", checks)
@@ -874,7 +889,7 @@ def main() -> None:
     json_dump(RES / "attempts.json", records)
     summary = summarize(records)
     json_dump(RES / "summary.json", summary)
-    print(f"completed benchmark, attempts={len(records)}", flush=True)
+    print(f"completed benchmark, attempts={len(records)}, run={run_name}", flush=True)
 
 
 if __name__ == "__main__":

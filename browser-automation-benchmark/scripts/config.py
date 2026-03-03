@@ -5,15 +5,15 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 BASE = Path(__file__).resolve().parents[1]
-ART = BASE / "artifacts"
-RES = BASE / "results"
+RUNS_DIR = BASE / "runs"
 AB_SOCKET_DIR = Path("/tmp/ab-bench")
 RUNTIME_DIR = Path("/tmp/ab-runtime")
 CAMOUFOX_BIN = Path.home() / ".cache" / "camoufox" / "camoufox-bin"
 PROFILES = BASE / ".profiles"
+COOKIES_DIR = BASE / "cookies"
 CONTROL_PAGE_DIR = BASE / "scripts" / "control_page"
 
-for d in (ART, RES, AB_SOCKET_DIR, RUNTIME_DIR, PROFILES):
+for d in (RUNS_DIR, AB_SOCKET_DIR, RUNTIME_DIR, PROFILES):
     d.mkdir(parents=True, exist_ok=True)
 
 # ── Target sites ──────────────────────────────────────────────────────────
@@ -79,37 +79,17 @@ FINGERPRINT_SITES: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# ── Cookies (Netscape format) ────────────────────────────────────────────
-COOKIES_RAW: Dict[str, str] = {
-    "x": """.x.com\tTRUE\t/\tTRUE\t1804045794\tnight_mode\t2
-.x.com\tTRUE\t/\tFALSE\t1807066194\t__cuid\t275a9d3ceb3640b1995368556e0e8f1b
-x.com\tFALSE\t/\tFALSE\t0\tlang\ten
-.x.com\tTRUE\t/\tTRUE\t1804913448\tpersonalization_id\t\"v1_lI2PyebYalOAhBfGH3Rsfw==\"
-.x.com\tTRUE\t/\tTRUE\t1806505040\tdnt\t1
-.x.com\tTRUE\t/\tTRUE\t1806505040\tkdt\tSiZbooJQPqWiC4mYFLvUcqv47oC8kbZXCSPWlYTK
-.x.com\tTRUE\t/\tTRUE\t1807069795\tauth_multi\t\"1677220568:d10163a806db01f8b460378cefc72968ed0ef76d\"
-.x.com\tTRUE\t/\tTRUE\t1806505040\tauth_token\tb905351bfaff2001231b9ce43e16b9a020ea4a7d
-.x.com\tTRUE\t/\tTRUE\t1807069800\tguest_id_ads\tv1%3A177194504045419875
-.x.com\tTRUE\t/\tTRUE\t1807069800\tguest_id_marketing\tv1%3A177194504045419875
-.x.com\tTRUE\t/\tTRUE\t1806505041\tguest_id\tv1%3A177194504045419875
-.x.com\tTRUE\t/\tTRUE\t1804045800\ttwid\tu%3D1481080264730288129
-.x.com\tTRUE\t/\tTRUE\t1806505041\tct0\t2e1df0c00c40f84751c8193f43e9f97f441b98c588f1550b756237542325325bb951d2a74947c7b32d0abb66d3fd7b1988c4d8c281f4933da2d7592245e8a47c351e1a4f1dcd749e11293a52ddc2e4c8
-""",
-    "linkedin": """.linkedin.com\tTRUE\t/\tTRUE\t1803697695\tbcookie\t\"v=2&9765043f-0558-4286-8aa3-de7c49100928\"
-.www.linkedin.com\tTRUE\t/\tTRUE\t1803697695\tbscookie\t\"v=1&20241223214557c8a2393d-1dad-4ebe-86b8-03f258783920AQFmLjr_--OxwvWkz-67Rt9fYk65vXmc\"
-.www.linkedin.com\tTRUE\t/\tTRUE\t1791581959\tli_rm\tAQEk5nVIAGbLrAAAAZP1fEsLj4fYYeuIJfZqzz2SLtQyO82Do_9PCerZNOjv7yC4LSYNxqZ5ccFk7lveh6mcr6TfZvmbpW5vBXTgloeIuE9pJQjNLAs6RBQXhUjUVBq6H5j3rZa6ZWVNKxjJrvWBTU5EfGGJeVWJ42YgMcHXVJK1CvrZV7Und0F5MDt-mPc1ZuJxmvBRUau4TJsZh80QzmYqsyB_F_xYxb1sdkJDe1J8_3kyh0mwayaWD-0-6sXZf4uBlzKs9ii--OLLxZ1C7vLT9wFHGuhGS9O_ZFKO5HOWc3tYMeB52omoXsQg6sBDi2g14fnFtjKQVSjUX3I
-.www.linkedin.com\tTRUE\t/\tTRUE\t1803697695\tJSESSIONID\t\"ajax:1957846287504080487\"
-.linkedin.com\tTRUE\t/\tTRUE\t1803697695\tliap\ttrue
-.www.linkedin.com\tTRUE\t/\tTRUE\t1803697695\tli_at\tAQEDARDtRBUEyys_AAABmcrqBeMAAAGcwR3_6E0AnmjJXw7xTRcC33KHAxzBp7OfsN6zEjMPPRLW8akBqTJHqN1KXtRku1NIBVtnRgpfDUsBZorj2lAJxi4fynv3-tjGEP0FZy_7feEwTNDkmS-uueub
-""",
-    "instagram": """.instagram.com\tTRUE\t/\tTRUE\t1774480946\tdatr\tMha1Z9A5p_QlLjwHV3MLECiA
-.instagram.com\tTRUE\t/\tTRUE\t1774480947\tmid\tZ7UWMgAEAAFmoKDVkfGZj_YuoYV1
-.instagram.com\tTRUE\t/\tTRUE\t1803526655\tig_did\t09CD82BC-DDF7-4565-9C65-6283461A74DB
-.instagram.com\tTRUE\t/\tTRUE\t1780285828\tds_user_id\t79028106685
-.instagram.com\tTRUE\t/\tTRUE\t1807069828\tcsrftoken\tCqBXIT8gwzwFYZXxjW3F26bHeJhibSfN
-.instagram.com\tTRUE\t/\tTRUE\t1804045828\tsessionid\t79028106685%3AoIAFrJKUG0TRYj%3A13%3AAYj8V_hmLbkJ84ckqo-XzOAYtFUxABhCoiNymghShg
-""",
-}
+# ── Cookies (loaded from cookies/<site>.txt in Netscape format) ───────────
+def _load_cookies() -> Dict[str, str]:
+    cookies: Dict[str, str] = {}
+    if not COOKIES_DIR.is_dir():
+        return cookies
+    for f in COOKIES_DIR.glob("*.txt"):
+        cookies[f.stem] = f.read_text(errors="ignore").strip()
+    return cookies
+
+
+COOKIES_RAW: Dict[str, str] = _load_cookies()
 
 # ── Block / failure detection patterns ────────────────────────────────────
 BLOCK_PAT = re.compile(
