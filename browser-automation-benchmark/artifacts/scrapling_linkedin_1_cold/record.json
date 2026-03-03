@@ -4,14 +4,14 @@
   "page_type": "company",
   "attempt": 1,
   "cold": true,
-  "ts": "2026-03-03T04:15:46.236599+00:00",
+  "ts": "2026-03-03T16:51:12.499573+00:00",
   "run_id": "scrapling_linkedin_1_cold",
-  "duration_s": 0.655,
-  "outcome": "crash/error",
+  "duration_s": 6.832,
+  "outcome": "partial",
   "extracted": {
     "title_or_company": "",
     "location": "",
-    "page_url": "",
+    "page_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
     "key_metadata": ""
   },
   "expected": [
@@ -20,6 +20,12 @@
     "page_url",
     "key_metadata"
   ],
-  "error": "scrapling exit 1",
-  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_1_cold"
+  "error": "",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_1_cold",
+  "final_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
+  "title": "",
+  "failure_category": "extraction",
+  "failure_reason": "missing-fields",
+  "failure_stage": "extraction",
+  "remediation": []
 }

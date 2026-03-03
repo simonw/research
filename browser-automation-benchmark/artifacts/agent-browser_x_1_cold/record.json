@@ -4,15 +4,15 @@
   "page_type": "post",
   "attempt": 1,
   "cold": true,
-  "ts": "2026-03-03T03:56:09.640766+00:00",
+  "ts": "2026-03-03T16:49:13.189009+00:00",
   "run_id": "agent-browser_x_1_cold",
-  "duration_s": 11.506,
-  "outcome": "crash/error",
+  "duration_s": 79.617,
+  "outcome": "timeout",
   "extracted": {
     "post_text": "",
-    "author_handle": "",
-    "timestamp": "",
-    "canonical_url": ""
+    "author_handle": "twitter",
+    "timestamp": "2022-01-12T01:47:18.000Z",
+    "canonical_url": "https://x.com/jack/status/20"
   },
   "expected": [
     "post_text",
@@ -20,6 +20,12 @@
     "timestamp",
     "canonical_url"
   ],
-  "error": "agent-browser exit 1",
-  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_1_cold"
+  "error": "\u001b[31m\u2717\u001b[0m page.goto: Timeout 25000ms exceeded.\nCall log:\n  - navigating to \"https://x.com/jack/status/20\", waiting until \"load\"",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_1_cold",
+  "final_url": "https://x.com/jack/status/20",
+  "title": "",
+  "failure_category": "timeout",
+  "failure_reason": "navigation-timeout",
+  "failure_stage": "navigation",
+  "remediation": []
 }

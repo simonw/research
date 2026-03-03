@@ -4,17 +4,17 @@
   "page_type": "post",
   "attempt": 1,
   "cold": true,
-  "ts": "2026-03-03T04:04:33.411862+00:00",
+  "ts": "2026-03-03T16:50:27.964640+00:00",
   "run_id": "camofox-browser_reddit_1_cold",
-  "duration_s": 5.632,
-  "outcome": "crash/error",
+  "duration_s": 10.213,
+  "outcome": "blocked/challenged",
   "extracted": {
-    "post_title": "",
+    "post_title": "Reddit - The heart of the internet",
     "post_body": "",
-    "subreddit": "",
+    "subreddit": "python",
     "author": "",
-    "timestamp": "",
-    "canonical_url": ""
+    "timestamp": "2026-03-03T15:24Z~fbcb1c8e",
+    "canonical_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/"
   },
   "expected": [
     "post_title",
@@ -24,6 +24,12 @@
     "timestamp",
     "canonical_url"
   ],
-  "error": "camofox exit 1",
-  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_1_cold"
+  "error": "",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_1_cold",
+  "final_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
+  "title": "Reddit - The heart of the internet",
+  "failure_category": "site",
+  "failure_reason": "anti-bot-challenge",
+  "failure_stage": "page",
+  "remediation": []
 }

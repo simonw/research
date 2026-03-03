@@ -4,20 +4,26 @@
   "page_type": "profile",
   "attempt": 1,
   "cold": true,
-  "ts": "2026-03-03T04:15:53.498182+00:00",
+  "ts": "2026-03-03T16:51:17.678444+00:00",
   "run_id": "scrapling_instagram_1_cold",
-  "duration_s": 0.657,
-  "outcome": "crash/error",
+  "duration_s": 5.179,
+  "outcome": "partial",
   "extracted": {
     "username": "",
     "timestamp": "",
-    "canonical_url": ""
+    "canonical_url": "https://www.instagram.com/instagram/"
   },
   "expected": [
     "username",
     "timestamp",
     "canonical_url"
   ],
-  "error": "scrapling exit 1",
-  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_instagram_1_cold"
+  "error": "",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_instagram_1_cold",
+  "final_url": "https://www.instagram.com/instagram/",
+  "title": "",
+  "failure_category": "extraction",
+  "failure_reason": "missing-fields",
+  "failure_stage": "extraction",
+  "remediation": []
 }

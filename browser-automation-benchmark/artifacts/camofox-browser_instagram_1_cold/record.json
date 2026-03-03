@@ -4,20 +4,26 @@
   "page_type": "profile",
   "attempt": 1,
   "cold": true,
-  "ts": "2026-03-03T04:11:55.245590+00:00",
+  "ts": "2026-03-03T16:50:54.158127+00:00",
   "run_id": "camofox-browser_instagram_1_cold",
-  "duration_s": 5.63,
-  "outcome": "crash/error",
+  "duration_s": 11.91,
+  "outcome": "partial",
   "extracted": {
-    "username": "",
+    "username": "instagram",
     "timestamp": "",
-    "canonical_url": ""
+    "canonical_url": "https://www.instagram.com/instagram/"
   },
   "expected": [
     "username",
     "timestamp",
     "canonical_url"
   ],
-  "error": "camofox exit 1",
-  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_1_cold"
+  "error": "",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_1_cold",
+  "final_url": "https://www.instagram.com/instagram/",
+  "title": "Instagram",
+  "failure_category": "extraction",
+  "failure_reason": "missing-fields",
+  "failure_stage": "extraction",
+  "remediation": []
 }

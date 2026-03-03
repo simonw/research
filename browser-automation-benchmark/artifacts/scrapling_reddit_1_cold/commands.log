@@ -1,0 +1,18 @@
+
+===== cookie-import =====
+{
+  "tool": "Scrapling",
+  "site": "reddit",
+  "cookie_count": 0,
+  "cookies": [],
+  "profile": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/.profiles/scrap-reddit-cold-1",
+  "import_mode": "StealthySession(cookies=...)"
+}
+
+===== scrapling =====
+{
+  "command": "/usr/bin/python3 -c \nimport json\nfrom scrapling.fetchers import StealthySession\n\nurl = 'https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/'\nprofile = '/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/.profiles/scrap-reddit-cold-1'\nout = '/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_1_cold'\ncookies = []\n\nprint(json.dumps({\n    \"tool\": \"Scrapling\",\n    \"cookie_count\": len(cookies),\n    \"cookies\": [],\n    \"profile\": profile,\n    \"import_mode\": \"StealthySession(cookies=...)\",\n}))\n\nwith StealthySession(user_data_dir=profile, cookies=cookies) as session:\n    response = session.fetch(url, headless=False, timeout=45000, wait=3000)\n    open(f\"{out}/page.html\", \"w\").write(response.text)\n    open(f\"{out}/url.txt\", \"w\").write(getattr(response, \"url\", url))\n",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 5.194
+}

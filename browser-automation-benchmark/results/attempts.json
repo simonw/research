@@ -5,15 +5,15 @@
     "page_type": "post",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T03:56:09.640766+00:00",
+    "ts": "2026-03-03T16:49:13.189009+00:00",
     "run_id": "agent-browser_x_1_cold",
-    "duration_s": 11.506,
-    "outcome": "crash/error",
+    "duration_s": 79.617,
+    "outcome": "timeout",
     "extracted": {
       "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
+      "author_handle": "twitter",
+      "timestamp": "2022-01-12T01:47:18.000Z",
+      "canonical_url": "https://x.com/jack/status/20"
     },
     "expected": [
       "post_text",
@@ -21,258 +21,14 @@
       "timestamp",
       "canonical_url"
     ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_1_cold"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 1,
-    "cold": false,
-    "ts": "2026-03-03T03:56:19.915043+00:00",
-    "run_id": "agent-browser_x_1_warm",
-    "duration_s": 10.274,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_1_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 2,
-    "cold": false,
-    "ts": "2026-03-03T03:56:28.251229+00:00",
-    "run_id": "agent-browser_x_2_warm",
-    "duration_s": 8.336,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_2_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 3,
-    "cold": false,
-    "ts": "2026-03-03T03:56:36.062262+00:00",
-    "run_id": "agent-browser_x_3_warm",
-    "duration_s": 7.811,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_3_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 4,
-    "cold": false,
-    "ts": "2026-03-03T03:56:43.885576+00:00",
-    "run_id": "agent-browser_x_4_warm",
-    "duration_s": 7.823,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_4_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 5,
-    "cold": false,
-    "ts": "2026-03-03T03:56:51.694948+00:00",
-    "run_id": "agent-browser_x_5_warm",
-    "duration_s": 7.809,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_5_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 6,
-    "cold": false,
-    "ts": "2026-03-03T03:56:59.465394+00:00",
-    "run_id": "agent-browser_x_6_warm",
-    "duration_s": 7.77,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_6_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 7,
-    "cold": false,
-    "ts": "2026-03-03T03:57:07.293920+00:00",
-    "run_id": "agent-browser_x_7_warm",
-    "duration_s": 7.828,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_7_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 8,
-    "cold": false,
-    "ts": "2026-03-03T03:57:14.853648+00:00",
-    "run_id": "agent-browser_x_8_warm",
-    "duration_s": 7.559,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_8_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 9,
-    "cold": false,
-    "ts": "2026-03-03T03:57:22.857598+00:00",
-    "run_id": "agent-browser_x_9_warm",
-    "duration_s": 8.004,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_9_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 10,
-    "cold": false,
-    "ts": "2026-03-03T03:57:30.797897+00:00",
-    "run_id": "agent-browser_x_10_warm",
-    "duration_s": 7.94,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_10_warm"
+    "error": "\u001b[31m\u2717\u001b[0m page.goto: Timeout 25000ms exceeded.\nCall log:\n  - navigating to \"https://x.com/jack/status/20\", waiting until \"load\"",
+    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_1_cold",
+    "final_url": "https://x.com/jack/status/20",
+    "title": "",
+    "failure_category": "timeout",
+    "failure_reason": "navigation-timeout",
+    "failure_stage": "navigation",
+    "remediation": []
   },
   {
     "tool": "agent-browser",
@@ -280,17 +36,17 @@
     "page_type": "post",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T03:57:38.381196+00:00",
+    "ts": "2026-03-03T16:49:25.362774+00:00",
     "run_id": "agent-browser_reddit_1_cold",
-    "duration_s": 7.583,
-    "outcome": "crash/error",
+    "duration_s": 11.384,
+    "outcome": "partial",
     "extracted": {
       "post_title": "",
       "post_body": "",
-      "subreddit": "",
-      "author": "",
+      "subreddit": "qRbF",
+      "author": "2hlK8BNfPHGTwMNc8gJhZnatmRe2rWdOHqdtKR7wPFrQgLCAQAAAExSufJ3bnjvKNdV",
       "timestamp": "",
-      "canonical_url": ""
+      "canonical_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/"
     },
     "expected": [
       "post_title",
@@ -300,298 +56,14 @@
       "timestamp",
       "canonical_url"
     ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_reddit_1_cold"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 1,
-    "cold": false,
-    "ts": "2026-03-03T03:57:45.964008+00:00",
-    "run_id": "agent-browser_reddit_1_warm",
-    "duration_s": 7.583,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_reddit_1_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 2,
-    "cold": false,
-    "ts": "2026-03-03T03:57:52.559036+00:00",
-    "run_id": "agent-browser_reddit_2_warm",
-    "duration_s": 6.595,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_reddit_2_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 3,
-    "cold": false,
-    "ts": "2026-03-03T03:57:59.157635+00:00",
-    "run_id": "agent-browser_reddit_3_warm",
-    "duration_s": 6.598,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_reddit_3_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 4,
-    "cold": false,
-    "ts": "2026-03-03T03:58:05.771486+00:00",
-    "run_id": "agent-browser_reddit_4_warm",
-    "duration_s": 6.614,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_reddit_4_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 5,
-    "cold": false,
-    "ts": "2026-03-03T03:58:12.381760+00:00",
-    "run_id": "agent-browser_reddit_5_warm",
-    "duration_s": 6.61,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_reddit_5_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 6,
-    "cold": false,
-    "ts": "2026-03-03T03:58:18.999518+00:00",
-    "run_id": "agent-browser_reddit_6_warm",
-    "duration_s": 6.617,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_reddit_6_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 7,
-    "cold": false,
-    "ts": "2026-03-03T03:58:25.608332+00:00",
-    "run_id": "agent-browser_reddit_7_warm",
-    "duration_s": 6.609,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_reddit_7_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 8,
-    "cold": false,
-    "ts": "2026-03-03T03:58:32.207995+00:00",
-    "run_id": "agent-browser_reddit_8_warm",
-    "duration_s": 6.599,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_reddit_8_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 9,
-    "cold": false,
-    "ts": "2026-03-03T03:58:38.828309+00:00",
-    "run_id": "agent-browser_reddit_9_warm",
-    "duration_s": 6.62,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_reddit_9_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 10,
-    "cold": false,
-    "ts": "2026-03-03T03:58:45.446445+00:00",
-    "run_id": "agent-browser_reddit_10_warm",
-    "duration_s": 6.618,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_reddit_10_warm"
+    "error": "",
+    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_reddit_1_cold",
+    "final_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
+    "title": "Reddit - Prove your humanity",
+    "failure_category": "extraction",
+    "failure_reason": "missing-fields",
+    "failure_stage": "extraction",
+    "remediation": []
   },
   {
     "tool": "agent-browser",
@@ -599,15 +71,15 @@
     "page_type": "company",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T03:58:55.301161+00:00",
+    "ts": "2026-03-03T16:49:47.604636+00:00",
     "run_id": "agent-browser_linkedin_1_cold",
-    "duration_s": 9.854,
-    "outcome": "crash/error",
+    "duration_s": 21.936,
+    "outcome": "success",
     "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
+      "title_or_company": "linkedin",
+      "location": "United States",
+      "page_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
+      "key_metadata": "Information Technology"
     },
     "expected": [
       "title_or_company",
@@ -615,258 +87,14 @@
       "page_url",
       "key_metadata"
     ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_linkedin_1_cold"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 1,
-    "cold": false,
-    "ts": "2026-03-03T03:59:05.141600+00:00",
-    "run_id": "agent-browser_linkedin_1_warm",
-    "duration_s": 9.84,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_linkedin_1_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 2,
-    "cold": false,
-    "ts": "2026-03-03T03:59:05.654204+00:00",
-    "run_id": "agent-browser_linkedin_2_warm",
-    "duration_s": 0.512,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_linkedin_2_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 3,
-    "cold": false,
-    "ts": "2026-03-03T03:59:06.060542+00:00",
-    "run_id": "agent-browser_linkedin_3_warm",
-    "duration_s": 0.405,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_linkedin_3_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 4,
-    "cold": false,
-    "ts": "2026-03-03T03:59:14.171039+00:00",
-    "run_id": "agent-browser_linkedin_4_warm",
-    "duration_s": 8.11,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_linkedin_4_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 5,
-    "cold": false,
-    "ts": "2026-03-03T03:59:14.620546+00:00",
-    "run_id": "agent-browser_linkedin_5_warm",
-    "duration_s": 0.449,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_linkedin_5_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 6,
-    "cold": false,
-    "ts": "2026-03-03T03:59:15.503665+00:00",
-    "run_id": "agent-browser_linkedin_6_warm",
-    "duration_s": 0.882,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_linkedin_6_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 7,
-    "cold": false,
-    "ts": "2026-03-03T03:59:16.335127+00:00",
-    "run_id": "agent-browser_linkedin_7_warm",
-    "duration_s": 0.83,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_linkedin_7_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 8,
-    "cold": false,
-    "ts": "2026-03-03T03:59:17.105218+00:00",
-    "run_id": "agent-browser_linkedin_8_warm",
-    "duration_s": 0.769,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_linkedin_8_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 9,
-    "cold": false,
-    "ts": "2026-03-03T03:59:25.533657+00:00",
-    "run_id": "agent-browser_linkedin_9_warm",
-    "duration_s": 8.428,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_linkedin_9_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 10,
-    "cold": false,
-    "ts": "2026-03-03T03:59:25.993701+00:00",
-    "run_id": "agent-browser_linkedin_10_warm",
-    "duration_s": 0.46,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_linkedin_10_warm"
+    "error": "",
+    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_linkedin_1_cold",
+    "final_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
+    "title": "(21) Microsoft: Posts | LinkedIn",
+    "failure_category": "",
+    "failure_reason": "",
+    "failure_stage": "",
+    "remediation": []
   },
   {
     "tool": "agent-browser",
@@ -874,252 +102,28 @@
     "page_type": "profile",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T03:59:35.122073+00:00",
+    "ts": "2026-03-03T16:50:05.823039+00:00",
     "run_id": "agent-browser_instagram_1_cold",
-    "duration_s": 9.128,
-    "outcome": "crash/error",
+    "duration_s": 17.84,
+    "outcome": "partial",
     "extracted": {
-      "username": "",
+      "username": "instagram",
       "timestamp": "",
-      "canonical_url": ""
+      "canonical_url": "https://www.instagram.com/instagram/"
     },
     "expected": [
       "username",
       "timestamp",
       "canonical_url"
     ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_1_cold"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 1,
-    "cold": false,
-    "ts": "2026-03-03T03:59:44.097156+00:00",
-    "run_id": "agent-browser_instagram_1_warm",
-    "duration_s": 8.975,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_1_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 2,
-    "cold": false,
-    "ts": "2026-03-03T03:59:51.092192+00:00",
-    "run_id": "agent-browser_instagram_2_warm",
-    "duration_s": 6.995,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_2_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 3,
-    "cold": false,
-    "ts": "2026-03-03T03:59:58.072942+00:00",
-    "run_id": "agent-browser_instagram_3_warm",
-    "duration_s": 6.981,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_3_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 4,
-    "cold": false,
-    "ts": "2026-03-03T04:00:04.942364+00:00",
-    "run_id": "agent-browser_instagram_4_warm",
-    "duration_s": 6.869,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_4_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 5,
-    "cold": false,
-    "ts": "2026-03-03T04:00:11.886630+00:00",
-    "run_id": "agent-browser_instagram_5_warm",
-    "duration_s": 6.944,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_5_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 6,
-    "cold": false,
-    "ts": "2026-03-03T04:00:18.883515+00:00",
-    "run_id": "agent-browser_instagram_6_warm",
-    "duration_s": 6.997,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_6_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 7,
-    "cold": false,
-    "ts": "2026-03-03T04:00:25.738830+00:00",
-    "run_id": "agent-browser_instagram_7_warm",
-    "duration_s": 6.855,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_7_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 8,
-    "cold": false,
-    "ts": "2026-03-03T04:00:32.738385+00:00",
-    "run_id": "agent-browser_instagram_8_warm",
-    "duration_s": 6.999,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_8_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 9,
-    "cold": false,
-    "ts": "2026-03-03T04:00:39.814373+00:00",
-    "run_id": "agent-browser_instagram_9_warm",
-    "duration_s": 7.076,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_9_warm"
-  },
-  {
-    "tool": "agent-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 10,
-    "cold": false,
-    "ts": "2026-03-03T04:00:46.763278+00:00",
-    "run_id": "agent-browser_instagram_10_warm",
-    "duration_s": 6.949,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "agent-browser exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_10_warm"
+    "error": "",
+    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_1_cold",
+    "final_url": "https://www.instagram.com/instagram/",
+    "title": "Instagram",
+    "failure_category": "extraction",
+    "failure_reason": "missing-fields",
+    "failure_stage": "extraction",
+    "remediation": []
   },
   {
     "tool": "camofox-browser",
@@ -1127,15 +131,15 @@
     "page_type": "post",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T04:02:11.855172+00:00",
+    "ts": "2026-03-03T16:50:17.751306+00:00",
     "run_id": "camofox-browser_x_1_cold",
-    "duration_s": 85.092,
-    "outcome": "timeout",
+    "duration_s": 11.596,
+    "outcome": "success",
     "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
+      "post_text": "  font-display: 'swap';",
+      "author_handle": "font",
+      "timestamp": "3:50 PM \u00b7 Mar 21, 2006",
+      "canonical_url": "https://x.com/jack/status/20"
     },
     "expected": [
       "post_text",
@@ -1143,258 +147,14 @@
       "timestamp",
       "canonical_url"
     ],
-    "error": "timeout",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_x_1_cold"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 1,
-    "cold": false,
-    "ts": "2026-03-03T04:02:17.547186+00:00",
-    "run_id": "camofox-browser_x_1_warm",
-    "duration_s": 5.691,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_x_1_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 2,
-    "cold": false,
-    "ts": "2026-03-03T04:02:23.181426+00:00",
-    "run_id": "camofox-browser_x_2_warm",
-    "duration_s": 5.634,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_x_2_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 3,
-    "cold": false,
-    "ts": "2026-03-03T04:02:28.814845+00:00",
-    "run_id": "camofox-browser_x_3_warm",
-    "duration_s": 5.633,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_x_3_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 4,
-    "cold": false,
-    "ts": "2026-03-03T04:02:34.448959+00:00",
-    "run_id": "camofox-browser_x_4_warm",
-    "duration_s": 5.634,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_x_4_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 5,
-    "cold": false,
-    "ts": "2026-03-03T04:02:40.090826+00:00",
-    "run_id": "camofox-browser_x_5_warm",
-    "duration_s": 5.642,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_x_5_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 6,
-    "cold": false,
-    "ts": "2026-03-03T04:04:05.182062+00:00",
-    "run_id": "camofox-browser_x_6_warm",
-    "duration_s": 85.091,
-    "outcome": "timeout",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "timeout",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_x_6_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 7,
-    "cold": false,
-    "ts": "2026-03-03T04:04:10.850408+00:00",
-    "run_id": "camofox-browser_x_7_warm",
-    "duration_s": 5.667,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_x_7_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 8,
-    "cold": false,
-    "ts": "2026-03-03T04:04:16.486723+00:00",
-    "run_id": "camofox-browser_x_8_warm",
-    "duration_s": 5.636,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_x_8_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 9,
-    "cold": false,
-    "ts": "2026-03-03T04:04:22.149050+00:00",
-    "run_id": "camofox-browser_x_9_warm",
-    "duration_s": 5.662,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_x_9_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 10,
-    "cold": false,
-    "ts": "2026-03-03T04:04:27.779517+00:00",
-    "run_id": "camofox-browser_x_10_warm",
-    "duration_s": 5.63,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_x_10_warm"
+    "error": "",
+    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_x_1_cold",
+    "final_url": "https://x.com/jack/status/20",
+    "title": "jack on X: \"just setting up my twttr\" / X",
+    "failure_category": "",
+    "failure_reason": "",
+    "failure_stage": "",
+    "remediation": []
   },
   {
     "tool": "camofox-browser",
@@ -1402,17 +162,17 @@
     "page_type": "post",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T04:04:33.411862+00:00",
+    "ts": "2026-03-03T16:50:27.964640+00:00",
     "run_id": "camofox-browser_reddit_1_cold",
-    "duration_s": 5.632,
-    "outcome": "crash/error",
+    "duration_s": 10.213,
+    "outcome": "blocked/challenged",
     "extracted": {
-      "post_title": "",
+      "post_title": "Reddit - The heart of the internet",
       "post_body": "",
-      "subreddit": "",
+      "subreddit": "python",
       "author": "",
-      "timestamp": "",
-      "canonical_url": ""
+      "timestamp": "2026-03-03T15:24Z~fbcb1c8e",
+      "canonical_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/"
     },
     "expected": [
       "post_title",
@@ -1422,298 +182,14 @@
       "timestamp",
       "canonical_url"
     ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_1_cold"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 1,
-    "cold": false,
-    "ts": "2026-03-03T04:05:58.503983+00:00",
-    "run_id": "camofox-browser_reddit_1_warm",
-    "duration_s": 85.092,
-    "outcome": "timeout",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "timeout",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_1_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 2,
-    "cold": false,
-    "ts": "2026-03-03T04:06:04.166783+00:00",
-    "run_id": "camofox-browser_reddit_2_warm",
-    "duration_s": 5.662,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_2_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 3,
-    "cold": false,
-    "ts": "2026-03-03T04:06:09.812654+00:00",
-    "run_id": "camofox-browser_reddit_3_warm",
-    "duration_s": 5.646,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_3_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 4,
-    "cold": false,
-    "ts": "2026-03-03T04:06:15.443954+00:00",
-    "run_id": "camofox-browser_reddit_4_warm",
-    "duration_s": 5.631,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_4_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 5,
-    "cold": false,
-    "ts": "2026-03-03T04:06:21.071997+00:00",
-    "run_id": "camofox-browser_reddit_5_warm",
-    "duration_s": 5.628,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_5_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 6,
-    "cold": false,
-    "ts": "2026-03-03T04:06:26.705718+00:00",
-    "run_id": "camofox-browser_reddit_6_warm",
-    "duration_s": 5.633,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_6_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 7,
-    "cold": false,
-    "ts": "2026-03-03T04:07:51.797445+00:00",
-    "run_id": "camofox-browser_reddit_7_warm",
-    "duration_s": 85.091,
-    "outcome": "timeout",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "timeout",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_7_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 8,
-    "cold": false,
-    "ts": "2026-03-03T04:07:57.469305+00:00",
-    "run_id": "camofox-browser_reddit_8_warm",
-    "duration_s": 5.671,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_8_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 9,
-    "cold": false,
-    "ts": "2026-03-03T04:08:03.106330+00:00",
-    "run_id": "camofox-browser_reddit_9_warm",
-    "duration_s": 5.637,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_9_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 10,
-    "cold": false,
-    "ts": "2026-03-03T04:08:08.734672+00:00",
-    "run_id": "camofox-browser_reddit_10_warm",
-    "duration_s": 5.628,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_10_warm"
+    "error": "",
+    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_1_cold",
+    "final_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
+    "title": "Reddit - The heart of the internet",
+    "failure_category": "site",
+    "failure_reason": "anti-bot-challenge",
+    "failure_stage": "page",
+    "remediation": []
   },
   {
     "tool": "camofox-browser",
@@ -1721,15 +197,15 @@
     "page_type": "company",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T04:08:14.367510+00:00",
+    "ts": "2026-03-03T16:50:42.247671+00:00",
     "run_id": "camofox-browser_linkedin_1_cold",
-    "duration_s": 5.633,
-    "outcome": "crash/error",
+    "duration_s": 14.283,
+    "outcome": "blocked/challenged",
     "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
+      "title_or_company": "linkedin",
+      "location": "United States",
+      "page_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
+      "key_metadata": "Information Technology"
     },
     "expected": [
       "title_or_company",
@@ -1737,258 +213,14 @@
       "page_url",
       "key_metadata"
     ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_1_cold"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 1,
-    "cold": false,
-    "ts": "2026-03-03T04:08:20.002244+00:00",
-    "run_id": "camofox-browser_linkedin_1_warm",
-    "duration_s": 5.634,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_1_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 2,
-    "cold": false,
-    "ts": "2026-03-03T04:09:45.093862+00:00",
-    "run_id": "camofox-browser_linkedin_2_warm",
-    "duration_s": 85.091,
-    "outcome": "timeout",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "timeout",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_2_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 3,
-    "cold": false,
-    "ts": "2026-03-03T04:09:50.748385+00:00",
-    "run_id": "camofox-browser_linkedin_3_warm",
-    "duration_s": 5.654,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_3_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 4,
-    "cold": false,
-    "ts": "2026-03-03T04:09:56.376148+00:00",
-    "run_id": "camofox-browser_linkedin_4_warm",
-    "duration_s": 5.628,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_4_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 5,
-    "cold": false,
-    "ts": "2026-03-03T04:10:02.001359+00:00",
-    "run_id": "camofox-browser_linkedin_5_warm",
-    "duration_s": 5.625,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_5_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 6,
-    "cold": false,
-    "ts": "2026-03-03T04:10:07.641513+00:00",
-    "run_id": "camofox-browser_linkedin_6_warm",
-    "duration_s": 5.64,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_6_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 7,
-    "cold": false,
-    "ts": "2026-03-03T04:10:13.274909+00:00",
-    "run_id": "camofox-browser_linkedin_7_warm",
-    "duration_s": 5.633,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_7_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 8,
-    "cold": false,
-    "ts": "2026-03-03T04:11:38.324708+00:00",
-    "run_id": "camofox-browser_linkedin_8_warm",
-    "duration_s": 85.05,
-    "outcome": "timeout",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "timeout",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_8_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 9,
-    "cold": false,
-    "ts": "2026-03-03T04:11:43.982365+00:00",
-    "run_id": "camofox-browser_linkedin_9_warm",
-    "duration_s": 5.657,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_9_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 10,
-    "cold": false,
-    "ts": "2026-03-03T04:11:49.614968+00:00",
-    "run_id": "camofox-browser_linkedin_10_warm",
-    "duration_s": 5.632,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_10_warm"
+    "error": "",
+    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_1_cold",
+    "final_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
+    "title": "(21) Microsoft: Posts | LinkedIn",
+    "failure_category": "site",
+    "failure_reason": "anti-bot-challenge",
+    "failure_stage": "page",
+    "remediation": []
   },
   {
     "tool": "camofox-browser",
@@ -1996,252 +228,28 @@
     "page_type": "profile",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T04:11:55.245590+00:00",
+    "ts": "2026-03-03T16:50:54.158127+00:00",
     "run_id": "camofox-browser_instagram_1_cold",
-    "duration_s": 5.63,
-    "outcome": "crash/error",
+    "duration_s": 11.91,
+    "outcome": "partial",
     "extracted": {
-      "username": "",
+      "username": "instagram",
       "timestamp": "",
-      "canonical_url": ""
+      "canonical_url": "https://www.instagram.com/instagram/"
     },
     "expected": [
       "username",
       "timestamp",
       "canonical_url"
     ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_1_cold"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 1,
-    "cold": false,
-    "ts": "2026-03-03T04:12:00.879000+00:00",
-    "run_id": "camofox-browser_instagram_1_warm",
-    "duration_s": 5.633,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_1_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 2,
-    "cold": false,
-    "ts": "2026-03-03T04:12:06.507212+00:00",
-    "run_id": "camofox-browser_instagram_2_warm",
-    "duration_s": 5.628,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_2_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 3,
-    "cold": false,
-    "ts": "2026-03-03T04:13:31.599167+00:00",
-    "run_id": "camofox-browser_instagram_3_warm",
-    "duration_s": 85.092,
-    "outcome": "timeout",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "timeout",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_3_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 4,
-    "cold": false,
-    "ts": "2026-03-03T04:13:37.273497+00:00",
-    "run_id": "camofox-browser_instagram_4_warm",
-    "duration_s": 5.673,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_4_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 5,
-    "cold": false,
-    "ts": "2026-03-03T04:13:42.909254+00:00",
-    "run_id": "camofox-browser_instagram_5_warm",
-    "duration_s": 5.636,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_5_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 6,
-    "cold": false,
-    "ts": "2026-03-03T04:13:48.540473+00:00",
-    "run_id": "camofox-browser_instagram_6_warm",
-    "duration_s": 5.631,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_6_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 7,
-    "cold": false,
-    "ts": "2026-03-03T04:13:54.177393+00:00",
-    "run_id": "camofox-browser_instagram_7_warm",
-    "duration_s": 5.637,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_7_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 8,
-    "cold": false,
-    "ts": "2026-03-03T04:13:59.809484+00:00",
-    "run_id": "camofox-browser_instagram_8_warm",
-    "duration_s": 5.632,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_8_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 9,
-    "cold": false,
-    "ts": "2026-03-03T04:15:24.901608+00:00",
-    "run_id": "camofox-browser_instagram_9_warm",
-    "duration_s": 85.092,
-    "outcome": "timeout",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "timeout",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_9_warm"
-  },
-  {
-    "tool": "camofox-browser",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 10,
-    "cold": false,
-    "ts": "2026-03-03T04:15:30.565774+00:00",
-    "run_id": "camofox-browser_instagram_10_warm",
-    "duration_s": 5.663,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "camofox exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_10_warm"
+    "error": "",
+    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_1_cold",
+    "final_url": "https://www.instagram.com/instagram/",
+    "title": "Instagram",
+    "failure_category": "extraction",
+    "failure_reason": "missing-fields",
+    "failure_stage": "extraction",
+    "remediation": []
   },
   {
     "tool": "Scrapling",
@@ -2249,15 +257,15 @@
     "page_type": "post",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T04:15:31.737819+00:00",
+    "ts": "2026-03-03T16:51:00.472073+00:00",
     "run_id": "scrapling_x_1_cold",
-    "duration_s": 1.172,
-    "outcome": "crash/error",
+    "duration_s": 6.314,
+    "outcome": "partial",
     "extracted": {
       "post_text": "",
       "author_handle": "",
       "timestamp": "",
-      "canonical_url": ""
+      "canonical_url": "https://x.com/jack/status/20"
     },
     "expected": [
       "post_text",
@@ -2265,258 +273,14 @@
       "timestamp",
       "canonical_url"
     ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_1_cold"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 1,
-    "cold": false,
-    "ts": "2026-03-03T04:15:32.404544+00:00",
-    "run_id": "scrapling_x_1_warm",
-    "duration_s": 0.666,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_1_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 2,
-    "cold": false,
-    "ts": "2026-03-03T04:15:33.071468+00:00",
-    "run_id": "scrapling_x_2_warm",
-    "duration_s": 0.667,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_2_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 3,
-    "cold": false,
-    "ts": "2026-03-03T04:15:33.729784+00:00",
-    "run_id": "scrapling_x_3_warm",
-    "duration_s": 0.658,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_3_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 4,
-    "cold": false,
-    "ts": "2026-03-03T04:15:34.387804+00:00",
-    "run_id": "scrapling_x_4_warm",
-    "duration_s": 0.658,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_4_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 5,
-    "cold": false,
-    "ts": "2026-03-03T04:15:35.047533+00:00",
-    "run_id": "scrapling_x_5_warm",
-    "duration_s": 0.659,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_5_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 6,
-    "cold": false,
-    "ts": "2026-03-03T04:15:35.706919+00:00",
-    "run_id": "scrapling_x_6_warm",
-    "duration_s": 0.659,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_6_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 7,
-    "cold": false,
-    "ts": "2026-03-03T04:15:36.362806+00:00",
-    "run_id": "scrapling_x_7_warm",
-    "duration_s": 0.656,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_7_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 8,
-    "cold": false,
-    "ts": "2026-03-03T04:15:37.020815+00:00",
-    "run_id": "scrapling_x_8_warm",
-    "duration_s": 0.658,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_8_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 9,
-    "cold": false,
-    "ts": "2026-03-03T04:15:37.681420+00:00",
-    "run_id": "scrapling_x_9_warm",
-    "duration_s": 0.66,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_9_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "x",
-    "page_type": "post",
-    "attempt": 10,
-    "cold": false,
-    "ts": "2026-03-03T04:15:38.341808+00:00",
-    "run_id": "scrapling_x_10_warm",
-    "duration_s": 0.66,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_text": "",
-      "author_handle": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_text",
-      "author_handle",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_10_warm"
+    "error": "",
+    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_1_cold",
+    "final_url": "https://x.com/jack/status/20",
+    "title": "",
+    "failure_category": "extraction",
+    "failure_reason": "missing-fields",
+    "failure_stage": "extraction",
+    "remediation": []
   },
   {
     "tool": "Scrapling",
@@ -2524,17 +288,17 @@
     "page_type": "post",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T04:15:38.999207+00:00",
+    "ts": "2026-03-03T16:51:05.667460+00:00",
     "run_id": "scrapling_reddit_1_cold",
-    "duration_s": 0.657,
-    "outcome": "crash/error",
+    "duration_s": 5.195,
+    "outcome": "partial",
     "extracted": {
       "post_title": "",
       "post_body": "",
       "subreddit": "",
       "author": "",
       "timestamp": "",
-      "canonical_url": ""
+      "canonical_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/"
     },
     "expected": [
       "post_title",
@@ -2544,298 +308,14 @@
       "timestamp",
       "canonical_url"
     ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_1_cold"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 1,
-    "cold": false,
-    "ts": "2026-03-03T04:15:39.655139+00:00",
-    "run_id": "scrapling_reddit_1_warm",
-    "duration_s": 0.656,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_1_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 2,
-    "cold": false,
-    "ts": "2026-03-03T04:15:40.310902+00:00",
-    "run_id": "scrapling_reddit_2_warm",
-    "duration_s": 0.655,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_2_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 3,
-    "cold": false,
-    "ts": "2026-03-03T04:15:40.967844+00:00",
-    "run_id": "scrapling_reddit_3_warm",
-    "duration_s": 0.657,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_3_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 4,
-    "cold": false,
-    "ts": "2026-03-03T04:15:41.621971+00:00",
-    "run_id": "scrapling_reddit_4_warm",
-    "duration_s": 0.654,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_4_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 5,
-    "cold": false,
-    "ts": "2026-03-03T04:15:42.287593+00:00",
-    "run_id": "scrapling_reddit_5_warm",
-    "duration_s": 0.665,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_5_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 6,
-    "cold": false,
-    "ts": "2026-03-03T04:15:42.946140+00:00",
-    "run_id": "scrapling_reddit_6_warm",
-    "duration_s": 0.658,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_6_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 7,
-    "cold": false,
-    "ts": "2026-03-03T04:15:43.603575+00:00",
-    "run_id": "scrapling_reddit_7_warm",
-    "duration_s": 0.657,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_7_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 8,
-    "cold": false,
-    "ts": "2026-03-03T04:15:44.266437+00:00",
-    "run_id": "scrapling_reddit_8_warm",
-    "duration_s": 0.659,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_8_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 9,
-    "cold": false,
-    "ts": "2026-03-03T04:15:44.923497+00:00",
-    "run_id": "scrapling_reddit_9_warm",
-    "duration_s": 0.657,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_9_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "reddit",
-    "page_type": "post",
-    "attempt": 10,
-    "cold": false,
-    "ts": "2026-03-03T04:15:45.581530+00:00",
-    "run_id": "scrapling_reddit_10_warm",
-    "duration_s": 0.658,
-    "outcome": "crash/error",
-    "extracted": {
-      "post_title": "",
-      "post_body": "",
-      "subreddit": "",
-      "author": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "post_title",
-      "post_body",
-      "subreddit",
-      "author",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_10_warm"
+    "error": "",
+    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_1_cold",
+    "final_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
+    "title": "",
+    "failure_category": "extraction",
+    "failure_reason": "missing-fields",
+    "failure_stage": "extraction",
+    "remediation": []
   },
   {
     "tool": "Scrapling",
@@ -2843,14 +323,14 @@
     "page_type": "company",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T04:15:46.236599+00:00",
+    "ts": "2026-03-03T16:51:12.499573+00:00",
     "run_id": "scrapling_linkedin_1_cold",
-    "duration_s": 0.655,
-    "outcome": "crash/error",
+    "duration_s": 6.832,
+    "outcome": "partial",
     "extracted": {
       "title_or_company": "",
       "location": "",
-      "page_url": "",
+      "page_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
       "key_metadata": ""
     },
     "expected": [
@@ -2859,258 +339,14 @@
       "page_url",
       "key_metadata"
     ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_1_cold"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 1,
-    "cold": false,
-    "ts": "2026-03-03T04:15:46.897936+00:00",
-    "run_id": "scrapling_linkedin_1_warm",
-    "duration_s": 0.661,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_1_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 2,
-    "cold": false,
-    "ts": "2026-03-03T04:15:47.563249+00:00",
-    "run_id": "scrapling_linkedin_2_warm",
-    "duration_s": 0.665,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_2_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 3,
-    "cold": false,
-    "ts": "2026-03-03T04:15:48.226147+00:00",
-    "run_id": "scrapling_linkedin_3_warm",
-    "duration_s": 0.663,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_3_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 4,
-    "cold": false,
-    "ts": "2026-03-03T04:15:48.884360+00:00",
-    "run_id": "scrapling_linkedin_4_warm",
-    "duration_s": 0.658,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_4_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 5,
-    "cold": false,
-    "ts": "2026-03-03T04:15:49.539621+00:00",
-    "run_id": "scrapling_linkedin_5_warm",
-    "duration_s": 0.655,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_5_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 6,
-    "cold": false,
-    "ts": "2026-03-03T04:15:50.197156+00:00",
-    "run_id": "scrapling_linkedin_6_warm",
-    "duration_s": 0.657,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_6_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 7,
-    "cold": false,
-    "ts": "2026-03-03T04:15:50.853602+00:00",
-    "run_id": "scrapling_linkedin_7_warm",
-    "duration_s": 0.656,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_7_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 8,
-    "cold": false,
-    "ts": "2026-03-03T04:15:51.523097+00:00",
-    "run_id": "scrapling_linkedin_8_warm",
-    "duration_s": 0.669,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_8_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 9,
-    "cold": false,
-    "ts": "2026-03-03T04:15:52.183927+00:00",
-    "run_id": "scrapling_linkedin_9_warm",
-    "duration_s": 0.661,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_9_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "linkedin",
-    "page_type": "company",
-    "attempt": 10,
-    "cold": false,
-    "ts": "2026-03-03T04:15:52.841043+00:00",
-    "run_id": "scrapling_linkedin_10_warm",
-    "duration_s": 0.657,
-    "outcome": "crash/error",
-    "extracted": {
-      "title_or_company": "",
-      "location": "",
-      "page_url": "",
-      "key_metadata": ""
-    },
-    "expected": [
-      "title_or_company",
-      "location",
-      "page_url",
-      "key_metadata"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_10_warm"
+    "error": "",
+    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_1_cold",
+    "final_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
+    "title": "",
+    "failure_category": "extraction",
+    "failure_reason": "missing-fields",
+    "failure_stage": "extraction",
+    "remediation": []
   },
   {
     "tool": "Scrapling",
@@ -3118,251 +354,27 @@
     "page_type": "profile",
     "attempt": 1,
     "cold": true,
-    "ts": "2026-03-03T04:15:53.498182+00:00",
+    "ts": "2026-03-03T16:51:17.678444+00:00",
     "run_id": "scrapling_instagram_1_cold",
-    "duration_s": 0.657,
-    "outcome": "crash/error",
+    "duration_s": 5.179,
+    "outcome": "partial",
     "extracted": {
       "username": "",
       "timestamp": "",
-      "canonical_url": ""
+      "canonical_url": "https://www.instagram.com/instagram/"
     },
     "expected": [
       "username",
       "timestamp",
       "canonical_url"
     ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_instagram_1_cold"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 1,
-    "cold": false,
-    "ts": "2026-03-03T04:15:54.160343+00:00",
-    "run_id": "scrapling_instagram_1_warm",
-    "duration_s": 0.662,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_instagram_1_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 2,
-    "cold": false,
-    "ts": "2026-03-03T04:15:54.813307+00:00",
-    "run_id": "scrapling_instagram_2_warm",
-    "duration_s": 0.653,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_instagram_2_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 3,
-    "cold": false,
-    "ts": "2026-03-03T04:15:55.476311+00:00",
-    "run_id": "scrapling_instagram_3_warm",
-    "duration_s": 0.663,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_instagram_3_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 4,
-    "cold": false,
-    "ts": "2026-03-03T04:15:56.130168+00:00",
-    "run_id": "scrapling_instagram_4_warm",
-    "duration_s": 0.654,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_instagram_4_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 5,
-    "cold": false,
-    "ts": "2026-03-03T04:15:56.810915+00:00",
-    "run_id": "scrapling_instagram_5_warm",
-    "duration_s": 0.68,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_instagram_5_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 6,
-    "cold": false,
-    "ts": "2026-03-03T04:15:57.467883+00:00",
-    "run_id": "scrapling_instagram_6_warm",
-    "duration_s": 0.657,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_instagram_6_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 7,
-    "cold": false,
-    "ts": "2026-03-03T04:15:58.122591+00:00",
-    "run_id": "scrapling_instagram_7_warm",
-    "duration_s": 0.654,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_instagram_7_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 8,
-    "cold": false,
-    "ts": "2026-03-03T04:15:58.774999+00:00",
-    "run_id": "scrapling_instagram_8_warm",
-    "duration_s": 0.652,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_instagram_8_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 9,
-    "cold": false,
-    "ts": "2026-03-03T04:15:59.427714+00:00",
-    "run_id": "scrapling_instagram_9_warm",
-    "duration_s": 0.652,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_instagram_9_warm"
-  },
-  {
-    "tool": "Scrapling",
-    "site": "instagram",
-    "page_type": "profile",
-    "attempt": 10,
-    "cold": false,
-    "ts": "2026-03-03T04:16:00.084189+00:00",
-    "run_id": "scrapling_instagram_10_warm",
-    "duration_s": 0.656,
-    "outcome": "crash/error",
-    "extracted": {
-      "username": "",
-      "timestamp": "",
-      "canonical_url": ""
-    },
-    "expected": [
-      "username",
-      "timestamp",
-      "canonical_url"
-    ],
-    "error": "scrapling exit 1",
-    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_instagram_10_warm"
+    "error": "",
+    "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_instagram_1_cold",
+    "final_url": "https://www.instagram.com/instagram/",
+    "title": "",
+    "failure_category": "extraction",
+    "failure_reason": "missing-fields",
+    "failure_stage": "extraction",
+    "remediation": []
   }
 ]

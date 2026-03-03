@@ -1,26 +1,354 @@
 - document:
-  - dialog "Sign in to see who you already know at Microsoft":
-    - button "Dismiss" [ref=e1]
-    - img
-    - heading "Sign in to see who you already know at Microsoft" [ref=e2] [level=2]
-    - button "Continue with google" [ref=e3]:
-      - iframe
-    - button "Sign in with Email" [ref=e4]
-    - paragraph: or
-    - button "Continue with google" [ref=e5] [nth=1]:
-      - iframe
-    - paragraph:
-      - text: New to LinkedIn?
-      - link "Join now" [ref=e6]:
-        - /url: https://www.linkedin.com/signup/cold-join?session_redirect=https%3A%2F%2Fwww%2Elinkedin%2Ecom%2Fcompany%2Fmicrosoft&trk=organization_guest_contextual-sign-in-modal_join-link
-    - paragraph:
-      - text: By clicking Continue to join or sign in, you agree to LinkedIn’s
-      - link "User Agreement" [ref=e7]:
-        - /url: /legal/user-agreement?trk=linkedin-tc_auth-button_user-agreement
-      - text: ","
-      - link "Privacy Policy" [ref=e8]:
-        - /url: /legal/privacy-policy?trk=linkedin-tc_auth-button_privacy-policy
-      - text: ", and"
-      - link "Cookie Policy" [ref=e9]:
-        - /url: /legal/cookie-policy?trk=linkedin-tc_auth-button_cookie-policy
-      - text: .
+  - region "Toast message" [ref=e1]:
+    - heading "0 notifications total" [ref=e2] [level=2]
+    - alert
+  - region
+  - button "Skip to search" [ref=e3]
+  - button "Skip to main content" [ref=e4]
+  - button "Keyboard shortcuts" [ref=e5]
+  - button "Close jump menu" [ref=e6]
+  - banner "Global Navigation":
+    - link "LinkedIn" [ref=e7]:
+      - /url: https://www.linkedin.com/feed/?nis=true
+      - img "LinkedIn":
+        - img
+    - combobox "Search" [ref=e8]
+    - navigation "Primary Navigation" [ref=e9]:
+      - list:
+        - listitem:
+          - link "new feed updates notifications Home" [ref=e10]:
+            - /url: https://www.linkedin.com/feed/?nis=true&
+        - listitem:
+          - link "My Network" [ref=e11]:
+            - /url: https://www.linkedin.com/mynetwork/?
+        - listitem:
+          - link "Jobs" [ref=e12]:
+            - /url: https://www.linkedin.com/jobs/?
+        - listitem:
+          - link "Messaging" [ref=e13]:
+            - /url: https://www.linkedin.com/messaging/?
+        - listitem:
+          - link "21 new notifications Notifications" [ref=e14]:
+            - /url: https://www.linkedin.com/notifications/?
+        - listitem:
+          - button "Kahtaf Alam Me" [ref=e15]:
+            - img "Kahtaf Alam"
+            - text: Me
+        - listitem:
+          - button "For Business" [ref=e16]
+        - listitem:
+          - link "Try Premium for CA$0" [ref=e17]:
+            - /url: javascript:void(0)
+  - main "Organization page for Microsoft" [ref=e18]:
+    - button [ref=e19]
+    - button "Subscribed to page notifications from people you may know. Click to manage." [ref=e20]
+    - img "Microsoft logo"
+    - heading "Microsoft" [ref=e21] [level=1]
+    - link "Verified" [ref=e22]:
+      - /url: /company/microsoft/about/
+    - text: · Software Development · Redmond, Washington · 28M followers
+    - link "· 10K+ employees" [ref=e23]:
+      - /url: /search/results/people/?currentCompany=%5B%221035%22%2C%221418841%22%2C%22165397%22%2C%221386954%22%2C%223763403%22%2C%223290211%22%2C%223719%22%2C%2210073178%22%2C%223238203%22%2C%222270931%22%2C%223641570%22%2C%22263515%22%2C%221148098%22%2C%2218612750%22%2C%225097047%22%2C%22589037%22%2C%223178875%22%2C%22692068%22%2C%2218086638%22%2C%2219537%22%2C%221889423%22%2C%2230203%22%2C%2211206713%22%2C%222446424%22%5D&origin=COMPANY_PAGE_CANNED_SEARCH
+    - link "Hamad Chaudhry Hamad & 4 other connections work here" [ref=e24]:
+      - /url: http://www.linkedin.com/search/results/people/?origin=COMPANY_PAGE_CANNED_SEARCH&network=%5B%22F%22%5D&currentCompany=%5B%221035%22%5D
+      - img "Hamad Chaudhry"
+      - heading "Hamad & 4 other connections work here" [ref=e25] [level=2]
+    - region:
+      - link "Learn more" [ref=e26]:
+        - /url: http://news.microsoft.com/
+      - button "Following" [ref=e27] [pressed]
+    - button "Overflow Actions" [ref=e28]:
+      - img "Overflow Actions"
+    - navigation "Organization’s page navigation" [ref=e29]:
+      - list:
+        - listitem:
+          - link "Home" [ref=e30]:
+            - /url: /company/microsoft/
+        - listitem:
+          - link "About" [ref=e31]:
+            - /url: /company/microsoft/about/
+        - listitem:
+          - link "Posts" [ref=e32]:
+            - /url: /company/microsoft/posts/?feedView=all
+        - listitem:
+          - link "Jobs" [ref=e33] [nth=1]:
+            - /url: /company/microsoft/jobs/
+        - listitem:
+          - link "Life" [ref=e34]:
+            - /url: /company/microsoft/life/
+        - listitem:
+          - link "People" [ref=e35]:
+            - /url: /company/microsoft/people/
+    - img "Microsoft logo"
+    - heading "Microsoft" [ref=e36] [nth=1] [level=2]
+    - paragraph: 27,689,843 followers
+    - paragraph: See a collection of active or past ads by Microsoft.
+    - link "View ad library" [ref=e37]:
+      - /url: /ad-library/search?companyIds=1035
+    - tablist:
+      - tab "All" [ref=e38] [selected]
+      - tab "Images" [ref=e39]
+      - tab "Videos" [ref=e40]
+      - tab "Articles" [ref=e41]
+      - tab "Documents" [ref=e42]
+    - 'button "Sort by: Top Sort relevance dropdown"':
+      - text: "Sort by:"
+      - strong: Top
+      - img "Sort relevance dropdown"
+    - article:
+      - heading "Feed post number 1" [ref=e43] [level=2]
+      - link "Microsoft, graphic." [ref=e44]:
+        - /url: https://www.linkedin.com/company/microsoft/posts
+      - 'link "View: Microsoft 27,689,843 followers"':
+        - /url: https://www.linkedin.com/company/microsoft/posts
+        - text: Microsoft 27,689,843 followers
+      - text: 6 days ago • Visible to anyone on or off LinkedIn
+      - button "Open control menu for post by Microsoft" [ref=e45]:
+        - img
+      - text: "Security culture > security tools. Learn how to innovate while keeping security embedded every step of the way. Explore AI-driven and expert tips you can implement today:"
+      - link "http://msft.it/6047QVeXW" [ref=e46]:
+        - /url: http://msft.it/6047QVeXW
+      - button "see more, visually reveals content which is already detected by screen readers" [ref=e47]: …more
+      - 'button "Activate to view larger image, Motivational quote on a gradient blue and pink background: ''Security isn''t a feature—it''s the foundation.''"':
+        - text: Activate to view larger image,
+        - 'img "Motivational quote on a gradient blue and pink background: ''Security isn''t a feature—it''s the foundation.''"'
+      - list:
+        - listitem:
+          - button "6 reactions" [ref=e48]:
+            - img "like"
+      - button "React Like" [ref=e49]
+      - button "Open reactions menu" [ref=e50]
+      - button "Comment" [ref=e51]
+      - button "Repost" [ref=e52]
+      - button "Send in a private message" [ref=e53]: Send
+    - article:
+      - heading "Feed post number 2" [ref=e54] [level=2]
+      - link "Microsoft, graphic." [ref=e55] [nth=1]:
+        - /url: https://www.linkedin.com/company/microsoft/posts
+      - 'link "View: Microsoft 27,689,843 followers"':
+        - /url: https://www.linkedin.com/company/microsoft/posts
+        - text: Microsoft 27,689,843 followers
+      - text: 3 days ago • Visible to anyone on or off LinkedIn
+      - button "Open control menu for post by Microsoft" [ref=e56] [nth=1]:
+        - img
+      - text: "Get the visibility and direction to turn exposure into assurance with Microsoft Purview Compliance Manager. Assess your compliance posture—even if you don’t have Purview. Try Microsoft Purview:"
+      - link "http://msft.it/6040QVpE6" [ref=e57]:
+        - /url: http://msft.it/6040QVpE6
+      - button "see more, visually reveals content which is already detected by screen readers" [ref=e58] [nth=1]: …more
+      - button "Activate to view larger image, You can&#39;t protect" [ref=e59]
+      - button "Activate to view larger image, what you can&#39;t see" [ref=e60]
+      - button "Activate to view larger image, See it with Microsoft Purview" [ref=e61]
+      - list:
+        - listitem:
+          - button "4 reactions" [ref=e62]:
+            - img "like"
+      - button "React Like" [ref=e63] [nth=1]
+      - button "Open reactions menu" [ref=e64] [nth=1]
+      - button "Comment" [ref=e65] [nth=1]
+      - button "Repost" [ref=e66] [nth=1]
+      - button "Send in a private message" [ref=e67] [nth=1]: Send
+    - article:
+      - heading "Feed post number 3" [ref=e68] [level=2]
+      - link "View Microsoft" [ref=e69]:
+        - /url: https://www.linkedin.com/company/microsoft/?miniCompanyUrn=urn%3Ali%3Afsd_company%3A1035
+        - img "View Microsoft"
+      - link "Microsoft" [ref=e70]:
+        - /url: https://www.linkedin.com/company/microsoft/
+      - text: reposted this
+      - button "Open control menu for post by Satya Nadella" [ref=e71]:
+        - img
+      - link "View Satya Nadella’s graphic link" [ref=e72]:
+        - /url: https://www.linkedin.com/in/satyanadella?miniProfileUrn=urn%3Ali%3Afsd_profile%3AACoAAAEkwwAB9KEc2TrQgOLEQ-vzRyZeCDyc6DQ
+        - img "View Satya Nadella’s graphic link"
+      - 'link "View: Satya Nadella Influencer • Following Chairman and CEO at Microsoft"':
+        - /url: https://www.linkedin.com/in/satyanadella?miniProfileUrn=urn%3Ali%3Afsd_profile%3AACoAAAEkwwAB9KEc2TrQgOLEQ-vzRyZeCDyc6DQ
+        - text: Satya Nadella Influencer • Following Chairman and CEO at Microsoft
+      - text: 1 week ago • Visible to anyone on or off LinkedIn We’re building the most comprehensive digital sovereignty platform to help countries and organizations meet their regulatory, security, and operational needs. Today in London, we announced new capabilities across Microsoft Sovereign Cloud that enable customers to bring core productivity workloads and AI models into fully disconnected sovereign environments, with more choice and greater local control.
+      - link "https://lnkd.in/gFYsatji" [ref=e73]:
+        - /url: https://lnkd.in/gFYsatji
+      - button "see more, visually reveals content which is already detected by screen readers" [ref=e74] [nth=2]: …more
+      - 'link "Open article: Microsoft Sovereign Cloud adds governance, productivity and support for large AI models securely running even when completely disconnected - The Official Microsoft Blog by blogs.microsoft.com, graphic"':
+        - /url: https://blogs.microsoft.com/blog/2026/02/24/microsoft-sovereign-cloud-adds-governance-productivity-and-support-for-large-ai-models-securely-running-even-when-completely-disconnected/
+      - link "Microsoft Sovereign Cloud adds governance, productivity and support for large AI models securely running even when completely disconnected - The Official Microsoft Blog" [ref=e75]:
+        - /url: https://blogs.microsoft.com/blog/2026/02/24/microsoft-sovereign-cloud-adds-governance-productivity-and-support-for-large-ai-models-securely-running-even-when-completely-disconnected/
+        - text: Microsoft Sovereign Cloud adds governance, productivity and support for large AI models securely running even when completely disconnected - The Official Microsoft Blog blogs.microsoft.com
+      - list:
+        - listitem:
+          - button "3,760 reactions" [ref=e76]:
+            - img "like"
+            - img "celebrate"
+            - img "insightful"
+        - listitem:
+          - list:
+            - listitem:
+              - button "340 comments on Satya Nadella’s post" [ref=e77]
+              - text: ·
+            - listitem:
+              - button "471 reposts of Satya Nadella’s post" [ref=e78]
+      - button "React Like" [ref=e79] [nth=2]
+      - button "Open reactions menu" [ref=e80] [nth=2]
+      - button "Comment" [ref=e81] [nth=2]
+      - button "Repost" [ref=e82] [nth=2]
+      - button "Send in a private message" [ref=e83] [nth=2]: Send
+    - button "Show more results" [ref=e84]
+  - complementary "Advertisement":
+    - iframe
+    - heading "Affiliated pages" [ref=e85] [level=3]
+    - list:
+      - listitem:
+        - link "Skype page logo" [ref=e86]:
+          - /url: https://www.linkedin.com/company/skype/
+          - img "Skype page logo"
+        - link "Skype Software Development Acquisition" [ref=e87]:
+          - /url: https://www.linkedin.com/company/skype/
+        - link "Kate Darnell Kate & 1 other connection follow this page" [ref=e88]:
+          - /url: http://www.linkedin.com/company/skype/?showInNetworkFollowers=true
+          - img "Kate Darnell"
+          - text: Kate & 1 other connection follow this page
+        - button "Follow Skype" [ref=e89]: Follow
+      - listitem:
+        - link "Microsoft Military Affairs page logo" [ref=e90]:
+          - /url: https://www.linkedin.com/showcase/microsoft-military-affairs/
+          - img "Microsoft Military Affairs page logo"
+        - link "Microsoft Military Affairs Information Technology & Services Showcase page" [ref=e91]:
+          - /url: https://www.linkedin.com/showcase/microsoft-military-affairs/
+        - link "Michael Korn Michael follows this page" [ref=e92]:
+          - /url: http://www.linkedin.com/in/michaelkorneexpedia
+          - img "Michael Korn"
+          - text: Michael follows this page
+        - button "Follow Microsoft Military Affairs" [ref=e93]: Follow
+      - listitem:
+        - link "Microsoft Design page logo" [ref=e94]:
+          - /url: https://www.linkedin.com/showcase/microsoft-design/
+          - img "Microsoft Design page logo"
+        - link "Microsoft Design Technology, Information and Internet Showcase page" [ref=e95]:
+          - /url: https://www.linkedin.com/showcase/microsoft-design/
+        - button "Follow Microsoft Design" [ref=e96]: Follow
+    - button "Show all affiliated pages" [ref=e97]: Show all
+    - heading "Pages people also viewed" [ref=e98] [level=3]
+    - list:
+      - listitem:
+        - link "Google page logo" [ref=e99]:
+          - /url: https://www.linkedin.com/company/google/
+          - img "Google page logo"
+        - link "Google Software Development 41,002,774 followers" [ref=e100]:
+          - /url: https://www.linkedin.com/company/google/
+        - link "Frank Ji Frank & 1 other connection work here" [ref=e101]:
+          - /url: http://www.linkedin.com/search/results/people/?origin=COMPANY_PAGE_CANNED_SEARCH&network=%5B%22F%22%5D&currentCompany=%5B%221441%22%5D
+          - img "Frank Ji"
+          - text: Frank & 1 other connection work here
+        - button "Following Google. Click to unfollow." [ref=e102] [pressed]: Following
+      - listitem:
+        - link "Amazon page logo" [ref=e103]:
+          - /url: https://www.linkedin.com/company/amazon/
+          - img "Amazon page logo"
+        - link "Amazon Software Development 36,361,740 followers" [ref=e104]:
+          - /url: https://www.linkedin.com/company/amazon/
+        - link "Ayush Kulkarni Ayush & 8 other connections work here" [ref=e105]:
+          - /url: http://www.linkedin.com/search/results/people/?origin=COMPANY_PAGE_CANNED_SEARCH&network=%5B%22F%22%5D&currentCompany=%5B%221586%22%5D
+          - img "Ayush Kulkarni"
+          - text: Ayush & 8 other connections work here
+        - button "Follow Amazon" [ref=e106]: Follow
+      - listitem:
+        - link "Apple page logo" [ref=e107]:
+          - /url: https://www.linkedin.com/company/apple/
+          - img "Apple page logo"
+        - link "Apple Computers and Electronics Manufacturing 18,120,600 followers" [ref=e108]:
+          - /url: https://www.linkedin.com/company/apple/
+        - link "Jason Yakimovich Jason works here" [ref=e109]:
+          - /url: http://www.linkedin.com/in/jason-yakimovich
+          - img "Jason Yakimovich"
+          - text: Jason works here
+        - button "Following Apple. Click to unfollow." [ref=e110] [pressed]: Following
+    - button "Show all similar pages" [ref=e111]: Show all
+    - heading "People also follow" [ref=e112] [level=3]
+    - list:
+      - listitem:
+        - link "Google DeepMind page logo" [ref=e113]:
+          - /url: https://www.linkedin.com/company/googledeepmind/
+          - img "Google DeepMind page logo"
+        - link "Google DeepMind Research Services 1,473,744 followers" [ref=e114]:
+          - /url: https://www.linkedin.com/company/googledeepmind/
+        - link "Naif Tarafdar Naif & 87 other connections follow this page" [ref=e115]:
+          - /url: http://www.linkedin.com/company/googledeepmind/?showInNetworkFollowers=true
+          - img "Naif Tarafdar"
+          - text: Naif & 87 other connections follow this page
+        - button "Follow Google DeepMind" [ref=e116]: Follow
+      - listitem:
+        - link "Netflix page logo" [ref=e117]:
+          - /url: https://www.linkedin.com/company/netflix/
+          - img "Netflix page logo"
+        - link "Netflix Entertainment Providers 11,722,534 followers" [ref=e118]:
+          - /url: https://www.linkedin.com/company/netflix/
+        - link "Usman Rafique Usman & 141 other connections follow this page" [ref=e119]:
+          - /url: http://www.linkedin.com/company/netflix/?showInNetworkFollowers=true
+          - img "Usman Rafique"
+          - text: Usman & 141 other connections follow this page
+        - button "Follow Netflix" [ref=e120]: Follow
+      - listitem:
+        - link "AMD page logo" [ref=e121]:
+          - /url: https://www.linkedin.com/company/amd/
+          - img "AMD page logo"
+        - link "AMD Semiconductor Manufacturing 2,183,131 followers" [ref=e122]:
+          - /url: https://www.linkedin.com/company/amd/
+        - link "Dan To Dan works here" [ref=e123]:
+          - /url: http://www.linkedin.com/in/danhto
+          - img "Dan To"
+          - text: Dan works here
+        - button "Follow AMD" [ref=e124]: Follow
+    - button "Show all recommended pages" [ref=e125]: Show all
+    - heading "School alumni that work here" [ref=e126] [level=3]
+    - list:
+      - listitem:
+        - link "Danny .. profile picture" [ref=e127]:
+          - /url: https://www.linkedin.com/in/hsnet
+          - img "Danny .."
+        - link "Danny .. 2nd Transformation Strategist - Enterprise Secrets Security" [ref=e128]:
+          - /url: https://www.linkedin.com/in/hsnet
+        - button "Invite Danny .. to connect" [ref=e129]: Connect
+      - listitem:
+        - link "Jason Ng profile picture" [ref=e130]:
+          - /url: https://www.linkedin.com/in/jasesayin
+          - img "Jason Ng"
+        - link "Jason Ng 3rd+ Global Director of Business Development | Product Management & UX Design Studio Lead | Podcast Host & Producer | Content Creator" [ref=e131]:
+          - /url: https://www.linkedin.com/in/jasesayin
+        - button "Jason Ng Message" [ref=e132]: Message
+    - link "Show all" [ref=e133]:
+      - /url: https://www.linkedin.com/search/results/people/?origin=COMPANY_HIRES_IN_COMPANY_CANNED_SEARCH&currentCompany=%5B10073178%2C3719%2C3238203%2C3178875%2C1035%2C1418841%2C19537%2C3290211%2C11206713%2C18612750%2C1889423%2C1148098%2C3641570%2C165397%2C1638785%2C5097047%2C263515%2C1386954%2C589037%2C692068%2C2270931%2C3763403%2C30203%2C18086638%2C2446424%5D&schoolFilter=3660
+    - iframe
+    - list:
+      - listitem:
+        - link "About" [ref=e134] [nth=1]:
+          - /url: https://about.linkedin.com/
+      - listitem:
+        - link "Accessibility" [ref=e135]:
+          - /url: https://www.linkedin.com/accessibility
+      - listitem:
+        - link "Help Center" [ref=e136]:
+          - /url: https://www.linkedin.com/help/linkedin?trk=footer_d_flagship3_company_posts
+      - listitem:
+        - button "Privacy & Terms" [ref=e137]
+      - listitem:
+        - link "Ad Choices" [ref=e138]:
+          - /url: https://www.linkedin.com/help/linkedin/answer/62931
+      - listitem:
+        - link "Advertising" [ref=e139]:
+          - /url: https://www.linkedin.com/ad/start?trk=n_nav_ads_rr
+      - listitem:
+        - button "Business Services" [ref=e140]
+      - listitem:
+        - button "Get the LinkedIn app" [ref=e141]
+      - listitem:
+        - button "More options" [ref=e142]: More
+    - img "LinkedIn":
+      - img
+    - text: LinkedIn Corporation © 2026
+  - complementary:
+    - img "Kahtaf Alam"
+    - text: Status is online
+    - button "You are on the messaging overlay. Press enter to open the list of conversations." [ref=e143]
+    - button "Open messenger dropdown menu" [ref=e144]:
+      - img "Open messenger dropdown menu"
+    - button "Compose message" [ref=e145]
+    - button "You are on the messaging overlay. Press enter to open the list of conversations." [ref=e146] [nth=1]
+  - complementary "AI-powered assistant to get help with your career, jobs etc"

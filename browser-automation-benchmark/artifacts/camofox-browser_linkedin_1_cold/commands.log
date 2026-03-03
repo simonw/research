@@ -1,0 +1,61 @@
+
+===== cookie-import =====
+{
+  "tool": "camofox-browser",
+  "site": "linkedin",
+  "cookie_count": 6,
+  "cookies": [
+    {
+      "name": "bcookie",
+      "domain": ".linkedin.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1803697695
+    },
+    {
+      "name": "bscookie",
+      "domain": ".www.linkedin.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1803697695
+    },
+    {
+      "name": "li_rm",
+      "domain": ".www.linkedin.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1791581959
+    },
+    {
+      "name": "JSESSIONID",
+      "domain": ".www.linkedin.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1803697695
+    },
+    {
+      "name": "liap",
+      "domain": ".linkedin.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1803697695
+    },
+    {
+      "name": "li_at",
+      "domain": ".www.linkedin.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1803697695
+    }
+  ],
+  "state_path": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/.profiles/camo-linkedin-warm-state.json",
+  "import_mode": "context.add_cookies"
+}
+
+===== camoufox =====
+{
+  "command": "/usr/bin/python3 -c \nfrom pathlib import Path\nimport json\nimport os\nfrom playwright.sync_api import sync_playwright\n\nurl = 'https://www.linkedin.com/company/microsoft/'\ncookies = [{'name': 'bcookie', 'value': 'v=2&9765043f-0558-4286-8aa3-de7c49100928', 'domain': '.linkedin.com', 'path': '/', 'secure': True, 'expires': 1803697695}, {'name': 'bscookie', 'value': 'v=1&20241223214557c8a2393d-1dad-4ebe-86b8-03f258783920AQFmLjr_--OxwvWkz-67Rt9fYk65vXmc', 'domain': '.www.linkedin.com', 'path': '/', 'secure': True, 'expires': 1803697695}, {'name': 'li_rm', 'value': 'AQEk5nVIAGbLrAAAAZP1fEsLj4fYYeuIJfZqzz2SLtQyO82Do_9PCerZNOjv7yC4LSYNxqZ5ccFk7lveh6mcr6TfZvmbpW5vBXTgloeIuE9pJQjNLAs6RBQXhUjUVBq6H5j3rZa6ZWVNKxjJrvWBTU5EfGGJeVWJ42YgMcHXVJK1CvrZV7Und0F5MDt-mPc1ZuJxmvBRUau4TJsZh80QzmYqsyB_F_xYxb1sdkJDe1J8_3kyh0mwayaWD-0-6sXZf4uBlzKs9ii--OLLxZ1C7vLT9wFHGuhGS9O_ZFKO5HOWc3tYMeB52omoXsQg6sBDi2g14fnFtjKQVSjUX3I', 'domain': '.www.linkedin.com', 'path': '/', 'secure': True, 'expires': 1791581959}, {'name': 'JSESSIONID', 'value': 'ajax:1957846287504080487', 'domain': '.www.linkedin.com', 'path': '/', 'secure': True, 'expires': 1803697695}, {'name': 'liap', 'value': 'true', 'domain': '.linkedin.com', 'path': '/', 'secure': True, 'expires': 1803697695}, {'name': 'li_at', 'value': 'AQEDARDtRBUEyys_AAABmcrqBeMAAAGcwR3_6E0AnmjJXw7xTRcC33KHAxzBp7OfsN6zEjMPPRLW8akBqTJHqN1KXtRku1NIBVtnRgpfDUsBZorj2lAJxi4fynv3-tjGEP0FZy_7feEwTNDkmS-uueub', 'domain': '.www.linkedin.com', 'path': '/', 'secure': True, 'expires': 1803697695}]\nstate_path = Path('/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/.profiles/camo-linkedin-warm-state.json')\nout = Path('/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_1_cold')\nbin_path = Path('/home/kahtaf/.cache/camoufox/camoufox-bin')\nos.environ[\"MOZ_ENABLE_WAYLAND\"] = \"0\"\n\nprint(json.dumps({\n    \"tool\": \"camofox-browser\",\n    \"cookie_count\": len(cookies),\n    \"cookies\": [{'name': 'bcookie', 'domain': '.linkedin.com', 'path': '/', 'secure': True, 'expires': 1803697695}, {'name': 'bscookie', 'domain': '.www.linkedin.com', 'path': '/', 'secure': True, 'expires': 1803697695}, {'name': 'li_rm', 'domain': '.www.linkedin.com', 'path': '/', 'secure': True, 'expires': 1791581959}, {'name': 'JSESSIONID', 'domain': '.www.linkedin.com', 'path': '/', 'secure': True, 'expires': 1803697695}, {'name': 'liap', 'domain': '.linkedin.com', 'path': '/', 'secure': True, 'expires': 1803697695}, {'name': 'li_at', 'domain': '.www.linkedin.com', 'path': '/', 'secure': True, 'expires': 1803697695}],\n    \"state_path\": str(state_path),\n    \"import_mode\": \"context.add_cookies\",\n}))\n\nwith sync_playwright() as p:\n    browser = p.firefox.launch(executable_path=str(bin_path), headless=False)\n    context_kwargs = {}\n    if state_path.exists():\n        context_kwargs[\"storage_state\"] = str(state_path)\n    context = browser.new_context(**context_kwargs)\n    if cookies:\n        context.add_cookies(cookies)\n    page = context.new_page()\n    page.goto(url, wait_until=\"domcontentloaded\", timeout=45000)\n    page.wait_for_timeout(6000)\n    (out / \"url.txt\").write_text(page.url)\n    (out / \"title.txt\").write_text(page.title())\n    (out / \"page.html\").write_text(page.content())\n    page.screenshot(path=str(out / \"screen.png\"), full_page=True)\n    context.storage_state(path=str(state_path))\n    context.close()\n    browser.close()\n",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 13.964
+}

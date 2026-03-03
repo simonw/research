@@ -1,5 +1,18 @@
 - document:
+  - link [ref=e1]:
+    - /url: https://www.reddit.com
+    - img
   - img
-  - text: You've been blocked by network security. If you think you've been blocked by mistake, file a ticket below and we'll look into it.
-  - link "File a ticket" [ref=e1]:
-    - /url: https://support.reddithelp.com/hc/en-us/requests/new?ticket_form_id=21879292693140
+  - heading "Prove your humanity" [ref=e2] [level=1]
+  - paragraph: We’re committed to safety and security. But not for bots. Complete the challenge below and let us know you’re a real person.
+  - iframe
+  - link "Reddit, Inc. © \" [ref=e3]2026\". All rights reserved.":
+    - /url: https://www.redditinc.com/
+  - link "User Agreement" [ref=e4]:
+    - /url: https://www.reddit.com/help/useragreement
+  - link "Privacy Policy" [ref=e5]:
+    - /url: https://www.reddit.com/help/privacypolicy
+  - link "Content Policy" [ref=e6]:
+    - /url: https://www.reddit.com/help/contentpolicy
+  - link "Help" [ref=e7]:
+    - /url: https://support.reddithelp.com/hc/en-us

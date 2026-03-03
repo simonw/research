@@ -1,0 +1,165 @@
+
+===== cookie-import =====
+{
+  "tool": "agent-browser",
+  "site": "instagram",
+  "cookie_count": 6,
+  "cookies": [
+    {
+      "name": "datr",
+      "domain": ".instagram.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1774480946
+    },
+    {
+      "name": "mid",
+      "domain": ".instagram.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1774480947
+    },
+    {
+      "name": "ig_did",
+      "domain": ".instagram.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1803526655
+    },
+    {
+      "name": "ds_user_id",
+      "domain": ".instagram.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1780285828
+    },
+    {
+      "name": "csrftoken",
+      "domain": ".instagram.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1807069828
+    },
+    {
+      "name": "sessionid",
+      "domain": ".instagram.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1804045828
+    }
+  ],
+  "state_path": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_1_cold/agent-browser-state.json",
+  "import_mode": "storage-state"
+}
+
+===== prime-state =====
+{
+  "command": "agent-browser --headed --session abi1c --state /home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_1_cold/agent-browser-state.json open about:blank",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 1.298
+}
+
+===== cookies =====
+{
+  "command": "agent-browser --session abi1c --json cookies",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 0.162
+}
+
+===== open =====
+{
+  "command": "agent-browser --headed --session abi1c open https://www.instagram.com/instagram/",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 1.141
+}
+
+===== wait =====
+{
+  "command": "agent-browser --session abi1c wait 6000",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 6.158
+}
+
+===== snapshot =====
+{
+  "command": "agent-browser --session abi1c snapshot",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 2.703
+}
+
+===== title =====
+{
+  "command": "agent-browser --session abi1c get title",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 0.157
+}
+
+===== url =====
+{
+  "command": "agent-browser --session abi1c get url",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 0.157
+}
+
+===== html =====
+{
+  "command": "agent-browser --session abi1c get html body",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 0.277
+}
+
+===== screenshot =====
+{
+  "command": "agent-browser --session abi1c screenshot /home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_1_cold/screen.png",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 2.414
+}
+
+===== capture-title =====
+{
+  "command": "agent-browser --session abi1c get title",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 0.155
+}
+
+===== capture-url =====
+{
+  "command": "agent-browser --session abi1c get url",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 0.155
+}
+
+===== capture-shot =====
+{
+  "command": "agent-browser --session abi1c screenshot /home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_1_cold/screen.png",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 2.692
+}
+
+===== capture-html =====
+{
+  "command": "agent-browser --session abi1c get html body",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 0.27
+}
+
+===== close =====
+{
+  "command": "agent-browser --session abi1c close",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 0.315
+}

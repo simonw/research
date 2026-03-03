@@ -1,0 +1,18 @@
+
+===== cookie-import =====
+{
+  "tool": "camofox-browser",
+  "site": "reddit",
+  "cookie_count": 0,
+  "cookies": [],
+  "state_path": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/.profiles/camo-reddit-warm-state.json",
+  "import_mode": "context.add_cookies"
+}
+
+===== camoufox =====
+{
+  "command": "/usr/bin/python3 -c \nfrom pathlib import Path\nimport json\nimport os\nfrom playwright.sync_api import sync_playwright\n\nurl = 'https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/'\ncookies = []\nstate_path = Path('/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/.profiles/camo-reddit-warm-state.json')\nout = Path('/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_1_cold')\nbin_path = Path('/home/kahtaf/.cache/camoufox/camoufox-bin')\nos.environ[\"MOZ_ENABLE_WAYLAND\"] = \"0\"\n\nprint(json.dumps({\n    \"tool\": \"camofox-browser\",\n    \"cookie_count\": len(cookies),\n    \"cookies\": [],\n    \"state_path\": str(state_path),\n    \"import_mode\": \"context.add_cookies\",\n}))\n\nwith sync_playwright() as p:\n    browser = p.firefox.launch(executable_path=str(bin_path), headless=False)\n    context_kwargs = {}\n    if state_path.exists():\n        context_kwargs[\"storage_state\"] = str(state_path)\n    context = browser.new_context(**context_kwargs)\n    if cookies:\n        context.add_cookies(cookies)\n    page = context.new_page()\n    page.goto(url, wait_until=\"domcontentloaded\", timeout=45000)\n    page.wait_for_timeout(6000)\n    (out / \"url.txt\").write_text(page.url)\n    (out / \"title.txt\").write_text(page.title())\n    (out / \"page.html\").write_text(page.content())\n    page.screenshot(path=str(out / \"screen.png\"), full_page=True)\n    context.storage_state(path=str(state_path))\n    context.close()\n    browser.close()\n",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 10.189
+}

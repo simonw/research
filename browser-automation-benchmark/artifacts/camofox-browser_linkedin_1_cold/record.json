@@ -4,15 +4,15 @@
   "page_type": "company",
   "attempt": 1,
   "cold": true,
-  "ts": "2026-03-03T04:08:14.367510+00:00",
+  "ts": "2026-03-03T16:50:42.247671+00:00",
   "run_id": "camofox-browser_linkedin_1_cold",
-  "duration_s": 5.633,
-  "outcome": "crash/error",
+  "duration_s": 14.283,
+  "outcome": "blocked/challenged",
   "extracted": {
-    "title_or_company": "",
-    "location": "",
-    "page_url": "",
-    "key_metadata": ""
+    "title_or_company": "linkedin",
+    "location": "United States",
+    "page_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
+    "key_metadata": "Information Technology"
   },
   "expected": [
     "title_or_company",
@@ -20,6 +20,12 @@
     "page_url",
     "key_metadata"
   ],
-  "error": "camofox exit 1",
-  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_1_cold"
+  "error": "",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_1_cold",
+  "final_url": "https://www.linkedin.com/company/microsoft/posts/?feedView=all",
+  "title": "(21) Microsoft: Posts | LinkedIn",
+  "failure_category": "site",
+  "failure_reason": "anti-bot-challenge",
+  "failure_stage": "page",
+  "remediation": []
 }

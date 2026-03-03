@@ -1,0 +1,61 @@
+
+===== cookie-import =====
+{
+  "tool": "camofox-browser",
+  "site": "instagram",
+  "cookie_count": 6,
+  "cookies": [
+    {
+      "name": "datr",
+      "domain": ".instagram.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1774480946
+    },
+    {
+      "name": "mid",
+      "domain": ".instagram.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1774480947
+    },
+    {
+      "name": "ig_did",
+      "domain": ".instagram.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1803526655
+    },
+    {
+      "name": "ds_user_id",
+      "domain": ".instagram.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1780285828
+    },
+    {
+      "name": "csrftoken",
+      "domain": ".instagram.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1807069828
+    },
+    {
+      "name": "sessionid",
+      "domain": ".instagram.com",
+      "path": "/",
+      "secure": true,
+      "expires": 1804045828
+    }
+  ],
+  "state_path": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/.profiles/camo-instagram-warm-state.json",
+  "import_mode": "context.add_cookies"
+}
+
+===== camoufox =====
+{
+  "command": "/usr/bin/python3 -c \nfrom pathlib import Path\nimport json\nimport os\nfrom playwright.sync_api import sync_playwright\n\nurl = 'https://www.instagram.com/instagram/'\ncookies = [{'name': 'datr', 'value': 'Mha1Z9A5p_QlLjwHV3MLECiA', 'domain': '.instagram.com', 'path': '/', 'secure': True, 'expires': 1774480946}, {'name': 'mid', 'value': 'Z7UWMgAEAAFmoKDVkfGZj_YuoYV1', 'domain': '.instagram.com', 'path': '/', 'secure': True, 'expires': 1774480947}, {'name': 'ig_did', 'value': '09CD82BC-DDF7-4565-9C65-6283461A74DB', 'domain': '.instagram.com', 'path': '/', 'secure': True, 'expires': 1803526655}, {'name': 'ds_user_id', 'value': '79028106685', 'domain': '.instagram.com', 'path': '/', 'secure': True, 'expires': 1780285828}, {'name': 'csrftoken', 'value': 'CqBXIT8gwzwFYZXxjW3F26bHeJhibSfN', 'domain': '.instagram.com', 'path': '/', 'secure': True, 'expires': 1807069828}, {'name': 'sessionid', 'value': '79028106685%3AoIAFrJKUG0TRYj%3A13%3AAYj8V_hmLbkJ84ckqo-XzOAYtFUxABhCoiNymghShg', 'domain': '.instagram.com', 'path': '/', 'secure': True, 'expires': 1804045828}]\nstate_path = Path('/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/.profiles/camo-instagram-warm-state.json')\nout = Path('/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_1_cold')\nbin_path = Path('/home/kahtaf/.cache/camoufox/camoufox-bin')\nos.environ[\"MOZ_ENABLE_WAYLAND\"] = \"0\"\n\nprint(json.dumps({\n    \"tool\": \"camofox-browser\",\n    \"cookie_count\": len(cookies),\n    \"cookies\": [{'name': 'datr', 'domain': '.instagram.com', 'path': '/', 'secure': True, 'expires': 1774480946}, {'name': 'mid', 'domain': '.instagram.com', 'path': '/', 'secure': True, 'expires': 1774480947}, {'name': 'ig_did', 'domain': '.instagram.com', 'path': '/', 'secure': True, 'expires': 1803526655}, {'name': 'ds_user_id', 'domain': '.instagram.com', 'path': '/', 'secure': True, 'expires': 1780285828}, {'name': 'csrftoken', 'domain': '.instagram.com', 'path': '/', 'secure': True, 'expires': 1807069828}, {'name': 'sessionid', 'domain': '.instagram.com', 'path': '/', 'secure': True, 'expires': 1804045828}],\n    \"state_path\": str(state_path),\n    \"import_mode\": \"context.add_cookies\",\n}))\n\nwith sync_playwright() as p:\n    browser = p.firefox.launch(executable_path=str(bin_path), headless=False)\n    context_kwargs = {}\n    if state_path.exists():\n        context_kwargs[\"storage_state\"] = str(state_path)\n    context = browser.new_context(**context_kwargs)\n    if cookies:\n        context.add_cookies(cookies)\n    page = context.new_page()\n    page.goto(url, wait_until=\"domcontentloaded\", timeout=45000)\n    page.wait_for_timeout(6000)\n    (out / \"url.txt\").write_text(page.url)\n    (out / \"title.txt\").write_text(page.title())\n    (out / \"page.html\").write_text(page.content())\n    page.screenshot(path=str(out / \"screen.png\"), full_page=True)\n    context.storage_state(path=str(state_path))\n    context.close()\n    browser.close()\n",
+  "returncode": 0,
+  "timeout": false,
+  "elapsed_s": 11.771
+}

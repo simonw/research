@@ -4,15 +4,15 @@
   "page_type": "post",
   "attempt": 1,
   "cold": true,
-  "ts": "2026-03-03T04:15:31.737819+00:00",
+  "ts": "2026-03-03T16:51:00.472073+00:00",
   "run_id": "scrapling_x_1_cold",
-  "duration_s": 1.172,
-  "outcome": "crash/error",
+  "duration_s": 6.314,
+  "outcome": "partial",
   "extracted": {
     "post_text": "",
     "author_handle": "",
     "timestamp": "",
-    "canonical_url": ""
+    "canonical_url": "https://x.com/jack/status/20"
   },
   "expected": [
     "post_text",
@@ -20,6 +20,12 @@
     "timestamp",
     "canonical_url"
   ],
-  "error": "scrapling exit 1",
-  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_1_cold"
+  "error": "",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_1_cold",
+  "final_url": "https://x.com/jack/status/20",
+  "title": "",
+  "failure_category": "extraction",
+  "failure_reason": "missing-fields",
+  "failure_stage": "extraction",
+  "remediation": []
 }

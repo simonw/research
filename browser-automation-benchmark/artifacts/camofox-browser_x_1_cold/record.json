@@ -4,15 +4,15 @@
   "page_type": "post",
   "attempt": 1,
   "cold": true,
-  "ts": "2026-03-03T04:02:11.855172+00:00",
+  "ts": "2026-03-03T16:50:17.751306+00:00",
   "run_id": "camofox-browser_x_1_cold",
-  "duration_s": 85.092,
-  "outcome": "timeout",
+  "duration_s": 11.596,
+  "outcome": "success",
   "extracted": {
-    "post_text": "",
-    "author_handle": "",
-    "timestamp": "",
-    "canonical_url": ""
+    "post_text": "  font-display: 'swap';",
+    "author_handle": "font",
+    "timestamp": "3:50 PM \u00b7 Mar 21, 2006",
+    "canonical_url": "https://x.com/jack/status/20"
   },
   "expected": [
     "post_text",
@@ -20,6 +20,12 @@
     "timestamp",
     "canonical_url"
   ],
-  "error": "timeout",
-  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_x_1_cold"
+  "error": "",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_x_1_cold",
+  "final_url": "https://x.com/jack/status/20",
+  "title": "jack on X: \"just setting up my twttr\" / X",
+  "failure_category": "",
+  "failure_reason": "",
+  "failure_stage": "",
+  "remediation": []
 }

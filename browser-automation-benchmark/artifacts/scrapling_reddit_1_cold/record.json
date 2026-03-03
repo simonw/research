@@ -4,17 +4,17 @@
   "page_type": "post",
   "attempt": 1,
   "cold": true,
-  "ts": "2026-03-03T04:15:38.999207+00:00",
+  "ts": "2026-03-03T16:51:05.667460+00:00",
   "run_id": "scrapling_reddit_1_cold",
-  "duration_s": 0.657,
-  "outcome": "crash/error",
+  "duration_s": 5.195,
+  "outcome": "partial",
   "extracted": {
     "post_title": "",
     "post_body": "",
     "subreddit": "",
     "author": "",
     "timestamp": "",
-    "canonical_url": ""
+    "canonical_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/"
   },
   "expected": [
     "post_title",
@@ -24,6 +24,12 @@
     "timestamp",
     "canonical_url"
   ],
-  "error": "scrapling exit 1",
-  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_1_cold"
+  "error": "",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_1_cold",
+  "final_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
+  "title": "",
+  "failure_category": "extraction",
+  "failure_reason": "missing-fields",
+  "failure_stage": "extraction",
+  "remediation": []
 }

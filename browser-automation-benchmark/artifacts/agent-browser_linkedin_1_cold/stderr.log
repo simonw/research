@@ -1,2 +1,42 @@
-[31mMissing arguments for: get html
-Usage: agent-browser get html <selector>[0m
+
+===== prime-state =====
+
+
+===== cookies =====
+
+
+===== open =====
+
+
+===== wait =====
+
+
+===== snapshot =====
+
+
+===== title =====
+
+
+===== url =====
+
+
+===== html =====
+
+
+===== screenshot =====
+
+
+===== capture-title =====
+
+
+===== capture-url =====
+
+
+===== capture-shot =====
+
+
+===== capture-html =====
+
+
+===== close =====
+
