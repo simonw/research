@@ -4,13 +4,12 @@
   "page_type": "profile",
   "attempt": 1,
   "cold": true,
-  "ts": "2026-03-03T16:51:17.678444+00:00",
+  "ts": "2026-03-03T20:50:08.233724+00:00",
   "run_id": "scrapling_instagram_1_cold",
-  "duration_s": 5.179,
+  "duration_s": 16.017,
   "outcome": "partial",
   "extracted": {
-    "username": "",
-    "timestamp": "",
+    "username": "Instagram (@instagram) \u2022 Instagram photos and videos",
     "canonical_url": "https://www.instagram.com/instagram/"
   },
   "expected": [
@@ -25,5 +24,20 @@
   "failure_category": "extraction",
   "failure_reason": "missing-fields",
   "failure_stage": "extraction",
-  "remediation": []
+  "remediation": [],
+  "ground_truth": {
+    "checks": {
+      "username_contains": {
+        "expected": "instagram",
+        "actual": "Instagram (@instagram) \u2022 Instagram photos and videos",
+        "pass": true
+      },
+      "canonical_url_contains": {
+        "expected": "instagram.com/instagram",
+        "actual": "https://www.instagram.com/instagram/",
+        "pass": true
+      }
+    },
+    "correctness_pct": 100.0
+  }
 }

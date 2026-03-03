@@ -4,17 +4,14 @@
   "page_type": "post",
   "attempt": 1,
   "cold": true,
-  "ts": "2026-03-03T16:49:25.362774+00:00",
+  "ts": "2026-03-03T20:47:43.624133+00:00",
   "run_id": "agent-browser_reddit_1_cold",
-  "duration_s": 11.384,
+  "duration_s": 9.356,
   "outcome": "partial",
   "extracted": {
-    "post_title": "",
-    "post_body": "",
-    "subreddit": "qRbF",
-    "author": "2hlK8BNfPHGTwMNc8gJhZnatmRe2rWdOHqdtKR7wPFrQgLCAQAAAExSufJ3bnjvKNdV",
-    "timestamp": "",
-    "canonical_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/"
+    "canonical_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
+    "subreddit": "3",
+    "author": "ptHWtd0IbnutlQh5r6y4CsdK3Tlh7l2bbq5raA3Vbf1ZF9w"
   },
   "expected": [
     "post_title",
@@ -27,9 +24,29 @@
   "error": "",
   "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_reddit_1_cold",
   "final_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
-  "title": "Reddit - Prove your humanity",
+  "title": "",
   "failure_category": "extraction",
   "failure_reason": "missing-fields",
   "failure_stage": "extraction",
-  "remediation": []
+  "remediation": [],
+  "ground_truth": {
+    "checks": {
+      "subreddit": {
+        "expected": "Python",
+        "actual": "3",
+        "pass": false
+      },
+      "post_title_contains": {
+        "expected": "working on this week",
+        "actual": "",
+        "pass": false
+      },
+      "canonical_url_contains": {
+        "expected": "reddit.com/r/Python",
+        "actual": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
+        "pass": true
+      }
+    },
+    "correctness_pct": 33.33
+  }
 }

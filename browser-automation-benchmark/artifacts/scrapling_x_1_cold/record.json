@@ -4,15 +4,15 @@
   "page_type": "post",
   "attempt": 1,
   "cold": true,
-  "ts": "2026-03-03T16:51:00.472073+00:00",
+  "ts": "2026-03-03T20:49:19.538817+00:00",
   "run_id": "scrapling_x_1_cold",
-  "duration_s": 6.314,
-  "outcome": "partial",
+  "duration_s": 19.74,
+  "outcome": "success",
   "extracted": {
-    "post_text": "",
-    "author_handle": "",
-    "timestamp": "",
-    "canonical_url": "https://x.com/jack/status/20"
+    "post_text": "just setting up my twttr",
+    "author_handle": "jack",
+    "canonical_url": "https://x.com/jack/status/20",
+    "timestamp": "3:50 PM \u00b7 Mar 21, 2006"
   },
   "expected": [
     "post_text",
@@ -24,8 +24,28 @@
   "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_1_cold",
   "final_url": "https://x.com/jack/status/20",
   "title": "",
-  "failure_category": "extraction",
-  "failure_reason": "missing-fields",
-  "failure_stage": "extraction",
-  "remediation": []
+  "failure_category": "",
+  "failure_reason": "",
+  "failure_stage": "",
+  "remediation": [],
+  "ground_truth": {
+    "checks": {
+      "post_text_contains": {
+        "expected": "just setting up my twttr",
+        "actual": "just setting up my twttr",
+        "pass": true
+      },
+      "author_handle": {
+        "expected": "jack",
+        "actual": "jack",
+        "pass": true
+      },
+      "canonical_url_contains": {
+        "expected": "x.com/jack/status/20",
+        "actual": "https://x.com/jack/status/20",
+        "pass": true
+      }
+    },
+    "correctness_pct": 100.0
+  }
 }

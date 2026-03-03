@@ -4,17 +4,15 @@
   "page_type": "post",
   "attempt": 1,
   "cold": true,
-  "ts": "2026-03-03T16:51:05.667460+00:00",
+  "ts": "2026-03-03T20:49:34.037655+00:00",
   "run_id": "scrapling_reddit_1_cold",
-  "duration_s": 5.195,
-  "outcome": "partial",
+  "duration_s": 14.498,
+  "outcome": "blocked/challenged",
   "extracted": {
-    "post_title": "",
-    "post_body": "",
-    "subreddit": "",
-    "author": "",
-    "timestamp": "",
-    "canonical_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/"
+    "post_title": "Reddit - The heart of the internet",
+    "canonical_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
+    "subreddit": "python",
+    "timestamp": "2026-03-03T18:11Z~fa3bc1e1"
   },
   "expected": [
     "post_title",
@@ -28,8 +26,28 @@
   "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_1_cold",
   "final_url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
   "title": "",
-  "failure_category": "extraction",
-  "failure_reason": "missing-fields",
-  "failure_stage": "extraction",
-  "remediation": []
+  "failure_category": "site",
+  "failure_reason": "anti-bot-challenge",
+  "failure_stage": "page",
+  "remediation": [],
+  "ground_truth": {
+    "checks": {
+      "subreddit": {
+        "expected": "Python",
+        "actual": "python",
+        "pass": true
+      },
+      "post_title_contains": {
+        "expected": "working on this week",
+        "actual": "Reddit - The heart of the internet",
+        "pass": false
+      },
+      "canonical_url_contains": {
+        "expected": "reddit.com/r/Python",
+        "actual": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
+        "pass": true
+      }
+    },
+    "correctness_pct": 66.67
+  }
 }
