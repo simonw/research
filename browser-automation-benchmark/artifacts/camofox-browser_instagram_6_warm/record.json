@@ -1,0 +1,23 @@
+{
+  "tool": "camofox-browser",
+  "site": "instagram",
+  "page_type": "profile",
+  "attempt": 6,
+  "cold": false,
+  "ts": "2026-03-03T04:13:48.540473+00:00",
+  "run_id": "camofox-browser_instagram_6_warm",
+  "duration_s": 5.631,
+  "outcome": "crash/error",
+  "extracted": {
+    "username": "",
+    "timestamp": "",
+    "canonical_url": ""
+  },
+  "expected": [
+    "username",
+    "timestamp",
+    "canonical_url"
+  ],
+  "error": "camofox exit 1",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_instagram_6_warm"
+}

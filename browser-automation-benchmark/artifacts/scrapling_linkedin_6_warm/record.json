@@ -1,0 +1,25 @@
+{
+  "tool": "Scrapling",
+  "site": "linkedin",
+  "page_type": "company",
+  "attempt": 6,
+  "cold": false,
+  "ts": "2026-03-03T04:15:50.197156+00:00",
+  "run_id": "scrapling_linkedin_6_warm",
+  "duration_s": 0.657,
+  "outcome": "crash/error",
+  "extracted": {
+    "title_or_company": "",
+    "location": "",
+    "page_url": "",
+    "key_metadata": ""
+  },
+  "expected": [
+    "title_or_company",
+    "location",
+    "page_url",
+    "key_metadata"
+  ],
+  "error": "scrapling exit 1",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_linkedin_6_warm"
+}

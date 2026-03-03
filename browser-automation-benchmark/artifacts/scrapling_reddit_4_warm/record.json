@@ -1,0 +1,29 @@
+{
+  "tool": "Scrapling",
+  "site": "reddit",
+  "page_type": "post",
+  "attempt": 4,
+  "cold": false,
+  "ts": "2026-03-03T04:15:41.621971+00:00",
+  "run_id": "scrapling_reddit_4_warm",
+  "duration_s": 0.654,
+  "outcome": "crash/error",
+  "extracted": {
+    "post_title": "",
+    "post_body": "",
+    "subreddit": "",
+    "author": "",
+    "timestamp": "",
+    "canonical_url": ""
+  },
+  "expected": [
+    "post_title",
+    "post_body",
+    "subreddit",
+    "author",
+    "timestamp",
+    "canonical_url"
+  ],
+  "error": "scrapling exit 1",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_reddit_4_warm"
+}

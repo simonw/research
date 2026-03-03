@@ -1,0 +1,25 @@
+{
+  "tool": "Scrapling",
+  "site": "x",
+  "page_type": "post",
+  "attempt": 8,
+  "cold": false,
+  "ts": "2026-03-03T04:15:37.020815+00:00",
+  "run_id": "scrapling_x_8_warm",
+  "duration_s": 0.658,
+  "outcome": "crash/error",
+  "extracted": {
+    "post_text": "",
+    "author_handle": "",
+    "timestamp": "",
+    "canonical_url": ""
+  },
+  "expected": [
+    "post_text",
+    "author_handle",
+    "timestamp",
+    "canonical_url"
+  ],
+  "error": "scrapling exit 1",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_x_8_warm"
+}

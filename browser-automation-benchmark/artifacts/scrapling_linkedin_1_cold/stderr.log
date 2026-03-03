@@ -1,0 +1,29 @@
+Traceback (most recent call last):
+  File "<string>", line 6, in <module>
+  File "/home/kahtaf/.local/lib/python3.12/site-packages/scrapling/engines/_browsers/_base.py", line 85, in __enter__
+    self.start()
+  File "/home/kahtaf/.local/lib/python3.12/site-packages/scrapling/engines/_browsers/_stealth.py", line 97, in start
+    self.context = self.playwright.chromium.launch_persistent_context(**persistent_options)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kahtaf/.local/lib/python3.12/site-packages/patchright/sync_api/_generated.py", line 14570, in launch_persistent_context
+    self._sync(
+  File "/home/kahtaf/.local/lib/python3.12/site-packages/patchright/_impl/_sync_base.py", line 97, in _sync
+    return task.result()
+           ^^^^^^^^^^^^^
+  File "/home/kahtaf/.local/lib/python3.12/site-packages/patchright/_impl/_browser_type.py", line 152, in launch_persistent_context
+    result = await self._channel.send_return_as_dict(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kahtaf/.local/lib/python3.12/site-packages/patchright/_impl/_connection.py", line 67, in send_return_as_dict
+    return await self._connection.wrap_api_call(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kahtaf/.local/lib/python3.12/site-packages/patchright/_impl/_connection.py", line 505, in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+patchright._impl._errors.Error: BrowserType.launch_persistent_context: Executable doesn't exist at /home/kahtaf/.cache/ms-playwright/chromium-1194/chrome-linux/chrome
+╔════════════════════════════════════════════════════════════╗
+║ Looks like Playwright was just installed or updated.       ║
+║ Please run the following command to download new browsers: ║
+║                                                            ║
+║     playwright install                                     ║
+║                                                            ║
+║ <3 Playwright Team                                         ║
+╚════════════════════════════════════════════════════════════╝

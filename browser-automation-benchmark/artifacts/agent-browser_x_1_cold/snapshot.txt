@@ -1,0 +1,75 @@
+- document:
+  - text: Don’t miss what’s happening People on X are the first to know.
+  - link "Log in" [ref=e1]:
+    - /url: /login
+  - link "Sign up" [ref=e2]:
+    - /url: /i/flow/signup
+  - button "Skip to home timeline" [ref=e3]
+  - button "Skip to trending" [ref=e4]
+  - banner:
+    - heading "X" [ref=e5] [level=1]:
+      - link "X" [ref=e6]:
+        - /url: /
+    - navigation "Primary" [ref=e7]
+  - main:
+    - button "Back" [ref=e8]
+    - heading "Post" [ref=e9] [level=2]
+    - status
+    - region "Conversation" [ref=e10]:
+      - heading "Conversation" [ref=e11] [level=1]
+      - article "jack Verified account @jack just setting up my twttr 16424 replies, 127578 reposts, 290117 likes, 16260 bookmarks" [ref=e12]:
+        - link "jack Verified account" [ref=e13]:
+          - /url: /jack
+          - text: jack
+          - img "Verified account"
+          - link [ref=e14]
+        - link "@jack" [ref=e15]:
+          - /url: /jack
+        - button "More" [ref=e16]
+        - text: just setting up my twttr
+        - link "3:50 PM · Mar 21, 2006" [ref=e17]:
+          - /url: /jack/status/20
+          - time: 3:50 PM · Mar 21, 2006
+        - group "16424 replies, 127578 reposts, 290117 likes, 16260 bookmarks":
+          - button "16424 Replies. Reply" [ref=e18]: 16K
+          - button "127578 reposts. Repost" [ref=e19]: 127K
+          - button "290117 Likes. Like" [ref=e20]: 290K
+          - button "16260 Bookmarks. Bookmark" [ref=e21]: 16K
+          - button "Share post" [ref=e22]
+        - button "Read 16.4K replies" [ref=e23]
+    - region "Sign up" [ref=e24]:
+      - heading "New to X?" [ref=e25] [level=2]
+      - text: Sign up now to get your own personalized timeline!
+      - iframe
+      - button "Sign up with Apple" [ref=e26]
+      - link "Create account" [ref=e27]:
+        - /url: /i/flow/signup
+      - text: By signing up, you agree to the
+      - link "Terms of Service" [ref=e28]:
+        - /url: https://x.com/tos
+      - text: and
+      - link "Privacy Policy" [ref=e29]:
+        - /url: https://x.com/privacy
+      - text: ", including"
+      - link "Cookie Use." [ref=e30]:
+        - /url: https://help.x.com/rules-and-policies/twitter-cookies
+    - text: Something went wrong. Try reloading.
+    - button "Retry" [ref=e31]
+    - navigation "Footer" [ref=e32]:
+      - link "Terms of Service" [ref=e33] [nth=1]:
+        - /url: https://x.com/tos
+      - text: "|"
+      - link "Privacy Policy" [ref=e34] [nth=1]:
+        - /url: https://x.com/privacy
+      - text: "|"
+      - link "Cookie Policy" [ref=e35]:
+        - /url: https://support.x.com/articles/20170514
+      - text: "|"
+      - link "Accessibility" [ref=e36]:
+        - /url: https://help.x.com/resources/accessibility
+      - text: "|"
+      - link "Ads info" [ref=e37]:
+        - /url: https://business.x.com/en/help/troubleshooting/how-twitter-ads-work.html?ref=web-twc-ao-gbl-adsinfo&utm_source=twc&utm_medium=web&utm_campaign=ao&utm_content=adsinfo
+      - text: "|"
+      - button "More" [ref=e38] [nth=1]
+      - text: © 2026 X Corp.

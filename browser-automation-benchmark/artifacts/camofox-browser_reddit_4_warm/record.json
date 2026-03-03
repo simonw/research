@@ -1,0 +1,29 @@
+{
+  "tool": "camofox-browser",
+  "site": "reddit",
+  "page_type": "post",
+  "attempt": 4,
+  "cold": false,
+  "ts": "2026-03-03T04:06:15.443954+00:00",
+  "run_id": "camofox-browser_reddit_4_warm",
+  "duration_s": 5.631,
+  "outcome": "crash/error",
+  "extracted": {
+    "post_title": "",
+    "post_body": "",
+    "subreddit": "",
+    "author": "",
+    "timestamp": "",
+    "canonical_url": ""
+  },
+  "expected": [
+    "post_title",
+    "post_body",
+    "subreddit",
+    "author",
+    "timestamp",
+    "canonical_url"
+  ],
+  "error": "camofox exit 1",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_reddit_4_warm"
+}

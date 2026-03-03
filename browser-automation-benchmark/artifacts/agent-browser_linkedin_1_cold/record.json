@@ -1,0 +1,25 @@
+{
+  "tool": "agent-browser",
+  "site": "linkedin",
+  "page_type": "company",
+  "attempt": 1,
+  "cold": true,
+  "ts": "2026-03-03T03:58:55.301161+00:00",
+  "run_id": "agent-browser_linkedin_1_cold",
+  "duration_s": 9.854,
+  "outcome": "crash/error",
+  "extracted": {
+    "title_or_company": "",
+    "location": "",
+    "page_url": "",
+    "key_metadata": ""
+  },
+  "expected": [
+    "title_or_company",
+    "location",
+    "page_url",
+    "key_metadata"
+  ],
+  "error": "agent-browser exit 1",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_linkedin_1_cold"
+}

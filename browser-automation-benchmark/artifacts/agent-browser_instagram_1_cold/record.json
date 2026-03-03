@@ -1,0 +1,23 @@
+{
+  "tool": "agent-browser",
+  "site": "instagram",
+  "page_type": "profile",
+  "attempt": 1,
+  "cold": true,
+  "ts": "2026-03-03T03:59:35.122073+00:00",
+  "run_id": "agent-browser_instagram_1_cold",
+  "duration_s": 9.128,
+  "outcome": "crash/error",
+  "extracted": {
+    "username": "",
+    "timestamp": "",
+    "canonical_url": ""
+  },
+  "expected": [
+    "username",
+    "timestamp",
+    "canonical_url"
+  ],
+  "error": "agent-browser exit 1",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_instagram_1_cold"
+}

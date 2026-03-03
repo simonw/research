@@ -1,0 +1,104 @@
+- document:
+  - img:
+    - img
+  - text: See everyday moments from your close friends. Log into Instagram
+  - textbox "Mobile number, username or email" [ref=e1]
+  - text: Mobile number, username or email
+  - textbox "Password" [ref=e2]
+  - text: Password
+  - button "Log In" [ref=e3] [disabled]: Log in
+  - link "Forgot password?" [ref=e4]:
+    - /url: https://www.instagram.com/accounts/password/reset/?next=%2Finstagram%2F
+  - button "Log in with Facebook" [ref=e5]:
+    - img
+    - text: Log in with Facebook
+  - link "Create new account" [ref=e6]:
+    - /url: /accounts/emailsignup/?next=%2Finstagram%2F
+  - img "Meta logo"
+  - separator
+  - contentinfo:
+    - link "Meta" [ref=e7]:
+      - /url: https://about.meta.com/
+    - link "About" [ref=e8]:
+      - /url: https://about.instagram.com/
+    - link "Blog" [ref=e9]:
+      - /url: https://about.instagram.com/blog/
+    - link "Jobs" [ref=e10]:
+      - /url: https://about.instagram.com/about-us/careers
+    - link "Help" [ref=e11]:
+      - /url: https://help.instagram.com/
+    - link "API" [ref=e12]:
+      - /url: https://developers.facebook.com/docs/instagram
+    - link "Privacy" [ref=e13]:
+      - /url: /legal/privacy/?next=%2Finstagram%2F
+    - link "Terms" [ref=e14]:
+      - /url: /legal/terms/?next=%2Finstagram%2F
+    - link "Locations" [ref=e15]:
+      - /url: /explore/locations/?next=%2Finstagram%2F
+    - link "Instagram Lite" [ref=e16]:
+      - /url: /web/lite/?next=%2Finstagram%2F
+    - link "Meta AI" [ref=e17]:
+      - /url: https://www.meta.ai/?utm_source=foa_web_footer
+    - link "Threads" [ref=e18]:
+      - /url: https://www.threads.com/
+    - link "Contact Uploading & Non-Users" [ref=e19]:
+      - /url: https://www.facebook.com/help/instagram/261704639352628?next=%2Finstagram%2F
+    - link "Meta Verified" [ref=e20]:
+      - /url: /accounts/meta_verified/?entrypoint=web_footer&next=%2Finstagram%2F
+    - text: English
+    - img "Down chevron icon"
+    - combobox "Switch Display Language" [ref=e21]:
+      - option "Afrikaans" [ref=e22]
+      - option "العربية" [ref=e23]
+      - option "Čeština" [ref=e24]
+      - option "Dansk" [ref=e25]
+      - option "Deutsch" [ref=e26]
+      - option "Ελληνικά" [ref=e27]
+      - option "English" [ref=e28] [selected]
+      - option "English (UK)" [ref=e29]
+      - option "Español (España)" [ref=e30]
+      - option "Español" [ref=e31]
+      - option "فارسی" [ref=e32]
+      - option "Suomi" [ref=e33]
+      - option "Français" [ref=e34]
+      - option "עברית" [ref=e35]
+      - option "Bahasa Indonesia" [ref=e36]
+      - option "Italiano" [ref=e37]
+      - option "日本語" [ref=e38]
+      - option "한국어" [ref=e39]
+      - option "Bahasa Melayu" [ref=e40]
+      - option "Norsk" [ref=e41]
+      - option "Nederlands" [ref=e42]
+      - option "Polski" [ref=e43]
+      - option "Português (Brasil)" [ref=e44]
+      - option "Português (Portugal)" [ref=e45]
+      - option "Русский" [ref=e46]
+      - option "Svenska" [ref=e47]
+      - option "ภาษาไทย" [ref=e48]
+      - option "Filipino" [ref=e49]
+      - option "Türkçe" [ref=e50]
+      - option "中文(简体)" [ref=e51]
+      - option "中文(台灣)" [ref=e52]
+      - option "বাংলা" [ref=e53]
+      - option "ગુજરાતી" [ref=e54]
+      - option "हिन्दी" [ref=e55]
+      - option "Hrvatski" [ref=e56]
+      - option "Magyar" [ref=e57]
+      - option "ಕನ್ನಡ" [ref=e58]
+      - option "മലയാളം" [ref=e59]
+      - option "मराठी" [ref=e60]
+      - option "नेपाली" [ref=e61]
+      - option "ਪੰਜਾਬੀ" [ref=e62]
+      - option "සිංහල" [ref=e63]
+      - option "Slovenčina" [ref=e64]
+      - option "தமிழ்" [ref=e65]
+      - option "తెలుగు" [ref=e66]
+      - option "اردو" [ref=e67]
+      - option "Tiếng Việt" [ref=e68]
+      - option "中文(香港)" [ref=e69]
+      - option "Български" [ref=e70]
+      - option "Français (Canada)" [ref=e71]
+      - option "Română" [ref=e72]
+      - option "Српски" [ref=e73]
+      - option "Українська" [ref=e74]
+    - text: © 2026 Instagram from Meta

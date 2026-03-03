@@ -1,0 +1,29 @@
+{
+  "tool": "agent-browser",
+  "site": "reddit",
+  "page_type": "post",
+  "attempt": 1,
+  "cold": true,
+  "ts": "2026-03-03T03:57:38.381196+00:00",
+  "run_id": "agent-browser_reddit_1_cold",
+  "duration_s": 7.583,
+  "outcome": "crash/error",
+  "extracted": {
+    "post_title": "",
+    "post_body": "",
+    "subreddit": "",
+    "author": "",
+    "timestamp": "",
+    "canonical_url": ""
+  },
+  "expected": [
+    "post_title",
+    "post_body",
+    "subreddit",
+    "author",
+    "timestamp",
+    "canonical_url"
+  ],
+  "error": "agent-browser exit 1",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_reddit_1_cold"
+}

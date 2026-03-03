@@ -1,0 +1,25 @@
+{
+  "tool": "camofox-browser",
+  "site": "x",
+  "page_type": "post",
+  "attempt": 1,
+  "cold": false,
+  "ts": "2026-03-03T04:02:17.547186+00:00",
+  "run_id": "camofox-browser_x_1_warm",
+  "duration_s": 5.691,
+  "outcome": "crash/error",
+  "extracted": {
+    "post_text": "",
+    "author_handle": "",
+    "timestamp": "",
+    "canonical_url": ""
+  },
+  "expected": [
+    "post_text",
+    "author_handle",
+    "timestamp",
+    "canonical_url"
+  ],
+  "error": "camofox exit 1",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_x_1_warm"
+}

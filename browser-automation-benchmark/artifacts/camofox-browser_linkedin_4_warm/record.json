@@ -1,0 +1,25 @@
+{
+  "tool": "camofox-browser",
+  "site": "linkedin",
+  "page_type": "company",
+  "attempt": 4,
+  "cold": false,
+  "ts": "2026-03-03T04:09:56.376148+00:00",
+  "run_id": "camofox-browser_linkedin_4_warm",
+  "duration_s": 5.628,
+  "outcome": "crash/error",
+  "extracted": {
+    "title_or_company": "",
+    "location": "",
+    "page_url": "",
+    "key_metadata": ""
+  },
+  "expected": [
+    "title_or_company",
+    "location",
+    "page_url",
+    "key_metadata"
+  ],
+  "error": "camofox exit 1",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/camofox-browser_linkedin_4_warm"
+}

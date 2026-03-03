@@ -1,0 +1,17 @@
+- document:
+  - dialog:
+    - button "Close" [ref=e1]:
+      - img "Close"
+    - link "instagram's profile picture" [ref=e2]:
+      - img "instagram's profile picture"
+    - text: See more from instagram See photos, videos and more from Instagram.
+    - link "Sign up for Instagram" [ref=e3]:
+      - /url: /accounts/emailsignup/?next=%2Finstagram%2F
+    - button "Log in" [ref=e4]
+    - text: By continuing, you agree to Instagram's
+    - link "Terms of Use" [ref=e5]:
+      - /url: https://help.instagram.com/581066165581870/?locale=en_US
+    - text: and
+    - link "Privacy Policy" [ref=e6]:
+      - /url: https://privacycenter.instagram.com/policy/
+    - text: .

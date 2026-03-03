@@ -1,0 +1,23 @@
+{
+  "tool": "Scrapling",
+  "site": "instagram",
+  "page_type": "profile",
+  "attempt": 7,
+  "cold": false,
+  "ts": "2026-03-03T04:15:58.122591+00:00",
+  "run_id": "scrapling_instagram_7_warm",
+  "duration_s": 0.654,
+  "outcome": "crash/error",
+  "extracted": {
+    "username": "",
+    "timestamp": "",
+    "canonical_url": ""
+  },
+  "expected": [
+    "username",
+    "timestamp",
+    "canonical_url"
+  ],
+  "error": "scrapling exit 1",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/scrapling_instagram_7_warm"
+}

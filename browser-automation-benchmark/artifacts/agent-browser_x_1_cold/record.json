@@ -1,0 +1,25 @@
+{
+  "tool": "agent-browser",
+  "site": "x",
+  "page_type": "post",
+  "attempt": 1,
+  "cold": true,
+  "ts": "2026-03-03T03:56:09.640766+00:00",
+  "run_id": "agent-browser_x_1_cold",
+  "duration_s": 11.506,
+  "outcome": "crash/error",
+  "extracted": {
+    "post_text": "",
+    "author_handle": "",
+    "timestamp": "",
+    "canonical_url": ""
+  },
+  "expected": [
+    "post_text",
+    "author_handle",
+    "timestamp",
+    "canonical_url"
+  ],
+  "error": "agent-browser exit 1",
+  "artifact_dir": "/home/kahtaf/Documents/workspace/research/browser-automation-benchmark/artifacts/agent-browser_x_1_cold"
+}
