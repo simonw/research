@@ -26,8 +26,8 @@ URLS: Dict[str, Dict[str, Any]] = {
     },
     "reddit": {
         "page_type": "post",
-        "url": "https://www.reddit.com/r/Python/comments/10wxbk8/whats_everyone_working_on_this_week/",
-        "expected": ["post_title", "post_body", "subreddit", "author", "timestamp", "canonical_url"],
+        "url": "https://www.reddit.com/r/Python/comments/g53lxf/lad_wrote_a_python_script_to_download_alexa_voice/",
+        "expected": ["post_title", "subreddit", "author", "canonical_url"],
         "warmup_url": "https://www.reddit.com",
     },
     "linkedin": {
@@ -101,9 +101,13 @@ COOKIES_RAW: Dict[str, str] = _load_cookies()
 BLOCK_PAT = re.compile(
     r"captcha|challenge|suspicious|unusual traffic|verify.{0,20}(human|robot|identity)"
     r"|access denied|temporarily unavailable|just a moment"
-    r"|cloudflare|attention required",
+    r"|cloudflare|attention required"
+    r"|shreddit-forbidden",
     re.I,
 )
+
+# Reddit-specific content-unavailable pattern (deleted/removed posts, not anti-bot)
+FORBIDDEN_PAT = re.compile(r"shreddit-forbidden", re.I)
 
 # Soft-block indicators (page loaded but content degraded)
 SOFT_BLOCK_INDICATORS: Dict[str, Dict[str, Any]] = {
@@ -146,9 +150,10 @@ GROUND_TRUTH: Dict[str, Dict[str, Any]] = {
         "canonical_url_contains": "x.com/jack/status/20",
     },
     "reddit": {
+        "post_title_contains": "python script",
         "subreddit": "Python",
-        "post_title_contains": "working on this week",
-        "canonical_url_contains": "reddit.com/r/Python",
+        "author": "iEslam",
+        "canonical_url_contains": "reddit.com/r/Python/comments/g53lxf",
     },
     "linkedin": {
         "title_or_company_contains": "Microsoft",

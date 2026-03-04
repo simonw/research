@@ -34,7 +34,14 @@ def extract_regex(site: str, text: str, url: str) -> Dict[str, str]:
         e["post_title"] = next(iter(re.findall(r"<title>(.*?)</title>", t, re.I | re.S)), "").strip()
         e["post_body"] = next(iter(re.findall(r"<shreddit-post[\s\S]*?>", t, re.I)), "")[:300]
         e["subreddit"] = next(iter(re.findall(r"r/([A-Za-z0-9_]+)", t)), "")
-        e["author"] = next(iter(re.findall(r"u/([A-Za-z0-9_\-]+)", t)), "")
+        # Prefer author attr on <shreddit-post> (more reliable than first u/ on page, which may be an ad)
+        # Handle both raw quotes and escaped quotes (\\") from JSON-embedded HTML
+        e["author"] = (
+            next(iter(re.findall(r'<shreddit-post[^>]*\bauthor="([^"]+)"', t, re.I)), "")
+            or next(iter(re.findall(r'<shreddit-post[^>]*\bauthor=\\"([^\\]+)\\"', t, re.I)), "")
+            or next(iter(re.findall(r'aria-label="Author:\s*([^"]+)"', t, re.I)), "")
+            or next(iter(re.findall(r"u/([A-Za-z0-9_\-]+)", t)), "")
+        )
         e["timestamp"] = next(
             iter(re.findall(r"\d+\s+(?:hours?|days?|minutes?)\s+ago|\d{4}-\d{2}-\d{2}T[^\s\"]+", t)),
             "",

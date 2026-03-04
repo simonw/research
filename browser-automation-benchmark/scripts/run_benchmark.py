@@ -27,6 +27,7 @@ from config import (
     URLS,
     COOKIES_RAW,
     BLOCK_PAT,
+    FORBIDDEN_PAT,
     SOFT_BLOCK_INDICATORS,
     LOGIN_REDIRECT_PAT,
     SETUP_PATTERNS,
@@ -214,24 +215,13 @@ def classify_page(text: str, extracted: Dict[str, str], expected: List[str],
                    site: str = "", final_url: str = "") -> Dict[str, str]:
     t = (text or "")[:30000]
 
-    # Check for login redirects
-    if final_url and LOGIN_REDIRECT_PAT.search(final_url):
-        return {
-            "outcome": "blocked/challenged",
-            "failure_category": "site",
-            "failure_reason": "login-redirect",
-            "failure_stage": "page",
-        }
-
+    # Always compute block signals for transparency
+    full_text = text or ""
+    block_signals: List[str] = []
     if BLOCK_PAT.search(t):
-        return {
-            "outcome": "blocked/challenged",
-            "failure_category": "site",
-            "failure_reason": "anti-bot-challenge",
-            "failure_stage": "page",
-        }
-
-    # Check for soft blocks (page loaded but content missing/degraded)
+        block_signals.append("block_pattern_in_html")
+    if FORBIDDEN_PAT.search(full_text):
+        block_signals.append("content_forbidden")
     if site and site in SOFT_BLOCK_INDICATORS:
         indicators = SOFT_BLOCK_INDICATORS[site]
         page_size = len(t)
@@ -240,22 +230,60 @@ def classify_page(text: str, extracted: Dict[str, str], expected: List[str],
         if page_size < min_size and required:
             missing_elements = [el for el in required if el.lower() not in t.lower()]
             if missing_elements:
-                return {
-                    "outcome": "blocked/challenged",
-                    "failure_category": "site",
-                    "failure_reason": "soft-block",
-                    "failure_stage": "page",
-                }
+                block_signals.append("soft_block_indicators")
 
+    # 1. Login redirect (URL-based, always fatal)
+    if final_url and LOGIN_REDIRECT_PAT.search(final_url):
+        return {
+            "outcome": "blocked/challenged",
+            "failure_category": "site",
+            "failure_reason": "login-redirect",
+            "failure_stage": "page",
+            "block_signals": block_signals,
+        }
+
+    # 2. Extraction success check — takes priority over passive block patterns.
+    #    If all expected fields are extracted, the page loaded successfully even
+    #    if block-related scripts (e.g. reCAPTCHA) appear in the HTML.
     found = sum(1 for key in expected if extracted.get(key))
     if found == len(expected) and found > 0:
-        return {"outcome": "success", "failure_category": "", "failure_reason": "", "failure_stage": ""}
+        return {
+            "outcome": "success",
+            "failure_category": "",
+            "failure_reason": "",
+            "failure_stage": "",
+            "block_signals": block_signals,
+        }
+
+    # 3. Hard block pattern (only checked when extraction didn't fully succeed)
+    if "block_pattern_in_html" in block_signals:
+        reason = "content-unavailable" if "content_forbidden" in block_signals else "anti-bot-challenge"
+        return {
+            "outcome": "blocked/challenged",
+            "failure_category": "site",
+            "failure_reason": reason,
+            "failure_stage": "page",
+            "block_signals": block_signals,
+        }
+
+    # 4. Soft block check
+    if "soft_block_indicators" in block_signals:
+        return {
+            "outcome": "blocked/challenged",
+            "failure_category": "site",
+            "failure_reason": "soft-block",
+            "failure_stage": "page",
+            "block_signals": block_signals,
+        }
+
+    # 5. Partial extraction
     if found > 0:
         return {
             "outcome": "partial",
             "failure_category": "extraction",
             "failure_reason": "missing-fields",
             "failure_stage": "extraction",
+            "block_signals": block_signals,
         }
     if t.strip():
         return {
@@ -263,12 +291,14 @@ def classify_page(text: str, extracted: Dict[str, str], expected: List[str],
             "failure_category": "extraction",
             "failure_reason": "no-expected-fields",
             "failure_stage": "extraction",
+            "block_signals": block_signals,
         }
     return {
         "outcome": "timeout",
         "failure_category": "timeout",
         "failure_reason": "no-page-content",
         "failure_stage": "navigation",
+        "block_signals": block_signals,
     }
 
 
@@ -293,6 +323,7 @@ def build_record(
     extraction_s: Optional[float] = None,
     setup_s: Optional[float] = None,
     step_timings: Optional[Dict[str, float]] = None,
+    block_signals: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     gt = validate_ground_truth(site, extracted)
     rec: Dict[str, Any] = {
@@ -316,6 +347,7 @@ def build_record(
         "failure_stage": failure_stage,
         "remediation": remediation or [],
         "ground_truth": gt,
+        "block_signals": block_signals or [],
     }
     if navigation_s is not None:
         rec["navigation_s"] = round(navigation_s, 3)
@@ -530,12 +562,14 @@ def run_agent_browser(site: str, cfg: Dict[str, Any], attempt: int, cold: bool, 
         extract_start = time.time()
         extracted = extract(site, text, final_url)
         extraction_s = time.time() - extract_start
+        block_signals: List[str] = []
         if not first_error:
             classified = classify_page(text, extracted, cfg["expected"], site=site, final_url=final_url)
             outcome = classified["outcome"]
             failure_category = classified["failure_category"]
             failure_reason = classified["failure_reason"]
             failure_stage = classified["failure_stage"]
+            block_signals = classified.get("block_signals", [])
         elif failure_category == "site" and BLOCK_PAT.search(text):
             outcome = "blocked/challenged"
         elif failure_category == "timeout":
@@ -563,6 +597,7 @@ def run_agent_browser(site: str, cfg: Dict[str, Any], attempt: int, cold: bool, 
             extraction_s=extraction_s,
             setup_s=setup_s,
             step_timings=step_timings,
+            block_signals=block_signals,
         )
     except Exception as exc:
         append_log(adir / "stderr.log", "agent-browser-exception", repr(exc))
@@ -699,6 +734,7 @@ print("__TIMING__" + json.dumps({{"navigation_s": round(_nav_end - _nav_start, 3
     extracted = extract(site, text, final_url)
     extraction_s = time.time() - extract_start
 
+    block_signals: List[str] = []
     if result["timeout"]:
         outcome = "timeout"
         failure_category = "timeout"
@@ -718,6 +754,7 @@ print("__TIMING__" + json.dumps({{"navigation_s": round(_nav_end - _nav_start, 3
         failure_category = classified["failure_category"]
         failure_reason = classified["failure_reason"]
         failure_stage = classified["failure_stage"]
+        block_signals = classified.get("block_signals", [])
         error = ""
 
     rec = build_record(
@@ -739,6 +776,7 @@ print("__TIMING__" + json.dumps({{"navigation_s": round(_nav_end - _nav_start, 3
         remediation=remediation_for("camofox-browser", failure_reason),
         navigation_s=camo_navigation_s,
         extraction_s=extraction_s,
+        block_signals=block_signals,
     )
     json_dump(adir / "record.json", rec)
     return rec
@@ -839,6 +877,7 @@ print("__TIMING__" + json.dumps({{"navigation_s": round(_nav_end - _nav_start, 3
     extracted = extract(site, text, final_url)
     extraction_s = time.time() - extract_start
 
+    block_signals: List[str] = []
     if result["timeout"]:
         outcome = "timeout"
         failure_category = "timeout"
@@ -858,6 +897,7 @@ print("__TIMING__" + json.dumps({{"navigation_s": round(_nav_end - _nav_start, 3
         failure_category = classified["failure_category"]
         failure_reason = classified["failure_reason"]
         failure_stage = classified["failure_stage"]
+        block_signals = classified.get("block_signals", [])
         error = ""
 
     rec = build_record(
@@ -879,6 +919,7 @@ print("__TIMING__" + json.dumps({{"navigation_s": round(_nav_end - _nav_start, 3
         remediation=remediation_for("Scrapling", failure_reason),
         navigation_s=scrap_navigation_s,
         extraction_s=extraction_s,
+        block_signals=block_signals,
     )
     json_dump(adir / "record.json", rec)
     return rec

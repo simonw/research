@@ -15,7 +15,7 @@ Compares three browser automation tools on their ability to load and extract str
 | Site | Page type | URL |
 |------|-----------|-----|
 | X (Twitter) | Post | `https://x.com/jack/status/20` |
-| Reddit | Post | `https://www.reddit.com/r/Python/comments/10wxbk8/` |
+| Reddit | Post | `https://www.reddit.com/r/Python/comments/g53lxf/` |
 | LinkedIn | Company | `https://www.linkedin.com/company/microsoft/` |
 | Instagram | Profile | `https://www.instagram.com/instagram/` |
 | example.com | Control | `https://example.com` |
@@ -111,32 +111,34 @@ For each tool/site combination, the benchmark:
 
 | Tool | Site | Outcome | Success Rate | Correctness* | Nav Time (median) | Total Time (median) |
 |------|------|---------|:------------:|:------------:|------------------:|--------------------:|
-| agent-browser | x | timeout | 0/3 | — | 25.2s | 54.6s |
-| agent-browser | reddit | blocked | 0/3 | —† | 9.2s | 12.6s |
-| agent-browser | linkedin | blocked | 0/3 | —† | 9.4s | 21.3s |
-| agent-browser | instagram | **success** | **3/3** | **100.0%** | 7.0s | 14.8s |
-| agent-browser | control | **success** | **3/3** | **100.0%** | 6.8s | 9.7s |
-| camofox-browser | x | **success** | **3/3** | **100.0%** | 10.7s | 13.3s |
-| camofox-browser | reddit | blocked | 0/3 | —† | 9.3s | 11.3s |
-| camofox-browser | linkedin | blocked | 0/3 | —† | 11.8s | 15.7s |
-| camofox-browser | instagram | **success** | **3/3** | **100.0%** | 9.5s | 12.2s |
-| camofox-browser | control | **success** | **3/3** | **100.0%** | 8.7s | 10.2s |
-| Scrapling | x | **success** | **3/3** | **100.0%** | 21.6s | 22.4s |
-| Scrapling | reddit | blocked | 0/3 | —† | 14.5s | 15.0s |
-| Scrapling | linkedin | blocked | 0/3 | —† | 17.2s | 18.0s |
-| Scrapling | instagram | **success** | **3/3** | **100.0%** | 15.6s | 16.2s |
-| Scrapling | control | **success** | **3/3** | **100.0%** | 13.8s | 14.2s |
+| agent-browser | x | partial | 0/3 | — | 10.6s | 13.8s |
+| agent-browser | reddit | **success** | **3/3** | **100.0%** | 10.3s | 13.9s |
+| agent-browser | linkedin | **success** | **3/3** | **100.0%**‡ | 9.5s | 13.6s |
+| agent-browser | instagram | **success** | **3/3** | **100.0%** | 7.1s | 10.6s |
+| agent-browser | control | **success** | **3/3** | **100.0%** | 6.8s | 9.8s |
+| camofox-browser | x | **success** | **3/3** | **100.0%** | 10.8s | 13.4s |
+| camofox-browser | reddit | **success** | **3/3** | **100.0%** | 9.6s | 12.4s |
+| camofox-browser | linkedin | **success** | **3/3** | **100.0%**‡ | 12.0s | 16.2s |
+| camofox-browser | instagram | **success** | **3/3** | **100.0%** | 9.8s | 12.7s |
+| camofox-browser | control | **success** | **3/3** | **100.0%** | 9.0s | 10.4s |
+| Scrapling | x | **success** | **3/3** | **100.0%** | 19.0s | 19.6s |
+| Scrapling | reddit | **success** | **3/3** | **100.0%** | 19.3s | 19.9s |
+| Scrapling | linkedin | **success** | **3/3** | **100.0%**‡ | 17.0s | 17.9s |
+| Scrapling | instagram | **success** | **3/3** | **100.0%** | 15.7s | 16.2s |
+| Scrapling | control | **success** | **3/3** | **100.0%** | 13.0s | 13.4s |
 
 \* Correctness reported only for successful outcomes. Based on ground truth validation (e.g., "just setting up my twttr" for Jack's tweet).
-† Blocked pages may contain partial real content mixed with challenge elements — correctness is not meaningful.
+‡ LinkedIn loads reCAPTCHA scripts as standard page infrastructure (not an active challenge). All expected fields were extracted successfully despite the passive block pattern in HTML.
 
 ### Navigation time comparison (median, successful sites only)
 
 | Site | agent-browser | camofox-browser | Scrapling |
 |------|:-------------:|:---------------:|:---------:|
-| X (Twitter) | timeout | **10.7s** | 21.6s |
-| Instagram | **7.0s** | 9.5s | 15.6s |
-| Control | **6.8s** | 8.7s | 13.8s |
+| X (Twitter) | partial | **10.8s** | 19.0s |
+| Reddit | 10.3s | **9.6s** | 19.3s |
+| LinkedIn | **9.5s** | 12.0s | 17.0s |
+| Instagram | **7.1s** | 9.8s | 15.7s |
+| Control | **6.8s** | 9.0s | 13.0s |
 
 Navigation time isolates page load + rendering, excluding agent-browser's CLI setup overhead (~1.4s) and post-capture steps. See Methodology for details.
 
@@ -144,17 +146,23 @@ Navigation time isolates page load + rendering, excluding agent-browser's CLI se
 
 **No single tool wins everywhere.** Each tool has strengths and weaknesses depending on the site's anti-bot stack. All tools pass the control site (example.com) at 3/3, confirming correct setup.
 
-**X (Twitter)** — Camofox and Scrapling both achieve 3/3 success with 100% ground truth, correctly extracting Jack's tweet text, author handle, and canonical URL. Agent-browser times out on all 3 attempts in headed mode. Camofox's navigation is fastest (median 10.7s vs 21.6s for Scrapling), likely due to Firefox's lighter rendering of X's page.
+**X (Twitter)** — Camofox and Scrapling both achieve 3/3 success with 100% ground truth, correctly extracting Jack's tweet text, author handle, and canonical URL. Agent-browser extracts 3/4 fields (author, timestamp, canonical URL) but consistently misses the tweet text, resulting in a "partial" classification. Camofox's navigation is fastest (median 10.8s vs 19.0s for Scrapling).
 
-**Reddit** — The hardest site: all three tools are blocked 3/3. Reddit's anti-bot system consistently serves challenge pages regardless of browser engine or stealth approach. Detection appears to go beyond browser fingerprinting, likely using behavioral signals and IP reputation.
+**Reddit** — All three tools achieve 3/3 success with 100% correctness, extracting post title, subreddit, author, and canonical URL from a live r/Python post. Earlier benchmark runs incorrectly classified Reddit as "blocked" — investigation revealed the prior target post had been deleted (see `reddit-block-investigation/README.md`). The `shreddit-forbidden` div that triggered block detection was Reddit's "content not found" page, not anti-bot blocking.
 
-**LinkedIn** — All three tools are now blocked 3/3 (agent-browser previously got through in some runs). LinkedIn's anti-bot has hardened since the initial runs. All tools receive large pages (2.1-2.3 MB) with challenge markers embedded alongside real content.
+**LinkedIn** — All three tools achieve 3/3 success with 100% ground truth correctness. LinkedIn loads reCAPTCHA Enterprise scripts as standard page infrastructure, but does not actively block any of the tools — all expected fields (company name, location, page URL, metadata) are extracted successfully.
 
-**Instagram** — All three tools now achieve 3/3 success with 100% correctness. The previous "partial" outcomes were due to the benchmark expecting a `timestamp` field that Instagram profile pages don't expose. After removing that expectation, all tools correctly extract `username` and `canonical_url`. Agent-browser is the fastest here (nav median 7.0s), with full-document capture now picking up JSON-LD data from `<head>`.
+**Instagram** — All three tools achieve 3/3 success with 100% correctness. Agent-browser is the fastest here (nav median 7.1s), with full-document capture picking up JSON-LD data from `<head>`.
 
 **Timing patterns** — agent-browser's total times include ~1.4s setup overhead (session prime + cookie import) and per-step CLI round-trips, but its navigation time is competitive. Scrapling consistently runs 1.5-2x slower on navigation than Camofox across all sites. Camofox is the fastest overall for navigation-heavy tasks.
 
 **Consistency is high.** All outcomes were deterministic across 3 attempts — no flaky results. Standard deviations on navigation time are all under 1s. This suggests anti-bot decisions are primarily fingerprint/reputation-based, not probabilistic.
+
+### Block analysis
+
+**LinkedIn (false positive — now fixed):** LinkedIn loads `recaptcha` scripts as standard page infrastructure on every page load. The benchmark's block-pattern detector previously matched the word "captcha" in the HTML and classified the page as blocked *before* checking whether extraction succeeded. The classification logic has been reordered: extraction success now takes priority over passive block patterns. The `block_signals` field in each record documents what signals were present (e.g., `"block_pattern_in_html"`) even when the outcome is success, preserving transparency.
+
+**Reddit (stale URL — now fixed):** The prior benchmark target (`/comments/10wxbk8/`) was a deleted weekly thread from January 2023. Reddit's `shreddit-forbidden` div is how the Shreddit frontend renders "content not found" — it is not an anti-bot signal. Replacing the URL with a live post (`/comments/g53lxf/`) resolved the issue entirely. See `reddit-block-investigation/` for full details.
 
 ## Methodology
 
