@@ -26,7 +26,7 @@ Compares three browser automation tools on their ability to load and extract str
 
 | Tool | Site | Success Rate | Correctness | Nav Time (median) | Total Time (median) |
 |------|------|:------------:|:-----------:|------------------:|--------------------:|
-| agent-browser | X | 0/3 partial | — | 10.6s | 13.8s |
+| agent-browser | X | **3/3** | **100%** | 8.7s | 13.9s |
 | agent-browser | Reddit | **3/3** | **100%** | 10.3s | 13.9s |
 | agent-browser | LinkedIn | **3/3** | **100%** | 9.5s | 13.6s |
 | agent-browser | Instagram | **3/3** | **100%** | 7.1s | 10.6s |
@@ -48,23 +48,23 @@ Correctness = percentage of extracted fields that match ground truth (reported f
 
 | Tool | Sites passed (3/3) | Total attempts | Overall |
 |------|:------------------:|:--------------:|:-------:|
+| **agent-browser** | **5/5** | **15/15** | **100%** |
 | **camofox-browser** | **5/5** | **15/15** | **100%** |
 | **Scrapling** | **5/5** | **15/15** | **100%** |
-| agent-browser | 4/5 | 12/15 | 80% |
 
-Agent-browser's only gap is X (Twitter), where it extracts 3/4 fields (author, timestamp, canonical URL) but misses the tweet text. All other sites succeed at 100%.
+All three tools achieved perfect scores — every site, every attempt, 100% ground truth correctness.
 
 ### Navigation time comparison (median seconds)
 
 | Site | agent-browser | camofox-browser | Scrapling |
 |------|:-------------:|:---------------:|:---------:|
-| X (Twitter) | — | **10.8** | 19.0 |
+| X (Twitter) | **8.7** | 10.8 | 19.0 |
 | Reddit | 10.3 | **9.6** | 19.3 |
 | LinkedIn | **9.5** | 12.0 | 17.0 |
 | Instagram | **7.1** | 9.8 | 15.7 |
 | Control | **6.8** | 9.0 | 13.0 |
 
-Navigation time isolates page load + JS rendering, excluding tool setup overhead. Bold = fastest per site. Agent-browser is fastest on 3 of 4 sites where it succeeds; Camofox wins on X and Reddit.
+Navigation time isolates page load + JS rendering, excluding tool setup overhead. Bold = fastest per site. Agent-browser is fastest on 4 of 5 sites; Camofox wins on Reddit.
 
 ### Extracted data samples
 
@@ -72,12 +72,12 @@ What each tool actually pulls from the page (attempt 1):
 
 **X (Twitter)** — Jack Dorsey's first tweet (`x.com/jack/status/20`)
 
-| Field | camofox-browser | Scrapling | agent-browser |
-|-------|----------------|-----------|---------------|
-| post_text | "just setting up my twttr" | "just setting up my twttr" | *missing* |
-| author_handle | jack | jack | jack |
-| timestamp | 3:50 PM - Mar 21, 2006 | 3:50 PM - Mar 21, 2006 | 3:50 PM - Mar 21, 2006 |
-| canonical_url | x.com/jack/status/20 | x.com/jack/status/20 | x.com/jack/status/20 |
+| Field | All 3 tools |
+|-------|-------------|
+| post_text | "just setting up my twttr" |
+| author_handle | jack |
+| timestamp | 3:50 PM - Mar 21, 2006 |
+| canonical_url | x.com/jack/status/20 |
 
 **Reddit** — Top all-time r/Python post (`/comments/g53lxf/`)
 
@@ -118,13 +118,13 @@ Setup overhead = total time minus navigation time, covering browser launch, cook
 
 ### Interpretation
 
-**Camofox and Scrapling both achieve perfect scores** — 5/5 sites, 15/15 attempts, 100% ground truth correctness. They successfully extract structured data from X, Reddit, LinkedIn, and Instagram without being blocked.
+**All three tools achieve perfect scores** — 5/5 sites, 15/15 attempts, 100% ground truth correctness. They successfully extract structured data from X, Reddit, LinkedIn, and Instagram without being blocked.
 
-**Agent-browser succeeds on 4/5 sites** but consistently fails to extract the tweet text from X. It captures author, timestamp, and URL correctly — the issue is extraction, not blocking. Agent-browser's navigation speed is competitive (fastest on LinkedIn, Instagram, and control), but its CLI architecture adds ~3.5s overhead per attempt.
+**Agent-browser is the fastest overall for navigation.** Running stock Chromium with no stealth overhead, it's the quickest on 4 of 5 sites (median 6.8-10.3s). Its CLI architecture adds ~3.5s overhead per attempt, but navigation itself is fast.
 
-**Camofox is the fastest overall for navigation.** Its Firefox-based engine loads pages 40-50% faster than Scrapling's Patchright across all sites (median 9.6-12.0s vs 15.7-19.3s). The Juggler protocol and C++-level fingerprint spoofing don't add measurable overhead.
+**Camofox is the fastest stealth option.** Its Firefox-based engine loads pages 40-50% faster than Scrapling's Patchright across all sites (median 9.6-12.0s vs 15.7-19.3s). The Juggler protocol and C++-level fingerprint spoofing don't add measurable overhead.
 
-**Scrapling is the slowest but most reliable Chromium option.** Navigation times run 1.5-2x slower than Camofox, likely due to Patchright's stealth patches adding overhead to the Chromium startup and navigation pipeline. Despite this, it achieves perfect results on all sites.
+**Scrapling is the slowest but equally reliable.** Navigation times run 1.5-2x slower than Camofox, likely due to Patchright's stealth patches adding overhead to the Chromium startup and navigation pipeline. Despite this, it achieves perfect results on all sites.
 
 **No site blocked any tool.** LinkedIn loads reCAPTCHA Enterprise scripts as standard page infrastructure, but this doesn't translate to active blocking — all tools extract complete data. Reddit and Instagram serve content without any challenge pages.
 

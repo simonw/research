@@ -453,7 +453,13 @@ def best_effort_agent_capture(session: str, adir: Path, env: Dict[str, str]) -> 
     ]:
         result = run_logged(label, command, adir, timeout=20, env=env)
         if target and result["returncode"] == 0 and result["stdout"]:
-            target.write_text(result["stdout"])
+            stdout = result["stdout"]
+            if label == "capture-html":
+                try:
+                    stdout = json.loads(stdout)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            target.write_text(stdout)
     title = read_text(adir / "title.txt").strip()
     final_url = read_text(adir / "url.txt").strip()
     return {"title": title, "final_url": final_url}
@@ -549,7 +555,12 @@ def run_agent_browser(site: str, cfg: Dict[str, Any], attempt: int, cold: bool, 
             elif label == "url":
                 (adir / "url.txt").write_text(result["stdout"])
             elif label == "html":
-                (adir / "page.html").write_text(result["stdout"])
+                html_out = result["stdout"]
+                try:
+                    html_out = json.loads(html_out)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                (adir / "page.html").write_text(html_out)
 
         # Compute timing breakdown
         setup_s = step_timings.get("prime-state", 0) + step_timings.get("cookies", 0)
