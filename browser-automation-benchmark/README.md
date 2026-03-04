@@ -128,6 +128,90 @@ Setup overhead = total time minus navigation time, covering browser launch, cook
 
 **No site blocked any tool.** LinkedIn loads reCAPTCHA Enterprise scripts as standard page infrastructure, but this doesn't translate to active blocking — all tools extract complete data. Reddit and Instagram serve content without any challenge pages.
 
+---
+
+### Unauthenticated mode (headed, no cookies, 3 attempts, 2026-03-04)
+
+Running without cookies tests whether tools can access content without a pre-authenticated session. This reveals which sites actually gate content behind login and which tools handle unauthenticated access gracefully.
+
+| Tool | Site | Success Rate | Correctness | Failure Reasons |
+|------|------|:------------:|:-----------:|-----------------|
+| agent-browser | X | **3/3** | **100%** | — |
+| agent-browser | Reddit | **3/3** | **100%** | — |
+| agent-browser | LinkedIn | **0/3** | — | browser-closed (2), soft-block (1) |
+| agent-browser | Instagram | **0/3** | — | browser-closed (1), unclassified-error (2) |
+| agent-browser | Control | **3/3** | **100%** | — |
+| camofox-browser | X | **3/3** | **100%** | — |
+| camofox-browser | Reddit | **3/3** | **100%** | — |
+| camofox-browser | LinkedIn | **3/3** | **100%** | — |
+| camofox-browser | Instagram | **3/3** | **100%** | — |
+| camofox-browser | Control | **3/3** | **100%** | — |
+| Scrapling | X | 2/3 | 100%* | navigation-timeout (1) |
+| Scrapling | Reddit | 2/3 | 100%* | navigation-timeout (1) |
+| Scrapling | LinkedIn | 1/3 | 100%* | navigation-timeout (2) |
+| Scrapling | Instagram | 2/3 | 100%* | navigation-timeout (1) |
+| Scrapling | Control | 2/3 | 100%* | navigation-timeout (1) |
+
+\* Correctness reported for successful attempts only.
+
+#### Overall success rates (no cookies)
+
+| Tool | Successful | Total | Overall |
+|------|:----------:|:-----:|:-------:|
+| **camofox-browser** | **15** | **15** | **100%** |
+| agent-browser | 9 | 15 | 60% |
+| Scrapling | 9 | 15 | 60% |
+
+**Camofox is the only tool that achieves 100% without cookies.** Its Firefox engine with C++-level fingerprint spoofing passes every site unauthenticated. Agent-browser succeeds on X, Reddit, and the control but crashes on LinkedIn and Instagram. Scrapling suffers from intermittent navigation timeouts across all sites.
+
+### Headless mode (with cookies, 3 attempts, 2026-03-04)
+
+Running headless with cookies tests whether tools survive headless detection — a common anti-bot signal since most scraping runs headless.
+
+| Tool | Site | Success Rate | Correctness | Failure Reasons |
+|------|------|:------------:|:-----------:|-----------------|
+| agent-browser | X | **0/3** | — | browser-closed (3) |
+| agent-browser | Reddit | **0/3** | — | browser-closed (3) |
+| agent-browser | LinkedIn | 1/3 | 100%* | unclassified-error (1), missing-fields (1) |
+| agent-browser | Instagram | 1/3 | 100%* | browser-closed (2) |
+| agent-browser | Control | **0/3** | — | browser-closed (3) |
+| camofox-browser | X | **3/3** | **100%** | — |
+| camofox-browser | Reddit | **3/3** | **100%** | — |
+| camofox-browser | LinkedIn | **3/3** | **100%** | — |
+| camofox-browser | Instagram | **3/3** | **100%** | — |
+| camofox-browser | Control | **3/3** | **100%** | — |
+| Scrapling | X | 2/3 | 100%* | navigation-timeout (1) |
+| Scrapling | Reddit | 1/3 | 100%* | navigation-timeout (2) |
+| Scrapling | LinkedIn | 2/3 | 100%* | navigation-timeout (1) |
+| Scrapling | Instagram | 1/3 | 100%* | navigation-timeout (2) |
+| Scrapling | Control | **3/3** | **100%** | — |
+
+\* Correctness reported for successful attempts only.
+
+#### Overall success rates (headless)
+
+| Tool | Successful | Total | Overall |
+|------|:----------:|:-----:|:-------:|
+| **camofox-browser** | **15** | **15** | **100%** |
+| Scrapling | 9 | 15 | 60% |
+| agent-browser | 2 | 15 | 13% |
+
+**Agent-browser collapses in headless mode.** Its stock Chromium has no stealth — the `browser-closed` errors suggest sites or the tool itself fail without a visible window. Camofox maintains a perfect 100%. Scrapling's intermittent timeouts persist but it handles headless better than agent-browser.
+
+### Cross-mode comparison
+
+| Tool | Headed + Cookies | Headed + No Cookies | Headless + Cookies |
+|------|:----------------:|:-------------------:|:------------------:|
+| **camofox-browser** | **100%** | **100%** | **100%** |
+| agent-browser | **100%** | 60% | 13% |
+| Scrapling | **100%** | 60% | 60% |
+
+**Camofox is the only tool that achieves 100% success across all three modes.** When cookies remove the authentication barrier, all tools work in headed mode. But without cookies or in headless mode, only Camofox's C++-level fingerprint spoofing and Juggler protocol maintain perfect reliability.
+
+**Agent-browser's stock Chromium has no stealth resilience.** It works well when everything is in its favor (headed + cookies) but falls apart under any adversity. Headless mode is particularly devastating — even the control site (example.com) fails, suggesting the `browser-closed` crashes are a tool-level issue with headless mode rather than anti-bot detection.
+
+**Scrapling is middle-ground.** Its Patchright stealth patches provide some protection but navigation timeouts plague both new modes equally. The timeouts affect even the control site, pointing to a reliability issue in Scrapling's browser lifecycle management rather than anti-bot blocking.
+
 ## Quick start
 
 ### Prerequisites
@@ -170,8 +254,14 @@ python3 scripts/run_benchmark.py --attempts 3
 # Headless mode
 python3 scripts/run_benchmark.py --headless
 
+# No cookies (unauthenticated)
+python3 scripts/run_benchmark.py --no-cookies
+
 # Compare headed vs headless modes
 python3 scripts/run_benchmark.py --compare-modes --attempts 3
+
+# Full stealth comparison (headed/headless x cookies/no-cookies)
+python3 scripts/run_benchmark.py --compare-stealth --attempts 3
 ```
 
 Each run creates a directory under `runs/` with per-attempt artifacts (HTML, screenshots, logs) and aggregated results (JSON).

@@ -24,6 +24,7 @@ from config import (
     AB_SOCKET_DIR,
     RUNTIME_DIR,
     CAMOUFOX_BIN,
+    PROFILES,
     URLS,
     COOKIES_RAW,
     BLOCK_PAT,
@@ -45,8 +46,13 @@ RES: Path = RUNS_DIR
 # Headless mode flag, composited in main() from --headless flag and display detection
 HEADLESS: bool = True
 
+# Cookie skip flag, set via --no-cookies or during --compare-stealth
+NO_COOKIES: bool = False
+
 
 def parse_cookies(site: str) -> List[Dict[str, Any]]:
+    if NO_COOKIES:
+        return []
     out = []
     raw = COOKIES_RAW.get(site, "").strip()
     if not raw:
@@ -330,6 +336,7 @@ def build_record(
         "tool": tool,
         "site": site,
         "page_type": cfg["page_type"],
+        "cookies_mode": "no-cookies" if NO_COOKIES else "cookies",
         "attempt": attempt,
         "cold": cold,
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -1103,8 +1110,124 @@ def _run_mode_comparison(
     print(f"\nMode comparison saved to {run_dir / 'mode_comparison.json'}", flush=True)
 
 
+def _run_stealth_comparison(
+    tool_order: List[str],
+    site_order: List[str],
+    n_attempts: int,
+    fn_by_tool: Dict[str, Any],
+    checks: Dict[str, Any],
+    run_dir: Path,
+) -> None:
+    """Run 4 configurations (headed/headless x cookies/no-cookies) and compare."""
+    global HEADLESS, NO_COOKIES, ART, RES
+
+    CONFIGS = [
+        ("headed-cookies",      False, False),
+        ("headed-no-cookies",   False, True),
+        ("headless-cookies",    True,  False),
+        ("headless-no-cookies", True,  True),
+    ]
+
+    mode_results: Dict[str, Any] = {}
+    for config_name, headless, no_cookies in CONFIGS:
+        HEADLESS = headless
+        NO_COOKIES = no_cookies
+
+        # Clean profiles between configs to prevent warm-state cookie leakage
+        if PROFILES.exists():
+            shutil.rmtree(PROFILES)
+            PROFILES.mkdir(parents=True, exist_ok=True)
+
+        mode_art = run_dir / config_name / "artifacts"
+        mode_res = run_dir / config_name / "results"
+        mode_art.mkdir(parents=True, exist_ok=True)
+        mode_res.mkdir(parents=True, exist_ok=True)
+        ART = mode_art
+        RES = mode_res
+
+        label = f"{'headless' if headless else 'headed'}, {'no cookies' if no_cookies else 'with cookies'}"
+        print(f"\n== Running: {label} ==", flush=True)
+
+        records = _run_benchmark_loop(tool_order, site_order, n_attempts, fn_by_tool, checks)
+        for rec in records:
+            rec["mode"] = config_name
+        json_dump(mode_res / "attempts.json", records)
+        summary = summarize(records)
+        json_dump(mode_res / "summary.json", summary)
+        mode_results[config_name] = {"records": records, "summary": summary}
+
+    # Build and save comparison report
+    comparison = _build_stealth_comparison(mode_results)
+    json_dump(run_dir / "stealth_comparison.json", comparison)
+    print(f"\nStealth comparison saved to {run_dir / 'stealth_comparison.json'}", flush=True)
+
+
+def _build_stealth_comparison(mode_results: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a comparison report across all 4 stealth configurations."""
+    configs = list(mode_results.keys())
+
+    # Index summaries by (tool, site) for each config
+    summaries_by_config: Dict[str, Dict[tuple, Any]] = {}
+    for config_name, data in mode_results.items():
+        summaries_by_config[config_name] = {
+            (s["tool"], s["site"]): s for s in data["summary"]
+        }
+
+    # Per tool-site comparison across all 4 modes
+    all_keys: set = set()
+    for indexed in summaries_by_config.values():
+        all_keys.update(indexed.keys())
+
+    per_tool_site: List[Dict[str, Any]] = []
+    for tool, site in sorted(all_keys):
+        entry: Dict[str, Any] = {"tool": tool, "site": site, "modes": {}}
+        for config_name in configs:
+            s = summaries_by_config[config_name].get((tool, site))
+            if s:
+                mode_entry: Dict[str, Any] = {
+                    "success_rate": s["success_rate"],
+                    "success_rate_pct": s["success_rate_pct"],
+                    "block_rate_pct": s["block_rate_pct"],
+                    "failure_reasons": s.get("failure_reasons", {}),
+                }
+                nav = s.get("timing_navigation")
+                if nav:
+                    mode_entry["nav_median_s"] = nav["median"]
+                entry["modes"][config_name] = mode_entry
+        per_tool_site.append(entry)
+
+    # Aggregate per-tool across all sites
+    per_tool: Dict[str, Dict[str, Dict[str, int]]] = {}
+    for config_name, data in mode_results.items():
+        for rec in data["records"]:
+            tool = rec["tool"]
+            per_tool.setdefault(tool, {}).setdefault(config_name, {"total": 0, "success": 0, "blocked": 0})
+            per_tool[tool][config_name]["total"] += 1
+            if rec["outcome"] == "success":
+                per_tool[tool][config_name]["success"] += 1
+            elif rec["outcome"] == "blocked/challenged":
+                per_tool[tool][config_name]["blocked"] += 1
+
+    tool_summary: List[Dict[str, Any]] = []
+    for tool, modes in sorted(per_tool.items()):
+        row: Dict[str, Any] = {"tool": tool}
+        for config_name, counts in modes.items():
+            total = counts["total"]
+            row[config_name] = {
+                "success_pct": round(100 * counts["success"] / total, 2) if total else 0,
+                "block_pct": round(100 * counts["blocked"] / total, 2) if total else 0,
+            }
+        tool_summary.append(row)
+
+    return {
+        "configs": configs,
+        "per_tool_site": per_tool_site,
+        "tool_summary": tool_summary,
+    }
+
+
 def main() -> None:
-    global ART, RES, HEADLESS
+    global ART, RES, HEADLESS, NO_COOKIES
 
     parser = argparse.ArgumentParser(description="Run browser automation benchmark")
     parser.add_argument("--tools", nargs="*", choices=["agent-browser", "camofox-browser", "Scrapling"])
@@ -1116,7 +1239,19 @@ def main() -> None:
                         help="Run in headless mode (default: headed if display available)")
     parser.add_argument("--compare-modes", action="store_true", default=False,
                         help="Run benchmark in both headed and headless modes, then compare")
+    parser.add_argument("--no-cookies", action="store_true", default=False,
+                        help="Skip cookie loading/injection for all tools")
+    parser.add_argument("--compare-stealth", action="store_true", default=False,
+                        help="Run 4 configurations (headed/headless x cookies/no-cookies) and compare")
     args = parser.parse_args()
+
+    if args.compare_stealth and args.compare_modes:
+        parser.error("--compare-stealth and --compare-modes are mutually exclusive")
+
+    global NO_COOKIES
+    if args.no_cookies:
+        NO_COOKIES = True
+        print("Running without cookies (--no-cookies flag)", flush=True)
 
     if args.headless:
         HEADLESS = True
@@ -1174,7 +1309,9 @@ def main() -> None:
         "Scrapling": run_scrapling,
     }
 
-    if args.compare_modes:
+    if args.compare_stealth:
+        _run_stealth_comparison(tool_order, site_order, n_attempts, fn_by_tool, checks, run_dir)
+    elif args.compare_modes:
         _run_mode_comparison(tool_order, site_order, n_attempts, fn_by_tool, checks, run_dir)
     else:
         records = _run_benchmark_loop(tool_order, site_order, n_attempts, fn_by_tool, checks)
