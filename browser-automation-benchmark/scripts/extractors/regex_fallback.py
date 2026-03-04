@@ -51,7 +51,7 @@ def extract_regex(site: str, text: str, url: str) -> Dict[str, str]:
 
     elif site == "instagram":
         e["username"] = next(iter(re.findall(r"instagram", t, re.I)), "")
-        e["timestamp"] = next(iter(re.findall(r"\d{4}-\d{2}-\d{2}T[^\s\"]+", t)), "")
+        # Instagram profile pages don't reliably expose timestamps
         e["canonical_url"] = url if "instagram.com" in (url or "") else ""
 
     elif site == "control_example":

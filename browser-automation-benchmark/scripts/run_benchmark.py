@@ -41,10 +41,8 @@ from extractors import extract, validate_ground_truth
 ART: Path = RUNS_DIR
 RES: Path = RUNS_DIR
 
-# Detect if a display is available for headed mode
-HAS_DISPLAY = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
-if not HAS_DISPLAY:
-    print("WARNING: No DISPLAY detected, falling back to headless mode", flush=True)
+# Headless mode flag, composited in main() from --headless flag and display detection
+HEADLESS: bool = True
 
 
 def parse_cookies(site: str) -> List[Dict[str, Any]]:
@@ -291,9 +289,13 @@ def build_record(
     failure_reason: str = "",
     failure_stage: str = "",
     remediation: Optional[List[str]] = None,
+    navigation_s: Optional[float] = None,
+    extraction_s: Optional[float] = None,
+    setup_s: Optional[float] = None,
+    step_timings: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     gt = validate_ground_truth(site, extracted)
-    return {
+    rec: Dict[str, Any] = {
         "tool": tool,
         "site": site,
         "page_type": cfg["page_type"],
@@ -315,6 +317,15 @@ def build_record(
         "remediation": remediation or [],
         "ground_truth": gt,
     }
+    if navigation_s is not None:
+        rec["navigation_s"] = round(navigation_s, 3)
+    if extraction_s is not None:
+        rec["extraction_s"] = round(extraction_s, 3)
+    if setup_s is not None:
+        rec["setup_s"] = round(setup_s, 3)
+    if step_timings is not None:
+        rec["step_timings"] = {k: round(v, 3) for k, v in step_timings.items()}
+    return rec
 
 
 def run_logged(
@@ -406,7 +417,7 @@ def best_effort_agent_capture(session: str, adir: Path, env: Dict[str, str]) -> 
         ("capture-title", ["agent-browser", "--session", session, "get", "title"], adir / "title.txt"),
         ("capture-url", ["agent-browser", "--session", session, "get", "url"], adir / "url.txt"),
         ("capture-shot", ["agent-browser", "--session", session, "screenshot", str(adir / "screen.png")], None),
-        ("capture-html", ["agent-browser", "--session", session, "get", "html", "body"], adir / "page.html"),
+        ("capture-html", ["agent-browser", "--session", session, "eval", "document.documentElement.outerHTML"], adir / "page.html"),
     ]:
         result = run_logged(label, command, adir, timeout=20, env=env)
         if target and result["returncode"] == 0 and result["stdout"]:
@@ -453,23 +464,24 @@ def run_agent_browser(site: str, cfg: Dict[str, Any], attempt: int, cold: bool, 
     failure_reason = "unclassified-error"
     failure_stage = "unknown"
     rec: Optional[Dict[str, Any]] = None
+    step_timings: Dict[str, float] = {}
 
-    headed_flag = ["--headed"] if HAS_DISPLAY else []
+    headed_flag = [] if HEADLESS else ["--headed"]
     steps = [
         ("prime-state", ["agent-browser"] + headed_flag + ["--session", session, "--state", str(state_path), "open", "about:blank"], 30),
         ("cookies", ["agent-browser", "--session", session, "--json", "cookies"], 15),
         ("open", ["agent-browser"] + headed_flag + ["--session", session, "open", cfg["url"]], 45),
         ("wait", ["agent-browser", "--session", session, "wait", "6000"], 15),
-        ("snapshot", ["agent-browser", "--session", session, "snapshot"], 30),
         ("title", ["agent-browser", "--session", session, "get", "title"], 15),
         ("url", ["agent-browser", "--session", session, "get", "url"], 15),
-        ("html", ["agent-browser", "--session", session, "get", "html", "body"], 25),
+        ("html", ["agent-browser", "--session", session, "eval", "document.documentElement.outerHTML"], 25),
         ("screenshot", ["agent-browser", "--session", session, "screenshot", str(adir / "screen.png")], 25),
     ]
 
     try:
         for label, command, timeout in steps:
             result = run_logged(label, command, adir, timeout=timeout, env=env)
+            step_timings[label] = result["elapsed_s"]
             if result["timeout"]:
                 first_error = f"{label} timed out after {timeout}s"
                 failure_category = "timeout"
@@ -486,22 +498,38 @@ def run_agent_browser(site: str, cfg: Dict[str, Any], attempt: int, cold: bool, 
                 failure_category = classified["failure_category"]
                 failure_reason = classified["failure_reason"]
                 failure_stage = classified["failure_stage"] or label
+                # If html step fails, try snapshot as fallback
+                if label == "html":
+                    snap_result = run_logged("snapshot-fallback", ["agent-browser", "--session", session, "snapshot"], adir, timeout=30, env=env)
+                    step_timings["snapshot-fallback"] = snap_result["elapsed_s"]
+                    if snap_result["returncode"] == 0 and snap_result["stdout"]:
+                        (adir / "snapshot.txt").write_text(snap_result["stdout"])
+                        first_error = ""  # recovered
+                        failure_category = ""
+                        failure_reason = ""
+                        failure_stage = ""
+                        continue
                 break
             if label == "cookies":
                 append_log(adir / "stdout.log", "cookie-check", result["stdout"])
-            elif label == "snapshot":
-                (adir / "snapshot.txt").write_text(result["stdout"])
             elif label == "title":
                 (adir / "title.txt").write_text(result["stdout"])
             elif label == "url":
                 (adir / "url.txt").write_text(result["stdout"])
             elif label == "html":
                 (adir / "page.html").write_text(result["stdout"])
+
+        # Compute timing breakdown
+        setup_s = step_timings.get("prime-state", 0) + step_timings.get("cookies", 0)
+        navigation_s = step_timings.get("open", 0) + step_timings.get("wait", 0)
+
         capture = best_effort_agent_capture(session, adir, env)
         title = capture["title"]
         final_url = capture["final_url"]
         text = read_text(adir / "page.html") or read_text(adir / "snapshot.txt")
+        extract_start = time.time()
         extracted = extract(site, text, final_url)
+        extraction_s = time.time() - extract_start
         if not first_error:
             classified = classify_page(text, extracted, cfg["expected"], site=site, final_url=final_url)
             outcome = classified["outcome"]
@@ -531,6 +559,10 @@ def run_agent_browser(site: str, cfg: Dict[str, Any], attempt: int, cold: bool, 
             failure_reason=failure_reason,
             failure_stage=failure_stage,
             remediation=remediation_for("agent-browser", failure_reason),
+            navigation_s=navigation_s,
+            extraction_s=extraction_s,
+            setup_s=setup_s,
+            step_timings=step_timings,
         )
     except Exception as exc:
         append_log(adir / "stderr.log", "agent-browser-exception", repr(exc))
@@ -557,6 +589,7 @@ def run_agent_browser(site: str, cfg: Dict[str, Any], attempt: int, cold: bool, 
             failure_reason=classified["failure_reason"],
             failure_stage=classified["failure_stage"],
             remediation=remediation_for("agent-browser", classified["failure_reason"]),
+            step_timings=step_timings,
         )
     finally:
         run_logged("close", ["agent-browser", "--session", session, "close"], adir, timeout=15, env=env)
@@ -596,6 +629,7 @@ def run_camoufox(site: str, cfg: Dict[str, Any], attempt: int, cold: bool, check
 from pathlib import Path
 import json
 import os
+import time as _time
 from camoufox.sync_api import Camoufox
 
 url = {cfg['url']!r}
@@ -612,26 +646,58 @@ print(json.dumps({{
     "import_mode": "context.add_cookies",
 }}))
 
-headless = {not HAS_DISPLAY!r}
+headless = {HEADLESS!r}
+_nav_start = _time.time()
 with Camoufox(headless=headless, humanize=not headless) as browser:
     context = browser.new_context()
     if cookies:
         context.add_cookies(cookies)
     page = context.new_page()
-    page.goto(url, wait_until="domcontentloaded", timeout=45000)
-    page.wait_for_timeout(6000)
-    (out / "url.txt").write_text(page.url)
-    (out / "title.txt").write_text(page.title())
-    (out / "page.html").write_text(page.content())
-    page.screenshot(path=str(out / "screen.png"), full_page=True)
-    context.storage_state(path=str(state_path))
-    context.close()
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        page.wait_for_timeout(6000)
+    finally:
+        _nav_end = _time.time()
+        try:
+            (out / "url.txt").write_text(page.url)
+        except Exception:
+            pass
+        try:
+            (out / "title.txt").write_text(page.title())
+        except Exception:
+            pass
+        try:
+            (out / "page.html").write_text(page.content())
+        except Exception:
+            pass
+        try:
+            page.screenshot(path=str(out / "screen.png"), full_page=True)
+        except Exception:
+            pass
+        try:
+            context.storage_state(path=str(state_path))
+        except Exception:
+            pass
+        context.close()
+print("__TIMING__" + json.dumps({{"navigation_s": round(_nav_end - _nav_start, 3)}}))
 """
     result = run_inline_python("camoufox", script, adir, timeout=85)
+
+    # Parse timing from subprocess output
+    camo_navigation_s = None
+    for line in (result.get("stdout") or "").splitlines():
+        if line.startswith("__TIMING__"):
+            try:
+                camo_navigation_s = json.loads(line[len("__TIMING__"):]).get("navigation_s")
+            except (json.JSONDecodeError, ValueError):
+                pass
+
     text = read_text(adir / "page.html")
     final_url = read_text(adir / "url.txt").strip()
     title = read_text(adir / "title.txt").strip()
+    extract_start = time.time()
     extracted = extract(site, text, final_url)
+    extraction_s = time.time() - extract_start
 
     if result["timeout"]:
         outcome = "timeout"
@@ -671,6 +737,8 @@ with Camoufox(headless=headless, humanize=not headless) as browser:
         failure_reason=failure_reason,
         failure_stage=failure_stage,
         remediation=remediation_for("camofox-browser", failure_reason),
+        navigation_s=camo_navigation_s,
+        extraction_s=extraction_s,
     )
     json_dump(adir / "record.json", rec)
     return rec
@@ -701,6 +769,7 @@ def run_scrapling(site: str, cfg: Dict[str, Any], attempt: int, cold: bool, chec
     )
     script = f"""
 import json
+import time as _time
 from pathlib import Path
 from scrapling.fetchers import StealthySession
 
@@ -721,13 +790,23 @@ captured_html = ""
 
 def page_action(page):
     global captured_html
-    page.wait_for_timeout(6000)
-    captured_html = page.content()
-    page.screenshot(path=str(out / "screen.png"), full_page=True)
+    try:
+        page.wait_for_timeout(6000)
+    finally:
+        try:
+            captured_html = page.content()
+        except Exception:
+            pass
+        try:
+            page.screenshot(path=str(out / "screen.png"), full_page=True)
+        except Exception:
+            pass
 
+_nav_start = _time.time()
 with StealthySession(user_data_dir=profile, cookies=cookies) as session:
-    response = session.fetch(url, headless={not HAS_DISPLAY!r}, timeout=45000, wait=6000,
+    response = session.fetch(url, headless={HEADLESS!r}, timeout=45000, wait=6000,
                              page_action=page_action)
+    _nav_end = _time.time()
     # Try multiple ways to get HTML content
     html = response.text or ""
     if not html:
@@ -741,11 +820,24 @@ with StealthySession(user_data_dir=profile, cookies=cookies) as session:
         html = captured_html
     (out / "page.html").write_text(html)
     (out / "url.txt").write_text(getattr(response, "url", url))
+print("__TIMING__" + json.dumps({{"navigation_s": round(_nav_end - _nav_start, 3)}}))
 """
     result = run_inline_python("scrapling", script, adir, timeout=90)
+
+    # Parse timing from subprocess output
+    scrap_navigation_s = None
+    for line in (result.get("stdout") or "").splitlines():
+        if line.startswith("__TIMING__"):
+            try:
+                scrap_navigation_s = json.loads(line[len("__TIMING__"):]).get("navigation_s")
+            except (json.JSONDecodeError, ValueError):
+                pass
+
     text = read_text(adir / "page.html")
     final_url = read_text(adir / "url.txt").strip()
+    extract_start = time.time()
     extracted = extract(site, text, final_url)
+    extraction_s = time.time() - extract_start
 
     if result["timeout"]:
         outcome = "timeout"
@@ -785,9 +877,29 @@ with StealthySession(user_data_dir=profile, cookies=cookies) as session:
         failure_reason=failure_reason,
         failure_stage=failure_stage,
         remediation=remediation_for("Scrapling", failure_reason),
+        navigation_s=scrap_navigation_s,
+        extraction_s=extraction_s,
     )
     json_dump(adir / "record.json", rec)
     return rec
+
+
+def timing_stats(values: List[float]) -> Optional[Dict[str, float]]:
+    """Compute descriptive statistics for a list of timing values."""
+    if not values:
+        return None
+    s: Dict[str, float] = {
+        "mean": round(statistics.mean(values), 3),
+        "median": round(statistics.median(values), 3),
+        "min": round(min(values), 3),
+        "max": round(max(values), 3),
+    }
+    if len(values) >= 2:
+        s["stdev"] = round(statistics.stdev(values), 3)
+        q = statistics.quantiles(values, n=4)
+        s["iqr"] = round(q[2] - q[0], 3)
+        s["p95"] = round(statistics.quantiles(values, n=20)[-1], 3)
+    return s
 
 
 def summarize(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -802,11 +914,16 @@ def summarize(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         blocked = [x for x in rows if x["outcome"] == "blocked/challenged"]
         timeout = [x for x in rows if x["outcome"] == "timeout"]
         crash = [x for x in rows if x["outcome"] == "crash/error"]
+
+        # Timing stats from all non-crash runs
+        all_times = [x["duration_s"] for x in rows if x["outcome"] not in ("crash/error",)]
         succ_times = [x["duration_s"] for x in succ]
-        p95 = statistics.quantiles(succ_times, n=20)[-1] if len(succ_times) >= 2 else (succ_times[0] if succ_times else None)
+        nav_times = [x["navigation_s"] for x in rows if x.get("navigation_s") is not None]
+        extract_times = [x["extraction_s"] for x in rows if x.get("extraction_s") is not None]
 
         completeness = []
-        gt_correctness = []
+        gt_correctness_all = []
+        gt_correctness_success = []
         for row in rows:
             expected = len(row["expected"])
             got = sum(1 for field in row["expected"] if row["extracted"].get(field))
@@ -814,7 +931,9 @@ def summarize(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             gt = row.get("ground_truth", {})
             gt_pct = gt.get("correctness_pct")
             if gt_pct is not None:
-                gt_correctness.append(gt_pct)
+                gt_correctness_all.append(gt_pct)
+                if row["outcome"] == "success":
+                    gt_correctness_success.append(gt_pct)
 
         failure_reasons = Counter(row.get("failure_reason") for row in rows if row.get("failure_reason"))
         setup_failures = sum(1 for row in rows if row.get("failure_category") == "setup")
@@ -833,13 +952,17 @@ def summarize(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "blocked": len(blocked),
                 "timeout": len(timeout),
                 "crash": len(crash),
+                "success_rate": f"{len(succ)}/{len(rows)}",
                 "success_rate_pct": round(100 * len(succ) / len(rows), 2),
                 "block_rate_pct": round(100 * len(blocked) / len(rows), 2),
                 "partial_rate_pct": round(100 * len(partial) / len(rows), 2),
-                "avg_success_time_s": round(sum(succ_times) / len(succ_times), 3) if succ_times else None,
-                "p95_success_time_s": round(p95, 3) if p95 else None,
+                "timing_total": timing_stats(all_times),
+                "timing_success": timing_stats(succ_times),
+                "timing_navigation": timing_stats(nav_times),
+                "timing_extraction": timing_stats(extract_times),
                 "data_completeness_pct": round(sum(completeness) / len(completeness), 2),
-                "correctness_pct": round(sum(gt_correctness) / len(gt_correctness), 2) if gt_correctness else None,
+                "correctness_pct": round(sum(gt_correctness_all) / len(gt_correctness_all), 2) if gt_correctness_all else None,
+                "correctness_success_only_pct": round(sum(gt_correctness_success) / len(gt_correctness_success), 2) if gt_correctness_success else None,
                 "stability_score": round(stability, 2),
                 "setup_failures": setup_failures,
                 "startup_failures": startup_failures,
@@ -851,14 +974,133 @@ def summarize(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return summary
 
 
+def _run_benchmark_loop(
+    tool_order: List[str],
+    site_order: List[str],
+    n_attempts: int,
+    fn_by_tool: Dict[str, Any],
+    checks: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    for tool in tool_order:
+        for site in site_order:
+            cfg = URLS[site]
+            for attempt in range(1, n_attempts + 1):
+                cold = (attempt == 1)
+                rec = fn_by_tool[tool](site, cfg, attempt, cold, checks)
+                records.append(rec)
+                print(f"done {tool} {site} attempt={attempt}/{n_attempts} cold={cold} outcome={rec['outcome']}", flush=True)
+                if attempt < n_attempts:
+                    time.sleep(2)
+    return records
+
+
+def _run_mode_comparison(
+    tool_order: List[str],
+    site_order: List[str],
+    n_attempts: int,
+    fn_by_tool: Dict[str, Any],
+    checks: Dict[str, Any],
+    run_dir: Path,
+) -> None:
+    global HEADLESS, ART, RES
+
+    mode_results: Dict[str, Any] = {}
+    for mode in ("headed", "headless"):
+        HEADLESS = (mode == "headless")
+        mode_art = run_dir / mode / "artifacts"
+        mode_res = run_dir / mode / "results"
+        mode_art.mkdir(parents=True, exist_ok=True)
+        mode_res.mkdir(parents=True, exist_ok=True)
+        ART = mode_art
+        RES = mode_res
+        print(f"\n== Running in {mode} mode ==", flush=True)
+
+        records = _run_benchmark_loop(tool_order, site_order, n_attempts, fn_by_tool, checks)
+        for rec in records:
+            rec["mode"] = mode
+        json_dump(mode_res / "attempts.json", records)
+        summary = summarize(records)
+        json_dump(mode_res / "summary.json", summary)
+        mode_results[mode] = {"records": records, "summary": summary}
+
+    # Build comparison
+    comparison: List[Dict[str, Any]] = []
+    headed_by_key = {(s["tool"], s["site"]): s for s in mode_results["headed"]["summary"]}
+    headless_by_key = {(s["tool"], s["site"]): s for s in mode_results["headless"]["summary"]}
+    for key in headed_by_key:
+        h = headed_by_key[key]
+        hl = headless_by_key.get(key)
+        if not hl:
+            continue
+        entry: Dict[str, Any] = {
+            "tool": key[0],
+            "site": key[1],
+            "headed_success_rate": h["success_rate"],
+            "headless_success_rate": hl["success_rate"],
+            "success_rate_diff_pct": round(h["success_rate_pct"] - hl["success_rate_pct"], 2),
+        }
+        h_nav = h.get("timing_navigation")
+        hl_nav = hl.get("timing_navigation")
+        if h_nav and hl_nav:
+            entry["headed_nav_median"] = h_nav["median"]
+            entry["headless_nav_median"] = hl_nav["median"]
+            entry["nav_median_diff_s"] = round(h_nav["median"] - hl_nav["median"], 3)
+        comparison.append(entry)
+    json_dump(run_dir / "mode_comparison.json", comparison)
+    print(f"\nMode comparison saved to {run_dir / 'mode_comparison.json'}", flush=True)
+
+
 def main() -> None:
-    global ART, RES
+    global ART, RES, HEADLESS
 
     parser = argparse.ArgumentParser(description="Run browser automation benchmark")
     parser.add_argument("--tools", nargs="*", choices=["agent-browser", "camofox-browser", "Scrapling"])
     parser.add_argument("--sites", nargs="*", choices=sorted(URLS))
     parser.add_argument("--name", help="Custom name for this run (default: timestamp)")
+    parser.add_argument("--attempts", type=int, default=5,
+                        help="Number of attempts per tool/site combination (default: 5)")
+    parser.add_argument("--headless", action="store_true", default=False,
+                        help="Run in headless mode (default: headed if display available)")
+    parser.add_argument("--compare-modes", action="store_true", default=False,
+                        help="Run benchmark in both headed and headless modes, then compare")
     args = parser.parse_args()
+
+    if args.headless:
+        HEADLESS = True
+        print("Running in headless mode (--headless flag)", flush=True)
+    else:
+        has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        # Env vars may be missing in non-login shells (e.g., tmux, SSH, Claude Code).
+        # Probe for actual X11/Wayland sockets and set env vars so downstream tools work.
+        if not has_display:
+            x11_dir = Path("/tmp/.X11-unix")
+            wayland_dir = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+            # Find the user's own X socket (skip greeter sockets owned by other users)
+            uid = os.getuid()
+            for sock in sorted(x11_dir.glob("X*")):
+                try:
+                    if sock.stat().st_uid == uid:
+                        display = ":" + sock.name[1:]  # X1 -> :1
+                        os.environ["DISPLAY"] = display
+                        has_display = True
+                        print(f"Detected X11 socket {sock}, setting DISPLAY={display}", flush=True)
+                        break
+                except OSError:
+                    continue
+            if not has_display:
+                for sock in sorted(wayland_dir.glob("wayland-[0-9]*")):
+                    if sock.is_socket():
+                        os.environ["WAYLAND_DISPLAY"] = sock.name
+                        has_display = True
+                        print(f"Detected Wayland socket {sock}, setting WAYLAND_DISPLAY={sock.name}", flush=True)
+                        break
+        if has_display:
+            HEADLESS = False
+            print("Running in headed mode", flush=True)
+        else:
+            HEADLESS = True
+            print("WARNING: No display detected, falling back to headless mode", flush=True)
 
     run_name = args.name or datetime.now().strftime("%Y-%m-%d_%H%M%S")
     run_dir = RUNS_DIR / run_name
@@ -873,23 +1115,21 @@ def main() -> None:
 
     tool_order = args.tools or ["agent-browser", "camofox-browser", "Scrapling"]
     site_order = args.sites or list(URLS.keys())
+    n_attempts = args.attempts
     fn_by_tool = {
         "agent-browser": run_agent_browser,
         "camofox-browser": run_camoufox,
         "Scrapling": run_scrapling,
     }
 
-    records = []
-    for tool in tool_order:
-        for site in site_order:
-            cfg = URLS[site]
-            records.append(fn_by_tool[tool](site, cfg, 1, True, checks))
-            print(f"done {tool} {site}", flush=True)
-
-    json_dump(RES / "attempts.json", records)
-    summary = summarize(records)
-    json_dump(RES / "summary.json", summary)
-    print(f"completed benchmark, attempts={len(records)}, run={run_name}", flush=True)
+    if args.compare_modes:
+        _run_mode_comparison(tool_order, site_order, n_attempts, fn_by_tool, checks, run_dir)
+    else:
+        records = _run_benchmark_loop(tool_order, site_order, n_attempts, fn_by_tool, checks)
+        json_dump(RES / "attempts.json", records)
+        summary = summarize(records)
+        json_dump(RES / "summary.json", summary)
+        print(f"completed benchmark, attempts={len(records)}, run={run_name}", flush=True)
 
 
 if __name__ == "__main__":

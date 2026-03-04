@@ -6,9 +6,9 @@ Compares three browser automation tools on their ability to load and extract str
 
 | Tool | Engine | Stealth approach |
 |------|--------|-----------------|
-| **agent-browser** (Vercel Labs) | Chromium via Playwright | No built-in anti-bot. Stock browser with daemon-based session persistence. |
-| **camofox-browser** (Camoufox) | Firefox fork | C++-level fingerprint spoofing, Juggler protocol (invisible to page JS), cursor humanization. |
-| **Scrapling** (Patchright) | Chromium via Patchright | Stealth-patched Playwright fork. Patches WebDriver flags, navigator overrides. |
+| [**agent-browser**](https://github.com/vercel-labs/agent-browser) (Vercel Labs) | Chromium via Playwright | No built-in anti-bot. Stock browser with daemon-based session persistence. |
+| [**camofox-browser**](https://github.com/jo-inc/camofox-browser) (Camoufox) | Firefox fork | C++-level fingerprint spoofing, Juggler protocol (invisible to page JS), cursor humanization. |
+| [**Scrapling**](https://github.com/D4Vinci/Scrapling) (Patchright) | Chromium via Patchright | Stealth-patched Playwright fork. Patches WebDriver flags, navigator overrides. |
 
 ## Target sites
 
@@ -18,6 +18,7 @@ Compares three browser automation tools on their ability to load and extract str
 | Reddit | Post | `https://www.reddit.com/r/Python/comments/10wxbk8/` |
 | LinkedIn | Company | `https://www.linkedin.com/company/microsoft/` |
 | Instagram | Profile | `https://www.instagram.com/instagram/` |
+| example.com | Control | `https://example.com` |
 
 ## Quick start
 
@@ -35,6 +36,7 @@ For authenticated access, place Netscape-format cookie files in `cookies/`:
 
 ```
 cookies/x.txt
+cookies/reddit.txt
 cookies/linkedin.txt
 cookies/instagram.txt
 ```
@@ -51,6 +53,14 @@ Each file has one cookie per line in Netscape/curl format:
 python3 scripts/run_benchmark.py
 ```
 
+By default the benchmark runs in **headed (headful) mode** when a display server is available. This is the recommended mode — some tools (e.g., Camoufox's cursor humanization) only work headed, and headed mode more closely resembles real browser usage to anti-bot systems.
+
+To force headless mode:
+
+```bash
+python3 scripts/run_benchmark.py --headless
+```
+
 Each run creates a timestamped directory under `runs/`:
 
 ```
@@ -58,6 +68,8 @@ runs/2026-03-03_143022/
   artifacts/    # per-attempt logs, HTML, screenshots
   results/      # attempts.json, summary.json, preflight.json
 ```
+
+Screenshots are captured at the end of every run (including failures), so you can visually inspect whether a browser was blocked or served a challenge page.
 
 Options:
 
@@ -67,6 +79,15 @@ python3 scripts/run_benchmark.py --name my-test
 
 # Specific tools or sites only
 python3 scripts/run_benchmark.py --tools agent-browser Scrapling --sites x reddit
+
+# Multiple attempts (default: 5)
+python3 scripts/run_benchmark.py --attempts 3
+
+# Headless mode
+python3 scripts/run_benchmark.py --headless
+
+# Compare headed vs headless modes
+python3 scripts/run_benchmark.py --compare-modes --attempts 3
 ```
 
 ## How it works
@@ -86,44 +107,95 @@ For each tool/site combination, the benchmark:
 
 ## Results
 
-### Summary (headless mode, single cold run per tool/site)
+### Summary (headed mode, 3 attempts per tool/site, 2026-03-04)
 
-| Tool | Site | Outcome | Ground Truth | Page Size | Time |
-|------|------|---------|:------------:|----------:|-----:|
-| agent-browser | x | partial | 33.3% | 476 KB | 14.8s |
-| agent-browser | reddit | partial | 33.3% | 190 KB | 9.4s |
-| agent-browser | linkedin | **success** | 50.0% | 1.4 MB | 13.8s |
-| agent-browser | instagram | partial | 100.0% | 1.0 MB | 12.3s |
-| camofox-browser | x | **success** | **100.0%** | 828 KB | 12.2s |
-| camofox-browser | reddit | blocked | 66.7% | 400 KB | 10.6s |
-| camofox-browser | linkedin | blocked | 100.0% | 2.2 MB | 14.7s |
-| camofox-browser | instagram | partial | 100.0% | 1.6 MB | 11.8s |
-| Scrapling | x | **success** | **100.0%** | 925 KB | 19.7s |
-| Scrapling | reddit | blocked | 66.7% | 401 KB | 14.5s |
-| Scrapling | linkedin | blocked | 100.0% | 2.2 MB | 18.2s |
-| Scrapling | instagram | partial | 100.0% | 1.6 MB | 16.0s |
+| Tool | Site | Outcome | Success Rate | Correctness* | Nav Time (median) | Total Time (median) |
+|------|------|---------|:------------:|:------------:|------------------:|--------------------:|
+| agent-browser | x | timeout | 0/3 | — | 25.2s | 54.6s |
+| agent-browser | reddit | blocked | 0/3 | —† | 9.2s | 12.6s |
+| agent-browser | linkedin | blocked | 0/3 | —† | 9.4s | 21.3s |
+| agent-browser | instagram | **success** | **3/3** | **100.0%** | 7.0s | 14.8s |
+| agent-browser | control | **success** | **3/3** | **100.0%** | 6.8s | 9.7s |
+| camofox-browser | x | **success** | **3/3** | **100.0%** | 10.7s | 13.3s |
+| camofox-browser | reddit | blocked | 0/3 | —† | 9.3s | 11.3s |
+| camofox-browser | linkedin | blocked | 0/3 | —† | 11.8s | 15.7s |
+| camofox-browser | instagram | **success** | **3/3** | **100.0%** | 9.5s | 12.2s |
+| camofox-browser | control | **success** | **3/3** | **100.0%** | 8.7s | 10.2s |
+| Scrapling | x | **success** | **3/3** | **100.0%** | 21.6s | 22.4s |
+| Scrapling | reddit | blocked | 0/3 | —† | 14.5s | 15.0s |
+| Scrapling | linkedin | blocked | 0/3 | —† | 17.2s | 18.0s |
+| Scrapling | instagram | **success** | **3/3** | **100.0%** | 15.6s | 16.2s |
+| Scrapling | control | **success** | **3/3** | **100.0%** | 13.8s | 14.2s |
+
+\* Correctness reported only for successful outcomes. Based on ground truth validation (e.g., "just setting up my twttr" for Jack's tweet).
+† Blocked pages may contain partial real content mixed with challenge elements — correctness is not meaningful.
+
+### Navigation time comparison (median, successful sites only)
+
+| Site | agent-browser | camofox-browser | Scrapling |
+|------|:-------------:|:---------------:|:---------:|
+| X (Twitter) | timeout | **10.7s** | 21.6s |
+| Instagram | **7.0s** | 9.5s | 15.6s |
+| Control | **6.8s** | 8.7s | 13.8s |
+
+Navigation time isolates page load + rendering, excluding agent-browser's CLI setup overhead (~1.4s) and post-capture steps. See Methodology for details.
 
 ### Interpretation
 
-**No single tool wins everywhere.** Each tool has strengths and weaknesses depending on the site's anti-bot stack.
+**No single tool wins everywhere.** Each tool has strengths and weaknesses depending on the site's anti-bot stack. All tools pass the control site (example.com) at 3/3, confirming correct setup.
 
-**X (Twitter)** - Camofox and Scrapling both achieve 100% ground truth, correctly extracting Jack's tweet from the `<title>` tag. Agent-browser only manages 33% because it picks up a wrong user handle from related content in the page. Camofox is fastest here (12.2s vs 19.7s for Scrapling), likely due to Firefox's lighter rendering of X's SPA compared to Chromium.
+**X (Twitter)** — Camofox and Scrapling both achieve 3/3 success with 100% ground truth, correctly extracting Jack's tweet text, author handle, and canonical URL. Agent-browser times out on all 3 attempts in headed mode. Camofox's navigation is fastest (median 10.7s vs 21.6s for Scrapling), likely due to Firefox's lighter rendering of X's page.
 
-**Reddit** - The hardest site for all tools. Reddit's anti-bot system blocks both Camofox and Scrapling with challenge pages, despite their stealth features. Agent-browser avoids the block but only extracts partial data (33% ground truth). Reddit's detection appears to go beyond browser fingerprinting — it likely uses behavioral signals and IP reputation that no amount of fingerprint spoofing can bypass.
+**Reddit** — The hardest site: all three tools are blocked 3/3. Reddit's anti-bot system consistently serves challenge pages regardless of browser engine or stealth approach. Detection appears to go beyond browser fingerprinting, likely using behavioral signals and IP reputation.
 
-**LinkedIn** - Agent-browser is the only tool that gets through without being blocked. This is likely because LinkedIn's anti-bot is tuned more aggressively against Firefox-based browsers and known automation frameworks. Camofox and Scrapling both receive the full page content (2.2 MB, 100% ground truth on what they extract) but are still classified as blocked due to challenge markers in the HTML. This suggests LinkedIn serves a mix of real content and challenge elements.
+**LinkedIn** — All three tools are now blocked 3/3 (agent-browser previously got through in some runs). LinkedIn's anti-bot has hardened since the initial runs. All tools receive large pages (2.1-2.3 MB) with challenge markers embedded alongside real content.
 
-**Instagram** - All three tools get partial results with 100% correctness on extracted fields. The missing field is `timestamp`, which Instagram doesn't expose in the initial page load for profile pages. This is a limitation of the test target, not the tools.
+**Instagram** — All three tools now achieve 3/3 success with 100% correctness. The previous "partial" outcomes were due to the benchmark expecting a `timestamp` field that Instagram profile pages don't expose. After removing that expectation, all tools correctly extract `username` and `canonical_url`. Agent-browser is the fastest here (nav median 7.0s), with full-document capture now picking up JSON-LD data from `<head>`.
 
-**Browser engine matters.** Chromium-based tools (agent-browser, Scrapling) and Firefox-based tools (Camofox) face different challenge profiles. LinkedIn blocks Firefox aggressively. Reddit blocks everything. X is permissive to stealth browsers but trips up stock Chromium on extraction quality.
+**Timing patterns** — agent-browser's total times include ~1.4s setup overhead (session prime + cookie import) and per-step CLI round-trips, but its navigation time is competitive. Scrapling consistently runs 1.5-2x slower on navigation than Camofox across all sites. Camofox is the fastest overall for navigation-heavy tasks.
 
-**Headless mode limits stealth.** These results were collected in headless mode. Camofox's cursor humanization (`humanize=True`) only works in headed mode, so its stealth potential is underrepresented here. Running headed (with a display server) would likely improve Camofox's results on sites that detect headless browsers.
+**Consistency is high.** All outcomes were deterministic across 3 attempts — no flaky results. Standard deviations on navigation time are all under 1s. This suggests anti-bot decisions are primarily fingerprint/reputation-based, not probabilistic.
+
+## Methodology
+
+### Multiple runs and statistics
+
+By default the benchmark runs 5 attempts per tool/site combination (`--attempts 5`). The first attempt is cold (fresh profile/session), subsequent attempts are warm. A 2-second delay separates attempts. Summary statistics include mean, median, stdev, IQR, min, max, and p95 for timing metrics. Success rate is reported as a fraction (e.g., `4/5`).
+
+### Timing breakdown
+
+Each record includes separate timing fields:
+- **`duration_s`** — wall-clock time from start to finish (includes all overhead)
+- **`navigation_s`** — time spent on page navigation and rendering (the apples-to-apples metric for comparing tools)
+- **`extraction_s`** — time spent running the extraction pipeline on captured HTML
+- **`setup_s`** (agent-browser only) — time spent on session setup (prime-state + cookie import)
+- **`step_timings`** (agent-browser only) — per-CLI-step timing breakdown
+
+Agent-browser's CLI architecture requires multiple sequential commands where Camoufox and Scrapling use a single script. The `navigation_s` metric isolates the page load + wait time, making it the fair comparison across tools. `duration_s` reflects total end-to-end time including agent-browser's daemon overhead (which is sub-ms after the first call).
+
+### Correctness reporting
+
+Ground truth correctness is only reported for successful outcomes. Blocked pages often contain partial real content mixed with challenge elements, making correctness metrics misleading. The summary includes both `correctness_pct` (all runs) and `correctness_success_only_pct` (successful runs only).
+
+### Control site
+
+The benchmark includes `example.com` as a control site with no anti-bot protection. This establishes a baseline: if a tool fails on the control site, the issue is with the tool's setup rather than anti-bot detection.
+
+### Content capture
+
+Agent-browser captures full document HTML (`document.documentElement.outerHTML`) rather than just `<body>`, ensuring JSON-LD and Open Graph tags in `<head>` are available for extraction — matching how Camoufox (`page.content()`) and Scrapling (`response.text`) capture content.
+
+### Headed vs headless comparison
+
+Use `--compare-modes` to run the full benchmark in both headed and headless modes. Results are saved in separate subdirectories with a `mode_comparison.json` summarizing success rate and navigation time differences per tool/site.
 
 ## Output format
 
 Each run produces:
 
 - `results/preflight.json` - dependency checks for each tool
-- `results/attempts.json` - detailed per-attempt records with extracted data, ground truth validation, timing, and failure classification
-- `results/summary.json` - aggregated metrics per tool/site (success rate, block rate, correctness, timing)
+- `results/attempts.json` - detailed per-attempt records with extracted data, ground truth validation, timing breakdown, and failure classification
+- `results/summary.json` - aggregated metrics per tool/site (success rate as fraction, timing stats with mean/median/p95, correctness for successful runs only)
 - `artifacts/<tool>_<site>_<n>_<cold|warm>/` - raw logs (`stdout.log`, `stderr.log`, `commands.log`), captured HTML (`page.html`), screenshots (`screen.png`), and per-attempt record (`record.json`)
+
+When using `--compare-modes`, each mode gets its own `headed/` and `headless/` subdirectory, plus a top-level `mode_comparison.json`.

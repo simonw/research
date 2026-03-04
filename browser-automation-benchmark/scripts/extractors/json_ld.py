@@ -120,7 +120,7 @@ def extract_json_ld(site: str, text: str, url: str) -> Dict[str, str]:
                     or block.get("name", "")
                     or _get_nested(block, "mainEntity", "alternateName")
                 )
-                fields["timestamp"] = block.get("dateModified", "") or block.get("dateCreated", "")
+                # Instagram profile pages don't reliably expose timestamps
                 fields["canonical_url"] = block.get("url", "")
 
     elif site == "control_local":

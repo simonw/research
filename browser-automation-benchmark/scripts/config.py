@@ -39,8 +39,14 @@ URLS: Dict[str, Dict[str, Any]] = {
     "instagram": {
         "page_type": "profile",
         "url": "https://www.instagram.com/instagram/",
-        "expected": ["username", "timestamp", "canonical_url"],
+        "expected": ["username", "canonical_url"],
         "warmup_url": "https://www.instagram.com",
+    },
+    "control_example": {
+        "page_type": "control",
+        "url": "https://example.com",
+        "expected": ["title"],
+        "warmup_url": None,
     },
 }
 
@@ -105,6 +111,7 @@ SOFT_BLOCK_INDICATORS: Dict[str, Dict[str, Any]] = {
     "reddit": {"min_page_size": 15000, "required_elements": ["<shreddit-", "r/Python"]},
     "linkedin": {"min_page_size": 20000, "required_elements": ["Microsoft", "employees"]},
     "instagram": {"min_page_size": 10000, "required_elements": ["instagram"]},
+    "control_example": {"min_page_size": 100, "required_elements": ["Example Domain"]},
 }
 
 # Login/redirect block patterns
