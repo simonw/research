@@ -248,11 +248,22 @@ def classify_page(text: str, extracted: Dict[str, str], expected: List[str],
             "block_signals": block_signals,
         }
 
-    # 2. Extraction success check — takes priority over passive block patterns.
-    #    If all expected fields are extracted, the page loaded successfully even
-    #    if block-related scripts (e.g. reCAPTCHA) appear in the HTML.
+    # 2. Extraction success check — all expected fields must be non-empty AND
+    #    ground-truth validation (when available) must pass at least 50%.
+    #    This prevents garbage extraction from blocked/CAPTCHA pages being
+    #    misclassified as success.
     found = sum(1 for key in expected if extracted.get(key))
     if found == len(expected) and found > 0:
+        gt = validate_ground_truth(site, extracted)
+        correctness = gt.get("correctness_pct")
+        if correctness is not None and correctness < 50:
+            return {
+                "outcome": "blocked/challenged",
+                "failure_category": "site",
+                "failure_reason": "incorrect-extraction",
+                "failure_stage": "extraction",
+                "block_signals": block_signals,
+            }
         return {
             "outcome": "success",
             "failure_category": "",
@@ -282,8 +293,19 @@ def classify_page(text: str, extracted: Dict[str, str], expected: List[str],
             "block_signals": block_signals,
         }
 
-    # 5. Partial extraction
+    # 5. Partial extraction — also check ground truth for garbage data from
+    #    blocked pages that managed to extract some fields (e.g. from URL or meta).
     if found > 0:
+        gt = validate_ground_truth(site, extracted)
+        correctness = gt.get("correctness_pct")
+        if correctness is not None and correctness < 50:
+            return {
+                "outcome": "blocked/challenged",
+                "failure_category": "site",
+                "failure_reason": "incorrect-extraction",
+                "failure_stage": "extraction",
+                "block_signals": block_signals,
+            }
         return {
             "outcome": "partial",
             "failure_category": "extraction",
@@ -512,6 +534,8 @@ def run_agent_browser(site: str, cfg: Dict[str, Any], attempt: int, cold: bool, 
     step_timings: Dict[str, float] = {}
 
     headed_flag = [] if HEADLESS else ["--headed"]
+    if HEADLESS and cold:
+        run_logged("close-pre", ["agent-browser", "--session", session, "close"], adir, timeout=10, env=env)
     steps = [
         ("prime-state", ["agent-browser"] + headed_flag + ["--session", session, "--state", str(state_path), "open", "about:blank"], 30),
         ("cookies", ["agent-browser", "--session", session, "--json", "cookies"], 15),
@@ -814,6 +838,12 @@ def run_scrapling(site: str, cfg: Dict[str, Any], attempt: int, cold: bool, chec
         return rec
 
     profile = BASE / ".profiles" / f"scrap-{site}-{'cold' if cold else 'warm'}-{attempt}"
+    lock_file = profile / "SingletonLock"
+    if lock_file.exists():
+        try:
+            lock_file.unlink()
+        except OSError:
+            pass
     profile.mkdir(parents=True, exist_ok=True)
     cookies = parse_cookies(site)
     log_cookie_import(

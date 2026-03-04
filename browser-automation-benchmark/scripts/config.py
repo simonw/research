@@ -136,10 +136,11 @@ STARTUP_PATTERNS = [
     (re.compile(r"Daemon failed to start", re.I), "startup", "daemon-start-failed", "browser-startup"),
     (re.compile(r"Firefox is already running, but is not responding", re.I), "startup", "profile-lock", "browser-startup"),
     (re.compile(r"Target page, context or browser has been closed", re.I), "startup", "browser-closed", "browser-startup"),
+    (re.compile(r"Failed to create a ProcessSingleton|SingletonLock.*File exists", re.I), "startup", "profile-lock", "browser-startup"),
 ]
 
 TIMEOUT_PATTERNS = [
-    (re.compile(r"Timeout \d+ms exceeded|timeout", re.I), "timeout", "navigation-timeout", "navigation"),
+    (re.compile(r"Timeout \d+ms exceeded", re.I), "timeout", "navigation-timeout", "navigation"),
 ]
 
 # ── Ground truth for correctness validation ──────────────────────────────
