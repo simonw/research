@@ -1,0 +1,608 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index cddddec..b1949cb 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1027,7 +1027,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "tmuxcc"
+-version = "0.1.6"
++version = "0.1.7"
+ dependencies = [
+  "anyhow",
+  "chrono",
+diff --git a/src/app/actions.rs b/src/app/actions.rs
+index b97ec35..94b564f 100644
+--- a/src/app/actions.rs
++++ b/src/app/actions.rs
+@@ -67,6 +67,21 @@ pub enum Action {
+     ScrollDown,
+     /// No action (used for unbound keys)
+     None,
++    // --- Filter actions (llmfit-inspired live filtering) ---
++    /// Enter filter mode (focus the filter bar)
++    EnterFilter,
++    /// Exit filter mode (keep filter applied but unfocus bar)
++    ExitFilter,
++    /// Type a character into the filter query
++    FilterChar(char),
++    /// Delete last char from filter query
++    FilterBackspace,
++    /// Clear all active filters
++    ClearFilter,
++    /// Cycle the status filter chip (All → Waiting → Working → Idle → Error → All)
++    CycleStatusFilter,
++    /// Cycle the agent-type filter chip (All → ClaudeCode → OpenCode → CodexCli → GeminiCli → All)
++    CycleTypeFilter,
+ }
+ 
+ impl Action {
+@@ -106,6 +121,13 @@ impl Action {
+             Action::ScrollUp => "Scroll up",
+             Action::ScrollDown => "Scroll down",
+             Action::None => "",
++            Action::EnterFilter => "Enter filter mode",
++            Action::ExitFilter => "Exit filter mode",
++            Action::FilterChar(_) => "Type filter character",
++            Action::FilterBackspace => "Delete filter character",
++            Action::ClearFilter => "Clear all filters",
++            Action::CycleStatusFilter => "Cycle status filter",
++            Action::CycleTypeFilter => "Cycle agent-type filter",
+         }
+     }
+ }
+diff --git a/src/app/mod.rs b/src/app/mod.rs
+index ae9ed8e..dbd82b3 100644
+--- a/src/app/mod.rs
++++ b/src/app/mod.rs
+@@ -4,4 +4,4 @@ mod state;
+ 
+ pub use actions::Action;
+ pub use config::Config;
+-pub use state::{AgentTree, AppState, FocusedPanel};
++pub use state::{AgentTree, AgentTypeFilter, AppState, FocusedPanel, StatusFilter};
+diff --git a/src/app/state.rs b/src/app/state.rs
+index d0e073d..af21b0f 100644
+--- a/src/app/state.rs
++++ b/src/app/state.rs
+@@ -1,8 +1,74 @@
+-use crate::agents::MonitoredAgent;
++use crate::agents::{AgentStatus, AgentType, MonitoredAgent};
+ use crate::monitor::SystemStats;
+ use std::collections::HashSet;
+ use std::time::Instant;
+ 
++/// Filter by agent status (llmfit-inspired: like FitFilter cycling)
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
++pub enum StatusFilter {
++    #[default]
++    All,
++    Waiting,
++    Working,
++    Idle,
++    Error,
++}
++
++impl StatusFilter {
++    pub fn next(self) -> Self {
++        match self {
++            StatusFilter::All => StatusFilter::Waiting,
++            StatusFilter::Waiting => StatusFilter::Working,
++            StatusFilter::Working => StatusFilter::Idle,
++            StatusFilter::Idle => StatusFilter::Error,
++            StatusFilter::Error => StatusFilter::All,
++        }
++    }
++
++    pub fn label(self) -> &'static str {
++        match self {
++            StatusFilter::All => "All",
++            StatusFilter::Waiting => "⚠ Waiting",
++            StatusFilter::Working => "● Working",
++            StatusFilter::Idle => "● Idle",
++            StatusFilter::Error => "✗ Error",
++        }
++    }
++}
++
++/// Filter by agent type (llmfit-inspired: like provider filter)
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
++pub enum AgentTypeFilter {
++    #[default]
++    All,
++    ClaudeCode,
++    OpenCode,
++    CodexCli,
++    GeminiCli,
++}
++
++impl AgentTypeFilter {
++    pub fn next(self) -> Self {
++        match self {
++            AgentTypeFilter::All => AgentTypeFilter::ClaudeCode,
++            AgentTypeFilter::ClaudeCode => AgentTypeFilter::OpenCode,
++            AgentTypeFilter::OpenCode => AgentTypeFilter::CodexCli,
++            AgentTypeFilter::CodexCli => AgentTypeFilter::GeminiCli,
++            AgentTypeFilter::GeminiCli => AgentTypeFilter::All,
++        }
++    }
++
++    pub fn label(self) -> &'static str {
++        match self {
++            AgentTypeFilter::All => "All",
++            AgentTypeFilter::ClaudeCode => "Claude",
++            AgentTypeFilter::OpenCode => "Open",
++            AgentTypeFilter::CodexCli => "Codex",
++            AgentTypeFilter::GeminiCli => "Gemini",
++        }
++    }
++}
++
+ /// Which panel is currently focused
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+ pub enum FocusedPanel {
+@@ -107,6 +173,15 @@ pub struct AppState {
+     last_tick: Instant,
+     /// System resource statistics
+     pub system_stats: SystemStats,
++    // --- llmfit-inspired filter state ---
++    /// Current text search query for agent filtering
++    pub filter_query: String,
++    /// Whether the filter bar input is currently focused
++    pub filter_active: bool,
++    /// Active status filter chip
++    pub filter_status: StatusFilter,
++    /// Active agent-type filter chip
++    pub filter_agent_type: AgentTypeFilter,
+ }
+ 
+ impl AppState {
+@@ -128,6 +203,10 @@ impl AppState {
+             tick: 0,
+             last_tick: Instant::now(),
+             system_stats: SystemStats::new(),
++            filter_query: String::new(),
++            filter_active: false,
++            filter_status: StatusFilter::All,
++            filter_agent_type: AgentTypeFilter::All,
+         }
+     }
+ 
+@@ -338,6 +417,137 @@ impl AppState {
+     pub fn clear_error(&mut self) {
+         self.last_error = None;
+     }
++
++    // --- llmfit-inspired filter methods ---
++
++    /// Focus the filter bar for text entry
++    pub fn enter_filter(&mut self) {
++        self.filter_active = true;
++    }
++
++    /// Unfocus the filter bar (keep filter applied)
++    pub fn exit_filter(&mut self) {
++        self.filter_active = false;
++    }
++
++    /// Add a character to the filter query
++    pub fn filter_char(&mut self, c: char) {
++        self.filter_query.push(c);
++    }
++
++    /// Remove the last character from the filter query
++    pub fn filter_backspace(&mut self) {
++        self.filter_query.pop();
++    }
++
++    /// Clear all active filters and exit filter mode
++    pub fn clear_filter(&mut self) {
++        self.filter_query.clear();
++        self.filter_status = StatusFilter::All;
++        self.filter_agent_type = AgentTypeFilter::All;
++        self.filter_active = false;
++    }
++
++    /// Cycle through status filter chips (like llmfit's FitFilter cycling)
++    pub fn cycle_status_filter(&mut self) {
++        self.filter_status = self.filter_status.next();
++    }
++
++    /// Cycle through agent-type filter chips (like llmfit's provider filter)
++    pub fn cycle_type_filter(&mut self) {
++        self.filter_agent_type = self.filter_agent_type.next();
++    }
++
++    /// Returns true if any filter is currently active
++    pub fn has_active_filter(&self) -> bool {
++        !self.filter_query.is_empty()
++            || self.filter_status != StatusFilter::All
++            || self.filter_agent_type != AgentTypeFilter::All
++    }
++
++    /// Returns true if the given agent matches the current filters.
++    /// Used by the agent tree to dim non-matching agents.
++    pub fn agent_matches_filter(&self, agent: &MonitoredAgent) -> bool {
++        // Text query: case-insensitive match against session, window name, working dir
++        if !self.filter_query.is_empty() {
++            let q = self.filter_query.to_lowercase();
++            let haystack = format!(
++                "{} {} {} {}",
++                agent.session,
++                agent.window_name,
++                agent.agent_type.display_name(),
++                agent.abbreviated_path()
++            )
++            .to_lowercase();
++            if !haystack.contains(&q) {
++                return false;
++            }
++        }
++
++        // Status filter chip
++        match self.filter_status {
++            StatusFilter::All => {}
++            StatusFilter::Waiting => {
++                if !matches!(agent.status, AgentStatus::AwaitingApproval { .. }) {
++                    return false;
++                }
++            }
++            StatusFilter::Working => {
++                if !matches!(agent.status, AgentStatus::Processing { .. }) {
++                    return false;
++                }
++            }
++            StatusFilter::Idle => {
++                if !matches!(agent.status, AgentStatus::Idle) {
++                    return false;
++                }
++            }
++            StatusFilter::Error => {
++                if !matches!(agent.status, AgentStatus::Error { .. }) {
++                    return false;
++                }
++            }
++        }
++
++        // Agent type filter chip
++        match self.filter_agent_type {
++            AgentTypeFilter::All => {}
++            AgentTypeFilter::ClaudeCode => {
++                if agent.agent_type != AgentType::ClaudeCode {
++                    return false;
++                }
++            }
++            AgentTypeFilter::OpenCode => {
++                if agent.agent_type != AgentType::OpenCode {
++                    return false;
++                }
++            }
++            AgentTypeFilter::CodexCli => {
++                if agent.agent_type != AgentType::CodexCli {
++                    return false;
++                }
++            }
++            AgentTypeFilter::GeminiCli => {
++                if agent.agent_type != AgentType::GeminiCli {
++                    return false;
++                }
++            }
++        }
++
++        true
++    }
++
++    /// Count of agents matching the current filters
++    pub fn filtered_agent_count(&self) -> usize {
++        if !self.has_active_filter() {
++            return self.agents.root_agents.len();
++        }
++        self.agents
++            .root_agents
++            .iter()
++            .filter(|a| self.agent_matches_filter(a))
++            .count()
++    }
+ }
+ 
+ impl Default for AppState {
+diff --git a/src/ui/app.rs b/src/ui/app.rs
+index f0da5c9..0ad4db0 100644
+--- a/src/ui/app.rs
++++ b/src/ui/app.rs
+@@ -20,8 +20,8 @@ use crate::parsers::ParserRegistry;
+ use crate::tmux::TmuxClient;
+ 
+ use super::components::{
+-    AgentTreeWidget, FooterWidget, HeaderWidget, HelpWidget, InputWidget, PanePreviewWidget,
+-    SubagentLogWidget,
++    AgentTreeWidget, FilterBarWidget, FooterWidget, HeaderWidget, HelpWidget, InputWidget,
++    PanePreviewWidget, SubagentLogWidget,
+ };
+ use super::Layout;
+ 
+@@ -104,18 +104,24 @@ async fn run_loop(
+         // Draw UI
+         terminal.draw(|frame| {
+             let size = frame.area();
+-            let main_chunks = Layout::main_layout(size);
++
++            // Use filter layout (always show the 2-line filter bar, like llmfit)
++            let main_chunks = Layout::main_layout_with_filter(size);
++            //   [0] = header, [1] = filter bar, [2] = content, [3] = footer
+ 
+             // Header
+             HeaderWidget::render(frame, main_chunks[0], state);
+ 
++            // Filter bar (llmfit-inspired: always visible search + chip row)
++            FilterBarWidget::render(frame, main_chunks[1], state);
++
+             // Always show input widget at bottom of right column
+             let input_height = InputWidget::calculate_height(state.get_input(), 6);
+ 
+             if state.show_subagent_log {
+                 // With subagent log: sidebar | summary+preview+input | subagent_log
+                 let (left, preview, subagent_log) =
+-                    Layout::content_layout_with_log(main_chunks[1], state.sidebar_width);
++                    Layout::content_layout_with_log(main_chunks[2], state.sidebar_width);
+                 AgentTreeWidget::render(frame, left, state);
+ 
+                 // Split preview area for summary, preview, and input
+@@ -134,7 +140,7 @@ async fn run_loop(
+             } else {
+                 // Normal: sidebar | summary+preview+input
+                 let (left, summary, preview, input_area) = Layout::content_layout_with_input(
+-                    main_chunks[1],
++                    main_chunks[2],
+                     state.sidebar_width,
+                     input_height,
+                     state.show_summary_detail,
+@@ -148,7 +154,7 @@ async fn run_loop(
+             }
+ 
+             // Footer
+-            FooterWidget::render(frame, main_chunks[2], state);
++            FooterWidget::render(frame, main_chunks[3], state);
+ 
+             // Help overlay
+             if state.show_help {
+@@ -182,10 +188,10 @@ async fn run_loop(
+                     if let Event::Mouse(mouse) = event {
+                         let size = terminal.size()?;
+                         let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
+-                        let main_chunks = Layout::main_layout(area);
+-                        let footer_area = main_chunks[2];
++                        let main_chunks = Layout::main_layout_with_filter(area);
++                        let footer_area = main_chunks[3];
+                         let (sidebar, _, _, input_area) = Layout::content_layout_with_input(
+-                            main_chunks[1], state.sidebar_width, 3, state.show_summary_detail
++                            main_chunks[2], state.sidebar_width, 3, state.show_summary_detail
+                         );
+ 
+                         match mouse.kind {
+@@ -453,6 +459,28 @@ async fn run_loop(
+                             Action::ScrollDown => {
+                                 state.select_next();
+                             }
++                            // --- llmfit-inspired filter actions ---
++                            Action::EnterFilter => {
++                                state.enter_filter();
++                            }
++                            Action::ExitFilter => {
++                                state.exit_filter();
++                            }
++                            Action::FilterChar(c) => {
++                                state.filter_char(c);
++                            }
++                            Action::FilterBackspace => {
++                                state.filter_backspace();
++                            }
++                            Action::ClearFilter => {
++                                state.clear_filter();
++                            }
++                            Action::CycleStatusFilter => {
++                                state.cycle_status_filter();
++                            }
++                            Action::CycleTypeFilter => {
++                                state.cycle_type_filter();
++                            }
+                             Action::None => {}
+                         }
+                     }
+@@ -474,6 +502,17 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
+         return Action::HideHelp;
+     }
+ 
++    // --- llmfit-inspired: filter bar is focused ---
++    if state.filter_active {
++        return match code {
++            KeyCode::Esc => Action::ExitFilter,
++            KeyCode::Backspace => Action::FilterBackspace,
++            KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => Action::ClearFilter,
++            KeyCode::Char(c) => Action::FilterChar(c),
++            _ => Action::None,
++        };
++    }
++
+     // If input panel is focused, handle input-specific keys
+     if state.is_input_focused() {
+         return match code {
+@@ -523,12 +562,17 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
+         }
+ 
+         // Focus pane with 'f'
+-        KeyCode::Char('f') | KeyCode::Char('F') => Action::FocusPane,
++        KeyCode::Char('f') => Action::FocusPane,
+ 
+         KeyCode::Char('s') | KeyCode::Char('S') => Action::ToggleSubagentLog,
+         KeyCode::Char('t') | KeyCode::Char('T') => Action::ToggleSummaryDetail,
+         KeyCode::Char('r') => Action::Refresh,
+ 
++        // llmfit-inspired filter keybindings
++        KeyCode::Char('/') => Action::EnterFilter,           // focus search (like llmfit's /)
++        KeyCode::Char('p') | KeyCode::Char('P') => Action::CycleTypeFilter,  // cycle type chip (like llmfit's P)
++        KeyCode::Char('F') => Action::CycleStatusFilter,     // cycle status chip (Shift+F)
++
+         // Sidebar resize (only < and >)
+         KeyCode::Char('<') => Action::SidebarNarrower,
+         KeyCode::Char('>') => Action::SidebarWider,
+@@ -540,6 +584,8 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
+                 Action::ClearSelection
+             } else if state.show_subagent_log {
+                 Action::ToggleSubagentLog
++            } else if state.has_active_filter() {
++                Action::ClearFilter
+             } else {
+                 Action::None
+             }
+diff --git a/src/ui/components/agent_tree.rs b/src/ui/components/agent_tree.rs
+index 624cfa1..71222d3 100644
+--- a/src/ui/components/agent_tree.rs
++++ b/src/ui/components/agent_tree.rs
+@@ -55,9 +55,12 @@ impl AgentTreeWidget {
+         let subagent_count = state.agents.running_subagent_count();
+         let selected_count = state.selected_agents.len();
+ 
+-        // Build title
++        // Build title — show filter match count when a filter is active (llmfit-style)
+         let title = if selected_count > 0 {
+             format!(" {} sel │ {} pending ", selected_count, active_count)
++        } else if state.has_active_filter() {
++            let matched = state.filtered_agent_count();
++            format!(" {}/{} agents (filtered) ", matched, agents.len())
+         } else if subagent_count > 0 {
+             format!(" {} pending │ {} subs ", active_count, subagent_count)
+         } else if active_count > 0 {
+@@ -153,7 +156,13 @@ impl AgentTreeWidget {
+                         "  "
+                     };
+ 
++                    // Whether this agent passes the active filter (llmfit-style dimming)
++                    let passes_filter = !state.has_active_filter()
++                        || state.agent_matches_filter(agent);
++
+                     // Status indicator and text
++                    // AwaitingApproval uses Magenta (not Red) to distinguish "needs input"
++                    // from an actual error — mirrors llmfit's Marginal vs TooTight semantics.
+                     let (status_char, status_text, status_style) = match &agent.status {
+                         AgentStatus::Idle => ("●", "Idle", Style::default().fg(Color::Green)),
+                         AgentStatus::Processing { .. } => (
+@@ -164,7 +173,9 @@ impl AgentTreeWidget {
+                         AgentStatus::AwaitingApproval { .. } => (
+                             "⚠",
+                             "Waiting",
+-                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
++                            Style::default()
++                                .fg(Color::Magenta)
++                                .add_modifier(Modifier::BOLD),
+                         ),
+                         AgentStatus::Error { .. } => {
+                             ("✗", "Error", Style::default().fg(Color::Red))
+@@ -174,22 +185,35 @@ impl AgentTreeWidget {
+                         }
+                     };
+ 
+-                    let type_style = match agent.agent_type {
+-                        AgentType::ClaudeCode => Style::default().fg(Color::Magenta),
+-                        AgentType::OpenCode => Style::default().fg(Color::Blue),
+-                        AgentType::CodexCli => Style::default().fg(Color::Green),
+-                        AgentType::GeminiCli => Style::default().fg(Color::Yellow),
+-                        AgentType::Unknown => Style::default().fg(Color::DarkGray),
+-                    };
+-
+-                    let item_style = if is_cursor {
+-                        Style::default().bg(Color::Rgb(50, 50, 70)) // より濃い紫がかった背景
++                    // Dim agents that don't match the active filter (llmfit-style dimming:
++                    // non-matching entries become dark gray, like llmfit dims unavailable models)
++                    let item_style = if !passes_filter {
++                        Style::default().fg(Color::DarkGray)
++                    } else if is_cursor {
++                        Style::default().bg(Color::Rgb(50, 50, 70))
+                     } else if is_selected {
+-                        Style::default().bg(Color::Rgb(35, 35, 50)) // 薄めの選択背景
++                        Style::default().bg(Color::Rgb(35, 35, 50))
+                     } else {
+                         Style::default()
+                     };
+ 
++                    // When dimmed, override status/type styles to dark gray
++                    let (status_style, type_style) = if !passes_filter {
++                        (
++                            Style::default().fg(Color::DarkGray),
++                            Style::default().fg(Color::DarkGray),
++                        )
++                    } else {
++                        let ts = match agent.agent_type {
++                            AgentType::ClaudeCode => Style::default().fg(Color::Magenta),
++                            AgentType::OpenCode => Style::default().fg(Color::Blue),
++                            AgentType::CodexCli => Style::default().fg(Color::Green),
++                            AgentType::GeminiCli => Style::default().fg(Color::Yellow),
++                            AgentType::Unknown => Style::default().fg(Color::DarkGray),
++                        };
++                        (status_style, ts)
++                    };
++
+                     // Main line: status + path
+                     let line = Line::from(vec![
+                         Span::styled(
+diff --git a/src/ui/components/mod.rs b/src/ui/components/mod.rs
+index 10f9240..0290768 100644
+--- a/src/ui/components/mod.rs
++++ b/src/ui/components/mod.rs
+@@ -1,4 +1,5 @@
+ mod agent_tree;
++mod filter_bar;
+ mod footer;
+ mod header;
+ mod help;
+@@ -7,6 +8,7 @@ mod pane_preview;
+ mod subagent_log;
+ 
+ pub use agent_tree::AgentTreeWidget;
++pub use filter_bar::FilterBarWidget;
+ pub use footer::{FooterButton, FooterWidget};
+ pub use header::HeaderWidget;
+ pub use help::HelpWidget;
+diff --git a/src/ui/layout.rs b/src/ui/layout.rs
+index c3f085d..f349776 100644
+--- a/src/ui/layout.rs
++++ b/src/ui/layout.rs
+@@ -17,6 +17,21 @@ impl Layout {
+             .to_vec()
+     }
+ 
++    /// Creates the main layout with a 2-line llmfit-style filter bar between header and content.
++    /// Returns [header, filter_bar, content, footer].
++    pub fn main_layout_with_filter(area: Rect) -> Vec<Rect> {
++        ratatui::layout::Layout::default()
++            .direction(Direction::Vertical)
++            .constraints([
++                Constraint::Length(3), // Header
++                Constraint::Length(2), // Filter bar (search line + chips line)
++                Constraint::Min(10),   // Content area
++                Constraint::Length(1), // Footer
++            ])
++            .split(area)
++            .to_vec()
++    }
++
+     /// Splits the content area into 2 columns: agent list (left) and preview (right)
+     pub fn content_layout(area: Rect, sidebar_width: u16) -> (Rect, Rect) {
+         let chunks = ratatui::layout::Layout::default()
+diff --git a/src/ui/styles.rs b/src/ui/styles.rs
+index 8758f6e..21b70a1 100644
+--- a/src/ui/styles.rs
++++ b/src/ui/styles.rs
+@@ -14,7 +14,11 @@ impl Styles {
+     }
+ 
+     pub fn awaiting_approval() -> Style {
+-        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
++        // Magenta (not Red) mirrors llmfit's "Marginal" level color —
++        // signals "needs attention" without conflating it with an actual error.
++        Style::default()
++            .fg(Color::Magenta)
++            .add_modifier(Modifier::BOLD)
+     }
+ 
+     pub fn error() -> Style {
