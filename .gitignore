@@ -1,2 +1,8 @@
 .DS_Store
 __pycache__
+
+# Full clones of investigated repos — excluded per AGENTS.md
+# ("Do NOT include full copies of code that you fetched")
+llmfit/
+tmuxcc-llmfit-ux/llmfit/
+tmuxcc-llmfit-ux/tmuxcc/
