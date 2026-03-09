@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Luau Playground</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .description {
+            margin-top: 0;
+            color: #666;
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 16px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+            min-height: 200px;
+            resize: vertical;
+            tab-size: 2;
+        }
+        textarea:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+        }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 12px 24px;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+        button:hover:not(:disabled) {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: wait;
+            opacity: 0.7;
+        }
+        button.secondary {
+            background-color: #6c757d;
+        }
+        button.secondary:hover:not(:disabled) {
+            background-color: #545b62;
+        }
+        #status {
+            padding: 12px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            display: none;
+        }
+        #status.visible {
+            display: block;
+        }
+        #status.info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        #status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        #status.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        #output-section {
+            display: none;
+        }
+        #output-section.visible {
+            display: block;
+        }
+        .output-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .output-header h2 {
+            margin: 0;
+            font-size: 20px;
+        }
+        #copy-btn {
+            padding: 6px 12px;
+            font-size: 14px;
+        }
+        #output {
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            padding: 16px;
+            border-radius: 4px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+            font-size: 14px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            min-height: 100px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        #output.error-output {
+            background-color: #2d1f1f;
+            color: #f8d7da;
+        }
+        .execution-time {
+            font-size: 12px;
+            color: #666;
+            margin-top: 8px;
+        }
+        .examples-section {
+            margin-bottom: 20px;
+        }
+        .examples-section h3 {
+            font-size: 14px;
+            color: #666;
+            margin: 0 0 10px 0;
+            font-weight: 500;
+        }
+        .examples-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .example-btn {
+            padding: 6px 12px;
+            font-size: 13px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 20px;
+            color: #495057;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .example-btn:hover {
+            background: #e9ecef;
+            border-color: #adb5bd;
+            color: #212529;
+        }
+        .example-btn:active {
+            background: #dee2e6;
+        }
+        .tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 0;
+        }
+        .tab {
+            padding: 8px 16px;
+            border: 1px solid #dee2e6;
+            border-bottom: none;
+            background: #f8f9fa;
+            cursor: pointer;
+            font-size: 14px;
+            border-radius: 4px 4px 0 0;
+            color: #666;
+        }
+        .tab.active {
+            background: white;
+            color: #333;
+            font-weight: 600;
+            border-bottom: 1px solid white;
+            margin-bottom: -1px;
+            z-index: 1;
+            position: relative;
+        }
+        .tab-content {
+            border: 1px solid #dee2e6;
+            border-radius: 0 4px 4px 4px;
+            margin-bottom: 20px;
+        }
+        .tab-panel {
+            display: none;
+            padding: 0;
+        }
+        .tab-panel.active {
+            display: block;
+        }
+        .tab-panel textarea {
+            border: none;
+            border-radius: 0 4px 4px 4px;
+        }
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+            h1 {
+                font-size: 24px;
+            }
+            .button-group {
+                flex-direction: column;
+            }
+            .button-group button {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Luau Playground</h1>
+    <p class="description">Execute <a href="https://luau.org/">Luau</a> code in a sandboxed environment running via WebAssembly. Luau is a fast, small, safe, gradually typed embeddable scripting language derived from Lua. Code is saved in the URL for easy sharing.</p>
+
+    <div class="examples-section">
+        <h3>Try an example:</h3>
+        <div class="examples-list" id="examples-list"></div>
+    </div>
+
+    <div class="tabs">
+        <div class="tab active" data-tab="luau">Luau</div>
+        <div class="tab" data-tab="pyodide">Pyodide (Python)</div>
+    </div>
+    <div class="tab-content">
+        <div class="tab-panel active" id="tab-luau">
+            <textarea id="code-input" placeholder="-- Enter your Luau code here, or click an example above"></textarea>
+        </div>
+        <div class="tab-panel" id="tab-pyodide">
+            <textarea id="python-input" placeholder="# Python code that uses Luau via Pyodide"></textarea>
+        </div>
+    </div>
+
+    <div class="button-group">
+        <button id="run-btn" disabled>Initializing...</button>
+        <button id="clear-btn" class="secondary">Clear</button>
+    </div>
+
+    <div id="status"></div>
+
+    <div id="output-section">
+        <div class="output-header">
+            <h2>Output</h2>
+            <button id="copy-btn" class="secondary">Copy</button>
+        </div>
+        <div id="output"></div>
+        <div class="execution-time" id="execution-time"></div>
+    </div>
+
+    <script src="luau.js"></script>
+    <script>
+        const examples = [
+            {
+                name: 'Hello World',
+                code: `print("Hello from Luau!")`
+            },
+            {
+                name: 'Variables & Types',
+                code: `local name: string = "Luau"
+local version: number = 6
+local features: {string} = {"type annotations", "sandboxing", "fast VM"}
+
+print("Language: " .. name .. " v" .. tostring(version))
+print("Features:")
+for i, feat in ipairs(features) do
+    print("  " .. i .. ". " .. feat)
+end`
+            },
+            {
+                name: 'Tables',
+                code: `local person = {
+    name = "Alice",
+    age = 30,
+    hobbies = {"reading", "coding", "hiking"}
+}
+
+print("Name: " .. person.name)
+print("Age: " .. tostring(person.age))
+print("Hobbies:")
+for _, hobby in ipairs(person.hobbies) do
+    print("  - " .. hobby)
+end`
+            },
+            {
+                name: 'Fibonacci',
+                code: `local function fibonacci(n: number): number
+    if n < 2 then return n end
+    return fibonacci(n - 1) + fibonacci(n - 2)
+end
+
+print("First 15 Fibonacci numbers:")
+local results = {}
+for i = 0, 14 do
+    table.insert(results, tostring(fibonacci(i)))
+end
+print(table.concat(results, ", "))`
+            },
+            {
+                name: 'String Interpolation',
+                code: [
+                    'local name = "World"',
+                    'local x = 42',
+                    'local pi = math.pi',
+                    '',
+                    'print(`Hello, {name}!`)',
+                    'print(`The answer is {x}`)',
+                    'print(`Pi is approximately {string.format("%.4f", pi)}`)',
+                    'print(`2 + 2 = {2 + 2}`)',
+                    '',
+                    'local items = {"apple", "banana", "cherry"}',
+                    'for i, item in ipairs(items) do',
+                    '    print(`Item {i}: {item}`)',
+                    'end',
+                ].join('\n')
+            },
+            {
+                name: 'Type Functions',
+                code: `-- Luau supports type annotations
+type Point = {
+    x: number,
+    y: number,
+}
+
+local function distance(a: Point, b: Point): number
+    local dx = b.x - a.x
+    local dy = b.y - a.y
+    return math.sqrt(dx * dx + dy * dy)
+end
+
+local p1: Point = {x = 0, y = 0}
+local p2: Point = {x = 3, y = 4}
+
+print("Distance from " .. tostring(p1.x) .. "," .. tostring(p1.y))
+print("  to " .. tostring(p2.x) .. "," .. tostring(p2.y))
+print("  = " .. tostring(distance(p1, p2)))`
+            },
+            {
+                name: 'Pattern Matching',
+                code: `local text = "Hello World 123 test 456 end"
+
+-- Find all numbers
+print("Numbers found:")
+for num in string.gmatch(text, "%d+") do
+    print("  " .. num)
+end
+
+-- Find all words
+print("\\nWords found:")
+for word in string.gmatch(text, "%a+") do
+    print("  " .. word)
+end
+
+-- Replace pattern
+local result = string.gsub(text, "%d+", "[NUM]")
+print("\\nReplaced: " .. result)`
+            },
+            {
+                name: 'Iterators',
+                code: `-- Custom iterator function
+local function range(start, stop, step)
+    step = step or 1
+    local i = start - step
+    return function()
+        i = i + step
+        if i <= stop then
+            return i
+        end
+    end
+end
+
+print("Count by 1:")
+for i in range(1, 5) do
+    print("  " .. tostring(i))
+end
+
+print("\\nCount by 3:")
+for i in range(0, 15, 3) do
+    print("  " .. tostring(i))
+end`
+            },
+            {
+                name: 'FizzBuzz',
+                code: `for i = 1, 30 do
+    if i % 15 == 0 then
+        print("FizzBuzz")
+    elseif i % 3 == 0 then
+        print("Fizz")
+    elseif i % 5 == 0 then
+        print("Buzz")
+    else
+        print(tostring(i))
+    end
+end`
+            },
+            {
+                name: 'Sorting',
+                code: `local fruits = {"banana", "apple", "orange", "mango", "kiwi"}
+
+-- Copy and sort
+local sorted = table.clone(fruits)
+table.sort(sorted)
+print("Sorted: " .. table.concat(sorted, ", "))
+
+-- Sort by length
+local byLength = table.clone(fruits)
+table.sort(byLength, function(a, b)
+    return #a < #b
+end)
+print("By length: " .. table.concat(byLength, ", "))
+
+-- Numeric sort
+local nums = {42, 8, 15, 23, 4, 16}
+table.sort(nums)
+local numStrs = {}
+for _, n in ipairs(nums) do
+    table.insert(numStrs, tostring(n))
+end
+print("Numbers: " .. table.concat(numStrs, ", "))`
+            },
+            {
+                name: 'Metatables',
+                code: `-- Create a Vector2 "class" using metatables
+local Vector2 = {}
+Vector2.__index = Vector2
+
+function Vector2.new(x: number, y: number)
+    return setmetatable({x = x, y = y}, Vector2)
+end
+
+function Vector2:__add(other)
+    return Vector2.new(self.x + other.x, self.y + other.y)
+end
+
+function Vector2:__tostring()
+    return "(" .. tostring(self.x) .. ", " .. tostring(self.y) .. ")"
+end
+
+function Vector2:magnitude(): number
+    return math.sqrt(self.x * self.x + self.y * self.y)
+end
+
+local a = Vector2.new(3, 4)
+local b = Vector2.new(1, 2)
+local c = a + b
+
+print("a = " .. tostring(a))
+print("b = " .. tostring(b))
+print("a + b = " .. tostring(c))
+print("|a| = " .. tostring(a:magnitude()))`
+            },
+        ];
+
+        const pyodideExample = `# Using Luau from Python via Pyodide + WebAssembly
+# This demonstrates calling the Luau WASM module from Python
+
+from js import createLuau
+from pyodide.ffi import to_js
+
+# Initialize the Luau WASM module
+module = await createLuau()
+execute = module.cwrap("executeScript", "string", to_js(["string"]))
+
+# Run some Luau code
+result = execute("""
+local function greet(name)
+    return "Hello, " .. name .. "!"
+end
+
+print(greet("Pyodide"))
+print("Luau running inside Python inside WebAssembly!")
+
+local sum = 0
+for i = 1, 100 do
+    sum = sum + i
+end
+print("Sum 1..100 = " .. tostring(sum))
+""")
+
+if result.startswith("ERROR:"):
+    print("Error:", result[6:])
+else:
+    print(result)`;
+
+        const codeInput = document.getElementById('code-input');
+        const pythonInput = document.getElementById('python-input');
+        const runBtn = document.getElementById('run-btn');
+        const clearBtn = document.getElementById('clear-btn');
+        const copyBtn = document.getElementById('copy-btn');
+        const statusEl = document.getElementById('status');
+        const outputSection = document.getElementById('output-section');
+        const outputEl = document.getElementById('output');
+        const executionTimeEl = document.getElementById('execution-time');
+        const examplesList = document.getElementById('examples-list');
+
+        let LuauModule = null;
+        let executeScript = null;
+        let pyodideReady = false;
+        let pyodide = null;
+        let activeTab = 'luau';
+
+        // Set default python example
+        pythonInput.value = pyodideExample;
+
+        // Tab handling
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const tabName = tab.dataset.tab;
+                activeTab = tabName;
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById('tab-' + tabName).classList.add('active');
+            });
+        });
+
+        // Populate examples
+        examples.forEach((example) => {
+            const btn = document.createElement('button');
+            btn.className = 'example-btn';
+            btn.textContent = example.name;
+            btn.addEventListener('click', () => {
+                // Switch to Luau tab
+                activeTab = 'luau';
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+                document.querySelector('[data-tab="luau"]').classList.add('active');
+                document.getElementById('tab-luau').classList.add('active');
+
+                codeInput.value = example.code;
+                codeInput.focus();
+                if (executeScript && !runBtn.disabled) {
+                    executeLuauCode(example.code);
+                }
+            });
+            examplesList.appendChild(btn);
+        });
+
+        function showStatus(message, type = 'info') {
+            statusEl.textContent = message;
+            statusEl.className = `visible ${type}`;
+        }
+
+        function hideStatus() {
+            statusEl.className = '';
+        }
+
+        function showOutput(text, isError = false) {
+            outputEl.textContent = text || '(no output)';
+            outputEl.className = isError ? 'error-output' : '';
+            outputSection.classList.add('visible');
+        }
+
+        function hideOutput() {
+            outputSection.classList.remove('visible');
+        }
+
+        function updateUrlHash(code) {
+            const encoded = encodeURIComponent(code);
+            window.history.replaceState(null, null, '#' + encoded);
+        }
+
+        function loadFromHash() {
+            if (!window.location.hash) return null;
+            try {
+                return decodeURIComponent(window.location.hash.substring(1));
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function executeLuauCode(code) {
+            if (!executeScript) {
+                showStatus('Luau not initialized', 'error');
+                return;
+            }
+
+            if (!code.trim()) {
+                showStatus('Please enter some code to execute', 'error');
+                return;
+            }
+
+            runBtn.disabled = true;
+            runBtn.textContent = 'Running...';
+            hideStatus();
+
+            const startTime = performance.now();
+
+            try {
+                const result = executeScript(code);
+                const executionTime = (performance.now() - startTime).toFixed(2);
+
+                if (result && result.startsWith('ERROR:')) {
+                    showOutput(result.substring(6), true);
+                } else {
+                    showOutput(result || '(no output)');
+                }
+                executionTimeEl.textContent = `Execution time: ${executionTime}ms`;
+                updateUrlHash(code);
+            } catch (e) {
+                const executionTime = (performance.now() - startTime).toFixed(2);
+                showOutput(`Error: ${e.message}`, true);
+                executionTimeEl.textContent = `Execution time: ${executionTime}ms`;
+            } finally {
+                runBtn.disabled = false;
+                runBtn.textContent = 'Run Code';
+            }
+        }
+
+        async function executePythonCode(code) {
+            if (!pyodide) {
+                showStatus('Loading Pyodide...', 'info');
+                try {
+                    pyodide = await loadPyodide();
+                    pyodideReady = true;
+                    showStatus('Pyodide loaded!', 'success');
+                } catch (e) {
+                    showStatus('Failed to load Pyodide: ' + e.message, 'error');
+                    return;
+                }
+            }
+
+            if (!code.trim()) {
+                showStatus('Please enter some code to execute', 'error');
+                return;
+            }
+
+            runBtn.disabled = true;
+            runBtn.textContent = 'Running...';
+            hideStatus();
+
+            const startTime = performance.now();
+            let outputLines = [];
+
+            // Capture Python print output
+            pyodide.setStdout({
+                batched: (msg) => { outputLines.push(msg); }
+            });
+            pyodide.setStderr({
+                batched: (msg) => { outputLines.push(msg); }
+            });
+
+            try {
+                await pyodide.runPythonAsync(code);
+                const executionTime = (performance.now() - startTime).toFixed(2);
+                showOutput(outputLines.join('\n') || '(no output)');
+                executionTimeEl.textContent = `Execution time: ${executionTime}ms`;
+            } catch (e) {
+                const executionTime = (performance.now() - startTime).toFixed(2);
+                showOutput(e.message, true);
+                executionTimeEl.textContent = `Execution time: ${executionTime}ms`;
+            } finally {
+                runBtn.disabled = false;
+                runBtn.textContent = 'Run Code';
+            }
+        }
+
+        async function initialize() {
+            try {
+                showStatus('Loading Luau WebAssembly runtime...', 'info');
+
+                LuauModule = await createLuau();
+                executeScript = LuauModule.cwrap('executeScript', 'string', ['string']);
+
+                runBtn.textContent = 'Run Code';
+                runBtn.disabled = false;
+
+                showStatus('Ready!', 'success');
+                setTimeout(hideStatus, 1500);
+
+                const hashCode = loadFromHash();
+                if (hashCode) {
+                    codeInput.value = hashCode;
+                    executeLuauCode(hashCode);
+                }
+            } catch (e) {
+                showStatus('Failed to initialize Luau: ' + e.message, 'error');
+                console.error('Initialization error:', e);
+            }
+        }
+
+        // Event listeners
+        runBtn.addEventListener('click', () => {
+            if (activeTab === 'luau') {
+                executeLuauCode(codeInput.value);
+            } else {
+                executePythonCode(pythonInput.value);
+            }
+        });
+
+        clearBtn.addEventListener('click', () => {
+            if (activeTab === 'luau') {
+                codeInput.value = '';
+            } else {
+                pythonInput.value = '';
+            }
+            hideOutput();
+            hideStatus();
+            window.history.replaceState(null, null, window.location.pathname);
+        });
+
+        copyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(outputEl.textContent);
+                copyBtn.textContent = 'Copied!';
+                setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+            } catch (e) {
+                showStatus('Failed to copy to clipboard', 'error');
+            }
+        });
+
+        // Keyboard shortcuts
+        function handleKeydown(e) {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                if (!runBtn.disabled) {
+                    runBtn.click();
+                }
+            }
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const textarea = e.target;
+                const start = textarea.selectionStart;
+                const end = textarea.selectionEnd;
+                textarea.value = textarea.value.substring(0, start) + '  ' + textarea.value.substring(end);
+                textarea.selectionStart = textarea.selectionEnd = start + 2;
+            }
+        }
+        codeInput.addEventListener('keydown', handleKeydown);
+        pythonInput.addEventListener('keydown', handleKeydown);
+
+        window.addEventListener('hashchange', () => {
+            const hashCode = loadFromHash();
+            if (hashCode && hashCode !== codeInput.value) {
+                codeInput.value = hashCode;
+                activeTab = 'luau';
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+                document.querySelector('[data-tab="luau"]').classList.add('active');
+                document.getElementById('tab-luau').classList.add('active');
+                if (executeScript) {
+                    executeLuauCode(hashCode);
+                }
+            }
+        });
+
+        initialize();
+    </script>
+    <!-- Pyodide loaded on-demand when the Python tab is used -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.27.5/full/pyodide.js" defer></script>
+</body>
+</html>
