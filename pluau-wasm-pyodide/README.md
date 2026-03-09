@@ -1,5 +1,10 @@
 # Luau WebAssembly: Browser Playground + Python wasmtime
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 An investigation of compiling [Luau](https://luau.org/) (the language used by [pluau](https://github.com/gluau/pluau)) to WebAssembly for use in browsers (with Pyodide) and in Python via wasmtime.
 
 ## What This Is
