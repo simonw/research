@@ -14,6 +14,11 @@ self.__uv$config = {
   bundle: "/uv/uv.bundle.js",
   config: "/uv/uv.config.js",
   sw: "/uv/uv.sw.js",
+  inject: [{
+    host: ".*",
+    injectTo: "head",
+    html: '<script src="/puppet-agent.js"><\\/script>'
+  }]
 };
 `;
 

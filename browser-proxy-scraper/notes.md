@@ -117,6 +117,30 @@ Browser Page → UV Service Worker → bare-mux → Epoxy-TLS (WASM/Rustls)
 
 ---
 
+## 2026-03-09: Bug Fixes & Connector Runner
+
+### Bugs Found & Fixed
+1. **XOR encoding**: `i % 1 === 0` always true — XOR'd ALL chars instead of odd-indexed. Fixed to match UV codec exactly.
+2. **No `inject` array**: puppet-agent.js was never injected into proxied pages. Added to UV config.
+3. **Hardcoded Instagram patterns**: Replaced with dynamic capture registry. SW now supports `CAPTURE_REGISTER`/`CAPTURE_GET` messages.
+4. **Fallback matched encoded URLs**: Removed fallback, added proper `xorDecode()` to decode original URLs before matching.
+
+### Connector Runner Architecture
+Modeled after [vana-com/data-connectors](https://github.com/vana-com/data-connectors):
+- `page-api.ts`: Implements Vana-compatible `page` global (goto, evaluate, captureNetwork, getCapturedResponse, setData, sleep)
+- `connector-runner.ts`: Executes connector scripts with `page` API injected
+- Connector scripts are standalone JS files, one per site
+- Example: `codepen.js` captures `/graphql` responses from codepen.io
+
+### UVServiceWorker Internal Details (from source analysis)
+- `UVServiceWorker` extends Node.js `EventEmitter` — `on()`, `emit()` work
+- Three hooks: `"request"` (before fetch), `"beforemod"` (after fetch, before rewrite), `"response"` (after rewrite)
+- `inject` config: `[{ host: "regex", injectTo: "head"|"body", html: "..." }]`
+- Inject runs BEFORE `rewriteHtml()`, using naive `indexOf("<head>")`
+- XOR codec: odd-indexed chars XOR'd with 2, even chars pass through, then `encodeURIComponent`
+
+---
+
 ## Key Takeaways
 
 1. **wisp-js is well-designed** — supports custom socket classes, making upstream proxy integration clean

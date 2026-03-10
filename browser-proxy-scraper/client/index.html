@@ -21,9 +21,11 @@
         display: flex;
         gap: 8px;
         align-items: center;
+        flex-wrap: wrap;
       }
       #url-input {
         flex: 1;
+        min-width: 200px;
         padding: 8px 12px;
         background: #2a2a2a;
         border: 1px solid #444;
@@ -34,17 +36,53 @@
       }
       #url-input:focus { border-color: #666; }
       #url-input:disabled { opacity: 0.5; }
-      #go-btn {
-        padding: 8px 20px;
-        background: #3b82f6;
+      .btn {
+        padding: 8px 16px;
         color: #fff;
         border: none;
         border-radius: 6px;
         cursor: pointer;
-        font-size: 14px;
+        font-size: 13px;
+        white-space: nowrap;
       }
-      #go-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-      #go-btn:hover:not(:disabled) { background: #2563eb; }
+      .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      .btn-primary { background: #3b82f6; }
+      .btn-primary:hover:not(:disabled) { background: #2563eb; }
+      .btn-green { background: #22c55e; }
+      .btn-green:hover:not(:disabled) { background: #16a34a; }
+      .btn-red { background: #ef4444; }
+      .btn-red:hover:not(:disabled) { background: #dc2626; }
+      .btn-outline {
+        background: transparent;
+        border: 1px solid #444;
+        color: #ccc;
+      }
+      .btn-outline:hover:not(:disabled) { border-color: #666; color: #fff; }
+      select {
+        padding: 8px 12px;
+        background: #2a2a2a;
+        border: 1px solid #444;
+        border-radius: 6px;
+        color: #fff;
+        font-size: 13px;
+        outline: none;
+      }
+      .toolbar {
+        padding: 4px 16px 4px;
+        background: #1a1a1a;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        font-size: 12px;
+      }
+      .toolbar label {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        color: #888;
+        cursor: pointer;
+      }
+      .toolbar label:hover { color: #ccc; }
       #status {
         padding: 4px 12px;
         font-size: 12px;
@@ -77,6 +115,9 @@
         position: sticky;
         top: 0;
         background: #1a1a1a;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
       }
       .data-entry {
         padding: 8px 12px;
@@ -100,6 +141,11 @@
         white-space: pre-wrap;
         word-break: break-all;
         font-size: 11px;
+      }
+      .data-entry .data-key {
+        color: #fbbf24;
+        font-weight: bold;
+        margin-bottom: 4px;
       }
       #puppet-panel {
         padding: 8px 12px;
@@ -126,13 +172,28 @@
         placeholder="Enter URL (e.g., https://example.com)"
         disabled
       />
-      <button id="go-btn" disabled>Go</button>
+      <button id="go-btn" class="btn btn-primary" disabled>Go</button>
+      <select id="connector-select" disabled>
+        <option value="">-- Connector --</option>
+        <option value="/connectors/codepen.js">CodePen</option>
+        <option value="custom">Custom script...</option>
+      </select>
+      <button id="run-btn" class="btn btn-green" disabled>Run</button>
     </header>
+    <div class="toolbar">
+      <label>
+        <input type="checkbox" id="intercept-all-json" />
+        Intercept all JSON
+      </label>
+    </div>
     <div id="status">Initializing...</div>
     <div class="main-area">
       <iframe id="proxy-frame"></iframe>
       <div id="data-panel">
-        <h3>Intercepted Data <span id="data-count">(0)</span></h3>
+        <h3>
+          Intercepted Data <span id="data-count">(0)</span>
+          <button id="clear-data-btn" class="btn btn-outline" style="padding: 2px 8px; font-size: 11px;">Clear</button>
+        </h3>
         <div id="data-entries"></div>
       </div>
     </div>

@@ -103,13 +103,14 @@
       };
     },
 
-    evaluate(args) {
-      // Execute arbitrary JS and return result (use with caution)
-      return new Function(args.code)();
+    async evaluate(args) {
+      // Execute arbitrary JS and return result — supports async code
+      const result = await (0, eval)(args.code);
+      return result;
     },
   };
 
-  window.addEventListener("message", (event) => {
+  window.addEventListener("message", async (event) => {
     if (!event.data || event.data.type !== "PUPPET_CMD") return;
 
     const { id, command, args } = event.data;
@@ -117,7 +118,7 @@
       if (!commands[command]) {
         throw new Error(`Unknown command: ${command}`);
       }
-      const result = commands[command](args || {});
+      const result = await commands[command](args || {});
       sendResult(id, result);
     } catch (err) {
       sendResult(id, null, err.message || String(err));
