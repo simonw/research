@@ -167,21 +167,27 @@ self.addEventListener("message", (event) => {
   }
 });
 
-// --- Puppet agent injection for HTML responses ---
-// Inline the puppet-agent code to avoid URL rewriting by UV's client-side hooks.
-// This code is loaded once at SW init by fetching /puppet-agent.js from origin.
+// --- Anti-detect + puppet agent injection for HTML responses ---
+// Inline both scripts to avoid URL rewriting by UV's client-side hooks.
+// These are loaded once at SW init by fetching from origin.
+let ANTI_DETECT_SCRIPT_TAG = '';
 let PUPPET_SCRIPT_TAG = '';
 (async () => {
   try {
-    const resp = await fetch('/puppet-agent.js');
-    const code = await resp.text();
-    PUPPET_SCRIPT_TAG = '<script>' + code + '<\/script>';
+    const [antiDetectResp, puppetResp] = await Promise.all([
+      fetch('/anti-detect.js'),
+      fetch('/puppet-agent.js'),
+    ]);
+    const antiDetectCode = await antiDetectResp.text();
+    const puppetCode = await puppetResp.text();
+    ANTI_DETECT_SCRIPT_TAG = '<script>' + antiDetectCode + '<\/script>';
+    PUPPET_SCRIPT_TAG = '<script>' + puppetCode + '<\/script>';
   } catch (e) {
-    console.error('[sw] Failed to load puppet-agent.js:', e);
+    console.error('[sw] Failed to load injected scripts:', e);
   }
 })();
 
-async function injectPuppetAgent(response, destination) {
+async function injectScripts(response, destination) {
   // Only inject into document/iframe HTML responses
   if (!["document", "iframe"].includes(destination)) return response;
 
@@ -190,19 +196,18 @@ async function injectPuppetAgent(response, destination) {
 
   try {
     const html = await response.text();
-    // Insert puppet-agent script just before </head> so it runs in the proxied page context
-    // The /puppet-agent.js URL is on our origin (same as SW), not proxied
+    // Inject anti-detect first (runs before puppet-agent), then puppet-agent
+    const injectedScripts = ANTI_DETECT_SCRIPT_TAG + PUPPET_SCRIPT_TAG;
     let modified;
     const headClose = html.indexOf("</head>");
     if (headClose !== -1) {
-      modified = html.slice(0, headClose) + PUPPET_SCRIPT_TAG + html.slice(headClose);
+      modified = html.slice(0, headClose) + injectedScripts + html.slice(headClose);
     } else {
-      // Fallback: prepend to body
       const bodyOpen = html.indexOf("<body");
       if (bodyOpen !== -1) {
-        modified = html.slice(0, bodyOpen) + PUPPET_SCRIPT_TAG + html.slice(bodyOpen);
+        modified = html.slice(0, bodyOpen) + injectedScripts + html.slice(bodyOpen);
       } else {
-        modified = PUPPET_SCRIPT_TAG + html;
+        modified = injectedScripts + html;
       }
     }
 
@@ -216,13 +221,30 @@ async function injectPuppetAgent(response, destination) {
   }
 }
 
+// --- Turnstile / Cloudflare challenge hostnames to bypass UV ---
+const BYPASS_HOSTNAMES = new Set([
+  "challenges.cloudflare.com",
+  "turnstile.cloudflare.com",
+]);
+
 // --- Fetch handler with interception ---
 async function handleRequest(event) {
   if (uv.route(event)) {
-    let response = await uv.fetch(event);
-
-    // Decode the original URL from the proxied request
+    // Check if decoded target is a Cloudflare challenge — fetch directly to avoid breaking Turnstile
     const decodedUrl = decodeProxiedUrl(event.request.url);
+
+    if (decodedUrl) {
+      try {
+        const targetHost = new URL(decodedUrl).hostname;
+        if (BYPASS_HOSTNAMES.has(targetHost)) {
+          return await fetch(decodedUrl, { mode: "cors", credentials: "omit" });
+        }
+      } catch {
+        // Invalid URL, continue with UV
+      }
+    }
+
+    let response = await uv.fetch(event);
 
     if (decodedUrl) {
       // Check registered captures
@@ -237,8 +259,8 @@ async function handleRequest(event) {
       }
     }
 
-    // Inject puppet-agent into HTML responses
-    response = await injectPuppetAgent(response, event.request.destination);
+    // Inject anti-detect + puppet-agent into HTML responses
+    response = await injectScripts(response, event.request.destination);
 
     return response;
   }

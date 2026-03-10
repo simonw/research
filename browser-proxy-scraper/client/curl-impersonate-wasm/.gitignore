@@ -1,0 +1,7 @@
+# Don't commit fetched source code or build intermediaries
+emsdk/
+curl-impersonate-src/
+build/
+
+# WASM binary is >2MB, regenerate with ./link-wasm.sh
+dist/curl-impersonate.wasm

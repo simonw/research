@@ -2,7 +2,7 @@ import net from "node:net";
 
 /**
  * Creates a TCP connection through a SOCKS5 proxy.
- * Implements SOCKS5 handshake (RFC 1928) with no-auth method.
+ * Implements SOCKS5 handshake (RFC 1928) with optional username/password auth (RFC 1929).
  */
 export function createSocks5Connection(
   host: string,
@@ -13,38 +13,77 @@ export function createSocks5Connection(
     const url = new URL(proxyUrl);
     const proxyHost = url.hostname;
     const proxyPort = parseInt(url.port || "1080", 10);
+    const username = url.username ? decodeURIComponent(url.username) : "";
+    const password = url.password ? decodeURIComponent(url.password) : "";
+    const hasAuth = username.length > 0;
 
     const socket = net.connect(proxyPort, proxyHost, () => {
-      // SOCKS5 greeting: version 5, 1 auth method (no auth)
-      socket.write(Buffer.from([0x05, 0x01, 0x00]));
+      if (hasAuth) {
+        // Offer both no-auth (0x00) and username/password (0x02)
+        socket.write(Buffer.from([0x05, 0x02, 0x00, 0x02]));
+      } else {
+        // No-auth only
+        socket.write(Buffer.from([0x05, 0x01, 0x00]));
+      }
     });
 
-    let state: "greeting" | "connect" | "done" = "greeting";
+    let state: "greeting" | "auth" | "connect" | "done" = "greeting";
 
     socket.once("error", reject);
 
+    function sendConnectRequest() {
+      const hostBuf = Buffer.from(host, "utf8");
+      const portBuf = Buffer.alloc(2);
+      portBuf.writeUInt16BE(port);
+      const req = Buffer.concat([
+        Buffer.from([0x05, 0x01, 0x00, 0x03, hostBuf.length]),
+        hostBuf,
+        portBuf,
+      ]);
+      socket.write(req);
+    }
+
     socket.on("data", (data) => {
       if (state === "greeting") {
-        // Server response: version, chosen method
-        if (data[0] !== 0x05 || data[1] !== 0x00) {
+        if (data[0] !== 0x05) {
           socket.destroy();
-          reject(new Error("SOCKS5 auth negotiation failed"));
+          reject(new Error("SOCKS5 invalid server version"));
+          return;
+        }
+
+        const chosenMethod = data[1];
+
+        if (chosenMethod === 0x02 && hasAuth) {
+          // Server selected username/password auth (RFC 1929)
+          state = "auth";
+          const userBuf = Buffer.from(username, "utf8");
+          const passBuf = Buffer.from(password, "utf8");
+          const authReq = Buffer.concat([
+            Buffer.from([0x01, userBuf.length]),
+            userBuf,
+            Buffer.from([passBuf.length]),
+            passBuf,
+          ]);
+          socket.write(authReq);
+        } else if (chosenMethod === 0x00) {
+          // No auth required
+          state = "connect";
+          sendConnectRequest();
+        } else {
+          socket.destroy();
+          reject(new Error(`SOCKS5 unsupported auth method: 0x${chosenMethod.toString(16)}`));
+          return;
+        }
+      } else if (state === "auth") {
+        // RFC 1929 auth response: version (0x01), status (0x00 = success)
+        if (data[0] !== 0x01 || data[1] !== 0x00) {
+          socket.destroy();
+          reject(new Error("SOCKS5 username/password authentication failed"));
           return;
         }
         state = "connect";
-
-        // SOCKS5 connect request: version, connect cmd, reserved, domain type
-        const hostBuf = Buffer.from(host, "utf8");
-        const portBuf = Buffer.alloc(2);
-        portBuf.writeUInt16BE(port);
-        const req = Buffer.concat([
-          Buffer.from([0x05, 0x01, 0x00, 0x03, hostBuf.length]),
-          hostBuf,
-          portBuf,
-        ]);
-        socket.write(req);
+        sendConnectRequest();
       } else if (state === "connect") {
-        // Server response: version, status, reserved, addr type, addr, port
         if (data[0] !== 0x05 || data[1] !== 0x00) {
           socket.destroy();
           reject(new Error(`SOCKS5 connect failed with status ${data[1]}`));

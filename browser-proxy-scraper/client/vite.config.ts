@@ -60,6 +60,19 @@ export default defineConfig({
           src: "node_modules/@mercuryworkshop/epoxy-tls/full/*",
           dest: "epoxy",
         },
+        // curl-impersonate WASM artifacts (Chrome TLS fingerprint)
+        {
+          src: "curl-impersonate-wasm/dist/curl-impersonate.js",
+          dest: "curl-impersonate",
+        },
+        {
+          src: "curl-impersonate-wasm/dist/curl-impersonate.wasm",
+          dest: "curl-impersonate",
+        },
+        {
+          src: "curl-impersonate-wasm/src/curl-wasm-fetch.js",
+          dest: "curl-impersonate",
+        },
       ],
     }),
     uvConfigPlugin(),
