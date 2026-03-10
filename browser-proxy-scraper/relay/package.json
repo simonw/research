@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "start": "node --loader tsx src/index.ts"
+    "start": "node --import tsx src/index.ts"
   },
   "dependencies": {
     "@mercuryworkshop/wisp-js": "^0.4.1",
