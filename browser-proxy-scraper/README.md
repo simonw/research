@@ -89,14 +89,22 @@ npm run dev
 6. **Response interception**: SW hooks match GraphQL-pattern URLs, clone responses, and postMessage parsed JSON to the parent page
 7. **Puppet agent** (optional): Injected script enables programmatic DOM interaction via postMessage commands
 
+## Connector Runner
+
+Site-specific scraping scripts (modeled after [vana-com/data-connectors](https://github.com/vana-com/data-connectors)):
+
+- **`page` API**: `goto()`, `evaluate()`, `captureNetwork()`, `getCapturedResponse()`, `setData()`, `sleep()`
+- **Dynamic capture**: Register URL patterns at runtime, retrieve captured responses
+- **Built-in connector**: CodePen (`/connectors/codepen.js`) — captures GraphQL API responses
+
+Select a connector from the dropdown and click "Run", or paste custom script code.
+
 ## Traffic Interception
 
-The Service Worker intercepts responses matching these patterns:
-- `/api/graphql`
-- `graphql.instagram.com`
-- `i.instagram.com/api/v1`
-- `/api/v1/users`
-- `/api/v1/feed`
+The Service Worker maintains a dynamic capture registry:
+- **Register**: `page.captureNetwork({ urlPattern: '/graphql', key: 'graphql' })`
+- **Retrieve**: `page.getCapturedResponse('graphql')` — returns array of matched responses
+- **Intercept all JSON**: Toggle checkbox to broadcast all JSON responses to the data panel
 
 Intercepted data appears in the right-side panel as parsed JSON.
 
@@ -116,6 +124,10 @@ puppet.sendCommand('queryAll', { selector: 'a', limit: 10 })
 Or via the input field at the bottom: `query h1`, `click .btn`, `getPageInfo`, etc.
 
 ## Known Limitations
+
+### Dependency Patches
+
+The `@mercuryworkshop/epoxy-transport` v3.0.1 has a headers iteration bug (uses `for...of` on plain objects) and the `@titaniumnetwork-dev/ultraviolet` v3.2.10 has a rawHeaders format mismatch with epoxy-transport. Both are fixed via `patch-package` (patches auto-applied on `npm install`).
 
 ### TLS Fingerprinting
 
@@ -158,13 +170,18 @@ browser-proxy-scraper/
     ├── vite.config.ts                # Static copy + COEP/COOP + UV config override
     ├── tsconfig.json
     ├── index.html                    # Main page with URL input, iframe, data panel
+    ├── patches/                      # patch-package fixes for dependency bugs
     ├── public/
-    │   ├── sw.js                     # Custom SW: UV + response interception hooks
-    │   └── puppet-agent.js           # DOM automation agent (injected into proxied pages)
+    │   ├── sw.js                     # Custom SW: UV + capture registry + puppet injection
+    │   ├── puppet-agent.js           # DOM automation agent (injected into proxied pages)
+    │   └── connectors/
+    │       └── codepen.js            # CodePen GraphQL capture connector
     └── src/
         ├── main.ts                   # Bootstrap: SW → transport → UI
         ├── transport.ts              # bare-mux + epoxy initialization
-        ├── ui.ts                     # URL input → XOR encode → iframe navigation
+        ├── ui.ts                     # URL input → XOR encode → iframe navigation + connector UI
+        ├── connector-runner.ts       # Executes connector scripts with page API
+        ├── page-api.ts               # Vana-compatible page API (goto, evaluate, captureNetwork)
         ├── data-panel.ts             # Renders intercepted API data
         └── puppet.ts                 # Puppet command bridge to iframe
 ```

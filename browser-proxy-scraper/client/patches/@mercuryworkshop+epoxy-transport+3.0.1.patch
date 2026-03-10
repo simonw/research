@@ -1,0 +1,34 @@
+diff --git a/node_modules/@mercuryworkshop/epoxy-transport/dist/index.mjs b/node_modules/@mercuryworkshop/epoxy-transport/dist/index.mjs
+index c2f8e43..3a04a41 100644
+--- a/node_modules/@mercuryworkshop/epoxy-transport/dist/index.mjs
++++ b/node_modules/@mercuryworkshop/epoxy-transport/dist/index.mjs
+@@ -1528,7 +1528,8 @@ var opts = [
+   "wisp_ws_protocols",
+   "redirect_limit",
+   "header_limit",
+-  "buffer_size"
++  "buffer_size",
++  "disable_certificate_validation"
+ ];
+ var EpoxyTransport = class {
+   ready = false;
+@@ -1558,7 +1559,8 @@ var EpoxyTransport = class {
+     if (body instanceof Blob) body = await body.arrayBuffer();
+     try {
+       let headersObj = {};
+-      for (let [key, value] of headers) {
++      const headerEntries = typeof headers[Symbol.iterator] === 'function' ? headers : Object.entries(headers);
++      for (let [key, value] of headerEntries) {
+         if (headersObj[key]) {
+           console.warn(
+             `Duplicate header key "${key}" detected. Overwriting previous value.`
+@@ -1606,7 +1608,8 @@ var EpoxyTransport = class {
+       )
+     );
+     let headersObj = {};
+-    for (let [key, value] of requestHeaders) {
++    const requestHeaderEntries = typeof requestHeaders[Symbol.iterator] === 'function' ? requestHeaders : Object.entries(requestHeaders);
++    for (let [key, value] of requestHeaderEntries) {
+       if (headersObj[key]) {
+         console.warn(
+           `Duplicate header key "${key}" detected. Overwriting previous value.`

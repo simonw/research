@@ -3,7 +3,7 @@ import { viteStaticCopy } from "vite-plugin-static-copy";
 import { writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 
-// Custom UV config with correct paths
+// UV config — no inject (puppet-agent injection handled in sw.js)
 const UV_CONFIG = `/*global Ultraviolet*/
 self.__uv$config = {
   prefix: "/service/",
@@ -13,12 +13,7 @@ self.__uv$config = {
   client: "/uv/uv.client.js",
   bundle: "/uv/uv.bundle.js",
   config: "/uv/uv.config.js",
-  sw: "/uv/uv.sw.js",
-  inject: [{
-    host: ".*",
-    injectTo: "head",
-    html: '<script src="/puppet-agent.js"><\\/script>'
-  }]
+  sw: "/uv/uv.sw.js"
 };
 `;
 

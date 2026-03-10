@@ -4,16 +4,18 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "postinstall": "patch-package",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@titaniumnetwork-dev/ultraviolet": "^3.2.10",
     "@mercuryworkshop/bare-mux": "^2.1.8",
-    "@mercuryworkshop/epoxy-transport": "^3.0.1"
+    "@mercuryworkshop/epoxy-transport": "^3.0.1",
+    "@titaniumnetwork-dev/ultraviolet": "^3.2.10"
   },
   "devDependencies": {
+    "patch-package": "^8.0.1",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
     "vite-plugin-static-copy": "^2.2.0"

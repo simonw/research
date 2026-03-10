@@ -6,6 +6,10 @@ importScripts(__uv$config.sw || "/uv/uv.sw.js");
 
 const uv = new UVServiceWorker();
 
+// Take control immediately so navigator.serviceWorker.controller is available
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+
 // --- Dynamic capture registry ---
 // Map<key, { urlPattern: RegExp, bodyPattern?: RegExp, responses: object[] }>
 const captures = new Map();
@@ -163,10 +167,59 @@ self.addEventListener("message", (event) => {
   }
 });
 
+// --- Puppet agent injection for HTML responses ---
+// Inline the puppet-agent code to avoid URL rewriting by UV's client-side hooks.
+// This code is loaded once at SW init by fetching /puppet-agent.js from origin.
+let PUPPET_SCRIPT_TAG = '';
+(async () => {
+  try {
+    const resp = await fetch('/puppet-agent.js');
+    const code = await resp.text();
+    PUPPET_SCRIPT_TAG = '<script>' + code + '<\/script>';
+  } catch (e) {
+    console.error('[sw] Failed to load puppet-agent.js:', e);
+  }
+})();
+
+async function injectPuppetAgent(response, destination) {
+  // Only inject into document/iframe HTML responses
+  if (!["document", "iframe"].includes(destination)) return response;
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("text/html")) return response;
+
+  try {
+    const html = await response.text();
+    // Insert puppet-agent script just before </head> so it runs in the proxied page context
+    // The /puppet-agent.js URL is on our origin (same as SW), not proxied
+    let modified;
+    const headClose = html.indexOf("</head>");
+    if (headClose !== -1) {
+      modified = html.slice(0, headClose) + PUPPET_SCRIPT_TAG + html.slice(headClose);
+    } else {
+      // Fallback: prepend to body
+      const bodyOpen = html.indexOf("<body");
+      if (bodyOpen !== -1) {
+        modified = html.slice(0, bodyOpen) + PUPPET_SCRIPT_TAG + html.slice(bodyOpen);
+      } else {
+        modified = PUPPET_SCRIPT_TAG + html;
+      }
+    }
+
+    return new Response(modified, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  } catch {
+    return response;
+  }
+}
+
 // --- Fetch handler with interception ---
 async function handleRequest(event) {
   if (uv.route(event)) {
-    const response = await uv.fetch(event);
+    let response = await uv.fetch(event);
 
     // Decode the original URL from the proxied request
     const decodedUrl = decodeProxiedUrl(event.request.url);
@@ -183,6 +236,9 @@ async function handleRequest(event) {
         broadcastJsonResponse(decodedUrl, response.clone());
       }
     }
+
+    // Inject puppet-agent into HTML responses
+    response = await injectPuppetAgent(response, event.request.destination);
 
     return response;
   }

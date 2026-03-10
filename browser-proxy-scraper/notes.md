@@ -141,10 +141,50 @@ Modeled after [vana-com/data-connectors](https://github.com/vana-com/data-connec
 
 ---
 
+## 2026-03-09: E2E Test & Bug Fixes
+
+### Bugs Found During E2E Testing
+
+1. **epoxy-transport v3.0.1 / bare-mux v2.1.8 incompatibility**: `for (let [key, value] of headers)` in epoxy-transport's `request()` and `connect()` methods fails because bare-mux sends headers as a plain object (not iterable). Fixed via patch-package: use `Object.entries()` fallback.
+
+2. **TLS certificate validation**: epoxy-tls (Rustls WASM) doesn't ship root CA certificates. `disable_certificate_validation` option exists in EpoxyClientOptions but wasn't exposed in the `opts` array. Fixed via patch-package + transport config option.
+
+3. **rawHeaders format mismatch**: UV's BareClient in uv.bundle.js sets `s.rawHeaders = t.headers` where `t.headers` is an array of `[key, value]` pairs (from epoxy-transport), but UV's response handler expects a plain object `{key: value}`. This caused UV to skip HTML rewriting (no content-type header found), which meant no puppet-agent injection and no UV client scripts. Fixed via patch-package: convert array to object.
+
+4. **Puppet-agent injection via UV `inject` config**: UV's inject inserts HTML BEFORE `<head>`, but then UV's `rewriteHtml()` wraps everything in its own `<head>` structure, creating invalid nested `<head>` elements. Fixed by moving puppet-agent injection to sw.js's fetch handler AFTER UV processing — inserts inline `<script>` before `</head>`.
+
+5. **Service Worker controller null**: `navigator.serviceWorker.controller` is null on first page load after SW registration. Fixed by adding `self.skipWaiting()` + `self.clients.claim()` to SW, and waiting for `controllerchange` event in main.ts.
+
+### E2E Test Results
+
+**Proxy test (example.com)**: PASS
+- UV proxy loads external sites through epoxy/wisp transport
+- XOR encoding/decoding works correctly
+- COEP/COOP headers + SharedArrayBuffer functional
+
+**Puppet agent**: PASS
+- Inline injection via SW fetch handler works
+- PUPPET_READY message received by parent frame
+- DOM commands (query, evaluate, getPageInfo) functional
+
+**CodePen connector**: PARTIAL
+- Connector runner executes scripts correctly
+- Network capture registration and retrieval works
+- CodePen blocked by Cloudflare bot protection ("Performing security verification")
+- No GraphQL data captured due to Cloudflare challenge page
+
+### Patches Created (via patch-package)
+- `patches/@mercuryworkshop+epoxy-transport+3.0.1.patch` — headers iteration fix + disable_certificate_validation option
+- `patches/@titaniumnetwork-dev+ultraviolet+3.2.10.patch` — rawHeaders format normalization
+
+---
+
 ## Key Takeaways
 
 1. **wisp-js is well-designed** — supports custom socket classes, making upstream proxy integration clean
-2. **UV + bare-mux + epoxy** stack is mature and works well together
+2. **UV + bare-mux + epoxy** stack has version incompatibilities between packages — headers format (plain object vs array of pairs) differs between bare-mux v2.1.8 and epoxy-transport v3.0.1
 3. **Static file management** is the main build complexity — config path overrides needed careful handling
 4. **TLS fingerprinting** is the primary limitation for anti-bot evasion (Rustls fingerprint is non-browser)
 5. **COEP/COOP headers** required for SharedArrayBuffer — epoxy WASM won't work without them
+6. **Cloudflare bot protection** blocks headless/proxy access to CodePen — the Rustls TLS fingerprint is likely flagged
+7. **UV inject config** inserts before `<head>` which breaks with UV's own HTML rewriting — inject AFTER UV processing instead

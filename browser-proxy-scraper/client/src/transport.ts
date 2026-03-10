@@ -7,7 +7,7 @@ export async function initTransport(): Promise<void> {
 
   const wispUrl = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/wisp/`;
 
-  await connection.setTransport("/epoxy/index.mjs", [{ wisp: wispUrl }]);
+  await connection.setTransport("/epoxy/index.mjs", [{ wisp: wispUrl, disable_certificate_validation: true }]);
 
   console.log("[transport] initialized with wisp URL:", wispUrl);
 }

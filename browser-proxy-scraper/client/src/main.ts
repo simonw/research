@@ -15,10 +15,20 @@ async function bootstrap(): Promise<void> {
     throw err;
   }
 
-  // Wait for SW to be ready
+  // Wait for SW to be ready and controlling this page
   setStatus("Waiting for service worker...");
   await navigator.serviceWorker.ready;
   console.log("[main] SW ready");
+
+  // Wait for the controller to be set (skipWaiting + clients.claim in SW)
+  if (!navigator.serviceWorker.controller) {
+    await new Promise<void>((resolve) => {
+      navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), { once: true });
+      // Timeout fallback
+      setTimeout(resolve, 3000);
+    });
+    console.log("[main] SW controller active:", !!navigator.serviceWorker.controller);
+  }
 
   // Initialize transport (bare-mux + epoxy)
   setStatus("Initializing encrypted transport...");
