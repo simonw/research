@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Browser Proxy Scraper</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        background: #0f0f0f;
+        color: #e0e0e0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        padding: 12px 16px;
+        background: #1a1a1a;
+        border-bottom: 1px solid #333;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      #url-input {
+        flex: 1;
+        padding: 8px 12px;
+        background: #2a2a2a;
+        border: 1px solid #444;
+        border-radius: 6px;
+        color: #fff;
+        font-size: 14px;
+        outline: none;
+      }
+      #url-input:focus { border-color: #666; }
+      #url-input:disabled { opacity: 0.5; }
+      #go-btn {
+        padding: 8px 20px;
+        background: #3b82f6;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      #go-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      #go-btn:hover:not(:disabled) { background: #2563eb; }
+      #status {
+        padding: 4px 12px;
+        font-size: 12px;
+        color: #888;
+      }
+      #status.ready { color: #22c55e; }
+      #status.error { color: #ef4444; }
+      .main-area {
+        flex: 1;
+        display: flex;
+        overflow: hidden;
+      }
+      #proxy-frame {
+        flex: 1;
+        border: none;
+        background: #fff;
+      }
+      #data-panel {
+        width: 400px;
+        background: #1a1a1a;
+        border-left: 1px solid #333;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+      }
+      #data-panel h3 {
+        padding: 8px 12px;
+        font-size: 13px;
+        border-bottom: 1px solid #333;
+        position: sticky;
+        top: 0;
+        background: #1a1a1a;
+      }
+      .data-entry {
+        padding: 8px 12px;
+        border-bottom: 1px solid #222;
+        font-size: 12px;
+        font-family: monospace;
+      }
+      .data-entry .url {
+        color: #60a5fa;
+        word-break: break-all;
+        margin-bottom: 4px;
+      }
+      .data-entry .time { color: #666; font-size: 11px; }
+      .data-entry pre {
+        margin-top: 4px;
+        max-height: 200px;
+        overflow: auto;
+        background: #0f0f0f;
+        padding: 6px;
+        border-radius: 4px;
+        white-space: pre-wrap;
+        word-break: break-all;
+        font-size: 11px;
+      }
+      #puppet-panel {
+        padding: 8px 12px;
+        border-top: 1px solid #333;
+        background: #1a1a1a;
+      }
+      #puppet-input {
+        width: 100%;
+        padding: 6px 8px;
+        background: #2a2a2a;
+        border: 1px solid #444;
+        border-radius: 4px;
+        color: #fff;
+        font-family: monospace;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <input
+        type="text"
+        id="url-input"
+        placeholder="Enter URL (e.g., https://example.com)"
+        disabled
+      />
+      <button id="go-btn" disabled>Go</button>
+    </header>
+    <div id="status">Initializing...</div>
+    <div class="main-area">
+      <iframe id="proxy-frame"></iframe>
+      <div id="data-panel">
+        <h3>Intercepted Data <span id="data-count">(0)</span></h3>
+        <div id="data-entries"></div>
+      </div>
+    </div>
+    <div id="puppet-panel">
+      <input
+        type="text"
+        id="puppet-input"
+        placeholder="Puppet command: query h1 | click .btn | type #input Hello"
+        disabled
+      />
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
