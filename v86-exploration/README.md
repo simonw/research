@@ -1,5 +1,10 @@
 # v86 exploration
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 *2026-03-10T15:16:49Z by Showboat 0.6.1*
 <!-- showboat-id: f5f01b71-0095-452d-b2ba-9ad5edd73e2a -->
 
