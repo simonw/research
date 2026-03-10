@@ -16,8 +16,10 @@ export async function initTransport(): Promise<void> {
   const wispUrl = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/wisp/`;
 
   // Try curl-impersonate WASM first (Chrome TLS fingerprint)
+  // Use indirect import to avoid Vite's static analysis (this module is optional)
   try {
-    const curlWasm = await import("/curl-impersonate/curl-wasm-fetch.js");
+    const modulePath = "/curl-impersonate/curl-wasm-fetch.js";
+    const curlWasm = await import(/* @vite-ignore */ modulePath);
     await curlWasm.initCurlWasm(wispUrl);
     wasmFetchFn = curlWasm.wasmFetch;
     console.log("[transport] initialized with curl-impersonate WASM (Chrome TLS fingerprint)");

@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from "vite";
 import { viteStaticCopy } from "vite-plugin-static-copy";
-import { writeFileSync, mkdirSync } from "fs";
+import { writeFileSync, mkdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
 
 // UV config — no inject (puppet-agent injection handled in sw.js)
@@ -32,6 +32,33 @@ function uvConfigPlugin(): Plugin {
         res.setHeader("Content-Type", "application/javascript");
         res.end(UV_CONFIG);
       });
+
+      // Serve curl-impersonate WASM artifacts during dev
+      const curlFiles: Record<string, { path: string; type: string }> = {
+        "/curl-impersonate/curl-wasm-fetch.js": {
+          path: join(__dirname, "curl-impersonate-wasm/src/curl-wasm-fetch.js"),
+          type: "application/javascript",
+        },
+        "/curl-impersonate/curl-impersonate.js": {
+          path: join(__dirname, "curl-impersonate-wasm/dist/curl-impersonate.js"),
+          type: "application/javascript",
+        },
+        "/curl-impersonate/curl-impersonate.wasm": {
+          path: join(__dirname, "curl-impersonate-wasm/dist/curl-impersonate.wasm"),
+          type: "application/wasm",
+        },
+      };
+      for (const [route, info] of Object.entries(curlFiles)) {
+        server.middlewares.use(route, (_req, res) => {
+          if (existsSync(info.path)) {
+            res.setHeader("Content-Type", info.type);
+            res.end(readFileSync(info.path));
+          } else {
+            res.statusCode = 404;
+            res.end("Not found — run link-wasm.sh to build");
+          }
+        });
+      }
     },
   };
 }
@@ -79,6 +106,9 @@ export default defineConfig({
   ],
   server: {
     port: 5173,
+    watch: {
+      ignored: ["**/curl-impersonate-wasm/emsdk/**", "**/curl-impersonate-wasm/build/**", "**/curl-impersonate-wasm/curl-impersonate-src/**"],
+    },
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
       "Cross-Origin-Embedder-Policy": "require-corp",

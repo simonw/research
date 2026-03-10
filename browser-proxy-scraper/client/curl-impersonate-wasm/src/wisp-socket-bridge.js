@@ -24,8 +24,15 @@ mergeInto(LibraryManager.library, {
     nextStreamId: 1,
     streamToFd: {},     // streamId -> fd mapping
 
+    // Lazy-init promise: resolved once WebSocket is connected
+    initPromise: null,
+
     // Initialize the Wisp WebSocket connection
+    // Auto-reads URL from Module.wispUrl if not provided
     init: function(wispUrl) {
+      if (WispBridge.initPromise) return WispBridge.initPromise;
+      wispUrl = wispUrl || Module['wispUrl'];
+      if (!wispUrl) return Promise.reject(new Error('No wispUrl configured'));
       WispBridge.wispUrl = wispUrl;
       WispBridge.wispWs = new WebSocket(wispUrl);
       WispBridge.wispWs.binaryType = 'arraybuffer';
@@ -64,10 +71,16 @@ mergeInto(LibraryManager.library, {
         }
       };
 
-      return new Promise(function(resolve, reject) {
+      WispBridge.initPromise = new Promise(function(resolve, reject) {
         WispBridge.wispWs.onopen = function() { resolve(); };
         WispBridge.wispWs.onerror = function(e) { reject(e); };
       });
+      return WispBridge.initPromise;
+    },
+
+    // Ensure connected before any socket operation
+    ensureConnected: function() {
+      return WispBridge.init();
     },
 
     // Allocate a virtual fd
@@ -171,10 +184,12 @@ mergeInto(LibraryManager.library, {
   wispSocketConnect__async: true,
   wispSocketConnect: function(fd, hostPtr, port) {
     var host = UTF8ToString(hostPtr);
-    WispBridge.sendConnect(fd, host, port);
-    // Wisp CONNECT is fire-and-forget at the client side;
-    // the stream is usable immediately. Server errors arrive as CLOSE packets.
-    return 0;
+    return Asyncify.handleAsync(function() {
+      return WispBridge.ensureConnected().then(function() {
+        WispBridge.sendConnect(fd, host, port);
+        return 0;
+      });
+    });
   },
 
   // send() replacement — pushes raw bytes into the Wisp stream

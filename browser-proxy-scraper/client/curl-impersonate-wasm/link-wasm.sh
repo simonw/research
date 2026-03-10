@@ -32,6 +32,7 @@ emcc \
   -I"$BASE/build/curl-installed/include" \
   --js-library "$BASE/src/wisp-socket-bridge.js" \
   -s MODULARIZE=1 \
+  -s EXPORT_ES6=1 \
   -s EXPORT_NAME="CurlImpersonate" \
   -s EXPORTED_FUNCTIONS='["_curl_easy_init","_curl_easy_setopt","_curl_easy_perform","_curl_easy_cleanup","_curl_easy_getinfo","_curl_easy_strerror","_curl_slist_append","_curl_slist_free_all","_curl_global_init","_curl_global_cleanup","_malloc","_free"]' \
   -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","UTF8ToString","stringToUTF8","stringToNewUTF8","writeArrayToMemory","HEAPU8","getValue","setValue","addFunction","removeFunction"]' \

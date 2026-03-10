@@ -41,11 +41,12 @@ const CURL_HTTP_VERSION_2_0 = 3;
 export async function initCurlWasm(wispUrl) {
   if (Module) return;
 
-  // Dynamic import of the Emscripten-generated module
+  // Load the Emscripten-generated ES module (built with EXPORT_ES6=1)
+  // Pass the Wisp URL via Module config so the socket bridge can auto-connect
   const { default: CurlImpersonate } = await import('./curl-impersonate.js');
-  Module = await CurlImpersonate();
+  Module = await CurlImpersonate({ wispUrl });
 
-  // Get function wrappers
+  // Get function wrappers for exported C functions
   curlGlobalInit = Module.cwrap('curl_global_init', 'number', ['number']);
   curlGlobalCleanup = Module.cwrap('curl_global_cleanup', null, []);
   curlEasyInit = Module.cwrap('curl_easy_init', 'number', []);
@@ -56,13 +57,9 @@ export async function initCurlWasm(wispUrl) {
   curlEasyStrerror = Module.cwrap('curl_easy_strerror', 'string', ['number']);
   curlSlistAppend = Module.cwrap('curl_slist_append', 'number', ['number', 'number']);
   curlSlistFreeAll = Module.cwrap('curl_slist_free_all', null, ['number']);
-  wispBridgeInit = Module.cwrap('wispBridgeInit', null, ['string']);
 
   // Initialize libcurl
   curlGlobalInit(0); // CURL_GLOBAL_DEFAULT
-
-  // Connect to Wisp relay
-  await wispBridgeInit(wispUrl);
 
   console.log('[curl-wasm] Initialized with Wisp URL:', wispUrl);
 }

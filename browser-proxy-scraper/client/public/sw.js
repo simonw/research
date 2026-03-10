@@ -195,7 +195,11 @@ async function injectScripts(response, destination) {
   if (!contentType.includes("text/html")) return response;
 
   try {
-    const html = await response.text();
+    let html = await response.text();
+
+    // Fix Turnstile: inject direct (un-proxied) script tags for Turnstile API
+    html = fixTurnstileInHtml(html);
+
     // Inject anti-detect first (runs before puppet-agent), then puppet-agent
     const injectedScripts = ANTI_DETECT_SCRIPT_TAG + PUPPET_SCRIPT_TAG;
     let modified;
@@ -221,22 +225,50 @@ async function injectScripts(response, destination) {
   }
 }
 
-// --- Turnstile / Cloudflare challenge hostnames to bypass UV ---
-const BYPASS_HOSTNAMES = new Set([
+// --- Turnstile / Cloudflare challenge bypass ---
+// Turnstile requires its scripts and iframes to load from the real origin.
+// We bypass UV for challenges.cloudflare.com requests (script/iframe loads)
+// and rewrite HTML to load the Turnstile API script directly (un-proxied).
+const TURNSTILE_BYPASS_HOSTS = new Set([
   "challenges.cloudflare.com",
   "turnstile.cloudflare.com",
 ]);
 
+// Turnstile API script pattern — needs to be loaded un-proxied in HTML
+const TURNSTILE_SCRIPT_RE = /https:\/\/challenges\.cloudflare\.com\/turnstile\/v0\/api\.js[^"']*/g;
+
+/**
+ * Rewrite HTML to load Turnstile scripts directly (not through UV proxy).
+ * UV would rewrite the script src to go through the proxy, breaking origin checks.
+ * We inject the real script URL as a separate <script> tag and remove the proxied version.
+ */
+function fixTurnstileInHtml(html) {
+  // Find all turnstile script URLs referenced in the HTML
+  const turnstileUrls = html.match(TURNSTILE_SCRIPT_RE);
+  if (!turnstileUrls) return html;
+
+  // Add direct (un-proxied) Turnstile script tags before </head>
+  const directScripts = [...new Set(turnstileUrls)]
+    .map(url => `<script src="${url}" async defer></script>`)
+    .join('');
+
+  const headClose = html.indexOf('</head>');
+  if (headClose !== -1) {
+    html = html.slice(0, headClose) + directScripts + html.slice(headClose);
+  }
+  return html;
+}
+
 // --- Fetch handler with interception ---
 async function handleRequest(event) {
   if (uv.route(event)) {
-    // Check if decoded target is a Cloudflare challenge — fetch directly to avoid breaking Turnstile
     const decodedUrl = decodeProxiedUrl(event.request.url);
 
+    // Bypass UV for Turnstile/challenge iframe and script requests
     if (decodedUrl) {
       try {
         const targetHost = new URL(decodedUrl).hostname;
-        if (BYPASS_HOSTNAMES.has(targetHost)) {
+        if (TURNSTILE_BYPASS_HOSTS.has(targetHost)) {
           return await fetch(decodedUrl, { mode: "cors", credentials: "omit" });
         }
       } catch {
