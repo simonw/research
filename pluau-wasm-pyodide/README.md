@@ -7,6 +7,8 @@
 
 An investigation of compiling [Luau](https://luau.org/) (the language used by [pluau](https://github.com/gluau/pluau)) to WebAssembly for use in browsers (with Pyodide) and in Python via wasmtime.
 
+Try the result here: https://simonw.github.io/research/pluau-wasm-pyodide/playground.html
+
 ## What This Is
 
 [Luau](https://github.com/luau-lang/luau) is a fast, small, safe scripting language derived from Lua, created by Roblox. [pluau](https://github.com/gluau/pluau) provides Python bindings via PyO3/Maturin.
