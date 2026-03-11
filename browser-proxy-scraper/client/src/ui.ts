@@ -64,18 +64,12 @@ async function runSelectedConnector(): Promise<void> {
   }
 
   let script: string;
-  if (selected === "custom") {
-    script = prompt("Paste your connector script:") || "";
-    if (!script) return;
-  } else {
-    // Fetch the connector script
-    try {
-      const resp = await fetch(selected);
-      script = await resp.text();
-    } catch (err) {
-      setStatus(`Failed to load connector: ${err}`, "error");
-      return;
-    }
+  try {
+    const resp = await fetch(selected);
+    script = await resp.text();
+  } catch (err) {
+    setStatus(`Failed to load connector: ${err}`, "error");
+    return;
   }
 
   connectorRunning = true;

@@ -1,51 +1,100 @@
-# Browser Proxy Scraper: E2EE In-Browser Web Scraper & Proxy
+# Browser Proxy Scraper
 
-A system where TLS terminates entirely inside the user's browser via WebAssembly (Epoxy/Rustls), while the backend acts as a blind TCP relay. The user visits our domain, browses target sites through an iframe-based proxy, and we intercept and extract API data (e.g., Instagram GraphQL) — **without the backend ever seeing plaintext traffic or session cookies**.
+An E2EE in-browser web scraper where TLS terminates entirely inside the browser via WebAssembly. The backend acts as a blind TCP relay — it never sees plaintext traffic, cookies, or session tokens. Users browse target sites through an iframe-based proxy, and the system intercepts and extracts API data (e.g., GraphQL responses) client-side.
+
+The primary transport uses **curl-impersonate compiled to WASM**, which produces a Chrome-matching TLS fingerprint (JA3/JA4) to bypass Cloudflare and similar bot detection. An epoxy-tls (Rustls) fallback is available when the WASM module fails to load.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  Browser                                                         │
-│                                                                  │
-│  ┌──────────┐    ┌──────────────┐    ┌──────────────────────┐   │
-│  │  Main     │    │  UV Service  │    │  Epoxy-TLS (WASM)    │   │
-│  │  Page     │───▶│  Worker      │───▶│  Rustls in browser   │   │
-│  │  + iframe │    │  + bare-mux  │    │  TLS terminates here │   │
-│  └──────────┘    └──────────────┘    └──────────┬───────────┘   │
-│                                                  │ encrypted     │
-└──────────────────────────────────────────────────┼───────────────┘
-                                                   │ WebSocket
-                                                   │ (Wisp protocol)
-┌──────────────────────────────────────────────────┼───────────────┐
-│  Relay Server                                    │               │
-│                                                  ▼               │
-│  ┌─────────────────┐    ┌────────────────────────────────────┐  │
-│  │  Wisp Server     │───▶│  Blind TCP relay                   │  │
-│  │  (wisp-js)       │    │  Only sees encrypted bytes         │  │
-│  └─────────────────┘    │  Optional: upstream SOCKS5/HTTP    │  │
-│                          └──────────────┬─────────────────────┘  │
-└─────────────────────────────────────────┼────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  Browser                                                            │
+│                                                                     │
+│  ┌───────────┐   ┌──────────────┐    ┌───────────────────────────┐  │
+│  │  Main     │   │  UV Service  │    │  curl-impersonate (WASM)  │  │
+│  │  Page     │──▶│  Worker      │───▶│  BoringSSL + Chrome TLS   │  │
+│  │  + iframe │   │  + bare-mux  │    │  TLS terminates here      │  │
+│  └───────────┘   └──────────────┘    └────────────┬──────────────┘  │
+│       │                                           │ encrypted       │
+│       │  ┌─────────────────────────────┐          │                 │
+│       └──│  Injected into proxied page │          │                 │
+│          │  • anti-detect.js           │          │                 │
+│          │  • puppet-agent.js          │          │                 │
+│          └─────────────────────────────┘          │                 │
+└───────────────────────────────────────────────────┼─────────────────┘
+                                                    │ WebSocket
+                                                    │ (Wisp protocol)
+┌───────────────────────────────────────────────────┼─────────────────┐
+│  Relay Server                                     │                 │
+│                                                   ▼                 │
+│  ┌─────────────────┐    ┌────────────────────────────────────────┐  │
+│  │  Wisp Server    │───▶│  Blind TCP relay                       │  │
+│  │  (wisp-js)      │    │  Only sees encrypted bytes             │  │
+│  └─────────────────┘    │  Optional: upstream SOCKS5/HTTP proxy  │  │
+│                         └───────────────┬────────────────────────┘  │
+└─────────────────────────────────────────┼───────────────────────────┘
                                           │ TCP
                                           ▼
                                    ┌──────────────┐
-                                   │  Target Site  │
-                                   │  (e.g., IG)   │
+                                   │  Target Site │
                                    └──────────────┘
 ```
 
-**Key property**: The relay server never terminates TLS. It only sees encrypted bytes passing through the WebSocket. All plaintext HTTP content exists only in the browser's memory.
+### Transport Fallback
 
-## Components
+| Priority | Transport | TLS Library | Fingerprint | Status |
+|----------|-----------|-------------|-------------|--------|
+| Primary | curl-impersonate WASM | BoringSSL (patched) | Chrome-matching JA3/JA4 | Working, serialized requests |
+| Fallback | epoxy-tls | Rustls | Non-browser (detectable) | Stable, blocked by Cloudflare |
 
-### Relay Server (`relay/`)
+## How It Works
 
-Node.js server with a single WebSocket endpoint (`/wisp/`) that implements the Wisp protocol for blind TCP relaying.
+### Boot Sequence
 
-- **wisp-js**: Handles the Wisp protocol (multiplexed TCP streams over WebSocket)
-- **Upstream proxy**: Optional SOCKS5 or HTTP CONNECT proxy for IP rotation
-- **Hostname whitelist**: Restrict which destinations can be reached
-- **Stream limits**: Cap concurrent TCP streams per connection
+1. Service Worker registers at root scope (`/`), pre-fetches `anti-detect.js` and `puppet-agent.js`
+2. Transport initializes: tries curl-impersonate WASM first, falls back to epoxy-tls if it fails
+3. User enters a URL → XOR-encoded → loaded in an iframe under the `/service/` prefix
+4. UV Service Worker intercepts all iframe requests and routes them through the active transport → Wisp WebSocket → relay → target
+
+### Origin Spoofing
+
+The SW rewrites outbound requests and inbound responses to convince target sites (and their captcha widgets) that the page is running on the target's own origin:
+
+- **`Sec-Fetch-Site` header**: Recomputed based on the decoded target URL and referer (same-origin/same-site/cross-site)
+- **`ancestorOrigins`**: All JS responses are AST-rewritten to replace `.ancestorOrigins` with `.fakeAncestorOrigins`, which returns a DOMStringList containing the target origin
+- **Referrer/location**: `anti-detect.js` patches `document.referrer` and `Location.prototype` to expose the target origin
+
+### Anti-Detect Fingerprinting
+
+`anti-detect.js` is injected into every proxied page before `</head>`. It patches:
+
+| Surface | What It Does |
+|---------|-------------|
+| `navigator.webdriver` | Removed (set to `undefined`) |
+| `navigator.plugins` | Replaced with 3 Chrome PDF plugins |
+| `navigator.userAgentData` | Synthesized with correct brands, `getHighEntropyValues()` support |
+| Canvas | Deterministic per-pixel noise (+/-1 RGB at 64px stride, session-seeded) |
+| WebGL | `UNMASKED_VENDOR/RENDERER` sanitized (headless/SwiftShader strings replaced) |
+| `window.chrome` | Stubbed `chrome.runtime`, `chrome.app`, `chrome.csi()`, `chrome.loadTimes()` |
+| Window metrics | `outerWidth`/`outerHeight` ensured larger than inner dimensions |
+| UV leaks | `__uv$config` deleted from proxied page scope |
+
+### Captcha Bypass
+
+Captcha vendor scripts (Turnstile, reCAPTCHA, hCaptcha) receive special treatment in the SW:
+
+- `.ancestorOrigins` access rewritten to the fake version
+- `window.top !== window.self` comparisons rewritten to `false` (so captcha scripts think they're top-level)
+- Vendor JS is fetched and served with these rewrites applied
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+
+- npm
+
+### Relay Server
 
 ```bash
 cd relay
@@ -56,20 +105,15 @@ npm run dev
 ```
 
 Environment variables:
-- `PORT` — Server port (default: 3000)
-- `UPSTREAM_PROXY` — SOCKS5 or HTTP proxy URL (e.g., `socks5://user:pass@proxy:1080`)
-- `ALLOWED_HOSTS` — Comma-separated hostname whitelist (empty = allow all)
-- `MAX_STREAMS` — Max concurrent streams (-1 = unlimited)
 
-### Client (`client/`)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `3000` | Server port |
+| `UPSTREAM_PROXY` | none | SOCKS5 or HTTP proxy URL (e.g., `socks5://user:pass@proxy:1080`) |
+| `ALLOWED_HOSTS` | all | Comma-separated hostname whitelist |
+| `MAX_STREAMS` | unlimited | Max concurrent Wisp streams |
 
-Vite-based frontend hosting an Ultraviolet Service Worker proxy with Epoxy-TLS transport.
-
-- **Ultraviolet**: Service Worker intercepts all proxied requests
-- **bare-mux**: Abstracts the transport layer (SharedWorker-based)
-- **epoxy-tls**: WASM TLS implementation using Rustls — encrypts/decrypts in browser
-- **Traffic interception**: SW hooks capture GraphQL responses via postMessage
-- **Puppet agent**: Injected script enables DOM automation in proxied pages
+### Client
 
 ```bash
 cd client
@@ -79,136 +123,168 @@ npm run dev
 # Proxies /wisp to relay server
 ```
 
-## How It Works
+The Vite dev server adds `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` headers (required for SharedArrayBuffer, which the WASM transport needs).
 
-1. **Service Worker registers** with root scope, loads Ultraviolet proxy engine
-2. **Transport initializes**: bare-mux connects to epoxy-tls WASM module, which opens a WebSocket to the relay's `/wisp/` endpoint
-3. **User enters URL** → XOR-encoded → loaded in iframe under `/service/` prefix
-4. **UV Service Worker** intercepts all iframe requests, routes them through bare-mux → epoxy-tls
-5. **Epoxy-TLS (WASM)** performs the actual TLS handshake with the target site — the relay only sees encrypted bytes
-6. **Response interception**: SW hooks match GraphQL-pattern URLs, clone responses, and postMessage parsed JSON to the parent page
-7. **Puppet agent** (optional): Injected script enables programmatic DOM interaction via postMessage commands
+### Building curl-impersonate WASM (optional)
+
+Pre-built artifacts are included. To rebuild from source:
+
+```bash
+cd client/curl-impersonate-wasm
+
+# Install Emscripten + build deps
+git clone https://github.com/emscripten-core/emsdk.git
+cd emsdk && ./emsdk install latest && ./emsdk activate latest && cd ..
+brew install cmake ninja autoconf automake libtool
+
+# Build
+chmod +x build.sh build-curl.sh link-wasm.sh
+./build.sh
+
+# Output: dist/curl-impersonate.js (94K) + dist/curl-impersonate.wasm (2.1M)
+```
 
 ## Connector Runner
 
-Site-specific scraping scripts (modeled after [vana-com/data-connectors](https://github.com/vana-com/data-connectors)):
+Site-specific scraping scripts modeled after [vana-com/data-connectors](https://github.com/vana-com/data-connectors). Select a connector from the dropdown and click "Run", or paste custom script code.
 
-- **`page` API**: `goto()`, `evaluate()`, `captureNetwork()`, `getCapturedResponse()`, `setData()`, `sleep()`
-- **Dynamic capture**: Register URL patterns at runtime, retrieve captured responses
-- **Built-in connector**: CodePen (`/connectors/codepen.js`) — captures GraphQL API responses
+### Page API
 
-Select a connector from the dropdown and click "Run", or paste custom script code.
+```js
+await page.goto('https://example.com');
+await page.evaluate('document.title');
+await page.captureNetwork({ urlPattern: '/graphql', key: 'gql' });
+await page.sleep(2000);
+const responses = await page.getCapturedResponse('gql');
+await page.setData(responses);
+```
 
-## Traffic Interception
+### Traffic Interception
 
-The Service Worker maintains a dynamic capture registry:
-- **Register**: `page.captureNetwork({ urlPattern: '/graphql', key: 'graphql' })`
-- **Retrieve**: `page.getCapturedResponse('graphql')` — returns array of matched responses
-- **Intercept all JSON**: Toggle checkbox to broadcast all JSON responses to the data panel
+The SW maintains a dynamic capture registry:
 
-Intercepted data appears in the right-side panel as parsed JSON.
+- **Register**: `page.captureNetwork({ urlPattern, key })` — regex pattern matching against decoded URLs
+- **Retrieve**: `page.getCapturedResponse(key)` — returns array of matched JSON responses
+- **Intercept all**: Toggle the "Intercept All JSON" checkbox to broadcast every JSON response to the data panel
 
 ## Puppet Agent
 
-DOM automation via postMessage bridge:
+DOM automation via postMessage bridge, injected into every proxied page:
 
 ```js
-// From browser console:
 puppet.sendCommand('query', { selector: 'h1' })
 puppet.sendCommand('click', { selector: '.btn-primary' })
 puppet.sendCommand('type', { selector: '#username', text: 'hello' })
 puppet.sendCommand('getPageInfo')
 puppet.sendCommand('queryAll', { selector: 'a', limit: 10 })
+puppet.sendCommand('evaluate', { code: 'document.title' })
 ```
 
-Or via the input field at the bottom: `query h1`, `click .btn`, `getPageInfo`, etc.
+Or via the input field: `query h1`, `click .btn`, `getPageInfo`, etc.
+
+## E2E Test Results (2026-03-11)
+
+Tested with Chrome 145 on macOS against live services.
+
+| Test | Result | Notes |
+|------|--------|-------|
+| Basic proxy (example.com) | **PASS** | Page renders, puppet agent active |
+| Fingerprint self-test | **5/7 PASS** | WebGL vendor/renderer not spoofed in test (now patched) |
+| TLS fingerprint (JA4) | **PASS** | `t13d1515h2_8daaf6152771_5d45727bf495` matches Chrome |
+| reCAPTCHA v2 | **PASS** | Widget renders with no domain errors |
+| hCaptcha | **PASS** | Auto-verified without showing a challenge |
+| Cloudflare Turnstile | **FAIL** | Widget loads but verification hangs |
+| CreepJS audit | **INFO** | 25-40% headless/stealth signals detected |
+
+## Security Model
+
+| Layer | What It Sees |
+|-------|-------------|
+| Browser page | Plaintext HTTP content (same-origin via SW) |
+| Service Worker | Decoded URLs, request/response bodies |
+| curl-impersonate WASM | Plaintext (performs TLS handshake with BoringSSL) |
+| WebSocket frames | Encrypted TLS records only |
+| Relay server | Encrypted bytes + destination host:port |
+| Network observer | WebSocket frames containing encrypted data |
+
+The relay knows *which* hosts the user connects to (from Wisp CONNECT packets) but never sees plaintext content, cookies, or auth tokens.
 
 ## Known Limitations
 
+### Cloudflare Turnstile
+
+The Turnstile widget renders and begins verification but never completes. Turnstile performs deeper environment checks (worker integrity, timing analysis, execution context) that detect the proxy. reCAPTCHA and hCaptcha work.
+
+### WebRTC IP Leak
+
+STUN connections bypass the proxy's TCP tunnel and expose the user's real public IP. Needs WebRTC disabling or ICE candidate routing through the proxy.
+
+### Worker Context Unpatched
+
+`anti-detect.js` only patches the main thread. Web Workers report real hardware info (e.g., real CPU architecture) which CreepJS and similar tools can detect.
+
+### WASM Request Serialization
+
+The Asyncify-enabled curl-impersonate WASM module is not re-entrant. All `wasmFetch()` calls are serialized through a queue, so parallel subresource loads are sequential. This affects page load speed but not correctness.
+
 ### Dependency Patches
 
-The `@mercuryworkshop/epoxy-transport` v3.0.1 has a headers iteration bug (uses `for...of` on plain objects) and the `@titaniumnetwork-dev/ultraviolet` v3.2.10 has a rawHeaders format mismatch with epoxy-transport. Both are fixed via `patch-package` (patches auto-applied on `npm install`).
+`@mercuryworkshop/epoxy-transport` v3.0.1 and `@titaniumnetwork-dev/ultraviolet` v3.2.10 have compatibility bugs fixed via `patch-package` (auto-applied on `npm install`):
 
-### TLS Fingerprinting
-
-Epoxy-TLS uses **Rustls**, which produces a static, non-browser JA3/JA4 TLS fingerprint. This is detectable by sophisticated anti-bot systems (Cloudflare, Instagram, etc.):
-
-- Rustls's TLS ClientHello differs from Chrome/Firefox
-- No way to customize cipher suites or extensions in current Rustls WASM build
-- uTLS (Go) can impersonate browser TLS but cannot compile to browser WASM (needs raw TCP sockets)
-
-**Impact**: Sites with TLS fingerprinting (Instagram, most Cloudflare-protected sites) will likely detect and block the proxy.
-
-**Possible upgrade path**: Server-side Go proxy using uTLS for Chrome TLS impersonation. This partially breaks the "blind relay" constraint but solves the fingerprinting problem.
+- epoxy-transport: Headers iteration bug (`for...of` on plain objects) + certificate validation option
+- ultraviolet: rawHeaders format mismatch with epoxy-transport
 
 ### COEP/COOP Headers
 
-The client requires `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` headers for SharedArrayBuffer support (used by epoxy WASM). This means:
-- The page cannot open popups to other origins
-- Third-party iframes need CORP headers to load
-
-### Service Worker Scope
-
-The SW must be registered at root scope (`/`) to intercept all `/service/*` requests. This means only one UV instance per origin.
-
-### Curl/Wisp Status
-
-The curl-impersonate transport is now materially further along than the original poll deadlock:
-
-- Chrome-116 impersonation is wired through the custom wrapper
-- the Wisp bridge now tracks close reasons, send credits, queued recv chunks, and waiters
-- the build overrides `__syscall_poll` directly, which is the poll import the final WASM actually uses
-- captcha vendor exceptions now cover:
-  - Cloudflare Turnstile
-  - Google reCAPTCHA
-  - hCaptcha
-
-Current limitation: the transport reaches socket connect, sends the TLS ClientHello, and receives server TLS records, but the request still does not complete reliably. In practice the proxied iframe can remain blank and longer runs can still trap in WASM with `unreachable` / `function signature mismatch`. That means captcha vendor bypass support is implemented in the service worker, but full captcha usability still depends on resolving the remaining post-connect curl/WASM runtime issue.
+SharedArrayBuffer support requires `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`. This means no cross-origin popups and third-party iframes need CORP headers.
 
 ## File Structure
 
 ```
 browser-proxy-scraper/
-├── notes.md                          # Investigation journal
-├── README.md                         # This file
-├── relay/                            # Blind Wisp relay server
+├── README.md
+├── notes.md                              # Investigation journal
+├── docs/
+│   ├── captcha-fingerprint-bypass.md     # Captcha & fingerprint analysis
+│   ├── curl-impersonate-wasm.md          # WASM build notes
+│   └── e2e-test-notes.md                 # Detailed test logs
+├── relay/                                # Blind Wisp relay server
 │   ├── package.json
 │   ├── tsconfig.json
+│   ├── .env.example
 │   └── src/
-│       ├── index.ts                  # HTTP server + WS upgrade
-│       ├── wisp-server.ts            # Wraps wisp-js with config
-│       ├── upstream-proxy.ts         # SOCKS5/HTTP upstream + ProxiedTCPSocket
-│       └── config.ts                 # Env-based configuration
-└── client/                           # Browser frontend
+│       ├── index.ts                      # HTTP server + WS upgrade
+│       ├── wisp-server.ts                # Wisp protocol handler
+│       ├── upstream-proxy.ts             # SOCKS5/HTTP upstream + auth
+│       └── config.ts                     # Env-based configuration
+└── client/                               # Browser frontend
     ├── package.json
-    ├── vite.config.ts                # Static copy + COEP/COOP + UV config override
+    ├── vite.config.ts                    # Static copy + COEP/COOP + dev proxy
     ├── tsconfig.json
-    ├── index.html                    # Main page with URL input, iframe, data panel
-    ├── patches/                      # patch-package fixes for dependency bugs
+    ├── index.html
+    ├── patches/                          # patch-package fixes
+    ├── curl-impersonate-wasm/            # WASM build workspace
+    │   ├── build.sh                      # Full build script
+    │   ├── build-curl.sh                 # curl-only build
+    │   ├── link-wasm.sh                  # Final WASM linking
+    │   ├── dist/                         # Built artifacts (.js + .wasm)
+    │   └── src/
+    │       ├── socket_shim.c             # POSIX socket → Wisp bridge
+    │       ├── wisp-socket-bridge.js     # Wisp WebSocket transport
+    │       └── curl-wasm-fetch.js        # fetch()-like API wrapper
     ├── public/
-    │   ├── sw.js                     # Custom SW: UV + capture registry + puppet injection
-    │   ├── puppet-agent.js           # DOM automation agent (injected into proxied pages)
+    │   ├── sw.js                         # SW: UV + origin spoof + captcha bypass + injection
+    │   ├── anti-detect.js                # Fingerprint patches (navigator, canvas, WebGL, etc.)
+    │   ├── puppet-agent.js               # DOM automation agent
+    │   ├── fingerprint-self-test.html    # Local fingerprint verification page
     │   └── connectors/
-    │       └── codepen.js            # CodePen GraphQL capture connector
+    │       └── codepen.js                # CodePen GraphQL capture connector
     └── src/
-        ├── main.ts                   # Bootstrap: SW → transport → UI
-        ├── transport.ts              # bare-mux + epoxy initialization
-        ├── ui.ts                     # URL input → XOR encode → iframe navigation + connector UI
-        ├── connector-runner.ts       # Executes connector scripts with page API
-        ├── page-api.ts               # Vana-compatible page API (goto, evaluate, captureNetwork)
-        ├── data-panel.ts             # Renders intercepted API data
-        └── puppet.ts                 # Puppet command bridge to iframe
+        ├── main.ts                       # Bootstrap: SW → transport → UI
+        ├── transport.ts                  # curl-impersonate primary, epoxy fallback
+        ├── ui.ts                         # URL input → XOR encode → iframe navigation
+        ├── connector-runner.ts           # Executes connector scripts with page API
+        ├── page-api.ts                   # Vana-compatible page API
+        ├── data-panel.ts                 # Renders intercepted API data
+        └── puppet.ts                     # Puppet command bridge to iframe
 ```
-
-## Security Model
-
-| Layer | What it sees |
-|-------|-------------|
-| Browser page | Plaintext HTTP content (same-origin via SW) |
-| Service Worker | Decoded URLs, request/response bodies |
-| Epoxy-TLS WASM | Plaintext (performs TLS handshake) |
-| WebSocket frames | Encrypted TLS records only |
-| Relay server | Encrypted bytes + destination host:port |
-| Network observer | WebSocket frames containing encrypted data |
-
-The relay knows *which* hosts the user connects to (from Wisp CONNECT packets) but never sees the plaintext content, cookies, or authentication tokens.
