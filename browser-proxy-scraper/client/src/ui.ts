@@ -128,6 +128,13 @@ export function setupUI(): void {
     runSelectedConnector();
   });
 
+  // Enable intercept-all-json by default
+  interceptAllCheckbox.checked = true;
+  const sw = navigator.serviceWorker.controller;
+  if (sw) {
+    sw.postMessage({ type: "SET_INTERCEPT_ALL_JSON", enabled: true });
+  }
+
   // Intercept all JSON toggle
   interceptAllCheckbox.addEventListener("change", () => {
     const sw = navigator.serviceWorker.controller;

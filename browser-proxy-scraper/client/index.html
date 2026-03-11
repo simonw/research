@@ -4,214 +4,436 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script src="/shared-worker-polyfill.js"></script>
-    <title>Browser Proxy Scraper</title>
+    <title>Embrowse</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <style>
+      :root {
+        --bg: #111113;
+        --surface: #18181b;
+        --surface-raised: #1e1e22;
+        --border: #27272a;
+        --border-subtle: #1f1f23;
+        --text: #e4e4e7;
+        --text-muted: #71717a;
+        --accent: #d97706;
+        --accent-hover: #f59e0b;
+        --success: #22c55e;
+        --error: #ef4444;
+        --url-color: #93c5fd;
+        --font: "JetBrains Mono", ui-monospace, "Cascadia Code", "Fira Code", monospace;
+      }
+
       * { margin: 0; padding: 0; box-sizing: border-box; }
+
       body {
-        font-family: system-ui, -apple-system, sans-serif;
-        background: #0f0f0f;
-        color: #e0e0e0;
+        font-family: var(--font);
+        background: var(--bg);
+        color: var(--text);
         height: 100vh;
-        display: flex;
-        flex-direction: column;
-      }
-      header {
-        padding: 12px 16px;
-        background: #1a1a1a;
-        border-bottom: 1px solid #333;
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        flex-wrap: wrap;
-      }
-      #url-input {
-        flex: 1;
-        min-width: 200px;
-        padding: 8px 12px;
-        background: #2a2a2a;
-        border: 1px solid #444;
-        border-radius: 6px;
-        color: #fff;
-        font-size: 14px;
-        outline: none;
-      }
-      #url-input:focus { border-color: #666; }
-      #url-input:disabled { opacity: 0.5; }
-      .btn {
-        padding: 8px 16px;
-        color: #fff;
-        border: none;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 13px;
-        white-space: nowrap;
-      }
-      .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-      .btn-primary { background: #3b82f6; }
-      .btn-primary:hover:not(:disabled) { background: #2563eb; }
-      .btn-green { background: #22c55e; }
-      .btn-green:hover:not(:disabled) { background: #16a34a; }
-      .btn-red { background: #ef4444; }
-      .btn-red:hover:not(:disabled) { background: #dc2626; }
-      .btn-outline {
-        background: transparent;
-        border: 1px solid #444;
-        color: #ccc;
-      }
-      .btn-outline:hover:not(:disabled) { border-color: #666; color: #fff; }
-      select {
-        padding: 8px 12px;
-        background: #2a2a2a;
-        border: 1px solid #444;
-        border-radius: 6px;
-        color: #fff;
-        font-size: 13px;
-        outline: none;
-      }
-      .toolbar {
-        padding: 4px 16px 4px;
-        background: #1a1a1a;
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        font-size: 12px;
-      }
-      .toolbar label {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        color: #888;
-        cursor: pointer;
-      }
-      .toolbar label:hover { color: #ccc; }
-      #status {
-        padding: 4px 12px;
-        font-size: 12px;
-        color: #888;
-      }
-      #status.ready { color: #22c55e; }
-      #status.error { color: #ef4444; }
-      .main-area {
-        flex: 1;
         display: flex;
         overflow: hidden;
       }
-      #proxy-frame {
-        flex: 1;
-        border: none;
-        background: #fff;
+
+      /* --- Layout --- */
+      .layout {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        gap: 0;
       }
-      #data-panel {
-        width: 400px;
-        background: #1a1a1a;
-        border-left: 1px solid #333;
-        overflow-y: auto;
+
+      .browser-pane {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        min-width: 0;
+      }
+
+      .side-panel {
+        width: 360px;
+        flex-shrink: 0;
+        background: var(--surface);
+        border-left: 1px solid var(--border);
         display: flex;
         flex-direction: column;
+        overflow: hidden;
       }
-      #data-panel h3 {
-        padding: 8px 12px;
-        font-size: 13px;
-        border-bottom: 1px solid #333;
-        position: sticky;
-        top: 0;
-        background: #1a1a1a;
+
+      /* --- Browser Window Chrome --- */
+      .browser-window {
+        width: 100%;
+        height: 100%;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        background: var(--surface);
+      }
+
+      .title-bar {
+        height: 36px;
+        background: var(--surface-raised);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        padding: 0 12px;
+        gap: 10px;
+        flex-shrink: 0;
+      }
+
+      .traffic-lights {
+        display: flex;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+
+      .traffic-lights span {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+      }
+
+      .dot-close { background: #3d3d3f; }
+      .dot-minimize { background: #3d3d3f; }
+      .dot-maximize { background: #3d3d3f; }
+
+      .address-bar {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 0;
+        background: var(--bg);
+        border-radius: 6px;
+        border: 1px solid var(--border-subtle);
+        overflow: hidden;
+        min-width: 0;
+      }
+
+      #url-input {
+        flex: 1;
+        min-width: 0;
+        padding: 4px 10px;
+        background: transparent;
+        border: none;
+        color: var(--url-color);
+        font-family: var(--font);
+        font-size: 11px;
+        outline: none;
+      }
+
+      #url-input::placeholder {
+        color: var(--text-muted);
+      }
+
+      #url-input:disabled { opacity: 0.4; }
+
+      #go-btn {
+        flex-shrink: 0;
+        padding: 4px 10px;
+        background: transparent;
+        border: none;
+        border-left: 1px solid var(--border-subtle);
+        color: var(--text-muted);
+        font-family: var(--font);
+        font-size: 12px;
+        cursor: pointer;
+        transition: color 0.15s ease;
+      }
+
+      #go-btn:hover:not(:disabled) {
+        color: var(--accent);
+      }
+
+      #go-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+      .frame-container {
+        flex: 1;
+        overflow: hidden;
+      }
+
+      #proxy-frame {
+        width: 100%;
+        height: 100%;
+        border: none;
+        background: #fff;
+        display: block;
+      }
+
+      /* --- Side Panel --- */
+      .panel-controls {
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        flex-shrink: 0;
+      }
+
+      .controls-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      #connector-select {
+        flex: 1;
+        min-width: 0;
+        padding: 6px 8px;
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text);
+        font-family: var(--font);
+        font-size: 11px;
+        outline: none;
+        cursor: pointer;
+        transition: border-color 0.15s ease;
+        appearance: none;
+        -webkit-appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2371717a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 8px center;
+        padding-right: 24px;
+      }
+
+      #connector-select:hover { border-color: var(--text-muted); }
+      #connector-select:disabled { opacity: 0.4; cursor: not-allowed; }
+
+      #run-btn {
+        flex-shrink: 0;
+        padding: 6px 14px;
+        background: var(--accent);
+        border: none;
+        border-radius: 4px;
+        color: #000;
+        font-family: var(--font);
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s ease;
+        letter-spacing: 0.02em;
+      }
+
+      #run-btn:hover:not(:disabled) {
+        background: var(--accent-hover);
+      }
+
+      #run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+      #status {
+        font-size: 11px;
+        color: var(--text-muted);
+        letter-spacing: 0.01em;
+      }
+
+      #status.ready { color: var(--success); }
+      #status.error { color: var(--error); }
+
+      /* Hidden checkbox — kept in DOM for JS */
+      #intercept-all-json {
+        display: none;
+      }
+
+      /* --- Data Panel --- */
+      .data-header {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
         display: flex;
         justify-content: space-between;
         align-items: center;
+        flex-shrink: 0;
       }
+
+      .data-header-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .data-title {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-muted);
+      }
+
+      #data-count {
+        font-size: 10px;
+        color: var(--text-muted);
+        font-weight: 400;
+      }
+
+      #clear-data-btn {
+        padding: 3px 10px;
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        color: var(--text-muted);
+        font-family: var(--font);
+        font-size: 10px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      #clear-data-btn:hover {
+        border-color: var(--text-muted);
+        color: var(--text);
+      }
+
+      #data-entries {
+        flex: 1;
+        overflow-y: auto;
+      }
+
       .data-entry {
-        padding: 8px 12px;
-        border-bottom: 1px solid #222;
-        font-size: 12px;
-        font-family: monospace;
+        padding: 10px 16px;
+        padding-left: 14px;
+        border-bottom: 1px solid var(--border-subtle);
+        border-left: 2px solid var(--accent);
+        font-size: 11px;
+        margin-left: 0;
       }
+
       .data-entry .url {
-        color: #60a5fa;
+        color: var(--url-color);
         word-break: break-all;
-        margin-bottom: 4px;
-      }
-      .data-entry .time { color: #666; font-size: 11px; }
-      .data-entry pre {
-        margin-top: 4px;
-        max-height: 200px;
-        overflow: auto;
-        background: #0f0f0f;
-        padding: 6px;
-        border-radius: 4px;
-        white-space: pre-wrap;
-        word-break: break-all;
+        margin-bottom: 3px;
         font-size: 11px;
       }
-      .data-entry .data-key {
-        color: #fbbf24;
-        font-weight: bold;
-        margin-bottom: 4px;
+
+      .data-entry .time {
+        color: var(--text-muted);
+        font-size: 10px;
       }
-      #puppet-panel {
-        padding: 8px 12px;
-        border-top: 1px solid #333;
-        background: #1a1a1a;
-      }
-      #puppet-input {
-        width: 100%;
-        padding: 6px 8px;
-        background: #2a2a2a;
-        border: 1px solid #444;
+
+      .data-entry pre {
+        margin-top: 6px;
+        max-height: 200px;
+        overflow: auto;
+        background: var(--bg);
+        padding: 8px;
         border-radius: 4px;
-        color: #fff;
-        font-family: monospace;
-        font-size: 12px;
+        border: 1px solid var(--border-subtle);
+        white-space: pre-wrap;
+        word-break: break-all;
+        font-size: 10px;
+        color: var(--text-muted);
+        font-family: var(--font);
+      }
+
+      .data-entry .data-key {
+        color: var(--accent);
+        font-weight: 600;
+        margin-bottom: 3px;
+      }
+
+      /* Scrollbar */
+      #data-entries::-webkit-scrollbar {
+        width: 4px;
+      }
+
+      #data-entries::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      #data-entries::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 2px;
+      }
+
+      /* --- Responsive --- */
+      @media (max-width: 768px) {
+        body {
+          overflow: auto;
+        }
+
+        .layout {
+          flex-direction: column;
+          height: auto;
+          min-height: 100vh;
+        }
+
+        .browser-pane {
+          padding: 12px;
+          height: 60vh;
+          min-height: 400px;
+          flex: none;
+        }
+
+        .side-panel {
+          width: 100%;
+          border-left: none;
+          border-top: 1px solid var(--border);
+          flex: 1;
+          min-height: 300px;
+        }
       }
     </style>
   </head>
   <body>
-    <header>
-      <input
-        type="text"
-        id="url-input"
-        placeholder="Enter URL (e.g., https://example.com)"
-        disabled
-      />
-      <button id="go-btn" class="btn btn-primary" disabled>Go</button>
-      <select id="connector-select" disabled>
-        <option value="">-- Connector --</option>
-        <option value="/connectors/codepen.js">CodePen</option>
-        <option value="/connectors/httpbin.js">httpbin.org</option>
-        <option value="/connectors/turnstile-demo.js">Turnstile Demo</option>
-        <option value="/connectors/recaptcha-demo.js">reCAPTCHA Demo</option>
-        <option value="/connectors/hcaptcha-demo.js">hCaptcha Demo</option>
-        <option value="/connectors/instagram-login.js">Instagram Login</option>
-        <option value="/connectors/google-login.js">Google Login</option>
-        <option value="/connectors/creepjs.js">CreepJS Fingerprint</option>
-      </select>
-      <button id="run-btn" class="btn btn-green" disabled>Run</button>
-    </header>
-    <div class="toolbar">
-      <label>
+    <div class="layout">
+      <div class="browser-pane">
+        <div class="browser-window">
+          <div class="title-bar">
+            <div class="traffic-lights">
+              <span class="dot-close"></span>
+              <span class="dot-minimize"></span>
+              <span class="dot-maximize"></span>
+            </div>
+            <div class="address-bar">
+              <input
+                type="text"
+                id="url-input"
+                placeholder="Enter URL..."
+                disabled
+              />
+              <button id="go-btn" disabled>&rarr;</button>
+            </div>
+          </div>
+          <div class="frame-container">
+            <iframe id="proxy-frame"></iframe>
+          </div>
+        </div>
+      </div>
+
+      <div class="side-panel">
+        <div class="panel-controls">
+          <div class="controls-row">
+            <select id="connector-select" disabled>
+              <option value="">Connector</option>
+              <option value="/connectors/codepen.js">CodePen</option>
+              <option value="/connectors/httpbin.js">httpbin.org</option>
+              <option value="/connectors/turnstile-demo.js">Turnstile Demo</option>
+              <option value="/connectors/recaptcha-demo.js">reCAPTCHA Demo</option>
+              <option value="/connectors/hcaptcha-demo.js">hCaptcha Demo</option>
+              <option value="/connectors/instagram-login.js">Instagram Login</option>
+              <option value="/connectors/google-login.js">Google Login</option>
+              <option value="/connectors/creepjs.js">CreepJS Fingerprint</option>
+            </select>
+            <button id="run-btn" disabled>Run</button>
+          </div>
+          <div id="status">Initializing...</div>
+        </div>
+
         <input type="checkbox" id="intercept-all-json" />
-        Intercept all JSON
-      </label>
-    </div>
-    <div id="status">Initializing...</div>
-    <div class="main-area">
-      <iframe id="proxy-frame"></iframe>
-      <div id="data-panel">
-        <h3>
-          Intercepted Data <span id="data-count">(0)</span>
-          <button id="clear-data-btn" class="btn btn-outline" style="padding: 2px 8px; font-size: 11px;">Clear</button>
-        </h3>
+
+        <div class="data-header">
+          <div class="data-header-left">
+            <span class="data-title">Captured Traffic</span>
+            <span id="data-count">(0)</span>
+          </div>
+          <button id="clear-data-btn">Clear</button>
+        </div>
         <div id="data-entries"></div>
       </div>
     </div>
-    <div id="puppet-panel">
-      <input
-        type="text"
-        id="puppet-input"
-        placeholder="Puppet command: query h1 | click .btn | type #input Hello"
-        disabled
-      />
-    </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

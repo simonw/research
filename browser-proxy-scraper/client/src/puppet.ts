@@ -1,4 +1,4 @@
-const puppetInput = document.getElementById("puppet-input") as HTMLInputElement;
+const puppetInput = document.getElementById("puppet-input") as HTMLInputElement | null;
 const proxyFrame = document.getElementById("proxy-frame") as HTMLIFrameElement;
 
 type PuppetCommand = "query" | "queryAll" | "click" | "type" | "scroll" | "getPageInfo" | "evaluate";
@@ -76,26 +76,30 @@ export function setupPuppet(): void {
 
     if (event.data?.type === "PUPPET_READY") {
       console.log("[puppet] Agent ready in proxied page");
-      puppetInput.disabled = false;
-      puppetInput.placeholder = "Puppet ready — try: query h1 | click .btn | getPageInfo";
+      if (puppetInput) {
+        puppetInput.disabled = false;
+        puppetInput.placeholder = "Puppet ready — try: query h1 | click .btn | getPageInfo";
+      }
     }
   });
 
-  puppetInput.addEventListener("keydown", async (e) => {
-    if (e.key !== "Enter") return;
-    const input = puppetInput.value.trim();
-    if (!input) return;
+  if (puppetInput) {
+    puppetInput.addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter") return;
+      const input = puppetInput.value.trim();
+      if (!input) return;
 
-    const { command, args } = parseCommand(input);
-    console.log("[puppet] sending:", command, args);
+      const { command, args } = parseCommand(input);
+      console.log("[puppet] sending:", command, args);
 
-    try {
-      const result = await sendCommand(command, args);
-      console.log("[puppet] result:", result);
-    } catch (err) {
-      console.error("[puppet] error:", err);
-    }
-  });
+      try {
+        const result = await sendCommand(command, args);
+        console.log("[puppet] result:", result);
+      } catch (err) {
+        console.error("[puppet] error:", err);
+      }
+    });
+  }
 
   // Expose sendCommand globally for console access
   (window as unknown as Record<string, unknown>).puppet = { sendCommand };
