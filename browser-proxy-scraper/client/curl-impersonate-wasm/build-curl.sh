@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE="/Users/kahtaf/Documents/workspace_kahtaf/research/browser-proxy-scraper/client/curl-impersonate-wasm"
+BASE="$(cd "$(dirname "$0")" && pwd)"
 export EMSDK_QUIET=1
 source "$BASE/emsdk/emsdk_env.sh"
 

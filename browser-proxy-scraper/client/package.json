@@ -7,7 +7,8 @@
     "postinstall": "patch-package",
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:wasm": "cd curl-impersonate-wasm && ./build.sh"
   },
   "dependencies": {
     "@mercuryworkshop/bare-mux": "^2.1.8",

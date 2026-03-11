@@ -227,41 +227,27 @@ function createCurlTransport(
 /**
  * Initialize the transport layer.
  *
- * Tries curl-impersonate WASM first (Chrome TLS fingerprint via setRemoteTransport).
- * Falls back to epoxy-transport (Rustls) if WASM loading fails.
+ * Uses curl-impersonate WASM (Chrome TLS fingerprint via setRemoteTransport).
+ * Throws if WASM loading fails — no silent fallback to epoxy.
  */
 export async function initTransport(): Promise<void> {
   const wispUrl = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/wisp/`;
 
   connection = new BareMuxConnection("/bare-mux/worker.js");
 
-  // Try curl-impersonate WASM first (Chrome TLS fingerprint)
-  try {
-    const modulePath = "/curl-impersonate/curl-wasm-fetch.js";
-    const curlWasm = await import(/* @vite-ignore */ modulePath);
-    await curlWasm.initCurlWasm(wispUrl);
-    wasmFetchFn = curlWasm.wasmFetch;
-    console.log("[transport] curl-impersonate WASM loaded");
+  const modulePath = "/curl-impersonate/curl-wasm-fetch.js";
+  const curlWasm = await import(/* @vite-ignore */ modulePath);
+  await curlWasm.initCurlWasm(wispUrl);
+  wasmFetchFn = curlWasm.wasmFetch;
+  console.log("[transport] curl-impersonate WASM loaded");
 
-    // Create a BareTransport adapter and register it via setRemoteTransport
-    // This bridges the SharedWorker ↔ main page via MessageChannel
-    const transport = createCurlTransport(curlWasm.wasmFetch, wispUrl);
-    await connection.setRemoteTransport(transport, "curl-impersonate");
-    console.log(
-      "[transport] registered curl-impersonate as bare-mux transport (Chrome TLS fingerprint)",
-    );
-  } catch (e) {
-    console.warn(
-      "[transport] curl-impersonate WASM not available, falling back to epoxy:",
-      e,
-    );
-    wasmFetchFn = null;
-    // Fall back to epoxy-transport (Rustls TLS fingerprint)
-    await connection.setTransport("/epoxy/index.mjs", [
-      { wisp: wispUrl, disable_certificate_validation: true },
-    ]);
-    console.log("[transport] bare-mux/epoxy initialized (fallback)");
-  }
+  // Create a BareTransport adapter and register it via setRemoteTransport
+  // This bridges the SharedWorker ↔ main page via MessageChannel
+  const transport = createCurlTransport(curlWasm.wasmFetch, wispUrl);
+  await connection.setRemoteTransport(transport, "curl-impersonate");
+  console.log(
+    "[transport] registered curl-impersonate as bare-mux transport (Chrome TLS fingerprint)",
+  );
 }
 
 export function getConnection(): BareMuxConnection | null {

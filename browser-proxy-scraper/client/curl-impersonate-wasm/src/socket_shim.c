@@ -106,8 +106,9 @@ struct shim_addrinfo {
     struct shim_addrinfo *ai_next;
 };
 
-/* getaddrinfo: resolve hostname to a fake IP, store the mapping */
-int getaddrinfo(const char *node, const char *service,
+/* getaddrinfo: resolve hostname to a fake IP, store the mapping.
+ * Must use --wrap=getaddrinfo so this overrides Emscripten's SOCKFS version. */
+int __wrap_getaddrinfo(const char *node, const char *service,
                 const struct shim_addrinfo *hints,
                 struct shim_addrinfo **res) {
     if (!node || !res) return -1;
@@ -145,7 +146,7 @@ int getaddrinfo(const char *node, const char *service,
     return 0;
 }
 
-void freeaddrinfo(struct shim_addrinfo *res) {
+void __wrap_freeaddrinfo(struct shim_addrinfo *res) {
     while (res) {
         struct shim_addrinfo *next = res->ai_next;
         free(res->ai_addr);
@@ -155,7 +156,7 @@ void freeaddrinfo(struct shim_addrinfo *res) {
     }
 }
 
-const char *gai_strerror(int errcode) {
+const char *__wrap_gai_strerror(int errcode) {
     return "getaddrinfo error";
 }
 

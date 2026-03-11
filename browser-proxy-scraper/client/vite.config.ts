@@ -105,6 +105,7 @@ export default defineConfig({
     uvConfigPlugin(),
   ],
   server: {
+    host: true,
     port: 5173,
     watch: {
       ignored: ["**/curl-impersonate-wasm/emsdk/**", "**/curl-impersonate-wasm/build/**", "**/curl-impersonate-wasm/curl-impersonate-src/**"],

@@ -51,7 +51,15 @@ build_brotli() {
     -DCMAKE_INSTALL_LIBDIR=lib \
     ..
 
-  emmake make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu) install
+  cmake --build . -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+
+  # Brotli's CMakeLists skips install() when BROTLI_EMSCRIPTEN is detected,
+  # so we manually copy the static libraries and headers.
+  mkdir -p "$brotli_install/lib" "$brotli_install/include"
+  cp -f libbrotlidec-static.a "$brotli_install/lib/"
+  cp -f libbrotlienc-static.a "$brotli_install/lib/"
+  cp -f libbrotlicommon-static.a "$brotli_install/lib/"
+  cp -Rf "$brotli_dir/c/include/brotli" "$brotli_install/include/"
   echo "Brotli built successfully."
 }
 
@@ -156,7 +164,7 @@ build_curl() {
   local nghttp2_install="$BUILD_DIR/nghttp2-installed"
   local brotli_install="$BUILD_DIR/brotli-installed"
 
-  if [ -f "$curl_install/lib/libcurl.a" ]; then
+  if [ -f "$curl_install/lib/libcurl-impersonate-chrome.a" ]; then
     echo "curl already built, skipping."
     return
   fi
@@ -206,6 +214,7 @@ build_curl() {
     --disable-docs \
     --disable-ntlm \
     --disable-unix-sockets \
+    --disable-threaded-resolver \
     --without-librtmp \
     --without-libidn2 \
     --without-libpsl \
@@ -230,29 +239,61 @@ link_wasm() {
   local nghttp2_install="$BUILD_DIR/nghttp2-installed"
   local brotli_install="$BUILD_DIR/brotli-installed"
 
+  echo "=== Compiling socket shim ==="
+  emcc -O2 -c "$SCRIPT_DIR/src/socket_shim.c" \
+    -I"$curl_install/include" \
+    -o "$BUILD_DIR/socket_shim.o"
+
+  echo "=== Compiling curl wrappers ==="
+  emcc -O2 -c "$SCRIPT_DIR/src/curl_wrappers.c" \
+    -I"$curl_install/include" \
+    -o "$BUILD_DIR/curl_wrappers.o"
+
+  echo "=== Linking final WASM binary ==="
   emcc \
     -O2 \
-    "$curl_install/lib/libcurl.a" \
+    "$BUILD_DIR/socket_shim.o" \
+    "$BUILD_DIR/curl_wrappers.o" \
+    "$curl_install/lib/libcurl-impersonate-chrome.a" \
     "$bssl_build/lib/libssl.a" \
     "$bssl_build/lib/libcrypto.a" \
     "$nghttp2_install/lib/libnghttp2.a" \
     "$brotli_install/lib/libbrotlidec-static.a" \
     "$brotli_install/lib/libbrotlicommon-static.a" \
+    -I"$curl_install/include" \
     --js-library "$SCRIPT_DIR/src/wisp-socket-bridge.js" \
     -s MODULARIZE=1 \
+    -s EXPORT_ES6=1 \
     -s EXPORT_NAME="CurlImpersonate" \
-    -s EXPORTED_FUNCTIONS='["_curl_easy_init","_curl_easy_setopt","_curl_easy_perform","_curl_easy_cleanup","_curl_easy_getinfo","_curl_easy_strerror","_curl_slist_append","_curl_slist_free_all","_curl_global_init","_curl_global_cleanup","_malloc","_free"]' \
-    -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","UTF8ToString","stringToUTF8","allocateUTF8","writeArrayToMemory","HEAPU8","getValue","setValue"]' \
+    -s EXPORTED_FUNCTIONS='["_curl_easy_init","_curl_easy_setopt","_curl_easy_perform","_curl_easy_cleanup","_curl_easy_getinfo","_curl_easy_strerror","_curl_impersonate_chrome116","_curl_slist_append","_curl_slist_free_all","_curl_global_init","_curl_global_cleanup","_curl_setopt_string","_curl_setopt_long","_curl_setopt_ptr","_curl_setopt_cb","_curl_getinfo_long","_malloc","_free"]' \
+    -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","UTF8ToString","stringToUTF8","stringToNewUTF8","writeArrayToMemory","HEAPU8","getValue","setValue","addFunction","removeFunction"]' \
     -s ASYNCIFY \
-    -s 'ASYNCIFY_IMPORTS=["wispSocketConnect","wispSocketSend","wispSocketRecv","wispSocketClose"]' \
+    -s 'ASYNCIFY_IMPORTS=["wispSocketSend","wispSocketRecv","wispSocketClose","wispSocketWaitForData","poll","__syscall_poll"]' \
+    -s ASYNCIFY_STACK_SIZE=65536 \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s INITIAL_MEMORY=16777216 \
     -s TOTAL_STACK=1048576 \
     -s ENVIRONMENT=web,worker \
     -s NO_EXIT_RUNTIME=1 \
-    -s FILESYSTEM=0 \
-    -s SOCKET_WEBAPI=0 \
-    -s NO_FILESYSTEM=1 \
+    -s ALLOW_TABLE_GROWTH=1 \
+    -s ERROR_ON_UNDEFINED_SYMBOLS=0 \
+    -Wl,--wrap=socket \
+    -Wl,--wrap=connect \
+    -Wl,--wrap=send \
+    -Wl,--wrap=recv \
+    -Wl,--wrap=write \
+    -Wl,--wrap=read \
+    -Wl,--wrap=close \
+    -Wl,--wrap=fcntl \
+    -Wl,--wrap=ioctl \
+    -Wl,--wrap=select \
+    -Wl,--wrap=getsockopt \
+    -Wl,--wrap=setsockopt \
+    -Wl,--wrap=getpeername \
+    -Wl,--wrap=getsockname \
+    -Wl,--wrap=getaddrinfo \
+    -Wl,--wrap=freeaddrinfo \
+    -Wl,--wrap=gai_strerror \
     -o "$DIST_DIR/curl-impersonate.js"
 
   echo "=== Build complete ==="

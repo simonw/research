@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE="/Users/kahtaf/Documents/workspace_kahtaf/research/browser-proxy-scraper/client/curl-impersonate-wasm"
+BASE="$(cd "$(dirname "$0")" && pwd)"
 export EMSDK_QUIET=1
 source "$BASE/emsdk/emsdk_env.sh"
 
@@ -66,6 +66,9 @@ emcc \
   -Wl,--wrap=setsockopt \
   -Wl,--wrap=getpeername \
   -Wl,--wrap=getsockname \
+  -Wl,--wrap=getaddrinfo \
+  -Wl,--wrap=freeaddrinfo \
+  -Wl,--wrap=gai_strerror \
   -o "$DIST_DIR/curl-impersonate.js"
 
 echo "=== Build complete ==="
