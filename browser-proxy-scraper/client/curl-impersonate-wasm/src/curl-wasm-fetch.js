@@ -8,11 +8,16 @@
  */
 
 let Module = null;
-let curlEasyInit, curlEasySetopt, curlEasyPerform, curlEasyCleanup;
-let curlEasyGetinfo, curlEasyStrerror;
+
+// Non-variadic wrapper functions (avoid va_arg issues across JS→WASM boundary)
+let curlSetoptString, curlSetoptLong, curlSetoptPtr, curlSetoptCb;
+let curlGetinfoLong;
+
+// Standard curl functions (not variadic)
+let curlEasyInit, curlEasyPerform, curlEasyCleanup, curlEasyStrerror, curlImpersonateChrome116;
 let curlSlistAppend, curlSlistFreeAll;
 let curlGlobalInit, curlGlobalCleanup;
-let wispBridgeInit;
+let requestQueue = Promise.resolve();
 
 // curl option constants
 const CURLOPT_URL = 10002;
@@ -24,16 +29,26 @@ const CURLOPT_WRITEFUNCTION = 20011;
 const CURLOPT_HEADERFUNCTION = 20079;
 const CURLOPT_FOLLOWLOCATION = 52;
 const CURLOPT_MAXREDIRS = 68;
-const CURLOPT_HTTP_VERSION = 84;
 const CURLOPT_SSL_VERIFYPEER = 64;
 const CURLOPT_SSL_VERIFYHOST = 81;
 const CURLOPT_USERAGENT = 10018;
+const CURLOPT_NOSIGNAL = 99;
 
 // curl info constants
 const CURLINFO_RESPONSE_CODE = 0x200002;
 
-// curl HTTP version
-const CURL_HTTP_VERSION_2_0 = 3;
+function debugEnabled() {
+  return !!(
+    (typeof globalThis !== "undefined" && globalThis.__CURL_WASM_DEBUG) ||
+    (Module && Module.curlWasmDebug)
+  );
+}
+
+function debugLog(...args) {
+  if (debugEnabled()) {
+    console.log("[curl-wasm]", ...args);
+  }
+}
 
 /**
  * Initialize the curl-impersonate WASM module and connect to Wisp.
@@ -41,34 +56,49 @@ const CURL_HTTP_VERSION_2_0 = 3;
 export async function initCurlWasm(wispUrl) {
   if (Module) return;
 
-  // Load the Emscripten-generated ES module (built with EXPORT_ES6=1)
-  // Pass the Wisp URL via Module config so the socket bridge can auto-connect
   const { default: CurlImpersonate } = await import('./curl-impersonate.js');
   Module = await CurlImpersonate({ wispUrl });
+  Module.wispBridgeDebug = false;
+  Module.curlWasmDebug = false;
 
-  // Get function wrappers for exported C functions
+  // Non-variadic wrappers (safe for string/pointer options)
+  curlSetoptString = Module.cwrap('curl_setopt_string', 'number', ['number', 'number', 'number']);
+  curlSetoptLong = Module.cwrap('curl_setopt_long', 'number', ['number', 'number', 'number']);
+  curlSetoptPtr = Module.cwrap('curl_setopt_ptr', 'number', ['number', 'number', 'number']);
+  curlSetoptCb = Module.cwrap('curl_setopt_cb', 'number', ['number', 'number', 'number']);
+  curlGetinfoLong = Module.cwrap('curl_getinfo_long', 'number', ['number', 'number', 'number']);
+
+  // Standard curl functions
   curlGlobalInit = Module.cwrap('curl_global_init', 'number', ['number']);
   curlGlobalCleanup = Module.cwrap('curl_global_cleanup', null, []);
   curlEasyInit = Module.cwrap('curl_easy_init', 'number', []);
-  curlEasySetopt = Module.cwrap('curl_easy_setopt', 'number', ['number', 'number', 'number']);
-  curlEasyPerform = Module.cwrap('curl_easy_perform', 'number', ['number']);
+  curlEasyPerform = Module.cwrap('curl_easy_perform', 'number', ['number'], { async: true });
   curlEasyCleanup = Module.cwrap('curl_easy_cleanup', null, ['number']);
-  curlEasyGetinfo = Module.cwrap('curl_easy_getinfo', 'number', ['number', 'number', 'number']);
   curlEasyStrerror = Module.cwrap('curl_easy_strerror', 'string', ['number']);
+  curlImpersonateChrome116 = Module.cwrap('curl_impersonate_chrome116', 'number', ['number']);
   curlSlistAppend = Module.cwrap('curl_slist_append', 'number', ['number', 'number']);
   curlSlistFreeAll = Module.cwrap('curl_slist_free_all', null, ['number']);
 
-  // Initialize libcurl
   curlGlobalInit(0); // CURL_GLOBAL_DEFAULT
 
-  console.log('[curl-wasm] Initialized with Wisp URL:', wispUrl);
+  // Pre-connect the Wisp WebSocket (plain JS Promise, no Asyncify)
+  // This ensures the WebSocket is ready before any curl requests
+  await Module.wispBridgeInit(wispUrl);
+
+  debugLog('Initialized with Wisp URL:', wispUrl);
 }
 
 /**
  * fetch()-like function using curl-impersonate WASM.
  * Returns a Response-like object with status, headers, body, text(), json(), arrayBuffer().
  */
-export async function wasmFetch(url, options = {}) {
+function enqueueRequest(task) {
+  const run = requestQueue.catch(() => {}).then(task);
+  requestQueue = run.catch(() => {});
+  return run;
+}
+
+async function wasmFetchImpl(url, options = {}) {
   if (!Module) throw new Error('curl-wasm not initialized. Call initCurlWasm() first.');
 
   const method = (options.method || 'GET').toUpperCase();
@@ -78,62 +108,96 @@ export async function wasmFetch(url, options = {}) {
   const handle = curlEasyInit();
   if (!handle) throw new Error('curl_easy_init failed');
 
+  let urlPtr = 0;
+  let bodyPtr = 0;
+  let slist = 0;
+  let writeCallback = 0;
+  let headerCallback = 0;
+  let statusPtr = 0;
+
   try {
-    // Set URL
-    const urlPtr = Module.stringToNewUTF8(url);
-    curlEasySetopt(handle, CURLOPT_URL, urlPtr);
+    debugLog('request start', { url, method });
 
-    // Force HTTP/2
-    curlEasySetopt(handle, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
+    // Impersonate Chrome 116 TLS fingerprint (sets HTTP version, ciphers, extensions, etc.)
+    // Uses C wrapper that skips CURLOPT_SSL_CERT_COMPRESSION (causes WASM indirect call crash)
+    curlImpersonateChrome116(handle);
 
-    // Follow redirects (up to 10)
-    curlEasySetopt(handle, CURLOPT_FOLLOWLOCATION, 1);
-    curlEasySetopt(handle, CURLOPT_MAXREDIRS, 10);
+    // Set URL (string option — uses non-variadic wrapper)
+    urlPtr = Module.stringToNewUTF8(url);
+    curlSetoptString(handle, CURLOPT_URL, urlPtr);
 
-    // Set method
+    // Enable libcurl verbose output only during local debugging.
+    curlSetoptLong(handle, 41, debugEnabled() ? 1 : 0); // CURLOPT_VERBOSE = 41
+
+    // Disable SSL verification — no CA store in WASM environment
+    // TODO: implement CURLOPT_CAINFO_BLOB with embedded CA bundle for production
+    curlSetoptLong(handle, CURLOPT_SSL_VERIFYPEER, 0);
+    curlSetoptLong(handle, CURLOPT_SSL_VERIFYHOST, 0);
+    // Disable libcurl signal/alarm timeouts. In the Emscripten build these go
+    // through _setitimer_js -> _emscripten_timeout and can trigger callback ABI
+    // mismatches during Asyncify rewind.
+    curlSetoptLong(handle, CURLOPT_NOSIGNAL, 1);
+
+    // Redirect handling
+    if (options.redirect === 'manual') {
+      curlSetoptLong(handle, CURLOPT_FOLLOWLOCATION, 0);
+    } else {
+      curlSetoptLong(handle, CURLOPT_FOLLOWLOCATION, 1);
+      curlSetoptLong(handle, CURLOPT_MAXREDIRS, 10);
+    }
+
+    // Set method (string option)
     if (method !== 'GET') {
       const methodPtr = Module.stringToNewUTF8(method);
-      curlEasySetopt(handle, CURLOPT_CUSTOMREQUEST, methodPtr);
+      curlSetoptString(handle, CURLOPT_CUSTOMREQUEST, methodPtr);
       Module._free(methodPtr);
     }
 
-    // Set headers
-    let slist = 0;
+    // Set headers (pointer option)
     const headerEntries = headers instanceof Headers
       ? Array.from(headers.entries())
       : Object.entries(headers);
 
-    for (const [key, value] of headerEntries) {
+    const targetOrigin = globalThis.__TARGET_ORIGIN__;
+
+    for (let [key, value] of headerEntries) {
+      if (targetOrigin) {
+        const lowerKey = key.toLowerCase();
+        if (lowerKey === 'origin') value = targetOrigin;
+        if (lowerKey === 'referer' && typeof value === 'string' && value.includes(location.origin)) {
+          value = targetOrigin + '/';
+        }
+      }
       const headerStr = Module.stringToNewUTF8(`${key}: ${value}`);
       slist = curlSlistAppend(slist, headerStr);
       Module._free(headerStr);
     }
     if (slist) {
-      curlEasySetopt(handle, CURLOPT_HTTPHEADER, slist);
+      curlSetoptPtr(handle, CURLOPT_HTTPHEADER, slist);
     }
 
-    // Set request body
-    let bodyPtr = 0;
+    // Set request body (string + long options)
     if (body) {
       const bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
       bodyPtr = Module.stringToNewUTF8(bodyStr);
-      curlEasySetopt(handle, CURLOPT_POSTFIELDS, bodyPtr);
-      curlEasySetopt(handle, CURLOPT_POSTFIELDSIZE, bodyStr.length);
+      curlSetoptString(handle, CURLOPT_POSTFIELDS, bodyPtr);
+      curlSetoptLong(handle, CURLOPT_POSTFIELDSIZE, bodyStr.length);
     }
 
-    // Set up write callback to collect response body
+    // Write callback to collect response body (callback/function pointer option)
     const responseChunks = [];
-    const writeCallback = Module.addFunction(function(ptr, size, nmemb, userdata) {
+    writeCallback = Module.addFunction(function(ptr, size, nmemb, userdata) {
       const totalSize = size * nmemb;
       const chunk = new Uint8Array(Module.HEAPU8.buffer, ptr, totalSize);
-      responseChunks.push(new Uint8Array(chunk)); // Copy
+      responseChunks.push(new Uint8Array(chunk));
+      debugLog('write callback', { chunkBytes: totalSize, chunks: responseChunks.length });
       return totalSize;
     }, 'iiiii');
-    curlEasySetopt(handle, CURLOPT_WRITEFUNCTION, writeCallback);
+    curlSetoptCb(handle, CURLOPT_WRITEFUNCTION, writeCallback);
 
-    // Set up header callback to collect response headers
+    // Header callback to collect response headers
     const responseHeaders = [];
-    const headerCallback = Module.addFunction(function(ptr, size, nmemb, userdata) {
+    headerCallback = Module.addFunction(function(ptr, size, nmemb, userdata) {
       const totalSize = size * nmemb;
       const line = Module.UTF8ToString(ptr, totalSize).trim();
       if (line.includes(':')) {
@@ -143,23 +207,26 @@ export async function wasmFetch(url, options = {}) {
           line.slice(colonIdx + 1).trim()
         ]);
       }
+      debugLog('header callback', { line });
       return totalSize;
     }, 'iiiii');
-    curlEasySetopt(handle, CURLOPT_HEADERFUNCTION, headerCallback);
+    curlSetoptCb(handle, CURLOPT_HEADERFUNCTION, headerCallback);
 
-    // Perform the request (Asyncify suspends until complete)
-    const result = curlEasyPerform(handle);
+    // Perform the request (Asyncify suspends WASM until socket I/O completes)
+    debugLog('curl_easy_perform start', { url, method });
+    const result = await curlEasyPerform(handle);
+    debugLog('curl_easy_perform end', { url, method, result });
 
     if (result !== 0) {
       const errMsg = curlEasyStrerror(result);
       throw new Error(`curl_easy_perform failed (${result}): ${errMsg}`);
     }
 
-    // Get response status code
-    const statusPtr = Module._malloc(4);
-    curlEasyGetinfo(handle, CURLINFO_RESPONSE_CODE, statusPtr);
+    // Get response status code (via non-variadic wrapper)
+    statusPtr = Module._malloc(4);
+    curlGetinfoLong(handle, CURLINFO_RESPONSE_CODE, statusPtr);
     const status = Module.getValue(statusPtr, 'i32');
-    Module._free(statusPtr);
+    debugLog('status info', { status, headerCount: responseHeaders.length });
 
     // Build response body
     const totalLen = responseChunks.reduce((sum, c) => sum + c.length, 0);
@@ -169,13 +236,7 @@ export async function wasmFetch(url, options = {}) {
       bodyArray.set(chunk, offset);
       offset += chunk.length;
     }
-
-    // Clean up
-    Module._free(urlPtr);
-    if (bodyPtr) Module._free(bodyPtr);
-    if (slist) curlSlistFreeAll(slist);
-    Module.removeFunction(writeCallback);
-    Module.removeFunction(headerCallback);
+    debugLog('response assembled', { status, bodyBytes: totalLen, headerCount: responseHeaders.length });
 
     // Build Response-like object
     const headersObj = new Headers(responseHeaders);
@@ -204,6 +265,17 @@ export async function wasmFetch(url, options = {}) {
       },
     };
   } finally {
+    // Tear down the easy handle before freeing resources it still references.
     curlEasyCleanup(handle);
+    if (statusPtr) Module._free(statusPtr);
+    if (urlPtr) Module._free(urlPtr);
+    if (bodyPtr) Module._free(bodyPtr);
+    if (slist) curlSlistFreeAll(slist);
+    if (writeCallback) Module.removeFunction(writeCallback);
+    if (headerCallback) Module.removeFunction(headerCallback);
   }
+}
+
+export async function wasmFetch(url, options = {}) {
+  return enqueueRequest(() => wasmFetchImpl(url, options));
 }

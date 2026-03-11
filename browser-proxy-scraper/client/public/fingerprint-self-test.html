@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fingerprint Self Test</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b1118;
+        --panel: rgba(20, 28, 39, 0.92);
+        --border: rgba(148, 163, 184, 0.22);
+        --text: #e5edf5;
+        --muted: #96a7ba;
+        --accent: #6ee7b7;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        background:
+          radial-gradient(circle at top, rgba(110, 231, 183, 0.12), transparent 35%),
+          radial-gradient(circle at right, rgba(96, 165, 250, 0.12), transparent 30%),
+          var(--bg);
+        color: var(--text);
+      }
+
+      main {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 32px 20px 48px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+      }
+
+      p {
+        margin: 0 0 24px;
+        color: var(--muted);
+        max-width: 780px;
+        line-height: 1.5;
+      }
+
+      .grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 16px;
+        min-height: 220px;
+        backdrop-filter: blur(12px);
+      }
+
+      .panel h2 {
+        margin: 0 0 12px;
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--accent);
+      }
+
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .status {
+        margin-bottom: 16px;
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Fingerprint Self Test</h1>
+      <p>
+        Captures a baseline fingerprint snapshot, loads <code>/anti-detect.js</code>,
+        then captures the patched snapshot so you can compare the high-signal values.
+      </p>
+      <div class="status" id="status">Collecting baseline…</div>
+      <div class="grid">
+        <section class="panel">
+          <h2>Baseline</h2>
+          <pre id="baseline"></pre>
+        </section>
+        <section class="panel">
+          <h2>Patched</h2>
+          <pre id="patched"></pre>
+        </section>
+        <section class="panel">
+          <h2>Diff Summary</h2>
+          <pre id="summary"></pre>
+        </section>
+      </div>
+    </main>
+    <script>
+      async function digestString(input) {
+        const bytes = new TextEncoder().encode(input);
+        const hash = await crypto.subtle.digest("SHA-256", bytes);
+        return Array.from(new Uint8Array(hash))
+          .map((byte) => byte.toString(16).padStart(2, "0"))
+          .join("");
+      }
+
+      function getCanvasSignature() {
+        const canvas = document.createElement("canvas");
+        canvas.width = 280;
+        canvas.height = 80;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#141c27";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#6ee7b7";
+        ctx.font = "20px sans-serif";
+        ctx.fillText("browser-proxy-scraper", 12, 32);
+        ctx.fillStyle = "#60a5fa";
+        ctx.fillRect(14, 44, 90, 22);
+        ctx.beginPath();
+        ctx.arc(180, 40, 24, 0, Math.PI * 2);
+        ctx.strokeStyle = "#f8fafc";
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        return {
+          dataUrl: canvas.toDataURL(),
+          imageDataHead: Array.from(ctx.getImageData(0, 0, 8, 8).data.slice(0, 32)),
+        };
+      }
+
+      function getWebglSignature() {
+        const canvas = document.createElement("canvas");
+        const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+        if (!gl) {
+          return { supported: false };
+        }
+        const debugInfo = gl.getExtension("WEBGL_debug_renderer_info");
+        return {
+          supported: true,
+          vendor: debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR),
+          renderer: debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
+          maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+          maxViewportDims: Array.from(gl.getParameter(gl.MAX_VIEWPORT_DIMS)),
+        };
+      }
+
+      async function getUaDataSnapshot() {
+        if (!navigator.userAgentData) return null;
+        const hints = [
+          "architecture",
+          "bitness",
+          "brands",
+          "fullVersionList",
+          "mobile",
+          "model",
+          "platform",
+          "platformVersion",
+          "uaFullVersion",
+          "wow64",
+        ];
+        try {
+          return await navigator.userAgentData.getHighEntropyValues(hints);
+        } catch (error) {
+          return { error: String(error) };
+        }
+      }
+
+      async function collectSnapshot() {
+        const canvas = getCanvasSignature();
+        return {
+          navigator: {
+            userAgent: navigator.userAgent,
+            appVersion: navigator.appVersion,
+            vendor: navigator.vendor,
+            platform: navigator.platform,
+            hardwareConcurrency: navigator.hardwareConcurrency,
+            deviceMemory: navigator.deviceMemory,
+            maxTouchPoints: navigator.maxTouchPoints,
+            languages: navigator.languages,
+            webdriver: navigator.webdriver,
+            pdfViewerEnabled: navigator.pdfViewerEnabled,
+            pluginsLength: navigator.plugins.length,
+            mimeTypesLength: navigator.mimeTypes.length,
+          },
+          uaData: await getUaDataSnapshot(),
+          canvas: {
+            hash: await digestString(canvas.dataUrl),
+            imageDataHead: canvas.imageDataHead,
+          },
+          webgl: getWebglSignature(),
+          metrics: {
+            innerWidth: window.innerWidth,
+            innerHeight: window.innerHeight,
+            outerWidth: window.outerWidth,
+            outerHeight: window.outerHeight,
+          },
+        };
+      }
+
+      function render(id, value) {
+        document.getElementById(id).textContent = JSON.stringify(value, null, 2);
+      }
+
+      function summarizeDiff(before, after) {
+        return {
+          webdriverChanged: before.navigator.webdriver !== after.navigator.webdriver,
+          pluginsChanged: before.navigator.pluginsLength !== after.navigator.pluginsLength,
+          canvasHashChanged: before.canvas.hash !== after.canvas.hash,
+          canvasHashStableWithinPatchedSnapshot: after.canvas.hash === after.canvas.hash,
+          webglVendorChanged: before.webgl.vendor !== after.webgl.vendor,
+          webglRendererChanged: before.webgl.renderer !== after.webgl.renderer,
+          uaChanged: before.navigator.userAgent !== after.navigator.userAgent,
+          outerMetricsChanged:
+            before.metrics.outerWidth !== after.metrics.outerWidth ||
+            before.metrics.outerHeight !== after.metrics.outerHeight,
+        };
+      }
+
+      async function loadScript(src) {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = src;
+          script.onload = resolve;
+          script.onerror = reject;
+          document.head.appendChild(script);
+        });
+      }
+
+      async function main() {
+        const baseline = await collectSnapshot();
+        render("baseline", baseline);
+        document.getElementById("status").textContent = "Loading anti-detect.js…";
+
+        await loadScript("/anti-detect.js");
+
+        document.getElementById("status").textContent = "Collecting patched snapshot…";
+        const patched = await collectSnapshot();
+        const summary = summarizeDiff(baseline, patched);
+
+        window.__fingerprintSelfTest = { baseline, patched, summary };
+
+        render("patched", patched);
+        render("summary", summary);
+        document.getElementById("status").textContent = "Done.";
+      }
+
+      main().catch((error) => {
+        document.getElementById("status").textContent = "Failed: " + String(error);
+      });
+    </script>
+  </body>
+</html>

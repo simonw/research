@@ -6,6 +6,29 @@ importScripts(__uv$config.sw || "/uv/uv.sw.js");
 
 const uv = new UVServiceWorker();
 
+// Rewrite Sec-Fetch-Site via UV's request event so target servers see correct origin relationship
+uv.on("request", (event) => {
+  const url = event.data.url;
+  const referer = event.data.headers.referer;
+  if (url && referer) {
+    try {
+      const target = new URL(url);
+      const ref = new URL(referer);
+      if (target.origin === ref.origin) {
+        event.data.headers["sec-fetch-site"] = "same-origin";
+      } else {
+        const tParts = target.hostname.split(".");
+        const rParts = ref.hostname.split(".");
+        const tReg = tParts.length >= 2 ? tParts.slice(-2).join(".") : target.hostname;
+        const rReg = rParts.length >= 2 ? rParts.slice(-2).join(".") : ref.hostname;
+        event.data.headers["sec-fetch-site"] = tReg === rReg ? "same-site" : "cross-site";
+      }
+    } catch {}
+  } else if (url) {
+    event.data.headers["sec-fetch-site"] = "none";
+  }
+});
+
 // Take control immediately so navigator.serviceWorker.controller is available
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
@@ -187,7 +210,7 @@ let PUPPET_SCRIPT_TAG = '';
   }
 })();
 
-async function injectScripts(response, destination) {
+async function injectScripts(response, destination, decodedUrl) {
   // Only inject into document/iframe HTML responses
   if (!["document", "iframe"].includes(destination)) return response;
 
@@ -197,11 +220,16 @@ async function injectScripts(response, destination) {
   try {
     let html = await response.text();
 
-    // Fix Turnstile: inject direct (un-proxied) script tags for Turnstile API
-    html = fixTurnstileInHtml(html);
-
-    // Inject anti-detect first (runs before puppet-agent), then puppet-agent
-    const injectedScripts = ANTI_DETECT_SCRIPT_TAG + PUPPET_SCRIPT_TAG;
+    // Pass the decoded target origin so anti-detect.js can spoof location correctly
+    // Use a distinct name to avoid colliding with UV's own __uv$location
+    let originHint = '';
+    if (decodedUrl) {
+      try {
+        const targetOrigin = new URL(decodedUrl).origin;
+        originHint = '<script>window.__antiDetectTarget={origin:' + JSON.stringify(targetOrigin) + ',href:' + JSON.stringify(decodedUrl) + '};<\/script>';
+      } catch {}
+    }
+    const injectedScripts = originHint + ANTI_DETECT_SCRIPT_TAG + PUPPET_SCRIPT_TAG;
     let modified;
     const headClose = html.indexOf("</head>");
     if (headClose !== -1) {
@@ -225,56 +253,96 @@ async function injectScripts(response, destination) {
   }
 }
 
-// --- Turnstile / Cloudflare challenge bypass ---
-// Turnstile requires its scripts and iframes to load from the real origin.
-// We bypass UV for challenges.cloudflare.com requests (script/iframe loads)
-// and rewrite HTML to load the Turnstile API script directly (un-proxied).
-const TURNSTILE_BYPASS_HOSTS = new Set([
-  "challenges.cloudflare.com",
-  "turnstile.cloudflare.com",
-]);
+// --- Captcha vendor bypass ---
+const CAPTCHA_VENDORS = [
+  {
+    name: "turnstile",
+    hosts: [
+      "challenges.cloudflare.com",
+      "turnstile.cloudflare.com",
+    ],
+    scriptPatterns: [
+      /https:\/\/challenges\.cloudflare\.com\/turnstile\/v0\/api\.js[^"'\s>]*/g,
+    ],
+  },
+  {
+    name: "recaptcha",
+    hosts: [
+      "www.google.com",
+      "www.recaptcha.net",
+      "www.gstatic.com",
+    ],
+    scriptPatterns: [
+      /https:\/\/www\.google\.com\/recaptcha\/api\.js[^"'\s>]*/g,
+      /https:\/\/www\.google\.com\/recaptcha\/enterprise\.js[^"'\s>]*/g,
+      /https:\/\/www\.recaptcha\.net\/recaptcha\/api\.js[^"'\s>]*/g,
+      /https:\/\/www\.recaptcha\.net\/recaptcha\/enterprise\.js[^"'\s>]*/g,
+    ],
+  },
+  {
+    name: "hcaptcha",
+    hosts: [
+      "js.hcaptcha.com",
+      "hcaptcha.com",
+      "newassets.hcaptcha.com",
+      "assets.hcaptcha.com",
+      "imgs.hcaptcha.com",
+    ],
+    scriptPatterns: [
+      /https:\/\/js\.hcaptcha\.com\/1\/api\.js[^"'\s>]*/g,
+      /https:\/\/hcaptcha\.com\/1\/api\.js[^"'\s>]*/g,
+    ],
+  },
+];
 
-// Turnstile API script pattern — needs to be loaded un-proxied in HTML
-const TURNSTILE_SCRIPT_RE = /https:\/\/challenges\.cloudflare\.com\/turnstile\/v0\/api\.js[^"']*/g;
+function hostMatches(hostname, candidates) {
+  const host = hostname.toLowerCase();
+  return candidates.some((candidate) => host === candidate || host.endsWith(`.${candidate}`));
+}
 
-/**
- * Rewrite HTML to load Turnstile scripts directly (not through UV proxy).
- * UV would rewrite the script src to go through the proxy, breaking origin checks.
- * We inject the real script URL as a separate <script> tag and remove the proxied version.
- */
-function fixTurnstileInHtml(html) {
-  // Find all turnstile script URLs referenced in the HTML
-  const turnstileUrls = html.match(TURNSTILE_SCRIPT_RE);
-  if (!turnstileUrls) return html;
-
-  // Add direct (un-proxied) Turnstile script tags before </head>
-  const directScripts = [...new Set(turnstileUrls)]
-    .map(url => `<script src="${url}" async defer></script>`)
-    .join('');
-
-  const headClose = html.indexOf('</head>');
-  if (headClose !== -1) {
-    html = html.slice(0, headClose) + directScripts + html.slice(headClose);
+function isCaptchaScript(decodedUrl) {
+  if (!decodedUrl) return false;
+  try {
+    const url = new URL(decodedUrl);
+    return CAPTCHA_VENDORS.some(v => hostMatches(url.hostname, v.hosts));
+  } catch {
+    return false;
   }
-  return html;
+}
+
+async function sandboxCaptchaScript(response, decodedUrl) {
+  const contentType = response.headers.get("content-type") || "";
+  // Wait for JS files to be parsed
+  if (!contentType.includes("javascript") && !contentType.includes("application/x-javascript") && !decodedUrl.endsWith(".js")) {
+    return response;
+  }
+
+  try {
+    let js = await response.text();
+    
+    // Protect against the ancestorOrigins DOM read
+    js = js.replace(/\.ancestorOrigins/g, ".fakeAncestorOrigins");
+    
+    // Protect against strictly checking if it's in an iframe
+    js = js.replace(/window\.top\s*!==\s*window(?:\.self)?/g, "false");
+    js = js.replace(/window\.top\s*!=\s*window(?:\.self)?/g, "false");
+    js = js.replace(/window\.top\s*===\s*window(?:\.self)?/g, "true");
+    js = js.replace(/window\.top\s*==\s*window(?:\.self)?/g, "true");
+
+    return new Response(js, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  } catch (e) {
+    return response;
+  }
 }
 
 // --- Fetch handler with interception ---
 async function handleRequest(event) {
   if (uv.route(event)) {
     const decodedUrl = decodeProxiedUrl(event.request.url);
-
-    // Bypass UV for Turnstile/challenge iframe and script requests
-    if (decodedUrl) {
-      try {
-        const targetHost = new URL(decodedUrl).hostname;
-        if (TURNSTILE_BYPASS_HOSTS.has(targetHost)) {
-          return await fetch(decodedUrl, { mode: "cors", credentials: "omit" });
-        }
-      } catch {
-        // Invalid URL, continue with UV
-      }
-    }
 
     let response = await uv.fetch(event);
 
@@ -289,10 +357,31 @@ async function handleRequest(event) {
       if (interceptAllJson) {
         broadcastJsonResponse(decodedUrl, response.clone());
       }
+
+      // Captcha script sandboxing
+      if (isCaptchaScript(decodedUrl)) {
+         response = await sandboxCaptchaScript(response, decodedUrl);
+      }
+
+      // Universal ancestorOrigins rewrite for all non-captcha JS responses
+      if (!isCaptchaScript(decodedUrl)) {
+        const ct = response.headers.get("content-type") || "";
+        if (ct.includes("javascript") || ct.includes("application/x-javascript") || decodedUrl.endsWith(".js")) {
+          try {
+            let js = await response.text();
+            js = js.replace(/\.ancestorOrigins/g, ".fakeAncestorOrigins");
+            response = new Response(js, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers,
+            });
+          } catch {}
+        }
+      }
     }
 
     // Inject anti-detect + puppet-agent into HTML responses
-    response = await injectScripts(response, event.request.destination);
+    response = await injectScripts(response, event.request.destination, decodedUrl);
 
     return response;
   }

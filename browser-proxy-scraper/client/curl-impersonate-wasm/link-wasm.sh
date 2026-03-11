@@ -18,11 +18,17 @@ emcc -O2 -c "$BASE/src/socket_shim.c" \
   -I"$BASE/build/curl-installed/include" \
   -o "$BASE/build/socket_shim.o"
 
+echo "=== Compiling curl wrappers ==="
+emcc -O2 -c "$BASE/src/curl_wrappers.c" \
+  -I"$BASE/build/curl-installed/include" \
+  -o "$BASE/build/curl_wrappers.o"
+
 echo "=== Linking final WASM module ==="
 
 emcc \
   -O2 \
   "$BASE/build/socket_shim.o" \
+  "$BASE/build/curl_wrappers.o" \
   "$CURL_LIB" \
   "$BSSL_DIR/lib/libssl.a" \
   "$BSSL_DIR/lib/libcrypto.a" \
@@ -34,10 +40,11 @@ emcc \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \
   -s EXPORT_NAME="CurlImpersonate" \
-  -s EXPORTED_FUNCTIONS='["_curl_easy_init","_curl_easy_setopt","_curl_easy_perform","_curl_easy_cleanup","_curl_easy_getinfo","_curl_easy_strerror","_curl_slist_append","_curl_slist_free_all","_curl_global_init","_curl_global_cleanup","_malloc","_free"]' \
+  -s EXPORTED_FUNCTIONS='["_curl_easy_init","_curl_easy_setopt","_curl_easy_perform","_curl_easy_cleanup","_curl_easy_getinfo","_curl_easy_strerror","_curl_impersonate_chrome116","_curl_slist_append","_curl_slist_free_all","_curl_global_init","_curl_global_cleanup","_curl_setopt_string","_curl_setopt_long","_curl_setopt_ptr","_curl_setopt_cb","_curl_getinfo_long","_malloc","_free"]' \
   -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","UTF8ToString","stringToUTF8","stringToNewUTF8","writeArrayToMemory","HEAPU8","getValue","setValue","addFunction","removeFunction"]' \
   -s ASYNCIFY \
-  -s 'ASYNCIFY_IMPORTS=["wispSocketConnect","wispSocketSend","wispSocketRecv","wispSocketClose","wispBridgeInit"]' \
+  -s 'ASYNCIFY_IMPORTS=["wispSocketSend","wispSocketRecv","wispSocketClose","wispSocketWaitForData","poll","__syscall_poll"]' \
+  -s ASYNCIFY_STACK_SIZE=65536 \
   -s ALLOW_MEMORY_GROWTH=1 \
   -s INITIAL_MEMORY=16777216 \
   -s TOTAL_STACK=1048576 \
@@ -45,11 +52,20 @@ emcc \
   -s NO_EXIT_RUNTIME=1 \
   -s ALLOW_TABLE_GROWTH=1 \
   -s ERROR_ON_UNDEFINED_SYMBOLS=0 \
+  -Wl,--wrap=socket \
+  -Wl,--wrap=connect \
+  -Wl,--wrap=send \
+  -Wl,--wrap=recv \
   -Wl,--wrap=write \
   -Wl,--wrap=read \
   -Wl,--wrap=close \
   -Wl,--wrap=fcntl \
   -Wl,--wrap=ioctl \
+  -Wl,--wrap=select \
+  -Wl,--wrap=getsockopt \
+  -Wl,--wrap=setsockopt \
+  -Wl,--wrap=getpeername \
+  -Wl,--wrap=getsockname \
   -o "$DIST_DIR/curl-impersonate.js"
 
 echo "=== Build complete ==="

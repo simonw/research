@@ -151,6 +151,20 @@ The client requires `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-
 
 The SW must be registered at root scope (`/`) to intercept all `/service/*` requests. This means only one UV instance per origin.
 
+### Curl/Wisp Status
+
+The curl-impersonate transport is now materially further along than the original poll deadlock:
+
+- Chrome-116 impersonation is wired through the custom wrapper
+- the Wisp bridge now tracks close reasons, send credits, queued recv chunks, and waiters
+- the build overrides `__syscall_poll` directly, which is the poll import the final WASM actually uses
+- captcha vendor exceptions now cover:
+  - Cloudflare Turnstile
+  - Google reCAPTCHA
+  - hCaptcha
+
+Current limitation: the transport reaches socket connect, sends the TLS ClientHello, and receives server TLS records, but the request still does not complete reliably. In practice the proxied iframe can remain blank and longer runs can still trap in WASM with `unreachable` / `function signature mismatch`. That means captcha vendor bypass support is implemented in the service worker, but full captcha usability still depends on resolving the remaining post-connect curl/WASM runtime issue.
+
 ## File Structure
 
 ```

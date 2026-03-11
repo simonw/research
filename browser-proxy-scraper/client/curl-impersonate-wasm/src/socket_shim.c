@@ -18,6 +18,12 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <errno.h>
+#include <stdio.h>
+#include <arpa/inet.h>
+
+/* Non-blocking flag for fcntl */
+#define O_NONBLOCK 0x800
+static int fd_flags[512]; /* per-fd flags */
 
 /* Maximum tracked hostname mappings */
 #define MAX_HOST_ENTRIES 256
@@ -68,6 +74,16 @@ extern int wispSocketConnect(int fd, const char *host, int port);
 extern int wispSocketSend(int fd, const void *buf, int len);
 extern int wispSocketRecv(int fd, void *buf, int maxLen);
 extern int wispSocketClose(int fd);
+extern int wispSocketGetState(int fd);
+extern int wispSocketHasData(int fd);
+extern int wispSocketWaitForData(int fd, int timeoutMs);
+extern int wispSocketDebugEnabled(void);
+
+#define SHIM_LOG(fmt, ...) do { \
+    if (wispSocketDebugEnabled()) { \
+        emscripten_log(EM_LOG_CONSOLE, fmt, ##__VA_ARGS__); \
+    } \
+} while (0)
 
 /* ---- POSIX Socket API replacements ---- */
 
@@ -115,8 +131,8 @@ int getaddrinfo(const char *node, const char *service,
     }
 
     addr->sin_family = 2; /* AF_INET */
-    addr->sin_port = ((port >> 8) & 0xFF) | ((port & 0xFF) << 8); /* htons */
-    addr->sin_addr = fake_ip; /* Already in our format */
+    addr->sin_port = htons(port);
+    addr->sin_addr = htonl(fake_ip); /* Store in network byte order */
 
     info->ai_family = 2; /* AF_INET */
     info->ai_socktype = 1; /* SOCK_STREAM */
@@ -144,99 +160,165 @@ const char *gai_strerror(int errcode) {
 }
 
 /* socket: create a virtual fd via the JS bridge */
-int socket(int domain, int type, int protocol) {
-    return wispSocketCreate();
+int __wrap_socket(int domain, int type, int protocol) {
+    int fd = wispSocketCreate();
+    SHIM_LOG("[shim] socket(domain=%d type=%d proto=%d) = fd=%d", domain, type, protocol, fd);
+    return fd;
 }
 
-/* connect: look up the hostname from the fake IP and connect via Wisp */
-int connect(int fd, const void *addr, uint32_t addrlen) {
+/* connect: look up the hostname from the fake IP and send a Wisp CONNECT.
+ * For non-blocking sockets we still report EINPROGRESS so curl continues via
+ * poll()/getsockopt(SO_ERROR), but the later readiness/error state is driven
+ * by the bridge rather than a kernel TCP handshake. */
+int __wrap_connect(int fd, const void *addr, uint32_t addrlen) {
     const struct shim_sockaddr_in *sin = (const struct shim_sockaddr_in *)addr;
-    uint32_t fake_ip = sin->sin_addr;
+    SHIM_LOG("[shim] connect fd=%d addrlen=%d family=%d", fd, addrlen, sin->sin_family);
+    uint32_t fake_ip = ntohl(sin->sin_addr); /* Network → host byte order */
     uint16_t port_net = sin->sin_port;
-    int port = ((port_net >> 8) & 0xFF) | ((port_net & 0xFF) << 8); /* ntohs */
+    int port = ntohs(port_net);
 
     const char *hostname = lookup_hostname(fake_ip);
     if (!hostname) {
-        errno = 22; /* EINVAL */
+        SHIM_LOG("[shim] connect fd=%d NO HOSTNAME for ip=0x%x", fd, fake_ip);
+        errno = EINVAL;
         return -1;
     }
 
-    return wispSocketConnect(fd, hostname, port);
+    SHIM_LOG("[shim] connect fd=%d host=%s port=%d", fd, hostname, port);
+
+    /* Send Wisp CONNECT packet synchronously */
+    int result = wispSocketConnect(fd, hostname, port);
+    if (result < 0) {
+        SHIM_LOG("[shim] connect failed (ws not ready)");
+        errno = ECONNREFUSED;
+        return -1;
+    }
+
+    if (fd < 512 && (fd_flags[fd] & O_NONBLOCK)) {
+        errno = EINPROGRESS;
+        SHIM_LOG("[shim] connect returning EINPROGRESS for non-blocking fd=%d", fd);
+        return -1;
+    }
+
+    SHIM_LOG("[shim] connect returning 0 (CONNECT sent)");
+    return 0;
 }
 
 /* send: push bytes to the Wisp stream */
-int send(int fd, const void *buf, int len, int flags) {
-    return wispSocketSend(fd, buf, len);
+int __wrap_send(int fd, const void *buf, int len, int flags) {
+    SHIM_LOG("[shim] send fd=%d len=%d", fd, len);
+    if (fd >= 100) {
+        return wispSocketSend(fd, buf, len);
+    }
+    return len;
 }
 
-/* recv: pull bytes from the Wisp stream */
-int recv(int fd, void *buf, int len, int flags) {
-    return wispSocketRecv(fd, buf, len);
+/* recv: pull bytes from the Wisp stream.
+ * Virtual sockets stay non-blocking from curl's perspective. poll()/select()
+ * is the point where Asyncify may suspend, so recv()/read() should return
+ * EAGAIN when no bytes are queued yet. */
+int __wrap_recv(int fd, void *buf, int len, int flags) {
+    if (fd >= 100) {
+        int nonblock = (fd < 512) ? (fd_flags[fd] & O_NONBLOCK) : 0;
+        int hasData = wispSocketHasData(fd);
+        SHIM_LOG("[shim] recv fd=%d len=%d nonblock=%d hasData=%d", fd, len, nonblock, hasData);
+        if (nonblock && !hasData) {
+            errno = EAGAIN;
+            SHIM_LOG("[shim] recv fd=%d -> EAGAIN", fd);
+            return -1;
+        }
+        int result = wispSocketRecv(fd, buf, len);
+        if (result < 0) {
+            errno = (wispSocketGetState(fd) == 2) ? ECONNRESET : EAGAIN;
+        }
+        SHIM_LOG("[shim] recv fd=%d result=%d", fd, result);
+        return result;
+    }
+    return 0;
 }
 
 /* write: same as send for sockets */
 int __wrap_write(int fd, const void *buf, int len) {
     if (fd >= 100) { /* Our virtual fds start at 100 */
+        SHIM_LOG("[shim] write(socket) fd=%d len=%d", fd, len);
         return wispSocketSend(fd, buf, len);
     }
     /* Fall through to real write for stdout/stderr */
-    return len; /* Stub for non-socket fds */
+    extern int __real_write(int, const void *, int);
+    return __real_write(fd, buf, len);
 }
 
 /* read: same as recv for sockets */
 int __wrap_read(int fd, void *buf, int len) {
     if (fd >= 100) {
-        return wispSocketRecv(fd, buf, len);
+        int nonblock = (fd < 512) ? (fd_flags[fd] & O_NONBLOCK) : 0;
+        int hasData = wispSocketHasData(fd);
+        SHIM_LOG("[shim] read fd=%d len=%d nonblock=%d hasData=%d", fd, len, nonblock, hasData);
+        if (nonblock && !hasData) {
+            errno = EAGAIN;
+            SHIM_LOG("[shim] read fd=%d -> EAGAIN", fd);
+            return -1;
+        }
+        int result = wispSocketRecv(fd, buf, len);
+        if (result < 0) {
+            errno = (wispSocketGetState(fd) == 2) ? ECONNRESET : EAGAIN;
+        }
+        SHIM_LOG("[shim] read fd=%d result=%d", fd, result);
+        return result;
     }
     return 0;
 }
 
 /* close: close the Wisp stream */
 int __wrap_close(int fd) {
+    SHIM_LOG("[shim] close fd=%d", fd);
     if (fd >= 100) {
         return wispSocketClose(fd);
     }
     return 0;
 }
 
-/* poll: simplified - always report readable/writable for our fds */
-struct shim_pollfd {
-    int fd;
-    short events;
-    short revents;
-};
-
-int poll(struct shim_pollfd *fds, unsigned int nfds, int timeout) {
-    if (!fds) return -1;
-    int ready = 0;
-    for (unsigned int i = 0; i < nfds; i++) {
-        if (fds[i].fd >= 100) {
-            fds[i].revents = fds[i].events; /* Report all requested events as ready */
-            ready++;
-        } else {
-            fds[i].revents = 0;
-        }
-    }
-    return ready > 0 ? ready : 1;
-}
+/* poll: implemented entirely in JS (wisp-socket-bridge.js) as an Asyncify import.
+ * Removed --Wl,--wrap=poll; instead, poll is provided directly by --js-library.
+ * This ensures Asyncify properly instruments all callers (Curl_poll, etc.). */
 
 /* select: simplified stub */
-int select(int nfds, void *readfds, void *writefds, void *exceptfds, void *timeout) {
+int __wrap_select(int nfds, void *readfds, void *writefds, void *exceptfds, void *timeout) {
+    SHIM_LOG("[shim] select nfds=%d", nfds);
     return 1; /* Always ready */
 }
 
 /* setsockopt: no-op */
-int setsockopt(int fd, int level, int optname, const void *optval, uint32_t optlen) {
+int __wrap_setsockopt(int fd, int level, int optname, const void *optval, uint32_t optlen) {
+    SHIM_LOG("[shim] setsockopt fd=%d level=%d optname=%d", fd, level, optname);
     return 0;
 }
 
-/* getsockopt: no-op */
-int getsockopt(int fd, int level, int optname, void *optval, uint32_t *optlen) {
+/* getsockopt: query connection state for SO_ERROR */
+#define SOL_SOCKET 1
+#define SO_ERROR   4
+
+int __wrap_getsockopt(int fd, int level, int optname, void *optval, uint32_t *optlen) {
+    SHIM_LOG("[shim] getsockopt fd=%d level=%d optname=%d", fd, level, optname);
+    if (optval && optlen && *optlen >= 4) {
+        if (level == SOL_SOCKET && optname == SO_ERROR) {
+            int state = wispSocketGetState(fd);
+            int err = 0;
+            if (state == 2) err = ECONNREFUSED;
+            *(int *)optval = err;
+            *optlen = 4;
+            SHIM_LOG("[shim] getsockopt SO_ERROR fd=%d state=%d err=%d", fd, state, err);
+        } else {
+            /* Zero-fill for other options */
+            memset(optval, 0, *optlen > 256 ? 256 : *optlen);
+        }
+    }
     return 0;
 }
 
-/* getsockname / getpeername: return fake addr */
-int getsockname(int fd, void *addr, uint32_t *addrlen) {
+/* getsockname: return fake addr */
+int __wrap_getsockname(int fd, void *addr, uint32_t *addrlen) {
+    SHIM_LOG("[shim] getsockname fd=%d", fd);
     if (addr && addrlen && *addrlen >= sizeof(struct shim_sockaddr_in)) {
         struct shim_sockaddr_in *sin = (struct shim_sockaddr_in *)addr;
         memset(sin, 0, sizeof(*sin));
@@ -246,13 +328,38 @@ int getsockname(int fd, void *addr, uint32_t *addrlen) {
     return 0;
 }
 
-int getpeername(int fd, void *addr, uint32_t *addrlen) {
-    return getsockname(fd, addr, addrlen);
+/* getpeername: return fake addr in network byte order */
+int __wrap_getpeername(int fd, void *addr, uint32_t *addrlen) {
+    SHIM_LOG("[shim] getpeername fd=%d addr=%p addrlen=%p", fd, addr, addrlen);
+    if (addr && addrlen && *addrlen >= sizeof(struct shim_sockaddr_in)) {
+        struct shim_sockaddr_in *sin = (struct shim_sockaddr_in *)addr;
+        memset(sin, 0, sizeof(*sin));
+        sin->sin_family = 2; /* AF_INET */
+        sin->sin_addr = htonl(FAKE_IP_BASE); /* Network byte order */
+        sin->sin_port = htons(443);
+        *addrlen = sizeof(struct shim_sockaddr_in);
+    }
+    return 0;
 }
 
-/* fcntl: no-op for non-blocking etc */
+/* fcntl: track non-blocking flag per fd */
+#include <stdarg.h>
+#define F_GETFL 3
+#define F_SETFL 4
 int __wrap_fcntl(int fd, int cmd, ...) {
-    return 0;
+    va_list ap;
+    va_start(ap, cmd);
+    int result = 0;
+    if (cmd == F_GETFL) {
+        result = (fd < 512) ? fd_flags[fd] : 0;
+    } else if (cmd == F_SETFL) {
+        int flags = va_arg(ap, int);
+        if (fd < 512) fd_flags[fd] = flags;
+        result = 0;
+    }
+    va_end(ap);
+    SHIM_LOG("[shim] fcntl fd=%d cmd=%d result=%d", fd, cmd, result);
+    return result;
 }
 
 /* ioctl: no-op */

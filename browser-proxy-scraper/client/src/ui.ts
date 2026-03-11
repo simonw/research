@@ -38,6 +38,11 @@ function navigateToUrl(url: string): void {
     url = "https://" + url;
   }
 
+  try {
+    const parsed = new URL(url);
+    (globalThis as any).__TARGET_ORIGIN__ = parsed.origin;
+  } catch {}
+
   const encoded = xorEncode(url);
   const proxiedPath = `/service/${encoded}`;
 
