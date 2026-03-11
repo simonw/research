@@ -1,6 +1,6 @@
-# Browser Proxy Scraper
+# Embrowse
 
-An E2EE in-browser web scraper where TLS terminates entirely inside the browser via WebAssembly. The backend acts as a blind TCP relay — it never sees plaintext traffic, cookies, or session tokens. Users browse target sites through an iframe-based proxy, and the system intercepts and extracts API data (e.g., GraphQL responses) client-side.
+An E2EE in-browser automation tool where TLS terminates entirely inside the browser via WebAssembly. The backend acts as a blind TCP relay — it never sees plaintext traffic, cookies, or session tokens. Users browse and automate target sites through an iframe-based proxy, with DOM automation via an injected puppet agent and client-side data extraction.
 
 The primary transport uses **curl-impersonate compiled to WASM**, which produces a Chrome-matching TLS fingerprint (JA3/JA4) to bypass Cloudflare and similar bot detection. An epoxy-tls (Rustls) fallback is available when the WASM module fails to load.
 
@@ -241,7 +241,7 @@ SharedArrayBuffer support requires `Cross-Origin-Opener-Policy: same-origin` and
 ## File Structure
 
 ```
-browser-proxy-scraper/
+embrowse/
 ├── README.md
 ├── notes.md                              # Investigation journal
 ├── docs/
