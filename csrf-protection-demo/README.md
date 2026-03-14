@@ -1,5 +1,10 @@
 # CSRF Protection Demo: Modern Browser-Based Defenses
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 *2026-03-13T23:37:16Z by Showboat 0.6.1*
 <!-- showboat-id: 0f5effdf-8c16-4942-b67d-703309734138 -->
 
