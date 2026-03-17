@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "syntaqlite"
+version = "0.1.0"
+description = "Python bindings for syntaqlite — parser, formatter, and validator for SQLite SQL"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["."]
