@@ -1,0 +1,13 @@
+[package]
+name = "pdf2img_py"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "pdf2img_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module"] }
+pdfium-render = { version = "0.8", features = ["image"] }
+image = "0.25"
