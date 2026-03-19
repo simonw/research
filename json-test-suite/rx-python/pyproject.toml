@@ -1,0 +1,15 @@
+[project]
+name = "rx-python"
+version = "0.1.0"
+description = "Python implementation of the REXC (rx) encoder/decoder"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
