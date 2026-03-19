@@ -171,7 +171,17 @@ for dirname, _ in subdirs_with_dates:
             readme_path.write_text('\n'.join(new_lines))
 
 ]]]-->
-## 75 research projects
+## 76 research projects
+
+### [REXC (rx) JSON Test Suite](https://github.com/simonw/research/tree/main/json-test-suite#readme) (2026-03-19 06:26)
+
+REXC (rx) JSON Test Suite provides a comprehensive, language-agnostic test resource for validating implementations of the [REXC encoder/decoder](https://github.com/creationix/rx). It includes a single JSON file with 206 tests covering base64 encoding, zigzag integer transformations, value conversions, roundtrip integrity, and special numeric values, ensuring correctness across platforms. The suite is accompanied by a TypeScript runner utilizing Vitest and a standalone Python port fully tested via pytest, demonstrating cross-language fidelity and completeness. Both the TypeScript and Python implementations pass all test cases, verifying consistent and reliable encoding and decoding behavior.
+
+**Key features:**
+- JSON test suite covers all encoder/decoder edge cases and formats.
+- [Python implementation](https://github.com/creationix/rx/tree/main/rx-python) passes all tests as a faithful port.
+- TypeScript runner ensures the test suite remains synchronized with the reference implementation.
+- Supports advanced encoding features (schemas, pointers, special values).
 
 ### [syntaqlite Python Extension](https://github.com/simonw/research/tree/main/syntaqlite-python-extension#readme) (2026-03-17 16:51)
 
