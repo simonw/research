@@ -1,5 +1,10 @@
 # SQLite Tags Benchmark: Comparing 5 Tagging Strategies
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 Benchmarking different approaches to implementing tags in SQLite, using Python's `sqlite3` module.
 
 ## Test Setup
