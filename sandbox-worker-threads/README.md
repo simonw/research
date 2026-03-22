@@ -40,7 +40,7 @@ The `--max-old-space-size` flag cannot be passed via `execArgv` — Node.js reje
 ```js
 new Worker(file, {
   execArgv: [
-    '--experimental-permission',
+    '--permission',
     '--allow-fs-read=/app/sandbox/*',
     // Omit --allow-fs-write → all writes blocked
     // Omit --allow-child-process → spawn/exec blocked
@@ -54,7 +54,7 @@ new Worker(file, {
 - **fsWrite blocked:** `ERR_ACCESS_DENIED` when attempting `fs.writeFileSync`
 - **child_process blocked:** `ERR_ACCESS_DENIED` when attempting `execSync`
 - **Addons blocked by default:** Native addons (`.node` files) require explicit `--allow-addons`
-- **Still experimental** in Node.js 22 (requires `--experimental-permission`)
+- **Stable since Node.js v22.13.0** — use `--permission` (the older `--experimental-permission` also works)
 - **No `--allow-net` flag** — network restrictions not available through this mechanism
 - **Defense in depth:** Even if code escapes a `vm` sandbox, the permission model still enforces restrictions at the syscall level
 
@@ -127,7 +127,7 @@ isolate.dispose();
 ```js
 const worker = new Worker(sandboxRunner, {
   execArgv: [
-    '--experimental-permission',
+    '--permission',
     '--allow-fs-read=*',
     '--allow-addons',  // Required for isolated-vm
   ],
@@ -166,7 +166,7 @@ setTimeout(() => worker.terminate(), 30000);
 ```js
 const worker = new Worker(sandboxRunner, {
   execArgv: [
-    '--experimental-permission',
+    '--permission',
     '--allow-fs-read=/app/code/*',
   ],
 });
