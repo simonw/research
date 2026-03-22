@@ -1,5 +1,10 @@
 # Sandboxing Untrusted Code with Node.js Worker Threads
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 Investigation into options for running untrusted JavaScript code in a sandbox using `import { Worker } from "node:worker_threads"`, focusing on limiting filesystem access, network access, and CPU/memory monopolization.
 
 **Environment:** Node.js v22.22.0, Linux 6.18.5, March 2026

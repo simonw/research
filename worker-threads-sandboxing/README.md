@@ -1,5 +1,10 @@
 # Node.js worker_threads Sandboxing Capabilities (v22)
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 Research into sandboxing options available through Node.js built-in modules and popular
 npm packages, focused on Node.js v22 (tested on v22.22.0).
 

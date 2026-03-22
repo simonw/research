@@ -1,5 +1,10 @@
 # JavaScript Sandbox Solutions for Running Untrusted Code
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 Research conducted 2026-03-22.
 
 ## 1. isolated-vm
