@@ -1,0 +1,206 @@
+diff --git a/main.go b/main.go
+index a5188db..38e9a09 100644
+--- a/main.go
++++ b/main.go
+@@ -16,6 +16,7 @@ import (
+ 	"path/filepath"
+ 	"strconv"
+ 	"strings"
++	"sync"
+ 	"syscall"
+ 	"time"
+ 
+@@ -293,6 +294,8 @@ func main() {
+ 		cmdAXFind(args)
+ 	case "ax-node":
+ 		cmdAXNode(args)
++	case "network-log":
++		cmdNetworkLog(args)
+ 	case "help", "-h", "--help":
+ 		printUsage()
+ 		os.Exit(0)
+@@ -1965,3 +1968,184 @@ func proxyHTTP(w http.ResponseWriter, r *http.Request, upstream, authHeader stri
+ 	w.WriteHeader(resp.StatusCode)
+ 	io.Copy(w, resp.Body)
+ }
++
++// NetworkEntry represents a single network request/response pair
++type NetworkEntry struct {
++	RequestID    string            `json:"request_id"`
++	URL          string            `json:"url"`
++	Method       string            `json:"method"`
++	ResourceType string            `json:"resource_type"`
++	Status       int               `json:"status"`
++	MimeType     string            `json:"mime_type"`
++	EncodedSize  float64           `json:"encoded_size"`  // transfer size (compressed)
++	DecodedSize  float64           `json:"decoded_size"`  // actual size (decompressed)
++	HeadersSize  float64           `json:"headers_size"`
++	StartTime    float64           `json:"start_time"`
++	EndTime      float64           `json:"end_time"`
++	Duration     float64           `json:"duration_ms"`
++	Initiator    string            `json:"initiator"`
++	InitiatorURL string            `json:"initiator_url"`
++	Protocol     string            `json:"protocol"`
++	FromCache    bool              `json:"from_cache"`
++	FromSW       bool              `json:"from_service_worker"`
++	Headers      map[string]string `json:"response_headers,omitempty"`
++}
++
++func cmdNetworkLog(args []string) {
++	fs := flag.NewFlagSet("network-log", flag.ExitOnError)
++	duration := fs.Int("duration", 30, "seconds to capture network traffic")
++	urlStr := fs.String("url", "", "URL to navigate to (optional, uses current page if not set)")
++	withHeaders := fs.Bool("headers", false, "include response headers in output")
++	fs.Parse(args)
++
++	s, err := loadState()
++	if err != nil {
++		fatal("%v", err)
++	}
++	browser, err := connectBrowser(s)
++	if err != nil {
++		fatal("%v", err)
++	}
++
++	// If no pages exist, create one
++	pages, _ := browser.Pages()
++	var page *rod.Page
++	if len(pages) == 0 {
++		page = browser.MustPage("about:blank")
++		s.ActivePage = 0
++		saveState(s)
++	} else {
++		page, err = getActivePage(browser, s)
++		if err != nil {
++			fatal("%v", err)
++		}
++	}
++
++	type requestInfo struct {
++		url          string
++		method       string
++		resourceType string
++		initiator    string
++		initiatorURL string
++		startTime    float64
++	}
++
++	requests := make(map[proto.NetworkRequestID]*requestInfo)
++	var entries []NetworkEntry
++	var mu = &sync.Mutex{}
++
++	// Enable network domain
++	err = proto.NetworkEnable{}.Call(page)
++	if err != nil {
++		fatal("failed to enable network monitoring: %v", err)
++	}
++
++	// Listen for request events
++	go page.EachEvent(
++		func(e *proto.NetworkRequestWillBeSent) {
++			mu.Lock()
++			defer mu.Unlock()
++			initiator := ""
++			initiatorURL := ""
++			if e.Initiator != nil {
++				initiator = string(e.Initiator.Type)
++				if e.Initiator.URL != "" {
++					initiatorURL = e.Initiator.URL
++				}
++				if e.Initiator.Stack != nil && len(e.Initiator.Stack.CallFrames) > 0 {
++					initiatorURL = e.Initiator.Stack.CallFrames[0].URL
++				}
++			}
++			requests[e.RequestID] = &requestInfo{
++				url:          e.Request.URL,
++				method:       e.Request.Method,
++				resourceType: string(e.Type),
++				initiator:    initiator,
++				initiatorURL: initiatorURL,
++				startTime:    float64(e.Timestamp),
++			}
++		},
++		func(e *proto.NetworkResponseReceived) {
++			mu.Lock()
++			defer mu.Unlock()
++			req, ok := requests[e.RequestID]
++			if !ok {
++				return
++			}
++			entry := NetworkEntry{
++				RequestID:    string(e.RequestID),
++				URL:          req.url,
++				Method:       req.method,
++				ResourceType: req.resourceType,
++				Status:       e.Response.Status,
++				MimeType:     e.Response.MIMEType,
++				EncodedSize:  float64(e.Response.EncodedDataLength),
++				HeadersSize:  0,
++				StartTime:    req.startTime,
++				Initiator:    req.initiator,
++				InitiatorURL: req.initiatorURL,
++				Protocol:     e.Response.Protocol,
++				FromCache:    e.Response.FromDiskCache || e.Response.FromPrefetchCache,
++				FromSW:       e.Response.FromServiceWorker,
++			}
++			if *withHeaders {
++				headers := make(map[string]string)
++				for k, v := range e.Response.Headers {
++					headers[k] = fmt.Sprintf("%v", v)
++				}
++				entry.Headers = headers
++			}
++			entries = append(entries, entry)
++		},
++		func(e *proto.NetworkLoadingFinished) {
++			mu.Lock()
++			defer mu.Unlock()
++			for i := range entries {
++				if entries[i].RequestID == string(e.RequestID) {
++					entries[i].EncodedSize = e.EncodedDataLength
++					entries[i].EndTime = float64(e.Timestamp)
++					if entries[i].StartTime > 0 {
++						entries[i].Duration = (entries[i].EndTime - entries[i].StartTime) * 1000
++					}
++					break
++				}
++			}
++		},
++		func(e *proto.NetworkDataReceived) {
++			mu.Lock()
++			defer mu.Unlock()
++			for i := range entries {
++				if entries[i].RequestID == string(e.RequestID) {
++					entries[i].DecodedSize += float64(e.DataLength)
++					break
++				}
++			}
++		},
++	)()
++
++	// Small delay to ensure event listeners are registered
++	time.Sleep(200 * time.Millisecond)
++
++	// Navigate if URL provided
++	if *urlStr != "" {
++		u := *urlStr
++		if !strings.Contains(u, "://") {
++			u = "http://" + u
++		}
++		if err := page.Navigate(u); err != nil {
++			fatal("navigation failed: %v", err)
++		}
++		page.MustWaitLoad()
++	}
++
++	fmt.Fprintf(os.Stderr, "Capturing network traffic for %d seconds...\n", *duration)
++	time.Sleep(time.Duration(*duration) * time.Second)
++
++	mu.Lock()
++	result := make([]NetworkEntry, len(entries))
++	copy(result, entries)
++	mu.Unlock()
++
++	out, _ := json.Marshal(result)
++	fmt.Println(string(out))
++}
