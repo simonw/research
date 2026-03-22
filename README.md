@@ -173,38 +173,6 @@ for dirname, _ in subdirs_with_dates:
 ]]]-->
 ## 81 research projects
 
-### [Sandboxing Untrusted Code with Node.js Worker Threads](https://github.com/simonw/research/tree/main/sandbox-worker-threads#readme) (2026-03-22 19:27)
-
-Exploring sandboxing strategies for untrusted JavaScript code in Node.js v22, the project systematically tested worker threads, the Node.js Permission Model, and both the built-in `vm` module and the [isolated-vm](https://github.com/laverdet/isolated-vm) library. Results showed that Node's built-in memory limits (`resourceLimits`) are ineffective, and the Permission Model reliably restricts filesystem/process access but cannot block network calls or memory consumption. The standard `vm` module is not escape-proof, so only `isolated-vm`—which leverages native V8 isolates—enforces hard memory/CPU limits while removing all I/O and Node.js API surface. The recommended setup is using a worker thread combined with `isolated-vm`, optionally bolstered by the Permission Model for defense-in-depth, or considering [Deno](https://deno.com/) for more robust built-in permissions if switching runtimes is feasible.
-
-**Key findings:**
-- Node.js `resourceLimits` do not reliably enforce memory boundaries; workers can exceed limits by ~20x.
-- The Permission Model blocks filesystem writes/child process creation but cannot restrict network access.
-- `isolated-vm` offers robust isolation: no Node APIs, enforced memory/CPU limits, and proven resistance to common escape patterns.
-- Standard `vm` is not secure; injected functions enable escape to global scope.
-- For critical production sandboxing, only approaches using V8 isolates (`isolated-vm` or QuickJS/WASM) are viable in Node.js.
-
-### [Node.js worker_threads Sandboxing Capabilities (v22)](https://github.com/simonw/research/tree/main/worker-threads-sandboxing#readme) (2026-03-22 19:27)
-
-Examining Node.js v22, this research details the built-in and third-party sandboxing mechanisms available for executing untrusted or semi-trusted JavaScript code. Node’s worker_threads module enables environmental isolation, resource limits, and the use of the Node Permission Model (now stable in v22.13.0), which significantly restricts filesystem, process, and other OS-level capabilities when used via `execArgv`. While the `vm` module provides global scope isolation, it is not secure against malicious payloads due to prototype escapes—but combined with Worker permission settings, those escapes are neutered. For stronger in-process boundaries, [`isolated-vm`](https://www.npmjs.com/package/isolated-vm) offers V8 isolate-based separation, while [`quickjs-emscripten`](https://www.npmjs.com/package/quickjs-emscripten) uses WebAssembly and a separate JS engine for robust isolation. True security for adversarial code requires OS- or container-level sandboxing in addition to Node solutions.
-
-**Key Findings:**
-- Node.js Permission Model is stable (v22+) and can be enforced per-worker via `execArgv`.
-- Prototype escapes in `vm` are blocked operationally when the permission model denies OS resource access.
-- Resource limits protect only the V8 heap, not external/native allocations.
-- Avoid `vm2` for security; prefer `isolated-vm` or `quickjs-emscripten` for untrusted code.
-- Ultimate security requires running sandboxed logic in a subprocess or container with OS-level hardening.
-
-### [JavaScript Sandbox Solutions for Running Untrusted Code](https://github.com/simonw/research/tree/main/js-sandbox-research#readme) (2026-03-22 19:27)
-
-JavaScript sandbox solutions vary widely in their isolation guarantees, performance, and suitability for running untrusted code. The [isolated-vm](https://github.com/laverdet/isolated-vm) package exposes V8's Isolate API to Node.js, providing strong, thread-level separation and V8-native speed but is now in maintenance mode. In contrast, [quickjs-emscripten](https://github.com/justjake/quickjs-emscripten) leverages the QuickJS engine compiled to WebAssembly for the strongest sandbox boundary (WASM-level isolation) at the cost of slower, interpreter-only execution. Deno Workers offer granular permission-based isolation per worker but lack memory/CPU caps, while native Node.js workers provide thread separation with minimal security controls. Options like vm2 and ShadowRealm suffer from fundamental limitations and are not recommended for securing untrusted code—vm2 has a history of critical escapes, and ShadowRealm is a global isolation tool, not a sandbox.
-
-**Key findings:**
-- **Strongest isolation**: quickjs-emscripten (WASM sandbox) + worker_thread; best for highly untrusted code but much slower than V8.
-- **Best balance of performance and isolation**: isolated-vm (V8 isolate boundary) for semi-trusted code/plugins.
-- **Deno Workers**: Fine-grained permissions; secure defaults but limited to the Deno runtime.
-- **vm2 and ShadowRealm**: Unsafe for untrusted code—vm2's architecture is fundamentally flawed and ShadowRealm is not a security feature.
-
 ### [SQLite Tags Benchmark: Comparing 5 Tagging Strategies](https://github.com/simonw/research/tree/main/sqlite-tags-benchmark#readme) (2026-03-20 02:57)
 
 Benchmarking five tagging strategies in SQLite reveals clear trade-offs between query speed, storage, and implementation complexity for workflows involving tags (100,000 rows, 100 tags, average 6.5 tags/row). Indexed approaches—materialized lookup tables on JSON and classic many-to-many tables—easily outperform others, handling single-tag queries in under 1.5 milliseconds, while raw JSON and LIKE-based solutions are much slower. FTS5 (full-text search) offers strong performance and minimal storage, but tag tokenization can cause subtle correctness issues unless carefully managed. The ideal strategy depends on your use case: M2M tables are best for most production apps, FTS5 suits search-oriented interfaces, and lookup tables complement JSON columns for API-centric designs. The benchmark code is available at [benchmark.py](https://github.com/simonw/sqlite-tags-benchmark/blob/main/benchmark.py), and FTS5 docs are [here](https://sqlite.org/fts5.html).

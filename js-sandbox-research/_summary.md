@@ -1,7 +1,0 @@
-JavaScript sandbox solutions vary widely in their isolation guarantees, performance, and suitability for running untrusted code. The [isolated-vm](https://github.com/laverdet/isolated-vm) package exposes V8's Isolate API to Node.js, providing strong, thread-level separation and V8-native speed but is now in maintenance mode. In contrast, [quickjs-emscripten](https://github.com/justjake/quickjs-emscripten) leverages the QuickJS engine compiled to WebAssembly for the strongest sandbox boundary (WASM-level isolation) at the cost of slower, interpreter-only execution. Deno Workers offer granular permission-based isolation per worker but lack memory/CPU caps, while native Node.js workers provide thread separation with minimal security controls. Options like vm2 and ShadowRealm suffer from fundamental limitations and are not recommended for securing untrusted code—vm2 has a history of critical escapes, and ShadowRealm is a global isolation tool, not a sandbox.
-
-**Key findings:**
-- **Strongest isolation**: quickjs-emscripten (WASM sandbox) + worker_thread; best for highly untrusted code but much slower than V8.
-- **Best balance of performance and isolation**: isolated-vm (V8 isolate boundary) for semi-trusted code/plugins.
-- **Deno Workers**: Fine-grained permissions; secure defaults but limited to the Deno runtime.
-- **vm2 and ShadowRealm**: Unsafe for untrusted code—vm2's architecture is fundamentally flawed and ShadowRealm is not a security feature.
