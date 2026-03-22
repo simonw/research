@@ -1,5 +1,5 @@
 diff --git a/main.go b/main.go
-index a5188db..38e9a09 100644
+index a5188db..e6e330a 100644
 --- a/main.go
 +++ b/main.go
 @@ -16,6 +16,7 @@ import (
@@ -19,7 +19,15 @@ index a5188db..38e9a09 100644
  	case "help", "-h", "--help":
  		printUsage()
  		os.Exit(0)
-@@ -1965,3 +1968,184 @@ func proxyHTTP(w http.ResponseWriter, r *http.Request, upstream, authHeader stri
+@@ -378,6 +381,7 @@ func cmdStart(args []string) {
+ 		Set("no-sandbox").
+ 		Set("disable-gpu").
+ 		Set("single-process"). // Required for screenshots in gVisor/container environments
++		Set("autoplay-policy", "no-user-gesture-required").
+ 		Leakless(false).        // Keep Chrome alive after CLI exits
+ 		UserDataDir(dataDir).
+ 		Headless(headless)
+@@ -1965,3 +1969,184 @@ func proxyHTTP(w http.ResponseWriter, r *http.Request, upstream, authHeader stri
  	w.WriteHeader(resp.StatusCode)
  	io.Copy(w, resp.Body)
  }

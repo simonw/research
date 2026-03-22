@@ -43,12 +43,15 @@ https://www.pcgamer.com/software/kill-the-algorithm-in-your-head-lets-set-up-rss
 ### Headless vs Firefox Difference
 - Headless Chrome: ~6 MB transferred in 120s
 - Firefox reported by user: 38 MB initial, 200 MB+ over 5 minutes
-- Likely causes of difference:
-  - Video ads don't autoplay in headless mode
-  - Ad viewability tracking doesn't fire properly in headless
-  - Ad refresh cycles (bordeaux system has 17+ dynamic slot hooks for right-hand rail)
-  - Visible viewport triggers different ad targeting
-  - JW Player video content may stream in visible browsers
+- Root cause: JW Player video carousel with 5 videos (68-136 MB at 720p/1080p) + VAST pre-roll video ads
+
+### Forcing Video Player Initialization
+- Added `--autoplay-policy=no-user-gesture-required` to Chrome launch flags in rodney
+- JW Player initialized successfully and fetched playlist from `cdn.jwplayer.com/v2/playlists/egqep2zS`
+- Player made VAST ad request to `securepubads.g.doubleclick.net/gampad/ads` (52 KB response)
+- Started fetching MP4 from `videos-cloudfront.jwpsrv.com` but decoder failed in headless/container environment
+- Confirmed video file sizes via HTTP HEAD requests: 15-136 MB depending on quality level
+- 5 videos totaling 271.1 MB across all renditions
 
 ### Things I Tried
 - Running Resource Timing API first - didn't show cross-origin sizes
@@ -56,3 +59,6 @@ https://www.pcgamer.com/software/kill-the-algorithm-in-your-head-lets-set-up-rss
 - Analyzing response headers for cache-control and compression
 - Examining prebid.js configuration and GPT ad slot setup
 - Counting DOM elements and ad containers
+- Forcing JW Player initialization and playback via JS
+- Adding autoplay Chrome flag to enable video in headless mode
+- HTTP HEAD requests to check video file sizes directly

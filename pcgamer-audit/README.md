@@ -168,21 +168,45 @@ Several resources are fetched multiple times:
 
 ## Why Firefox Shows 38 MB+ Initial and 200 MB+ Over Time
 
-Our headless Chrome capture shows ~6 MB transfer in 120 seconds. The user's Firefox experience of 38 MB+ initial and 200 MB+ over 5 minutes is likely caused by:
+Our headless Chrome capture shows ~6 MB transfer in 120 seconds. The user's Firefox experience of 38 MB+ initial and 200 MB+ over 5 minutes is explained primarily by the **JW Player video carousel**.
 
-1. **Video ads:** In a visible browser, ad slots can serve video creatives (VAST/VPAID). A single 30-second video ad can be 2-10 MB. The page has multiple ad slots that could serve video.
+### The Smoking Gun: JW Player Video Carousel
 
-2. **JW Player:** The page loads the JW Player library (67 KB) and has a video container. In a visible browser, this likely autoplays video content, potentially streaming several MB of video.
+By forcing JW Player to initialize in headless Chrome, we discovered a carousel titled "PC Gamer In-article Player Playlist (THIS IS CAROUSEL)" containing **5 autoplaying videos** with 5 quality renditions each. We confirmed the actual file sizes via HTTP HEAD requests:
 
-3. **Ad refresh cycles:** Bordeaux creates 17 dynamic right-hand rail ad slot hooks. As the user scrolls or time passes, these slots refresh with new ads. Each refresh triggers a new Prebid auction across 10-12 bidders, new ad creative downloads, and new tracking pixels.
+| Quality | Video 1 (59s) | Video 2 (53s) | Video 3 (44s) | Video 4 (50s) | Video 5 (59s) | Total |
+|---------|--------------|--------------|--------------|--------------|--------------|-------|
+| 180p | 3.8 MB | 2.8 MB | 2.4 MB | 3.0 MB | 3.0 MB | **15.0 MB** |
+| 270p | 5.3 MB | 4.1 MB | 3.6 MB | 4.3 MB | 4.2 MB | **21.5 MB** |
+| 406p | 8.2 MB | 5.3 MB | 4.8 MB | 5.9 MB | 5.9 MB | **30.1 MB** |
+| 720p | 18.5 MB | 12.2 MB | 10.7 MB | 13.6 MB | 13.2 MB | **68.2 MB** |
+| 1080p | 36.8 MB | 24.2 MB | 21.6 MB | 27.8 MB | 25.9 MB | **136.3 MB** |
 
-4. **Viewability tracking:** Ad verification services (DoubleVerify, etc.) continuously fire tracking pixels to confirm ads are actually viewable. In headless mode, most ads aren't rendered visually, so this tracking doesn't fully trigger.
+**Total across all renditions: 271.1 MB**
 
-5. **Continuous beacon/sync traffic:** Even in headless, we see periodic requests every 30-60 seconds to DoubleVerify, Permutive, Newsroom.bi, and various cookie-sync services. Over 5 minutes, this adds up.
+In a real browser, the player autoplays and cycles through the playlist. Each video also triggers a VAST pre-roll ad request (we captured a 52 KB VAST response from `securepubads.g.doubleclick.net/gampad/ads`), which loads a video advertisement before each content video.
 
-6. **Hawk commerce widgets:** 34 Hawk affiliate elements load product data, images, and tracking. With scrolling in a real browser, more of these lazy-load.
+The math for 200+ MB over 5 minutes:
+- **~6 MB** — Page, scripts, ads, tracking (first load)
+- **~68-136 MB** — Video carousel content (720p or 1080p, all 5 videos = ~4.4 minutes total)
+- **~10-75 MB** — Video pre-roll ads (5 videos × 2-15 MB per ad creative)
+- **~1-5 MB** — Ongoing ad refresh, tracking beacons, cookie syncing
 
-7. **Recirculation/infinite scroll:** The page likely loads additional article recommendations and their images as the user scrolls, each with their own set of tracking.
+**Note:** The videos could not actually play in headless Chromium (codec/sandbox limitations in the container environment), but we confirmed JW Player initialized, made the VAST ad request, and began fetching the MP4 files — it just immediately failed at the decoder stage. The 5 Media requests to `videos-cloudfront.jwpsrv.com` appeared in the network log with only 0.1-0.4 KB each (aborted downloads).
+
+### Other Contributing Factors
+
+1. **Video pre-roll ads (VAST/VPAID):** Each of the 5 videos triggers a VAST ad request. Video ad creatives are typically 2-15 MB each.
+
+2. **Ad refresh cycles:** Bordeaux creates 17 dynamic right-hand rail ad slot hooks. As the user scrolls or time passes, these refresh with new ads — each triggering a Prebid auction across 10-12 bidders.
+
+3. **Viewability tracking:** DoubleVerify and other ad verification services continuously fire tracking pixels. In headless mode, most ads aren't rendered visually, so this tracking doesn't fully trigger.
+
+4. **Continuous beacon/sync traffic:** Even in headless, we see periodic requests every 30-60 seconds to DoubleVerify, Permutive, Newsroom.bi, and various cookie-sync services.
+
+5. **Hawk commerce widgets:** 34 Hawk affiliate elements load product data, images, and tracking. With scrolling in a real browser, more of these lazy-load.
+
+6. **Recirculation/infinite scroll:** The page likely loads additional article recommendations and their images as the user scrolls, each with their own set of tracking.
 
 ## The Actual Article Content
 
