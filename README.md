@@ -135,6 +135,8 @@ AI_NOTE_END = "<!-- /AI-GENERATED-NOTE --" + ">"
 AI_NOTE_CONTENT = """> [!NOTE]
 > This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research)."""
 
+NOT_AI_GENERATED = "<!-- not-ai-generated --" + ">"
+
 for dirname, _ in subdirs_with_dates:
     folder_path = research_dir / dirname
     readme_path = folder_path / "README.md"
@@ -143,6 +145,10 @@ for dirname, _ in subdirs_with_dates:
         continue
 
     content = readme_path.read_text()
+
+    # Skip files marked as not AI-generated
+    if NOT_AI_GENERATED in content:
+        continue
 
     # Check if note already exists
     if AI_NOTE_START in content:
