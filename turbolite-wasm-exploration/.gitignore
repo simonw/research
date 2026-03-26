@@ -1,0 +1,6 @@
+node_modules/
+static/dbs/
+static/sql-wasm.js
+static/sql-wasm.wasm
+static/fzstd.js
+static/fzstd-browser.js
