@@ -4,3 +4,6 @@ static/sql-wasm.js
 static/sql-wasm.wasm
 static/fzstd.js
 static/fzstd-browser.js
+static/zstd-wasm-decoder.js
+static/zstd-decoder.wasm
+static/zstd-decoder-small.wasm

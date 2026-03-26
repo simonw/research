@@ -99,17 +99,37 @@ Architecture that works:
 | Complex join+agg | 0.5ms | 2.9ms | 23.0ms | 315ms |
 | Count | 0.1ms | 0.1ms | 0.1ms | 1.0ms |
 
+## Attempt 3: WASM zstd Decompressor (Game Changer)
+
+After the initial benchmarks showed fzstd (pure JS) was the bottleneck, integrated `zstd-wasm-decoder`
+which provides a WASM-compiled zstd decompressor (only 37KB .wasm file for the perf variant).
+
+### Results: WASM zstd vs fzstd (pure JS)
+| Size | fzstd (JS) | WASM zstd | Speedup | Plain SQLite |
+|------|-----------|-----------|---------|-------------|
+| tiny | 56ms | 7ms | **8x** | 7ms |
+| small | 289ms | 7ms | **41x** | 7ms |
+| medium | 2,108ms | 23ms | **92x** | 15ms |
+| large | 18,965ms | 217ms | **87x** | 77ms |
+
+The WASM zstd decompressor is 40-90x faster than pure JS fzstd!
+
+### With WASM zstd, turbolite becomes competitive:
+- **Small DBs**: turbolite+WASM matches plain SQLite (7ms vs 7ms) while transferring 3x less
+- **Medium DBs**: turbolite+WASM only 1.5x slower (23ms vs 15ms) with 2.9x less transfer
+- **Large DBs**: turbolite+WASM 2.8x slower (217ms vs 77ms) with 2.8x less transfer
+- On slow/metered networks, turbolite+WASM would be FASTER end-to-end
+
 ## Conclusions
 
 1. **Direct WASM compilation of turbolite: not practical** - too many OS dependencies
-2. **Hybrid approach works well** - sql.js + JS decompression + HTTP range requests
-3. **Main bottleneck is decompression** - a WASM zstd decompressor would be much faster
-4. **For bandwidth-constrained scenarios**, turbolite compression is valuable (3x smaller transfers)
-5. **For latency-sensitive scenarios**, plain SQLite is better (no decompression overhead)
+2. **Hybrid approach works well** - sql.js + WASM zstd decompression + HTTP range requests
+3. **WASM zstd is the key** - 40-90x faster than pure JS, makes turbolite viable in browser
+4. **Turbolite + WASM zstd is competitive with plain SQLite** for most use cases
+5. **For bandwidth-constrained scenarios**, turbolite is now clearly superior
 6. **True lazy page loading** would require patching sql.js's VFS layer (currently need full buffer)
 
-## Ideas for Improvement
-- Compile zstd to WASM for faster decompression (would eliminate the 10-20x overhead)
+## Ideas for Further Improvement
 - Implement true lazy VFS in sql.js (only fetch pages as SQLite requests them)
 - Use turbolite's page grouping format for more efficient range requests
 - Web Worker for decompression to avoid blocking UI

@@ -64,6 +64,12 @@ tr:nth-child(even) { background: #1e1e3e; }
         <option value="full">Full Download</option>
       </select>
     </label>
+    <label>Decompressor:
+      <select id="decompressor-select">
+        <option value="fzstd">fzstd (pure JS)</option>
+        <option value="wasm" selected>zstd-wasm (WASM)</option>
+      </select>
+    </label>
     <button id="btn-open" onclick="openDatabase()">Open Database</button>
   </div>
 
@@ -115,6 +121,35 @@ tr:nth-child(even) { background: #1e1e3e; }
 
 <script src="sql-wasm.js"></script>
 <script src="fzstd-browser.js"></script>
+<script type="module">
+  // Import WASM zstd decoder and expose it globally
+  import { createDecoder, decompressSync } from './zstd-wasm-decoder.js';
+
+  let wasmReady = false;
+  let wasmDecoder = null;
+
+  async function initWasmZstd() {
+    if (wasmReady) return;
+    try {
+      wasmDecoder = await createDecoder();
+      wasmReady = true;
+      console.log('WASM zstd decoder initialized');
+    } catch (e) {
+      console.error('Failed to init WASM zstd:', e);
+      throw e;
+    }
+  }
+
+  function decompressWithWasm(data) {
+    if (!wasmReady || !wasmDecoder) throw new Error('WASM zstd not initialized');
+    return wasmDecoder.decompressSync(data);
+  }
+
+  // Expose globally
+  window.initWasmZstd = initWasmZstd;
+  window.decompressWithWasm = decompressWithWasm;
+  window.wasmZstdReady = () => wasmReady;
+</script>
 <script>
 // === Tab switching ===
 document.querySelectorAll('.tab').forEach(tab => {
@@ -148,6 +183,23 @@ let SQL = null;
 let db = null;
 let dbStats = {};
 let benchmarkResults = [];
+let activeDecompressor = 'fzstd'; // 'fzstd' or 'wasm'
+
+// === Decompression abstraction ===
+function zstdDecompress(data) {
+  if (activeDecompressor === 'wasm' && window.wasmZstdReady && window.wasmZstdReady()) {
+    return window.decompressWithWasm(data);
+  }
+  return fzstd.decompress(data);
+}
+
+async function ensureDecompressor() {
+  const selected = document.getElementById('decompressor-select').value;
+  activeDecompressor = selected;
+  if (selected === 'wasm' && window.initWasmZstd) {
+    await window.initWasmZstd();
+  }
+}
 
 // === sql.js initialization ===
 async function loadSqlJs() {
@@ -271,7 +323,7 @@ class TurboliteRangeVFS {
 
     let decompressed;
     try {
-      decompressed = fzstd.decompress(compressed);
+      decompressed = zstdDecompress(compressed);
     } catch (e) {
       console.error(`Decompression failed for page ${pageNum}:`, e);
       throw e;
@@ -305,7 +357,7 @@ class TurboliteRangeVFS {
       const localOffset = offset - minOffset;
       const compressed = data.slice(localOffset, localOffset + size);
       try {
-        let decompressed = fzstd.decompress(compressed);
+        let decompressed = zstdDecompress(compressed);
         if (decompressed.length < this.pageSize) {
           const padded = new Uint8Array(this.pageSize);
           padded.set(decompressed);
@@ -331,7 +383,7 @@ class TurboliteRangeVFS {
       const pageNum = parseInt(pageNumStr);
       const compressed = allData.slice(offset, offset + size);
       try {
-        let decompressed = fzstd.decompress(compressed);
+        let decompressed = zstdDecompress(compressed);
         const destOffset = pageNum * this.pageSize;
         fullDb.set(decompressed.subarray(0, this.pageSize), destOffset);
       } catch (e) {
@@ -425,6 +477,7 @@ async function openDatabase() {
 
   try {
     await loadSqlJs();
+    await ensureDecompressor();
     const t0 = performance.now();
 
     let dbBuf;
@@ -461,6 +514,7 @@ async function openDatabase() {
       format,
       size,
       mode,
+      decompressor: activeDecompressor,
       openTimeMs: Math.round(tReady - t0),
       fetchTimeMs: Math.round(tOpen - t0),
       parseTimeMs: Math.round(tReady - tOpen),
@@ -468,8 +522,9 @@ async function openDatabase() {
       bytesTransferred: vfs.bytesTransferred,
     };
 
+    const decompLabel = format === 'turbolite' ? `, decomp: ${activeDecompressor}` : '';
     statusEl.textContent = `Opened ${size} ${format} DB in ${dbStats.openTimeMs}ms ` +
-      `(${vfs.fetchCount} requests, ${(vfs.bytesTransferred / 1024).toFixed(0)} KB transferred)`;
+      `(${vfs.fetchCount} requests, ${(vfs.bytesTransferred / 1024).toFixed(0)} KB transferred${decompLabel})`;
     document.getElementById('btn-run').disabled = false;
 
   } catch (e) {

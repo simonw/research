@@ -6,7 +6,7 @@ Can [turbolite](https://github.com/russellromney/turbolite) — a Rust SQLite VF
 
 **Direct WASM compilation: not feasible.** Turbolite's I/O layer is deeply coupled to OS primitives (file locks, pread, fcntl). A major refactoring effort would be needed.
 
-**Hybrid approach: works well.** We built a working prototype using sql.js (SQLite WASM) + JavaScript zstd decompression + HTTP range requests. Turbolite's compressed format transfers ~3x less data but decompression adds significant overhead (10-20x slower than native).
+**Hybrid approach with WASM zstd: works great.** We built a working prototype using sql.js (SQLite WASM) + WASM-compiled zstd decompression + HTTP range requests. Turbolite's compressed format transfers ~3x less data with only modest overhead — a 10K-row turbolite DB opens in 23ms (vs 15ms for plain SQLite), while transferring 958 KB instead of 2.7 MB. Using pure-JS zstd (fzstd) was 40-90x slower; the WASM zstd decompressor was the key breakthrough.
 
 ## Architecture
 
@@ -21,9 +21,9 @@ Can [turbolite](https://github.com/russellromney/turbolite) — a Rust SQLite VF
 │  └──────────┘   └──────────┘   └──────┬───────┘│
 │                       ▲                │        │
 │                  ┌────┴─────┐          │        │
-│                  │  fzstd   │          │        │
-│                  │ (zstd    │          │        │
-│                  │  decomp) │          │        │
+│                  │zstd-wasm │          │        │
+│                  │-decoder  │          │        │
+│                  │(37KB WASM│          │        │
 │                  └──────────┘          │        │
 └────────────────────────────────────────┼────────┘
                                          │
@@ -74,11 +74,12 @@ Instead, we built a working prototype that:
 
 ### Files
 
-- `static/index.html` — Web UI with query editor, preset queries, and benchmark runner
+- `static/index.html` — Web UI with query editor, preset queries, decompressor toggle (fzstd/WASM), and benchmark runner
 - `server.py` — Static file server with HTTP Range request support
 - `create_test_dbs.py` — Generates test SQLite databases at 5 size tiers
 - `build_turbolite_index.py` — Pre-indexes turbolite compressed files for range requests
-- `run_benchmark.py` — Automated benchmark runner using rodney browser automation
+- `run_benchmark.py` — Original benchmark runner (fzstd only)
+- `run_benchmark_wasm.py` — Full benchmark comparing fzstd vs WASM zstd decompressors
 
 ## Benchmark Results
 
@@ -94,14 +95,16 @@ Instead, we built a working prototype that:
 
 ### Database Open Time (load + parse)
 
-| Size | SQLite (full) | SQLite (range) | Turbolite (full) | Turbolite (range) |
-|------|--------------|----------------|------------------|-------------------|
-| 100 rows | 11ms | 7ms | 68ms | 57ms |
-| 1K rows | 10ms | 14ms | 271ms | 264ms |
-| 10K rows | 20ms | 51ms | 1,864ms | 1,899ms |
-| 100K rows | 89ms | 482ms | 19,793ms | 20,804ms |
+#### With WASM zstd (recommended)
 
-**Key finding**: Turbolite's zstd decompression in JavaScript (fzstd) is the dominant bottleneck. At 100K rows, decompressing 6,814 pages takes ~20 seconds vs ~89ms to just load the plain SQLite.
+| Size | Plain SQLite | Turbolite + WASM zstd | Turbolite + fzstd (JS) |
+|------|-------------|----------------------|----------------------|
+| 100 rows | 7ms | **7ms** | 56ms |
+| 1K rows | 7ms | **7ms** | 289ms |
+| 10K rows | 15ms | **23ms** | 2,108ms |
+| 100K rows | 77ms | **217ms** | 18,965ms |
+
+**Key finding**: The WASM zstd decompressor (`zstd-wasm-decoder`, 37KB .wasm) is **40-90x faster** than pure-JS fzstd, making turbolite competitive with plain SQLite. For small/medium databases, turbolite + WASM zstd matches plain SQLite performance while transferring ~3x less data.
 
 ### Query Times (identical after loading)
 
@@ -118,22 +121,24 @@ Once the database is in memory, query times are the same regardless of source fo
 
 ### When Turbolite Format Makes Sense for WASM
 
+With the WASM zstd decompressor, the calculus shifts dramatically:
+
 | Scenario | Recommendation |
 |----------|---------------|
-| Small DBs (<1MB), fast network | **Plain SQLite** — negligible transfer savings, no decompression cost |
-| Medium DBs (1-10MB), fast network | **Plain SQLite** — decompression overhead outweighs bandwidth savings |
-| Large DBs (>10MB), slow/metered network | **Turbolite** — 3x bandwidth savings worth the decompression cost |
-| Any size, latency-sensitive | **Plain SQLite** — decompression adds seconds of latency |
-| Any size, with WASM zstd | **Turbolite** — a WASM zstd decompressor would close the performance gap |
+| Small DBs (<1MB) | **Turbolite + WASM zstd** — same speed, 3x less transfer |
+| Medium DBs (1-10MB) | **Turbolite + WASM zstd** — 1.5x slower open, 2.9x less transfer |
+| Large DBs (>10MB), fast network | **Plain SQLite** — 2.8x faster open, no decompression overhead |
+| Large DBs (>10MB), slow/metered network | **Turbolite + WASM zstd** — 2.8x less transfer offsets decompression |
+| Any size, with pure-JS decompressor only | **Plain SQLite** — fzstd adds 40-90x overhead |
 
 ## Potential Improvements
 
-1. **WASM zstd decompressor** — Compile zstd to WASM instead of using pure-JS fzstd. This could reduce decompression time by 5-10x, making turbolite format competitive even for medium DBs.
+1. ~~**WASM zstd decompressor**~~ **DONE** — Integrated `zstd-wasm-decoder` (37KB WASM), achieving 40-90x speedup over pure-JS fzstd. This was the single biggest improvement.
 
 2. **True lazy page loading** — Currently we load all pages into memory before opening with sql.js. A custom sql.js VFS that fetches pages on demand (via `Asyncify` or `SharedArrayBuffer` with a worker) would enable:
    - Sub-second "open" times for any database size
    - Only transfer pages the query actually touches
-   - Point lookups on a 100K-row DB might need only 3-4 pages (~16KB)
+   - Point lookups on a 100K-row DB might need only 3-4 pages (~16KB compressed)
 
 3. **Turbolite page grouping** — Use turbolite's tiered format (256 pages per group, seekable multi-frame zstd) instead of per-page records. This would enable:
    - Fewer, larger range requests
@@ -141,7 +146,7 @@ Once the database is in memory, query times are the same regardless of source fo
 
 4. **IndexedDB caching** — Cache decompressed pages client-side so repeat visits are instant.
 
-5. **Web Worker decompression** — Move decompression off the main thread.
+5. **Web Worker decompression** — Move decompression off the main thread to avoid blocking UI.
 
 ## Reproducing
 
