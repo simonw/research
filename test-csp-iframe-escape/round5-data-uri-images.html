@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head><title>CSP Escape Tests - Round 5: Data URI Image Loading</title></head>
+<body>
+<h1>Round 5: Can data: URI pages load external images?</h1>
+<p>This is the critical test: if CSP doesn't carry over to a data: URI page,
+can that page load images from external domains? That would be a data exfiltration vector.</p>
+<div id="results"></div>
+
+<h2>Test 35: Baseline - image blocked by CSP in normal srcdoc</h2>
+<iframe id="test35" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    const img = new Image();
+    img.onload = () => parent.postMessage({test: 35, result: 'FAIL - image loaded in CSP page'}, '*');
+    img.onerror = () => parent.postMessage({test: 35, result: 'PASS - image blocked by CSP'}, '*');
+    img.src = 'http://localhost:8000/canary.txt';
+    setTimeout(() => parent.postMessage({test: 35, result: 'PASS - image blocked (timeout)'}, '*'), 3000);
+  </script>
+"></iframe>
+
+<h2>Test 36: Image load from data: URI page (via location.href)</h2>
+<iframe id="test36" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    location.href = 'data:text/html,<script>var img=new Image();img.onload=function(){parent.postMessage({test:36,result:&quot;CRITICAL FAIL - image loaded from data: URI page!&quot;},&quot;*&quot;)};img.onerror=function(){parent.postMessage({test:36,result:&quot;PASS - image blocked even from data: URI&quot;},&quot;*&quot;)};img.src=&quot;http://localhost:8000/canary.txt&quot;;setTimeout(function(){parent.postMessage({test:36,result:&quot;image timed out from data: URI&quot;},&quot;*&quot;)},3000)<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 37: Image load from data: URI page (via meta refresh)</h2>
+<iframe id="test37" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    const meta = document.createElement('meta');
+    meta.httpEquiv = 'refresh';
+    meta.content = '0;url=data:text/html,<script>var img=new Image();img.onload=function(){parent.postMessage({test:37,result:&quot;CRITICAL FAIL - image loaded via meta refresh data: URI!&quot;},&quot;*&quot;)};img.onerror=function(){parent.postMessage({test:37,result:&quot;PASS - image blocked from meta refresh data: URI&quot;},&quot;*&quot;)};img.src=&quot;http://localhost:8000/canary.txt&quot;;setTimeout(function(){parent.postMessage({test:37,result:&quot;image timed out from meta refresh data: URI&quot;},&quot;*&quot;)},3000)<\/script>';
+    document.head.appendChild(meta);
+    setTimeout(() => parent.postMessage({test: 37, result: 'meta refresh timeout'}, '*'), 5000);
+  </script>
+"></iframe>
+
+<h2>Test 38: Inline &lt;img&gt; tag in data: URI page</h2>
+<iframe id="test38" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    location.href = 'data:text/html,<img src=&quot;http://localhost:8000/canary.txt&quot; onload=&quot;parent.postMessage({test:38,result:\'CRITICAL FAIL - inline img loaded from data URI\'},\'*\')&quot; onerror=&quot;parent.postMessage({test:38,result:\'PASS - inline img blocked from data URI\'},\'*\')&quot;><script>setTimeout(function(){parent.postMessage({test:38,result:&quot;inline img timed out from data URI&quot;},&quot;*&quot;)},3000)<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 39: CSS background-image from data: URI page</h2>
+<iframe id="test39" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    location.href = 'data:text/html,<style>body{background-image:url(http://localhost:8000/canary.txt)}</style><script>setTimeout(function(){parent.postMessage({test:39,result:&quot;CSS bg image - check server logs&quot;},&quot;*&quot;)},2000)<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 40: fetch with absolute URL from data: URI (retry with more detail)</h2>
+<iframe id="test40" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    location.href = 'data:text/html,<script>fetch(&quot;http://localhost:8000/canary.txt&quot;,{mode:&quot;no-cors&quot;}).then(function(r){parent.postMessage({test:40,result:&quot;CRITICAL FAIL - no-cors fetch from data URI: status &quot;+r.status+&quot; type &quot;+r.type},&quot;*&quot;)}).catch(function(e){parent.postMessage({test:40,result:&quot;PASS - no-cors fetch blocked: &quot;+e.message},&quot;*&quot;)})<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 41: Link prefetch from data: URI page</h2>
+<iframe id="test41" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    location.href = 'data:text/html,<script>var link=document.createElement(&quot;link&quot;);link.rel=&quot;prefetch&quot;;link.href=&quot;http://localhost:8000/canary.txt&quot;;document.head.appendChild(link);setTimeout(function(){parent.postMessage({test:41,result:&quot;link prefetch - check server logs&quot;},&quot;*&quot;)},2000)<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 42: Script tag src from data: URI page</h2>
+<iframe id="test42" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    location.href = 'data:text/html,<script>var s=document.createElement(&quot;script&quot;);s.src=&quot;http://localhost:8000/canary.txt&quot;;s.onload=function(){parent.postMessage({test:42,result:&quot;CRITICAL FAIL - script loaded from data URI&quot;},&quot;*&quot;)};s.onerror=function(){parent.postMessage({test:42,result:&quot;PASS - script blocked from data URI&quot;},&quot;*&quot;)};document.head.appendChild(s);setTimeout(function(){parent.postMessage({test:42,result:&quot;script load timed out from data URI&quot;},&quot;*&quot;)},3000)<\/script>';
+  </script>
+"></iframe>
+
+<script>
+  const results = {};
+  const testIds = [35,36,37,38,39,40,41,42];
+  window.addEventListener('message', (e) => {
+    if (e.data && e.data.test) {
+      results[e.data.test] = e.data.result;
+      const div = document.getElementById('results');
+      div.innerHTML = '<h2>Results So Far</h2><pre>' +
+        Object.entries(results)
+          .sort(([a],[b]) => a-b)
+          .map(([k,v]) => 'Test ' + k + ': ' + v)
+          .join('\n') +
+        '</pre>';
+      if (Object.keys(results).length >= testIds.length) {
+        window.__allDone = true;
+        div.innerHTML += '<p><strong>ALL TESTS COMPLETE</strong></p>';
+      }
+    }
+  });
+
+  setTimeout(() => {
+    for (const i of testIds) {
+      if (!results[i]) results[i] = 'TIMEOUT - no response received';
+    }
+    const div = document.getElementById('results');
+    div.innerHTML = '<h2>Final Results</h2><pre>' +
+      Object.entries(results)
+        .sort(([a],[b]) => a-b)
+        .map(([k,v]) => 'Test ' + k + ': ' + v)
+        .join('\n') +
+      '</pre><p><strong>ALL TESTS COMPLETE</strong></p>';
+    window.__allDone = true;
+  }, 10000);
+</script>
+</body>
+</html>

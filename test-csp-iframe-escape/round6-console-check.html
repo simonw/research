@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head><title>Round 6: Detailed data: URI diagnostics</title></head>
+<body>
+<h1>Round 6: What blocks requests in data: URI pages?</h1>
+<div id="results"></div>
+
+<h2>Test 43: From data: URI - what CSP is active? Can we detect it?</h2>
+<iframe id="test43" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    location.href = 'data:text/html,<script>var info={origin:location.origin,protocol:location.protocol,href:location.href.substring(0,50)};parent.postMessage({test:43,result:JSON.stringify(info)},&quot;*&quot;)<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 44: data: URI WITHOUT prior CSP - can it load images?</h2>
+<p>CRITICAL: This iframe has NO CSP meta tag. If images load here, the CSP escape via data: URI is real.</p>
+<iframe id="test44" sandbox="allow-scripts" srcdoc="
+  <script>
+    location.href = 'data:text/html,<script>var img=new Image();img.onload=function(){parent.postMessage({test:44,result:&quot;CRITICAL FAIL - image loaded from data URI (no prior CSP)!&quot;},&quot;*&quot;)};img.onerror=function(){parent.postMessage({test:44,result:&quot;image onerror from data URI (no prior CSP)&quot;},&quot;*&quot;)};img.src=&quot;http://localhost:8000/canary.txt&quot;;setTimeout(function(){parent.postMessage({test:44,result:&quot;image timed out from data URI (no prior CSP)&quot;},&quot;*&quot;)},3000)<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 45: data: URI WITHOUT prior CSP - fetch</h2>
+<iframe id="test45" sandbox="allow-scripts" srcdoc="
+  <script>
+    location.href = 'data:text/html,<script>fetch(&quot;http://localhost:8000/canary.txt&quot;).then(function(r){return r.text()}).then(function(t){parent.postMessage({test:45,result:&quot;CRITICAL FAIL - fetch from data URI no CSP: &quot;+t},&quot;*&quot;)}).catch(function(e){parent.postMessage({test:45,result:&quot;fetch blocked from data URI no CSP: &quot;+e.message},&quot;*&quot;)})<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 46: data: URI WITHOUT prior CSP - no-cors fetch</h2>
+<iframe id="test46" sandbox="allow-scripts" srcdoc="
+  <script>
+    location.href = 'data:text/html,<script>fetch(&quot;http://localhost:8000/canary.txt&quot;,{mode:&quot;no-cors&quot;}).then(function(r){parent.postMessage({test:46,result:&quot;CRITICAL FAIL - no-cors fetch status:&quot;+r.status+&quot; type:&quot;+r.type},&quot;*&quot;)}).catch(function(e){parent.postMessage({test:46,result:&quot;no-cors fetch blocked from data URI no CSP: &quot;+e.message},&quot;*&quot;)})<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 47: data: URI WITHOUT prior CSP - XHR</h2>
+<iframe id="test47" sandbox="allow-scripts" srcdoc="
+  <script>
+    location.href = 'data:text/html,<script>var x=new XMLHttpRequest();x.open(&quot;GET&quot;,&quot;http://localhost:8000/canary.txt&quot;);x.onload=function(){parent.postMessage({test:47,result:&quot;CRITICAL FAIL - XHR from data URI no CSP: &quot;+x.responseText},&quot;*&quot;)};x.onerror=function(){parent.postMessage({test:47,result:&quot;XHR blocked from data URI no CSP&quot;},&quot;*&quot;)};x.send()<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 48: data: URI WITHOUT prior CSP or sandbox - baseline</h2>
+<p>No sandbox at all — does data: URI fetch work without sandbox?</p>
+<iframe id="test48" srcdoc="
+  <script>
+    location.href = 'data:text/html,<script>fetch(&quot;http://localhost:8000/canary.txt&quot;).then(function(r){return r.text()}).then(function(t){parent.postMessage({test:48,result:&quot;data URI fetch without sandbox: &quot;+t},&quot;*&quot;)}).catch(function(e){parent.postMessage({test:48,result:&quot;data URI fetch without sandbox blocked: &quot;+e.message},&quot;*&quot;)})<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 49: Regular srcdoc WITHOUT CSP or sandbox - can it fetch?</h2>
+<p>Sanity check — does fetch work at all from srcdoc?</p>
+<iframe id="test49" srcdoc="
+  <script>
+    fetch('http://localhost:8000/canary.txt')
+      .then(r => r.text())
+      .then(t => parent.postMessage({test: 49, result: 'srcdoc fetch (no csp, no sandbox): ' + t}, '*'))
+      .catch(e => parent.postMessage({test: 49, result: 'srcdoc fetch blocked: ' + e.message}, '*'));
+  </script>
+"></iframe>
+
+<h2>Test 50: sandbox="allow-scripts" srcdoc WITHOUT CSP - can it fetch?</h2>
+<iframe id="test50" sandbox="allow-scripts" srcdoc="
+  <script>
+    fetch('http://localhost:8000/canary.txt')
+      .then(r => r.text())
+      .then(t => parent.postMessage({test: 50, result: 'IMPORTANT - sandboxed srcdoc fetch (no csp): ' + t}, '*'))
+      .catch(e => parent.postMessage({test: 50, result: 'sandboxed srcdoc fetch blocked (no csp): ' + e.message}, '*'));
+  </script>
+"></iframe>
+
+<script>
+  const results = {};
+  const testIds = [43,44,45,46,47,48,49,50];
+  window.addEventListener('message', (e) => {
+    if (e.data && e.data.test) {
+      results[e.data.test] = e.data.result;
+      const div = document.getElementById('results');
+      div.innerHTML = '<h2>Results So Far</h2><pre>' +
+        Object.entries(results)
+          .sort(([a],[b]) => a-b)
+          .map(([k,v]) => 'Test ' + k + ': ' + v)
+          .join('\n') +
+        '</pre>';
+      if (Object.keys(results).length >= testIds.length) {
+        window.__allDone = true;
+        div.innerHTML += '<p><strong>ALL TESTS COMPLETE</strong></p>';
+      }
+    }
+  });
+
+  setTimeout(() => {
+    for (const i of testIds) {
+      if (!results[i]) results[i] = 'TIMEOUT - no response received';
+    }
+    const div = document.getElementById('results');
+    div.innerHTML = '<h2>Final Results</h2><pre>' +
+      Object.entries(results)
+        .sort(([a],[b]) => a-b)
+        .map(([k,v]) => 'Test ' + k + ': ' + v)
+        .join('\n') +
+      '</pre><p><strong>ALL TESTS COMPLETE</strong></p>';
+    window.__allDone = true;
+  }, 10000);
+</script>
+</body>
+</html>

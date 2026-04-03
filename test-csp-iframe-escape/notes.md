@@ -79,5 +79,38 @@ JavaScript can navigate the iframe to a `data:` URI (via meta refresh or locatio
 ### dynamically inserted CSP meta tags are ignored
 Adding a new `<meta http-equiv="Content-Security-Policy">` via JS has no loosening effect, confirming the spec claim.
 
+## Round 5 Results (Tests 35-42) - Data URI Image Loading
+Server logs showed NO requests for canary.txt from CSP-protected data: URI pages.
+Tests mostly timed out (onerror didn't fire) but server confirmed no leaks.
+
+## Round 6 Results (Tests 43-50) - Critical Discovery
+- Test 46: no-cors fetch from data: URI (NO prior CSP) -> opaque response, SERVER REQUEST LOGGED
+- Test 49: srcdoc fetch (no sandbox, no CSP) -> CANARY_ESCAPED (expected baseline)
+- Test 50: sandbox without CSP -> fetch blocked
+- Server logs showed 3 requests to /canary.txt from tests 46, 49, and one other
+
+**Key insight**: Without CSP, sandbox alone does NOT block no-cors fetch from data: URI pages!
+
+## Round 7 Results (Tests 51-56) - Exfiltration Verification  
+- Test 51: CSP meta -> data: URI -> no-cors fetch: BLOCKED, no server request
+- Test 56: No CSP, sandbox only -> data: URI -> no-cors fetch: SERVER HIT with exfil URL
+- Server log confirmed: `GET /exfil-test-56?secret=NO_CSP_SANDBOX_ONLY`
+
+## Round 8 Results (Tests 57-63) - Blocking Navigation & csp Attribute
+- Tests 57-59: Cannot block data: URI navigation (navigate-to, frame-src, sandbox all fail)
+- Tests 60-63: CSP meta tag persists across data: URI navigation (blocked, no server hits)
+- Test 62: csp attribute alone also blocks in Chrome
+
+## Cross-Browser Testing (Playwright: Chromium + Firefox)
+Critical finding: **Firefox ignores the `csp` attribute on iframes**
+- Test I (csp attr + data: URI + no-cors): Chromium blocked, Firefox SERVER HIT
+- CSP meta tag works identically in both browsers
+- Without CSP, both browsers allow requests from data: URI pages in sandboxed iframes
+
 ## Conclusion
-**The CSP meta tag approach (Option 2) is secure against JavaScript escape in Chrome.** No tested technique could make a network request escape the sandbox. The CSP policy is enforced at parse time and cannot be removed, modified, or circumvented by JavaScript running inside the iframe.
+**The CSP meta tag approach (Option 2) is secure across Chromium and Firefox.** The CSP persists even after data: URI navigation.
+
+Critical caveats:
+1. sandbox alone is NOT enough - CSP meta tag is essential
+2. The csp iframe attribute is Chromium-only - Firefox ignores it
+3. The meta tag must come before any untrusted content

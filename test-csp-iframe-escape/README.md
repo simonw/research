@@ -22,9 +22,11 @@ The claim is that:
 ## Test Setup
 
 - Local HTTP server via `python -m http.server`
-- Headless Chrome automation via [Rodney](https://github.com/simonw/rodney)
+- Headless Chrome automation via [Rodney](https://github.com/simonw/rodney) for initial rounds
+- Cross-browser testing via Playwright (Chromium + Firefox) for final validation
 - A `canary.txt` file served at the root — any successful fetch of this file indicates a CSP escape
-- 34 tests across 4 rounds, each attempting a different bypass technique
+- Server request logs checked to verify whether requests actually reached the network (not just whether JS reported success)
+- 63 tests across 8 rounds, each attempting a different bypass technique
 
 ## Demo Pages
 
@@ -32,6 +34,9 @@ The claim is that:
 - [Round 2: Advanced Techniques (Tests 11-20)](https://simonw.github.io/research/test-csp-iframe-escape/round2.html)
 - [Round 3: Deep Dive on Findings (Tests 21-28)](https://simonw.github.io/research/test-csp-iframe-escape/round3-deep-dive.html)
 - [Round 4: Absolute URLs from data: URIs (Tests 29-34)](https://simonw.github.io/research/test-csp-iframe-escape/round4-absolute-urls.html)
+- [Round 5: Image Loading from data: URIs (Tests 35-42)](https://simonw.github.io/research/test-csp-iframe-escape/round5-data-uri-images.html)
+- [Round 7: Exfiltration Tests (Tests 51-56)](https://simonw.github.io/research/test-csp-iframe-escape/round7-exfiltration.html)
+- [Round 8: Blocking data: URI Navigation (Tests 57-63)](https://simonw.github.io/research/test-csp-iframe-escape/round8-block-data-nav.html)
 
 **Note:** The demo pages need to be served from an HTTP server to work (the iframes make requests to the server). On GitHub Pages they will show the test structure but fetch/beacon tests will target the GitHub Pages server rather than localhost.
 
@@ -99,42 +104,111 @@ The claim is that:
 | 33 | sendBeacon from data: URI | Returns true, **no server request** |
 | 34 | Check sandbox flags after data: navigation | origin=null, sandbox persists |
 
+### Rounds 5-8: Data URI Deep Dive and Exfiltration Testing
+
+After the initial 4 rounds, a critical question emerged: if JavaScript navigates to a `data:` URI and the original CSP meta tag doesn't carry over to the new document, **what actually prevents network requests from the data: URI page?**
+
+![Round 5 results](round5-screenshot.png)
+
+![Round 7 results](round7-screenshot.png)
+
+![Round 8 results](round8-screenshot.png)
+
+#### The sandbox alone is NOT enough
+
+**Test F** (no CSP meta tag, sandbox only, navigate to data: URI, no-cors fetch): The server received the request. This proves that `sandbox="allow-scripts"` by itself does NOT block network requests from data: URI pages.
+
+#### But the CSP meta tag DOES persist across data: URI navigation
+
+**Tests D, E, G** (CSP meta tag present, navigate to data: URI, various requests): All blocked, no server hits. The CSP from the original srcdoc document persists even after the iframe navigates to a data: URI.
+
+#### The `csp` attribute on the iframe does NOT work in Firefox
+
+**Test I**: Using the `csp` attribute on the iframe element (without a meta tag), then navigating to a data: URI:
+- **Chromium**: Blocked, no server hit
+- **Firefox**: **Request reached the server** (opaque response, but the request with any URL parameters was sent)
+
+This is a significant cross-browser difference. Firefox does not support the `csp` attribute on iframes, so relying on it alone is not safe.
+
+### Cross-Browser Comparison (Playwright)
+
+| Test | Description | Chromium | Firefox |
+|------|-------------|----------|---------|
+| A | CSP meta blocks fetch | Blocked | Blocked |
+| B | Remove meta tag, fetch | Blocked | Blocked |
+| C | document.write, fetch | Blocked | Blocked |
+| D | CSP meta → data: URI → no-cors | Blocked | Blocked |
+| E | CSP meta → data: URI → fetch | Blocked | Blocked |
+| **F** | **No CSP, sandbox → data: → no-cors** | **SERVER HIT** | **SERVER HIT** |
+| G | CSP meta → data: URI → image | Blocked | Blocked |
+| **H** | **No CSP, sandbox → data: → image** | **SERVER HIT** | **SERVER HIT** |
+| **I** | **`csp` attr → data: → no-cors** | **Blocked** | **SERVER HIT** |
+
 ## Key Findings
 
 ### 1. CSP Meta Tag Is Enforced at Parse Time and Cannot Be Removed
 
-Once Chrome parses a `<meta http-equiv="Content-Security-Policy">` tag, the policy is permanently enforced for that document. JavaScript can remove or modify the DOM element, but the CSP engine ignores this — the policy was already "baked in."
+Once the browser parses a `<meta http-equiv="Content-Security-Policy">` tag, the policy is permanently enforced for that document. JavaScript can remove or modify the DOM element, but the CSP engine ignores this — the policy was already "baked in." This is consistent across both Chromium and Firefox.
 
 ### 2. `document.write()` Does NOT Reset CSP
 
 Completely replacing the document content via `document.write()` — even writing a new, more permissive CSP meta tag — does not lift the original CSP restrictions. The original policy persists across document replacement.
 
-### 3. Navigation to `data:` URIs Is Possible But Not an Escape
+### 3. CSP Meta Tag Persists Across data: URI Navigation
 
-This was the most interesting finding. JavaScript inside the sandbox can navigate to a `data:` URI via `location.href` or dynamically-inserted `<meta http-equiv="refresh">`, and **JavaScript executes in the new page**. However:
+This was the most surprising and important finding. When an iframe with a CSP meta tag navigates to a `data:` URI via `location.href` or `<meta http-equiv="refresh">`:
 
-- The `sandbox` attribute persists across navigation (the iframe is still sandboxed)
-- The new page has a `null` origin
-- **All network requests (fetch, XHR, Image, WebSocket) with absolute URLs are blocked**
-- The original CSP doesn't carry over, but the `null` origin and sandbox isolation prevent any useful network access
+- JavaScript **does execute** in the new data: URI page
+- The CSP meta tag is **not present** in the new document
+- But the CSP restrictions **still apply** — all fetch, XHR, and image requests are blocked
+- Both Chromium and Firefox behave this way
 
-This means the data: URI navigation is **not a CSP escape** — the sandbox provides a second layer of defense.
+This appears to be because the browser associates the CSP with the browsing context (the iframe), not just the document.
 
-### 4. `sendBeacon()` Is a Red Herring
+### 4. Sandbox Alone Does NOT Block Network Requests from data: URIs
 
-`navigator.sendBeacon()` returns `true` even when CSP blocks the actual network request. Server logs confirmed that **zero beacon requests arrived at the server** across all tests. This is a quirk of the sendBeacon API (it reports whether the request was queued, not whether it succeeded), not a CSP bypass.
+**This is critical.** Without a CSP meta tag, a sandboxed iframe (`sandbox="allow-scripts"`) can navigate to a data: URI and make network requests that reach the server. The `sandbox` attribute controls capabilities (scripts, forms, popups, navigation) but does **not** block resource loading.
 
-### 5. Dynamically Inserted CSP Meta Tags Are Ignored
+Tests F and H confirmed this: with no CSP, both `no-cors` fetch and image requests from data: URI pages reached the server.
 
-Adding a new `<meta http-equiv="Content-Security-Policy">` tag via JavaScript has no loosening effect, confirming the spec. Multiple CSP policies can only intersect (tighten), never loosen.
+### 5. The `csp` Iframe Attribute Is Not Cross-Browser Safe
+
+The `csp` attribute on the iframe element is a Chromium-only feature. **Firefox ignores it entirely.** In our tests, when using only the `csp` attribute (no meta tag), Firefox allowed requests from data: URI pages to reach the server.
+
+### 6. `sendBeacon()` Is a Red Herring
+
+`navigator.sendBeacon()` returns `true` even when CSP blocks the actual network request. Server logs confirmed that **zero beacon requests arrived at the server** when CSP was active. This is a quirk of the sendBeacon API, not a CSP bypass.
+
+### 7. Cannot Block data: URI Navigation via CSP
+
+Tests 57-59 confirmed that `navigate-to 'none'`, `frame-src 'none'`, and the sandbox attribute all fail to prevent an iframe from navigating itself to a data: URI. However, since the CSP persists across this navigation, it doesn't create an escape vector.
 
 ## Conclusion
 
-**The CSP meta tag approach is secure against JavaScript escape in Chrome.** Across 34 different bypass techniques, none successfully made a network request escape the sandbox.
+**The CSP meta tag approach (Option 2) is robust across Chromium and Firefox.** The CSP persists even when JavaScript navigates the iframe to a data: URI, which was the most promising escape vector tested.
 
-The combination of `sandbox="allow-scripts"` + CSP meta tag provides defense in depth:
-- CSP blocks network requests at the content policy level
-- The sandbox attribute provides origin isolation and persists across navigation
-- Even if code navigates away from the CSP-protected document (via data: URIs), the sandbox prevents network access
+However, there are important caveats:
 
-For production use, combining this with the `csp` attribute on the iframe element (Option 3 in the original document) provides an additional layer that is entirely parent-controlled and cannot be influenced by iframe content at all.
+1. **The CSP meta tag is essential** — `sandbox="allow-scripts"` alone is NOT sufficient to prevent network requests. Without a CSP meta tag, code can navigate to a data: URI and make requests that reach external servers.
+
+2. **The `csp` iframe attribute is NOT a substitute** — it only works in Chromium. Firefox ignores it, creating a real data exfiltration path.
+
+3. **The meta tag must be the first element** — if untrusted content appears before it, an attacker could inject content that runs before the CSP takes effect.
+
+### Recommended Approach
+
+For maximum security across browsers:
+
+```html
+<iframe
+  sandbox="allow-scripts"
+  csp="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';"
+  srcdoc="
+    <meta http-equiv='Content-Security-Policy'
+          content='default-src none; script-src unsafe-inline; style-src unsafe-inline;'>
+    <!-- untrusted content here -->
+  "
+></iframe>
+```
+
+Use **both** the `csp` attribute (for Chromium defense-in-depth) **and** the meta tag (for cross-browser coverage). The meta tag is the one that actually matters for Firefox.
