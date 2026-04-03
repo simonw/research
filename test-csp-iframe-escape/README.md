@@ -22,7 +22,7 @@ The claim is that:
 ## Test Setup
 
 - Local HTTP server via `python -m http.server`
-- Headless Chrome automation via [Rodney](https://github.com/nicois/rodney)
+- Headless Chrome automation via [Rodney](https://github.com/simonw/rodney)
 - A `canary.txt` file served at the root — any successful fetch of this file indicates a CSP escape
 - 34 tests across 4 rounds, each attempting a different bypass technique
 
