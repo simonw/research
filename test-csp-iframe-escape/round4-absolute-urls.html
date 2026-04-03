@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head><title>CSP Escape Tests - Round 4 (Absolute URL from data: URI)</title></head>
+<body>
+<h1>Round 4: Can data: URI pages fetch with absolute URLs?</h1>
+<div id="results"></div>
+
+<h2>Test 29: Meta refresh to data: URI, then fetch with absolute URL</h2>
+<iframe id="test29" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    const meta = document.createElement('meta');
+    meta.httpEquiv = 'refresh';
+    meta.content = '0;url=data:text/html,<script>fetch(&quot;http://localhost:8000/canary.txt&quot;).then(r=>r.text()).then(t=>parent.postMessage({test:29,result:&quot;CRITICAL FAIL - absolute fetch from data URI: &quot;+t},&quot;*&quot;)).catch(e=>parent.postMessage({test:29,result:&quot;PASS - absolute fetch blocked: &quot;+e.message},&quot;*&quot;))<\/script>';
+    document.head.appendChild(meta);
+    setTimeout(() => parent.postMessage({test: 29, result: 'meta refresh timeout'}, '*'), 4000);
+  </script>
+"></iframe>
+
+<h2>Test 30: location.href to data: URI, then absolute fetch</h2>
+<iframe id="test30" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    try {
+      location.href = 'data:text/html,<script>fetch(&quot;http://localhost:8000/canary.txt&quot;).then(r=>r.text()).then(t=>parent.postMessage({test:30,result:&quot;CRITICAL FAIL - location.href data: absolute fetch: &quot;+t},&quot;*&quot;)).catch(e=>parent.postMessage({test:30,result:&quot;PASS - location.href data: absolute fetch blocked: &quot;+e.message},&quot;*&quot;))<\/script>';
+    } catch(e) {
+      parent.postMessage({test: 30, result: 'PASS - location.href blocked: ' + e.message}, '*');
+    }
+    setTimeout(() => parent.postMessage({test: 30, result: 'location.href timeout'}, '*'), 4000);
+  </script>
+"></iframe>
+
+<h2>Test 31: data: URI with XMLHttpRequest absolute URL</h2>
+<iframe id="test31" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    const meta = document.createElement('meta');
+    meta.httpEquiv = 'refresh';
+    meta.content = '0;url=data:text/html,<script>var x=new XMLHttpRequest();x.open(&quot;GET&quot;,&quot;http://localhost:8000/canary.txt&quot;);x.onload=function(){parent.postMessage({test:31,result:&quot;CRITICAL FAIL - XHR from data URI: &quot;+x.responseText},&quot;*&quot;)};x.onerror=function(){parent.postMessage({test:31,result:&quot;PASS - XHR from data URI blocked&quot;},&quot;*&quot;)};x.send()<\/script>';
+    document.head.appendChild(meta);
+    setTimeout(() => parent.postMessage({test: 31, result: 'timeout'}, '*'), 4000);
+  </script>
+"></iframe>
+
+<h2>Test 32: data: URI with Image beacon to absolute URL</h2>
+<iframe id="test32" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    const meta = document.createElement('meta');
+    meta.httpEquiv = 'refresh';
+    meta.content = '0;url=data:text/html,<script>var i=new Image();i.onload=function(){parent.postMessage({test:32,result:&quot;CRITICAL FAIL - image from data URI loaded&quot;},&quot;*&quot;)};i.onerror=function(){parent.postMessage({test:32,result:&quot;PASS - image from data URI blocked&quot;},&quot;*&quot;)};i.src=&quot;http://localhost:8000/canary.txt&quot;;setTimeout(function(){parent.postMessage({test:32,result:&quot;PASS - image timeout&quot;},&quot;*&quot;)},2000)<\/script>';
+    document.head.appendChild(meta);
+    setTimeout(() => parent.postMessage({test: 32, result: 'timeout'}, '*'), 5000);
+  </script>
+"></iframe>
+
+<h2>Test 33: data: URI with sendBeacon to absolute URL</h2>
+<iframe id="test33" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    const meta = document.createElement('meta');
+    meta.httpEquiv = 'refresh';
+    meta.content = '0;url=data:text/html,<script>try{var sent=navigator.sendBeacon(&quot;http://localhost:8000/beacon-from-data-uri&quot;,&quot;leaked&quot;);parent.postMessage({test:33,result:&quot;sendBeacon from data URI returned: &quot;+sent},&quot;*&quot;)}catch(e){parent.postMessage({test:33,result:&quot;PASS - sendBeacon from data URI blocked: &quot;+e.message},&quot;*&quot;)}<\/script>';
+    document.head.appendChild(meta);
+    setTimeout(() => parent.postMessage({test: 33, result: 'timeout'}, '*'), 4000);
+  </script>
+"></iframe>
+
+<h2>Test 34: Verify sandbox still applies after data: navigation</h2>
+<iframe id="test34" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    const meta = document.createElement('meta');
+    meta.httpEquiv = 'refresh';
+    meta.content = '0;url=data:text/html,<script>parent.postMessage({test:34,result:&quot;sandbox flags: &quot;+document.domain+&quot; origin: &quot;+location.origin+&quot; cookie: &quot;+(navigator.cookieEnabled?&quot;yes&quot;:&quot;no&quot;)},&quot;*&quot;)<\/script>';
+    document.head.appendChild(meta);
+    setTimeout(() => parent.postMessage({test: 34, result: 'timeout'}, '*'), 4000);
+  </script>
+"></iframe>
+
+<script>
+  const results = {};
+  const testIds = [29,30,31,32,33,34];
+  window.addEventListener('message', (e) => {
+    if (e.data && e.data.test) {
+      results[e.data.test] = e.data.result;
+      const div = document.getElementById('results');
+      div.innerHTML = '<h2>Results So Far</h2><pre>' +
+        Object.entries(results)
+          .sort(([a],[b]) => a-b)
+          .map(([k,v]) => 'Test ' + k + ': ' + v)
+          .join('\n') +
+        '</pre>';
+      if (Object.keys(results).length >= testIds.length) {
+        window.__allDone = true;
+        div.innerHTML += '<p><strong>ALL TESTS COMPLETE</strong></p>';
+      }
+    }
+  });
+
+  setTimeout(() => {
+    for (const i of testIds) {
+      if (!results[i]) results[i] = 'TIMEOUT - no response received';
+    }
+    const div = document.getElementById('results');
+    div.innerHTML = '<h2>Final Results</h2><pre>' +
+      Object.entries(results)
+        .sort(([a],[b]) => a-b)
+        .map(([k,v]) => 'Test ' + k + ': ' + v)
+        .join('\n') +
+      '</pre><p><strong>ALL TESTS COMPLETE</strong></p>';
+    window.__allDone = true;
+  }, 8000);
+</script>
+</body>
+</html>

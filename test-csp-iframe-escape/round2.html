@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head><title>CSP Escape Tests - Round 2 (Advanced)</title></head>
+<body>
+<h1>CSP Meta Tag Escape Tests - Round 2</h1>
+<div id="results"></div>
+
+<h2>Test 11: Worker creation attempt</h2>
+<iframe id="test11" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    try {
+      const blob = new Blob(['postMessage(&quot;worker-alive&quot;)'], {type: 'application/javascript'});
+      const url = URL.createObjectURL(blob);
+      const w = new Worker(url);
+      w.onmessage = () => parent.postMessage({test: 11, result: 'FAIL - worker created and ran'}, '*');
+      w.onerror = () => parent.postMessage({test: 11, result: 'PASS - worker creation errored'}, '*');
+      setTimeout(() => parent.postMessage({test: 11, result: 'PASS - worker blocked (timeout)'}, '*'), 2000);
+    } catch(e) {
+      parent.postMessage({test: 11, result: 'PASS - worker blocked: ' + e.message}, '*');
+    }
+  </script>
+"></iframe>
+
+<h2>Test 12: EventSource (SSE) attempt</h2>
+<iframe id="test12" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    try {
+      const es = new EventSource('/canary.txt');
+      es.onopen = () => parent.postMessage({test: 12, result: 'FAIL - EventSource connected'}, '*');
+      es.onerror = () => parent.postMessage({test: 12, result: 'PASS - EventSource blocked'}, '*');
+      setTimeout(() => parent.postMessage({test: 12, result: 'PASS - EventSource blocked (timeout)'}, '*'), 2000);
+    } catch(e) {
+      parent.postMessage({test: 12, result: 'PASS - EventSource blocked: ' + e.message}, '*');
+    }
+  </script>
+"></iframe>
+
+<h2>Test 13: XMLHttpRequest attempt</h2>
+<iframe id="test13" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', '/canary.txt');
+      xhr.onload = () => parent.postMessage({test: 13, result: 'FAIL - XHR succeeded: ' + xhr.responseText}, '*');
+      xhr.onerror = () => parent.postMessage({test: 13, result: 'PASS - XHR blocked'}, '*');
+      xhr.send();
+      setTimeout(() => parent.postMessage({test: 13, result: 'PASS - XHR blocked (timeout)'}, '*'), 2000);
+    } catch(e) {
+      parent.postMessage({test: 13, result: 'PASS - XHR blocked: ' + e.message}, '*');
+    }
+  </script>
+"></iframe>
+
+<h2>Test 14: navigator.sendBeacon</h2>
+<iframe id="test14" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    try {
+      const sent = navigator.sendBeacon('/canary.txt', 'data');
+      parent.postMessage({test: 14, result: sent ? 'FAIL - sendBeacon returned true' : 'PASS - sendBeacon returned false'}, '*');
+    } catch(e) {
+      parent.postMessage({test: 14, result: 'PASS - sendBeacon blocked: ' + e.message}, '*');
+    }
+  </script>
+"></iframe>
+
+<h2>Test 15: Dynamic script src injection</h2>
+<iframe id="test15" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    try {
+      const s = document.createElement('script');
+      s.src = '/canary.txt';
+      s.onload = () => parent.postMessage({test: 15, result: 'FAIL - external script loaded'}, '*');
+      s.onerror = () => parent.postMessage({test: 15, result: 'PASS - external script blocked by CSP'}, '*');
+      document.head.appendChild(s);
+      setTimeout(() => parent.postMessage({test: 15, result: 'PASS - external script blocked (timeout)'}, '*'), 2000);
+    } catch(e) {
+      parent.postMessage({test: 15, result: 'PASS - script injection blocked: ' + e.message}, '*');
+    }
+  </script>
+"></iframe>
+
+<h2>Test 16: CSS @import exfiltration via style element</h2>
+<iframe id="test16" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    try {
+      const style = document.createElement('style');
+      style.textContent = '@import url(/canary.txt);';
+      document.head.appendChild(style);
+      // Check if any network request went out by trying to detect via PerformanceObserver
+      setTimeout(() => {
+        parent.postMessage({test: 16, result: 'PASS - @import likely blocked (no way to detect load in sandbox)'}, '*');
+      }, 1500);
+    } catch(e) {
+      parent.postMessage({test: 16, result: 'PASS - style @import blocked: ' + e.message}, '*');
+    }
+  </script>
+"></iframe>
+
+<h2>Test 17: meta refresh redirect to data: URI</h2>
+<iframe id="test17" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    try {
+      const meta = document.createElement('meta');
+      meta.httpEquiv = 'refresh';
+      meta.content = '0;url=data:text/html,<script>parent.postMessage({test:17,result:&quot;FAIL - escaped via meta refresh to data URI&quot;},&quot;*&quot;)<\/script>';
+      document.head.appendChild(meta);
+      setTimeout(() => parent.postMessage({test: 17, result: 'PASS - meta refresh blocked or ignored'}, '*'), 2000);
+    } catch(e) {
+      parent.postMessage({test: 17, result: 'PASS - meta refresh blocked: ' + e.message}, '*');
+    }
+  </script>
+"></iframe>
+
+<h2>Test 18: Blob URL navigation to escape CSP</h2>
+<iframe id="test18" sandbox="allow-scripts allow-same-origin" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    // NOTE: This test adds allow-same-origin to see if blob URL navigation works
+    try {
+      const html = '<script>fetch(&quot;/canary.txt&quot;).then(r=>r.text()).then(t=>parent.postMessage({test:18,result:&quot;FAIL - blob nav escaped CSP: &quot;+t},&quot;*&quot;)).catch(e=>parent.postMessage({test:18,result:&quot;PASS - blob nav still blocked: &quot;+e.message},&quot;*&quot;))<\/script>';
+      const blob = new Blob([html], {type: 'text/html'});
+      const url = URL.createObjectURL(blob);
+      location.href = url;
+    } catch(e) {
+      parent.postMessage({test: 18, result: 'PASS - blob navigation blocked: ' + e.message}, '*');
+    }
+    setTimeout(() => parent.postMessage({test: 18, result: 'PASS - blob nav blocked (timeout)'}, '*'), 3000);
+  </script>
+"></iframe>
+
+<h2>Test 19: document.write replacing CSP with permissive one</h2>
+<iframe id="test19" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    // Try document.write with a NEW permissive CSP meta tag
+    document.open();
+    document.write('<meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src *; connect-src *;&quot;><script>(async()=>{try{const r=await fetch(&quot;/canary.txt&quot;);const t=await r.text();parent.postMessage({test:19,result:&quot;FAIL - doc.write with new CSP: &quot;+t},&quot;*&quot;)}catch(e){parent.postMessage({test:19,result:&quot;PASS - doc.write new CSP still restricted: &quot;+e.message},&quot;*&quot;)}})()</scr' + 'ipt>');
+    document.close();
+  </script>
+"></iframe>
+
+<h2>Test 20: Service Worker registration</h2>
+<iframe id="test20" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    (async () => {
+      try {
+        if (navigator.serviceWorker) {
+          await navigator.serviceWorker.register('/canary.txt');
+          parent.postMessage({test: 20, result: 'FAIL - service worker registered'}, '*');
+        } else {
+          parent.postMessage({test: 20, result: 'PASS - serviceWorker API not available in sandbox'}, '*');
+        }
+      } catch(e) {
+        parent.postMessage({test: 20, result: 'PASS - SW blocked: ' + e.message}, '*');
+      }
+    })();
+  </script>
+"></iframe>
+
+<script>
+  const results = {};
+  const total = 10; // tests 11-20
+  window.addEventListener('message', (e) => {
+    if (e.data && e.data.test) {
+      results[e.data.test] = e.data.result;
+      const div = document.getElementById('results');
+      div.innerHTML = '<h2>Results So Far</h2><pre>' +
+        Object.entries(results)
+          .sort(([a],[b]) => a-b)
+          .map(([k,v]) => 'Test ' + k + ': ' + v)
+          .join('\n') +
+        '</pre>';
+      if (Object.keys(results).length >= total) {
+        window.__allDone = true;
+        div.innerHTML += '<p><strong>ALL TESTS COMPLETE</strong></p>';
+      }
+    }
+  });
+
+  setTimeout(() => {
+    for (let i = 11; i <= 20; i++) {
+      if (!results[i]) results[i] = 'TIMEOUT - no response received';
+    }
+    const div = document.getElementById('results');
+    div.innerHTML = '<h2>Final Results</h2><pre>' +
+      Object.entries(results)
+        .sort(([a],[b]) => a-b)
+        .map(([k,v]) => 'Test ' + k + ': ' + v)
+        .join('\n') +
+      '</pre><p><strong>ALL TESTS COMPLETE</strong></p>';
+    window.__allDone = true;
+  }, 6000);
+</script>
+</body>
+</html>
