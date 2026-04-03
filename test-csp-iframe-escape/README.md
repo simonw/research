@@ -1,5 +1,10 @@
 # Can JavaScript Escape a CSP Meta Tag Inside an Iframe?
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 Testing whether JavaScript running inside a `sandbox="allow-scripts"` iframe can remove, modify, or circumvent a `<meta http-equiv="Content-Security-Policy">` tag to escape network restrictions.
 
 ## Background
