@@ -251,7 +251,7 @@ REXC (rx) JSON Test Suite provides a comprehensive, language-agnostic test resou
 - TypeScript runner ensures the test suite remains synchronized with the reference implementation.
 - Supports advanced encoding features (schemas, pointers, special values).
 
-### [syntaqlite Python Extension](https://github.com/simonw/research/tree/main/syntaqlite-python-extension#readme) (2026-03-17 16:51)
+### [syntaqlite Python Extension in WebAssembly](https://github.com/simonw/research/tree/main/syntaqlite-python-extension#readme) (2026-03-17 16:51)
 
 syntaqlite-python-extension is a Python C extension module that integrates the [syntaqlite](https://github.com/LalitMaganti/syntaqlite) Rust/C SQL toolkit, making high-fidelity SQL parsing, formatting, validation, and tokenization available to Python and Pyodide environments. It wraps syntaqlite's native FFI for both desktop and web, linking against static libraries produced by Rust and employing Emscripten for WASM builds. The extension exposes four key functions—parse, format_sql, validate, and tokenize—enabling error-tolerant parsing, customizable formatting, schema-aware validation (with suggestions), and full tokenization, including whitespace/comments. Rigorous test coverage ensures robustness for various SQL dialect scenarios.
 
