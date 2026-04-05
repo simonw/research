@@ -1,4 +1,4 @@
-# syntaqlite Python Extension
+# syntaqlite Python Extension in WebAssembly
 
 <!-- AI-GENERATED-NOTE -->
 > [!NOTE]
@@ -6,6 +6,8 @@
 <!-- /AI-GENERATED-NOTE -->
 
 A Python C extension module that exposes the core features of [syntaqlite](https://github.com/LalitMaganti/syntaqlite) — a parser, formatter, validator, and language server for SQLite SQL built on SQLite's own grammar and tokenizer.
+
+You can try the WebAssembly version of this out in [this playground interface](https://tools.simonwillison.net/syntaqlite) ([details](https://github.com/simonw/tools/pull/263)).
 
 ## Features
 
