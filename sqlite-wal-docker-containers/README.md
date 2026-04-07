@@ -1,5 +1,10 @@
 # SQLite WAL Mode Across Docker Containers Sharing a Volume
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 ## Question
 
 Does SQLite WAL mode work correctly when two Docker containers mount the same volume? WAL mode uses a memory-mapped shared memory file (`.db-shm`) for coordination - if the `mmap` isn't truly shared between containers, reads could see stale data or worse.
