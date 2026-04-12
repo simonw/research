@@ -118,16 +118,72 @@ safely. Proof-of-concept in `test_promises.py::test_deferred_resolution`.
 6. **JS bootstrap** defines `fetchAsync(url, options)`, `sleep(ms)`,
    `log(...)` — all Promise-returning wrappers so user code can `await`.
 
+## Follow-up: can we force-kill the thread? Process-based variant
+
+### Thread-kill experiments (`test_kill_thread.py`)
+- **`ctypes.pythonapi.PyThreadState_SetAsyncExc(tid, SystemExit)`**: the
+  call returns 1 (one thread affected), but the exception is pending and
+  only raised when Python bytecode executes. For **pure JS infinite loops
+  the thread stays alive forever** — QuickJS is in C code with no Python
+  frames.
+- If the JS periodically calls a Python callable, the injected exception
+  IS raised on the next callback (we get `JSException: Python call failed`
+  and the thread exits). So you could add an auto-injected `__heartbeat()`
+  Python callback — but that's invasive, and malicious code could simply
+  avoid calling it.
+- **`signal.pthread_kill(tid, SIGUSR1)`** with the default handler kills
+  the **entire process** (tested: exit code 138). Installing a Python
+  signal handler doesn't help because signals only dispatch in the main
+  thread.
+
+**Conclusion**: there is no reliable in-process way to terminate a thread
+running pure-JS QuickJS. For hard isolation you need a separate process.
+
+### `ProcessQuickJSSandbox` (`sandbox_process.py`)
+Same API surface as the thread-based sandbox, but runs QuickJS in a child
+process forked from the parent. Parent stays in asyncio; on timeout it
+`SIGTERM`s, waits 50 ms, then `SIGKILL`s the child. A tiny line-delimited
+JSON protocol over pipes carries log messages, RPC requests (fetch /
+sleep), and the final result.
+
+Additionally applies an OS-level address-space cap via
+`resource.setrlimit(RLIMIT_AS, ...)` in the child — belt-and-braces on top
+of the QuickJS memory limit.
+
+### Measured overheads (`demo_process.py`, fork start method, Linux)
+| scenario | thread sandbox | process sandbox |
+|---|---|---|
+| `40 + 2` total wall clock | ~2 ms | ~25 ms (~15 ms fork, ~10 ms QJS) |
+| `while(true){}` | abandoned thread | **SIGKILL after ~50 ms over budget** |
+| 3 concurrent `/delay/1` fetches | ~1.7 s | ~2.9 s (some IPC contention) |
+| memory-limit violation | caught (OOM) | caught (OOM) |
+| fetch-size violation | caught | caught |
+
+The process version is ~10× slower for trivial runs but is the only
+option that truly enforces a wall-clock deadline against hostile JS.
+
+### When to pick which
+- **Thread sandbox (`sandbox.py`)**: trusted-ish scripts, plugin code,
+  LLM-generated snippets you mostly expect to terminate. Fastest path;
+  the rare hung run just leaks a daemon thread.
+- **Process sandbox (`sandbox_process.py`)**: adversarial inputs, CTF,
+  anything from the public internet. Higher per-call overhead but hard
+  SIGKILL guarantee, and a C-level crash in quickjs can't take down the
+  parent.
+
 ## Files in this folder
 - `notes.md` — this file
 - `README.md` — final report
-- `sandbox.py` — `AsyncQuickJSSandbox` implementation
-- `demo.py` — end-to-end demo with 10 scenarios
+- `sandbox.py` — `AsyncQuickJSSandbox` (thread-based) implementation
+- `demo.py` — thread sandbox end-to-end demo with 10 scenarios
+- `sandbox_process.py` — `ProcessQuickJSSandbox` (fork + SIGKILL)
+- `demo_process.py` — process sandbox demo (8 scenarios, incl. pure-JS hang kill)
 - `test_limits.py` — memory/time/stack limit probes
 - `test_callbacks.py` / `test_callbacks2.py` — callable type & error tests
 - `test_time_limit_workaround.py` — what happens when you combine limits
 - `test_asyncio.py` — background-thread + run_coroutine_threadsafe tests
 - `test_promises.py` — Promise / async / await / deferred resolution
+- `test_kill_thread.py` — failed attempts to kill a QJS-running thread
 
 ## Demo results (all 10 pass)
 ```

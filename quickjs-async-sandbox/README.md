@@ -155,15 +155,82 @@ sb = AsyncQuickJSSandbox(extra_async_callables={"tool": my_async_tool})
 - `notes.md` — working notes with detailed findings
 - `pyproject.toml`, `uv.lock`, `.python-version` — `uv` project metadata
 
-## Remaining caveats / future work
+## Can we force-kill the worker thread?
 
-- **Timed-out threads are orphaned** — for a truly hostile adversary that
-  runs infinite JS, you'd want to switch to `multiprocessing` for hard
-  termination, at the cost of higher per-run overhead. For trusted-ish
-  code (plugin scripts, config DSLs), the daemon-thread approach is fine.
+**No** — not for pure JS. Experimentally verified in `test_kill_thread.py`:
+
+- `ctypes.pythonapi.PyThreadState_SetAsyncExc(tid, SystemExit)` queues an
+  exception that is raised only when Python bytecode executes. QuickJS
+  sits entirely in C code, so the injected exception never fires and the
+  thread runs forever.
+- If the JS *happens* to call a Python callback, the exception is raised
+  on the next call and the thread exits — but hostile JS can just avoid
+  callbacks (`while(true){}` never yields).
+- `signal.pthread_kill` with default handlers terminates the whole
+  process; with Python-installed handlers it doesn't help because Python
+  only dispatches signals in the main thread.
+
+So: **for hostile inputs, the only real option is a separate process.**
+
+## `ProcessQuickJSSandbox` — hard termination via SIGKILL
+
+`sandbox_process.py` provides the same run-JS-and-get-a-result API, but
+runs QuickJS in a forked child. Parent stays in asyncio; on timeout it
+`SIGTERM`s the child, waits briefly, then `SIGKILL`s. A small line-delimited
+JSON protocol over pipes carries log messages, RPC requests (fetch/sleep
+run on the parent's asyncio loop), and the final result.
+
+It also applies an OS-level address-space cap via
+`resource.setrlimit(RLIMIT_AS, ...)` in the child — defence in depth on
+top of the QuickJS memory limit — and a C-level crash in the quickjs
+extension can no longer take down the parent.
+
+### Measured overhead (Linux, fork start method)
+
+| scenario | thread sandbox | process sandbox |
+|---|---|---|
+| `40 + 2` total wall time | ~2 ms | ~25 ms (~15 ms fork + ~10 ms QJS) |
+| `while(true){}` | thread leaked | **SIGKILL'd ~50 ms over budget** |
+| 3× concurrent `/delay/1` fetches | ~1.7 s | ~2.9 s |
+
+### When to pick which
+
+- **Thread (`AsyncQuickJSSandbox`)** — trusted-ish plugin code, LLM-generated
+  snippets you mostly expect to terminate. ~10× faster per run; a rare
+  hung run leaks one daemon thread.
+- **Process (`ProcessQuickJSSandbox`)** — adversarial inputs, untrusted
+  network payloads. Higher start-up cost but guaranteed termination and
+  proper memory + crash isolation.
+
+Run the process demo with:
+
+```bash
+uv run python demo_process.py
+```
+
+Sample output:
+
+```
+[basic]        value=42 total=25ms js=11ms
+[fetch]        value=200 logs=['["status", 200]']
+[fetch-size]   value={'ok': False, 'err': 'ValueError: response exceeded 200 bytes'}
+[memory]       SandboxError: out of memory
+[pure-js-hang] SIGKILL'd after 1.57s: JS execution exceeded 1.5s wall clock
+[disallowed]   value={'ok': False, 'err': "ValueError: scheme 'ftp' not allowed"}
+[responsive]   value=[200, 200] elapsed=2.38s ticks=46 (loop stayed live)
+[concurrent]   total=2.92s results=[('A', 200, ...), ('B', 200, ...), ('C', 200, ...)]
+```
+
+## Other caveats / future work
+
 - **No fan-out inside a single sandbox run** unless you use Pattern B.
 - **Callback arg types** — arrays/objects arrive as `quickjs.Object`
-  instances in Python. The sandbox sidesteps this by passing everything
-  through JSON strings.
-- **`ctx.module()` not explored** — ES modules should work but the demo
-  uses plain scripts + IIFEs.
+  instances in Python. Both sandboxes sidestep this by using JSON
+  strings everywhere.
+- **`ctx.module()` not explored** — ES modules should work but the demos
+  use plain scripts + IIFEs.
+- **`spawn` start method** for the process sandbox (needed on macOS and
+  for maximum isolation) is untested — the current code uses `fork`,
+  which is faster but shares file descriptors up to the fork point.
+- **Process pool** could amortise the fork cost for high-throughput use
+  cases; not implemented here.
