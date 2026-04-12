@@ -1,5 +1,10 @@
 # QuickJS Python Sandbox — Investigation Report
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 Building an asyncio-friendly JavaScript sandbox using the
 [`quickjs`](https://pypi.org/project/quickjs/) PyPI package (v1.19.4), with
 hard memory and wall-clock limits and selected Python functions — including
