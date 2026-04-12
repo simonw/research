@@ -8,3 +8,4 @@ package-lock.json
 
 # Pyodide cross-build environment
 .pyodide-xbuildenv/
+quickjs-async-sandbox/.venv/
