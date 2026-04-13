@@ -1,5 +1,10 @@
 # Exploring the new `servo` crate
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 On 2026-04-13 the Servo team
 [shipped][blog] `servo` v0.1.0 to crates.io — the first time the
 Servo browser engine has been published as a regular embeddable
