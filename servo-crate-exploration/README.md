@@ -42,7 +42,7 @@ library. This folder is my investigation of the crate:
   self-contained SPA that loads Servo's actual `html5ever` +
   `markup5ever_rcdom` crates (`wasm32-unknown-unknown`, 454 KB
   `.wasm`) and shows the parse tree for whatever HTML you type in
-  — all running client-side, zero server round-trip.
+  — all running client-side, zero server round-trip. [View that demo](https://simonw.github.io/research/servo-crate-exploration/html5ever-wasm-demo/www/).
 
 ## Repo layout
 
@@ -269,7 +269,7 @@ in [`html5ever-wasm-demo/Cargo.toml`](html5ever-wasm-demo/Cargo.toml)
 and the commentary at the top of
 [`src/lib.rs`](html5ever-wasm-demo/src/lib.rs).
 
-To try it:
+To try it: [simonw.github.io/research/servo-crate-exploration/html5ever-wasm-demo/www/](https://simonw.github.io/research/servo-crate-exploration/html5ever-wasm-demo/www/) - or:
 
 ```
 cd html5ever-wasm-demo
