@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Servo html5ever in WebAssembly</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root { color-scheme: dark; }
+  body {
+    font: 15px/1.45 system-ui, -apple-system, sans-serif;
+    background: #111418; color: #e5e7eb;
+    margin: 0; padding: 2rem;
+    max-width: 64rem; margin-inline: auto;
+  }
+  h1 { margin-top: 0; }
+  h1 small { font-weight: 400; opacity: .7; font-size: 0.65em; display: block; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 780px) { .grid { grid-template-columns: 1fr; } }
+  textarea, pre {
+    width: 100%; box-sizing: border-box;
+    background: #1b1f24; color: #e5e7eb;
+    border: 1px solid #333; border-radius: .5rem;
+    padding: .75rem; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace;
+    min-height: 26rem;
+  }
+  textarea { resize: vertical; }
+  pre { white-space: pre-wrap; word-break: break-word; }
+  label { display: block; font-size: 13px; margin: .5rem 0 .25rem; opacity: .8; }
+  .tabs { display: flex; gap: .25rem; margin: 1rem 0 .25rem; }
+  .tabs button {
+    font: inherit; padding: .4rem .8rem; border-radius: .4rem;
+    border: 1px solid #333; background: #1b1f24; color: #e5e7eb;
+    cursor: pointer;
+  }
+  .tabs button.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+  footer { margin-top: 2rem; opacity: .7; font-size: 13px; }
+  footer code { background: #1b1f24; padding: 0.1em 0.3em; border-radius: .25rem; }
+</style>
+</head>
+<body>
+<h1>
+  Servo's <code>html5ever</code> in your browser tab
+  <small>Parses HTML with Servo's real HTML5 parser, compiled to WebAssembly (~465 KB).</small>
+</h1>
+
+<p>This page demonstrates that, while the full <code>servo</code> crate can't
+be compiled to WebAssembly (SpiderMonkey, threads, GL, …), individual Servo
+sub-crates absolutely can. Here <code>html5ever</code> + <code>markup5ever_rcdom</code>
+run entirely client-side. Edit the HTML on the left; see Servo's parse tree
+and normalised serialisation on the right.</p>
+
+<div class="grid">
+  <div>
+    <label for="in">HTML input</label>
+    <textarea id="in" spellcheck="false">&lt;p&gt;hello&lt;b&gt;world&lt;/p&gt;&lt;i&gt;!
+&lt;div&gt;&lt;table&gt;&lt;tr&gt;&lt;td&gt;implicit tbody
+&lt;p&gt;unclosed&lt;/html&gt;&lt;!-- parser adopts the mis-nested tags --&gt;</textarea>
+  </div>
+  <div>
+    <div class="tabs">
+      <button id="tab-tree" class="active" type="button">Parse tree</button>
+      <button id="tab-norm" type="button">Normalised HTML</button>
+    </div>
+    <label id="out-label" for="out">Servo's interpretation</label>
+    <pre id="out">loading wasm…</pre>
+  </div>
+</div>
+
+<footer>
+  Built with <code>html5ever 0.35</code> + <code>markup5ever_rcdom 0.35-unofficial</code>
+  (the same Rust crates used by Servo 0.1.0), compiled for
+  <code>wasm32-unknown-unknown</code> and loaded via
+  <code>wasm-bindgen</code>.
+</footer>
+
+<script type="module">
+  import init, { parse_tree, normalise } from "./html5ever_wasm_demo.js";
+  const $in   = document.getElementById("in");
+  const $out  = document.getElementById("out");
+  const $tabTree = document.getElementById("tab-tree");
+  const $tabNorm = document.getElementById("tab-norm");
+
+  let mode = "tree";
+  function render() {
+    const src = $in.value;
+    try {
+      $out.textContent = mode === "tree" ? parse_tree(src) : normalise(src);
+    } catch (e) {
+      $out.textContent = "error: " + e.message;
+    }
+  }
+  $tabTree.addEventListener("click", () => {
+    mode = "tree"; $tabTree.classList.add("active"); $tabNorm.classList.remove("active"); render();
+  });
+  $tabNorm.addEventListener("click", () => {
+    mode = "norm"; $tabNorm.classList.add("active"); $tabTree.classList.remove("active"); render();
+  });
+  $in.addEventListener("input", render);
+
+  await init();
+  render();
+</script>
+</body>
+</html>
