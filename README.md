@@ -27,14 +27,14 @@ for d in research_dir.iterdir():
         # Get the date of the first commit that touched this directory
         try:
             result = subprocess.run(
-                ['git', 'log', '--diff-filter=A', '--follow', '--format=%aI', '--reverse', '--', d.name],
+                ['git', 'log', '-1', '--format=%aI', '--', d.name],
                 capture_output=True,
                 text=True,
                 timeout=5
             )
             if result.returncode == 0 and result.stdout.strip():
-                # Parse first line (oldest commit)
-                date_str = result.stdout.strip().split('\n')[0]
+                # Most recent commit that touched this directory
+                date_str = result.stdout.strip()
                 commit_date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
                 subdirs_with_dates.append((d.name, commit_date))
             else:
