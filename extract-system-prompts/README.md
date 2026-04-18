@@ -4,6 +4,13 @@ Anthropic publishes the history of system prompts used on claude.ai and the mobi
 
 This folder extracts that document into a set of files and a git history shaped so that `git log`, `git diff`, and `git blame` become the primary interface for exploring how those prompts have evolved.
 
+Browse the per-family history pages on GitHub:
+
+- [`claude-opus.md` history](https://github.com/simonw/research/commits/main/extract-system-prompts/claude-opus.md) — Opus 3 → Opus 4.7
+- [`claude-sonnet.md` history](https://github.com/simonw/research/commits/main/extract-system-prompts/claude-sonnet.md) — Sonnet 3.5 → Sonnet 4.6
+- [`claude-haiku.md` history](https://github.com/simonw/research/commits/main/extract-system-prompts/claude-haiku.md) — Haiku 3 → Haiku 4.5
+- [`latest-prompt.md` history](https://github.com/simonw/research/commits/main/extract-system-prompts/latest-prompt.md) — every prompt across every model
+
 ## What you get
 
 For every `<section title="...">` block in the source document the extractor produces four artifacts:
