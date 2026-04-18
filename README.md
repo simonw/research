@@ -177,7 +177,7 @@ for dirname, _ in subdirs_with_dates:
             readme_path.write_text('\n'.join(new_lines))
 
 ]]]-->
-## 85 research projects
+## 86 research projects
 
 ### [Exploring the new `servo` crate](https://github.com/simonw/research/tree/main/servo-crate-exploration#readme) (2026-04-13 15:04)
 
@@ -1055,6 +1055,16 @@ A compact demo shows how to run Python scripts inside a WebAssembly sandbox from
 - Executes Python in WebAssembly via Pyodide and writes outputs to output/
 - Minimal commands: npm install; node server-simple.js
 - Recommended Node.js v16+ for best compatibility
+
+### [Claude system prompts as a git timeline](https://github.com/simonw/research/tree/main/extract-system-prompts#readme) (2024-07-12 12:00)
+
+Anthropic's published system prompt history for Claude is transformed into a git-based exploration tool, breaking up the monolithic markdown source into granular files and timestamped commits. By structuring extracted prompts per model, family, and revision, researchers can leverage `git log`, `diff`, and `blame` to trace prompt evolution, compare differences, and attribute changes to specific dates—all without manual parsing. The extraction workflow uses precise commit metadata to preserve chronology and clarity, enabling reproducible and detailed investigations of prompt adjustments across Opus, Sonnet, and Haiku model families. Access to both the original [Anthropic system prompts](https://platform.claude.com/docs/en/release-notes/system-prompts) and [prompt histories on GitHub](https://github.com/simonw/research/tree/main/extract-system-prompts) facilitates transparent, permalinks, and fine-grained audit trails.
+
+Key features:
+- 26 prompt revisions across 14 models and three model families
+- Four artifact types per revision, including per-model, per-family, and firehose files
+- Git commit timestamps and authors reflect the original prompt dates for historical accuracy
+- Idempotent extraction with reproducible results for future updates
 
 <!--[[[end]]]-->
 

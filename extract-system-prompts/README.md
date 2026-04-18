@@ -1,5 +1,10 @@
 # Claude system prompts as a git timeline
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 Anthropic publishes the history of system prompts used on claude.ai and the mobile apps at <https://platform.claude.com/docs/en/release-notes/system-prompts>. That page is a single monolithic markdown document grouped by model, and each model lists one or more dated revisions.
 
 This folder extracts that document into a set of files and a git history shaped so that `git log`, `git diff`, and `git blame` become the primary interface for exploring how those prompts have evolved.
