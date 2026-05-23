@@ -1,5 +1,10 @@
 # pydantic-monty investigation
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 Investigation date: 2026-05-22
 
 This folder records an experimental look at [`pydantic-monty`](https://github.com/pydantic/monty), focused on what Python it actually runs, how sandboxing behaves, and how resource limits perform in practice.
