@@ -91,6 +91,29 @@ Fix: synthesize `Host` as `host:port` for non-default ports. Added a pure-Python
 regression test (`test_synthesized_host_header_includes_nondefault_port`) first (red),
 then fixed the harness (green). One-line root cause, caught by the e2e layer.
 
+## Datasette (follow-up: "get Datasette working in that")
+Datasette is itself an ASGI app, so it drops into the same bridge.
+
+- **Feasibility probe (pure Python, reusing the embedded harness):** `Datasette(memory=True,
+  settings={"base_url": "/app/"})`, add a memory DB + rows, `bridge.startup()` → lifespan
+  works (Datasette supports the lifespan protocol). `base_url="/app/"` makes every generated
+  link / static asset / `.json` URL root-relative under `/app/` (`/app/demo`,
+  `/app/-/static/app.css`, `/app/demo/items`), so no `root_path` needed and everything stays
+  in the intercepted scope. HTML + JSON both render real data.
+- **Pyodide specifics:** set `num_sql_threads=0` (Pyodide has no threads; run SQLite inline).
+- **Vendoring:** Datasette 0.65.2 is pure-Python. Its closure: ~15 bundled-in-Pyodide deps
+  (jinja2, markupsafe, pyyaml, httpx/httpcore/h11/certifi, click, pluggy, anyio, ...) resolved
+  from the local lock, + 14 non-bundled pure-Python wheels (datasette, aiofiles, asgi-csrf,
+  asgiref, click-default-group, flexcache, flexparser, hupper, itsdangerous, janus, mergedeep,
+  pip, python-multipart, uvicorn) downloaded from PyPI into `vendor/` with a `datasette.json`
+  install manifest.
+- **Refactor to share code:** moved the bridge harness into `bridge-python.js` and the JS
+  plumbing into `worker-runtime.js`; `worker.js` (FastAPI) and `worker-datasette.js` both
+  `importScripts` them and just supply their app + install manifest. `bootstrap.js` picks the
+  worker from `self.ASGI_WORKER`; `datasette.html` sets it to `worker-datasette.js`.
+- Tests: `test_datasette_bridge.py` (pure Python, 3) + `test_datasette_browser.py` (Playwright:
+  home, db→table navigation, and an intercepted `fetch()` of the `.json` API).
+
 ## TDD plan
 1. Pure-Python unit tests of the ASGI bridge harness (scope building, receive/send,
    header/body round-trip) — fast, no browser. RED then GREEN.

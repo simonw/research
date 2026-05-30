@@ -59,7 +59,8 @@ async function main() {
   await navigator.serviceWorker.ready;
 
   setStatus("starting-worker");
-  const worker = new Worker("worker.js");
+  // Which Pyodide worker to run (FastAPI demo by default, Datasette if set).
+  const worker = new Worker(self.ASGI_WORKER || "worker.js");
 
   const ready = new Promise((resolve, reject) => {
     worker.onmessage = (event) => {

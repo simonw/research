@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Datasette in the browser via Pyodide + a service worker</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 60rem; }
+    #status { font-family: ui-monospace, monospace; padding: .4rem .6rem;
+              background: #f3f3f3; border-radius: .4rem; display: inline-block; }
+    #appframe { width: 100%; height: 80vh; border: 1px solid #ccc;
+                border-radius: .4rem; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Datasette, captured by a service worker</h1>
+  <p>
+    The full <a href="https://datasette.io/">Datasette</a> ASGI application runs entirely
+    in your browser via Pyodide. A service worker intercepts every navigation, facet,
+    SQL query and <code>.json</code> API request under <code>/app/</code> and answers it
+    over ASGI &mdash; there is no Datasette server behind it.
+  </p>
+  <p>Boot status: <span id="status">starting</span> (installing Datasette takes a little while)</p>
+  <iframe id="appframe" title="Datasette"></iframe>
+
+  <!-- Use the Datasette worker instead of the default FastAPI demo worker. -->
+  <script>self.ASGI_WORKER = "worker-datasette.js";</script>
+  <script src="bootstrap.js"></script>
+</body>
+</html>

@@ -1,11 +1,18 @@
 # Running Python ASGI apps in the browser via Pyodide + a service worker
 
 This project captures the **entire server side** of a Python web application and moves it
-into the browser. A FastAPI app runs inside [Pyodide](https://pyodide.org/), and a
+into the browser. An ASGI app runs inside [Pyodide](https://pyodide.org/), and a
 **service worker** intercepts every same-origin request under `/app/` — link navigations,
 form submissions and JavaScript `fetch()` calls alike — and answers them by speaking the
 **ASGI** protocol to the Python app. There is no HTTP server behind `/app/`: the only thing
 a real server does is hand over the static bootstrap files.
+
+Two apps run on the **same** bridge:
+
+- **FastAPI demo** (`index.html`) — links, a form POST→303 redirect, a JSON API, and a page
+  that runs its own intercepted `fetch()`.
+- **Datasette** (`datasette.html`) — the full [Datasette](https://datasette.io/) ASGI app,
+  with database/table navigation, SQL, and its `.json` API, all answered in the browser.
 
 ```
  Browser tab
@@ -87,17 +94,23 @@ offline-capable. `vendor/` is gitignored; run `python3 vendor.py` to reproduce i
 
 | File | Role |
 |------|------|
-| `index.html` | Bootstrap shell page with the app `<iframe>` |
-| `bootstrap.js` | Registers the SW, starts the Pyodide worker, brokers SW→worker requests |
+| `index.html` / `datasette.html` | Bootstrap shells (FastAPI demo / Datasette) with the app `<iframe>` |
+| `bootstrap.js` | Registers the SW, starts the chosen Pyodide worker, brokers SW→worker requests |
 | `sw.js` | Service worker; intercepts `/app/*` and proxies it to the shell/worker |
-| `worker.js` | Pyodide Web Worker; embeds the ASGI bridge harness + FastAPI demo app + glue |
+| `bridge-python.js` | The shared ASGI bridge harness (`ASGI_BRIDGE_PY`), used by both workers |
+| `worker-runtime.js` | Shared worker runtime: loads Pyodide, installs wheels, serves requests |
+| `worker.js` | FastAPI Web Worker (inline FastAPI app + glue) |
+| `worker-datasette.js` | Datasette Web Worker (inline Datasette setup + glue) |
 | `vendor.py` | Downloads Pyodide + the needed wheels into `vendor/` (gitignored) |
-| `tests/test_bridge.py` | Pure-Python unit tests of the embedded ASGI harness (fast) |
-| `tests/test_browser.py` | Playwright end-to-end tests driving real Chromium |
+| `tests/test_bridge.py` | Pure-Python unit tests of the FastAPI bridge path |
+| `tests/test_datasette_bridge.py` | Pure-Python unit tests of the Datasette bridge path |
+| `tests/test_browser.py` | Playwright end-to-end tests (FastAPI) in real Chromium |
+| `tests/test_datasette_browser.py` | Playwright end-to-end tests (Datasette) in real Chromium |
 
-The Python that runs in the browser is embedded in `worker.js` as two `String.raw` blocks
-(`ASGI_BRIDGE_PY`, `APP_PY`). The unit tests **extract those exact blocks** from `worker.js`
-and exercise them directly, so the tested code and the shipped code cannot drift apart.
+The Python that runs in the browser lives in `String.raw` blocks (`ASGI_BRIDGE_PY` in
+`bridge-python.js`; `APP_PY` in `worker.js`; `DATASETTE_PY` in `worker-datasette.js`). The
+unit tests **extract those exact blocks** and exercise them directly, so the tested code and
+the shipped code cannot drift apart.
 
 ## The demo FastAPI app
 
@@ -109,34 +122,54 @@ and exercise them directly, so the tested code and the shipped code cannot drift
   JSON API (that fetch is itself intercepted and answered by FastAPI).
 - `GET /app/api/items` — JSON API returning items seeded during lifespan startup.
 
+## Datasette on the same bridge
+
+`datasette.html` runs the full Datasette ASGI app through the identical bridge — proving the
+mechanism isn't FastAPI-specific. Two Datasette-specific details:
+
+- **`base_url="/app/"`** — Datasette's own setting for running under a path prefix makes every
+  link, static asset and `.json` URL root-relative under `/app/`, so they all stay inside the
+  intercepted scope. (No ASGI `root_path` needed; the bridge passes the full path through.)
+- **`num_sql_threads=0`** — Pyodide has no threads, so SQLite runs inline on the event loop.
+- **Vendoring** — Datasette 0.65 is pure-Python. Its heavy/compiled deps (MarkupSafe, PyYAML,
+  Jinja2, httpx, …) and the `sqlite3` package (unvendored from the stdlib in Pyodide) come
+  from the local Pyodide lock; ~14 pure-Python wheels (datasette, asgi-csrf, uvicorn, …) are
+  fetched from PyPI into `vendor/` with a `datasette.json` manifest.
+
+The Datasette demo seeds an in-memory `demo` database with an `items` table, then lets you
+navigate database → table pages and hit `/app/demo/items.json` — all answered in the browser.
+
 ## Testing (red/green TDD)
 
-Two layers, both written test-first:
+Two layers per app, all written test-first:
 
-1. **`tests/test_bridge.py`** — pure Python, no browser. Verifies scope construction,
-   lifespan startup, routing, the `/app` prefix on generated URLs, the `303` form redirect,
-   JSON output, and 404s. Sub-second feedback.
-2. **`tests/test_browser.py`** — Playwright + Chromium. Boots the real page, waits for
-   Pyodide + FastAPI to be ready, then asserts that link navigation, the form POST/redirect,
-   a JSON-driven page, and a page running its own `fetch()` are all served by Python in the
-   browser.
+1. **Pure-Python unit tests** (no browser): extract the embedded harness/app blocks and drive
+   the ASGI app directly. Verify scope construction, lifespan startup, routing, the `/app`
+   prefixing of generated URLs, the `303` form redirect, JSON, 404s, and — for Datasette —
+   `base_url` prefixing and query-string passthrough returning real rows. Sub-second feedback.
+2. **Playwright + Chromium end-to-end tests**: boot the real page, wait for Pyodide + the app
+   to be ready, then assert link navigation, the form POST/redirect, JSON-driven pages, and
+   page-initiated `fetch()` are all served by Python in the browser.
 
 ```bash
-pip install playwright pytest fastapi python-multipart
+pip install playwright pytest fastapi python-multipart datasette
 python3 -m playwright install chromium
-python3 vendor.py                           # download Pyodide + wheels into ./vendor
+python3 vendor.py                       # download Pyodide + all wheels into ./vendor
 
-python3 -m pytest tests/test_bridge.py      # fast unit layer (no browser)
-python3 -m pytest tests/test_browser.py     # end-to-end in real Chromium
+python3 -m pytest tests/                 # everything (unit + browser, both apps)
 ```
 
 ### Results
 
-- `tests/test_bridge.py`: **8 passed** (scope building, lifespan startup, routing, the
-  `/app` prefix on generated URLs, the `303` form redirect, JSON, 404, and the
-  synthesized-`Host`-header-with-port regression).
-- `tests/test_browser.py`: **4 passed** — home page served by Pyodide, link navigation,
-  form POST→303 redirect, and a page running its own intercepted `fetch()`.
+All **18 tests pass**:
+
+- `tests/test_bridge.py`: **8** (FastAPI bridge — incl. the synthesized-`Host`-header-with-port
+  regression).
+- `tests/test_browser.py`: **4** (FastAPI in Chromium — home, link nav, form→303, own `fetch()`).
+- `tests/test_datasette_bridge.py`: **3** (Datasette bridge — prefixed links, table data,
+  query-string passthrough).
+- `tests/test_datasette_browser.py`: **3** (Datasette in Chromium — home, db→table navigation,
+  intercepted `.json` API `fetch()`).
 
 ## Trying it by hand
 
@@ -144,7 +177,9 @@ python3 -m pytest tests/test_browser.py     # end-to-end in real Chromium
 cd pyodide-asgi-browser
 python3 vendor.py            # once, to populate ./vendor
 python3 -m http.server 8000
-# open http://127.0.0.1:8000/ and wait for status "ready", then use the app in the iframe
+# FastAPI demo:  http://127.0.0.1:8000/
+# Datasette:     http://127.0.0.1:8000/datasette.html
+# wait for status "ready", then use the app in the iframe
 ```
 
 ## Limitations / notes

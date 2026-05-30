@@ -10,25 +10,27 @@ import asyncio
 import pathlib
 import re
 
-WORKER_JS = pathlib.Path(__file__).resolve().parent.parent / "worker.js"
+HERE = pathlib.Path(__file__).resolve().parent.parent
+BRIDGE_JS = HERE / "bridge-python.js"
+WORKER_JS = HERE / "worker.js"
 
 
-def extract_python(const_name: str) -> str:
-    """Pull the contents of `const <const_name> = String.raw`...`;` out of worker.js."""
-    src = WORKER_JS.read_text()
+def extract_python(const_name: str, js_file: pathlib.Path) -> str:
+    """Pull the contents of `const <const_name> = String.raw`...`;` out of a JS file."""
+    src = js_file.read_text()
     match = re.search(
         r"const " + re.escape(const_name) + r" = String\.raw`(.*?)`;",
         src,
         re.S,
     )
-    assert match, f"could not find embedded python block {const_name} in worker.js"
+    assert match, f"could not find embedded python block {const_name} in {js_file.name}"
     return match.group(1)
 
 
 def load_namespace():
     ns: dict = {}
-    exec(extract_python("ASGI_BRIDGE_PY"), ns)
-    exec(extract_python("APP_PY"), ns)
+    exec(extract_python("ASGI_BRIDGE_PY", BRIDGE_JS), ns)
+    exec(extract_python("APP_PY", WORKER_JS), ns)
     return ns
 
 
