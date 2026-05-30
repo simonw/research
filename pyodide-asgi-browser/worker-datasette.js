@@ -1,14 +1,16 @@
 // worker-datasette.js — Pyodide Web Worker that runs *Datasette* (a real ASGI
 // app) through the exact same bridge + runtime as the FastAPI demo.
 //
-// Datasette is configured with base_url="/app/" so every link, static asset and
-// API URL it generates is rooted under the service-worker-intercepted scope, and
+// Datasette is configured with a base_url matching the published app prefix, so
+// every link, static asset and API URL it generates is rooted under the
+// service-worker-intercepted scope, and
 // num_sql_threads=0 so SQLite runs inline on Pyodide's event loop (no threads).
 //
 // The Datasette setup is embedded inline (a String.raw block) and extracted by
 // the pure-Python unit tests. Constraint: no backticks, no "${".
 
 const PYODIDE_URL = new URL("vendor/", self.location.href).href;
+const APP_BASE_URL = new URL("app/", self.location.href).pathname;
 
 // Shared ASGI bridge harness -> defines ASGI_BRIDGE_PY.
 importScripts("bridge-python.js");
@@ -20,6 +22,7 @@ from datasette import hookimpl
 from datasette.plugins import pm
 
 STATE = {"ds": None, "app": None}
+DATASETTE_BASE_URL = "/app/"
 
 
 class RootAuthPlugin:
@@ -45,12 +48,12 @@ def datasette_base_url_fixes(app, base_url):
     # applied to HTML response bodies:
     #   1. base.html hardcodes the navigation-search ("Jump to") endpoint as
     #      url="/-/jump" without the base_url prefix, so its client-side fetch()
-    #      escapes the service worker's /app/ scope.
+    #      escapes the service worker's app scope.
     #   2. The table/row/query "export" links double-apply base_url, because
     #      urls.path(path_with_format(request=request, ...)) is given a path that
-    #      already includes base_url -> /app/app/... -> 404 ("Database not found").
+    #      already includes base_url -> double-prefix -> 404 ("Database not found").
     # (Both assume no database is literally named "app".)
-    prefix = base_url.rstrip("/").encode("latin-1")  # b"/app"
+    prefix = base_url.rstrip("/").encode("latin-1")
     replacements = [
         (b'"/-/jump"', b'"' + prefix + b'/-/jump"'),   # fix 1
         (prefix + prefix + b"/", prefix + b"/"),        # fix 2: /app/app/ -> /app/
@@ -92,11 +95,11 @@ def datasette_base_url_fixes(app, base_url):
 
 async def build_app():
     _ensure_root_plugin()
-    # base_url keeps every generated URL under /app/; num_sql_threads=0 runs
-    # SQLite inline (Pyodide has no threads).
+    # base_url keeps every generated URL under the service-worker-intercepted
+    # app prefix; num_sql_threads=0 runs SQLite inline (Pyodide has no threads).
     ds = Datasette(
         memory=True,
-        settings={"base_url": "/app/", "num_sql_threads": 0},
+        settings={"base_url": DATASETTE_BASE_URL, "num_sql_threads": 0},
     )
     # Equivalent of the --root CLI flag: lets the root actor hold full
     # permissions (without it, root_enabled defaults to False and root is
@@ -114,7 +117,7 @@ async def build_app():
             "('Widget', 5), ('Gadget', 12), ('Sprocket', 7)"
         )
     STATE["ds"] = ds
-    STATE["app"] = datasette_base_url_fixes(ds.app(), "/app/")
+    STATE["app"] = datasette_base_url_fixes(ds.app(), DATASETTE_BASE_URL)
     return STATE["app"]
 `;
 // PYTHON-END datasette
@@ -157,6 +160,11 @@ startAsgiWorker({
   installManifest: "datasette.json",
   installingMessage: "installing-datasette",
   loadPackages: ["sqlite3"], // unvendored stdlib module Datasette needs
-  pythonSources: [ASGI_BRIDGE_PY, DATASETTE_PY, GLUE_PY],
+  pythonSources: [
+    ASGI_BRIDGE_PY,
+    DATASETTE_PY,
+    "DATASETTE_BASE_URL = " + JSON.stringify(APP_BASE_URL),
+    GLUE_PY,
+  ],
   setupExpr: "await setup()",
 });

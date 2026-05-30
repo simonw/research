@@ -12,7 +12,7 @@
 const statusEl = document.getElementById("status");
 const frame = document.getElementById("appframe");
 
-const APP_PREFIX = "/app";
+const APP_PREFIX = new URL("app", location.href).pathname.replace(/\/$/, "");
 // Opt-in (set by datasette.html): mirror the iframe's location into the parent
 // URL bar as a #fragment, and restore it on load. Lets the captured app behave
 // like a normal full-page app with shareable/bookmarkable URLs and a back button.

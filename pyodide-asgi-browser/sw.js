@@ -12,7 +12,7 @@
 // (which owns the long-lived Pyodide worker) brokers the request and replies. This
 // survives any number of service-worker restarts.
 
-const APP_PREFIX = "/app";
+const APP_PREFIX = new URL("app", self.location.href).pathname.replace(/\/$/, "");
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));

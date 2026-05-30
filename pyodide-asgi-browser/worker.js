@@ -10,6 +10,7 @@
 // keeps the demo self-contained and works in sandboxes where the browser itself
 // has no outbound network. Resolved relative to this worker's URL.
 const PYODIDE_URL = new URL("vendor/", self.location.href).href;
+const APP_PREFIX = new URL("app", self.location.href).pathname.replace(/\/$/, "");
 
 // The ASGI bridge harness is shared with the Datasette worker. Importing it here
 // defines ASGI_BRIDGE_PY (a String.raw block of pure Python).
@@ -131,7 +132,7 @@ import json
 from js import Object
 from pyodide.ffi import to_js
 
-bridge = ASGIBridge(app, root_path="/app")
+bridge = ASGIBridge(app, root_path=__APP_PREFIX_PY__)
 
 
 async def handle_request(method, path, query, headers_json, body_buf, scheme, host, port):
@@ -159,6 +160,10 @@ startAsgiWorker({
   pyodideUrl: PYODIDE_URL,
   installManifest: "install.json",
   installingMessage: "installing-fastapi",
-  pythonSources: [ASGI_BRIDGE_PY, APP_PY, GLUE_PY],
+  pythonSources: [
+    ASGI_BRIDGE_PY,
+    APP_PY,
+    GLUE_PY.replace("__APP_PREFIX_PY__", JSON.stringify(APP_PREFIX)),
+  ],
   setupExpr: "await bridge.startup()",
 });
