@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pyodide ASGI in the browser</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 50rem; }
+    #status { font-family: ui-monospace, monospace; padding: .4rem .6rem;
+              background: #f3f3f3; border-radius: .4rem; display: inline-block; }
+    #appframe { width: 100%; height: 70vh; border: 1px solid #ccc;
+                border-radius: .4rem; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Python ASGI app, captured by a service worker</h1>
+  <p>
+    A FastAPI app runs entirely in your browser via Pyodide. A service worker
+    intercepts every navigation, form submission and <code>fetch()</code> below and
+    answers it over the ASGI protocol &mdash; there is no server behind <code>/app/</code>.
+  </p>
+  <p>Boot status: <span id="status">starting</span></p>
+  <iframe id="appframe" title="captured ASGI app"></iframe>
+  <script src="bootstrap.js"></script>
+</body>
+</html>
