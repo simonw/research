@@ -40,13 +40,21 @@ def _ensure_root_plugin():
         pm.register(RootAuthPlugin(), name="pyodide_root_auth")
 
 
-def jump_base_url_fix(app, base_url):
-    # Cheap workaround for a Datasette bug: base.html hardcodes the navigation
-    # search ("Jump to") endpoint as url="/-/jump" without the base_url prefix,
-    # so its client-side fetch() escapes the service worker's /app/ scope. Rewrite
-    # the attribute in HTML responses to the prefixed URL. (To be fixed upstream.)
-    target = b'"/-/jump"'
-    replacement = ('"' + base_url.rstrip("/") + '/-/jump"').encode("latin-1")
+def datasette_base_url_fixes(app, base_url):
+    # Cheap workarounds for two Datasette base_url bugs (to be fixed upstream),
+    # applied to HTML response bodies:
+    #   1. base.html hardcodes the navigation-search ("Jump to") endpoint as
+    #      url="/-/jump" without the base_url prefix, so its client-side fetch()
+    #      escapes the service worker's /app/ scope.
+    #   2. The table/row/query "export" links double-apply base_url, because
+    #      urls.path(path_with_format(request=request, ...)) is given a path that
+    #      already includes base_url -> /app/app/... -> 404 ("Database not found").
+    # (Both assume no database is literally named "app".)
+    prefix = base_url.rstrip("/").encode("latin-1")  # b"/app"
+    replacements = [
+        (b'"/-/jump"', b'"' + prefix + b'/-/jump"'),   # fix 1
+        (prefix + prefix + b"/", prefix + b"/"),        # fix 2: /app/app/ -> /app/
+    ]
 
     async def wrapped(scope, receive, send):
         if scope["type"] != "http":
@@ -70,8 +78,9 @@ def jump_base_url_fix(app, base_url):
                 await send(message)
             elif message["type"] == "http.response.body" and state["html"]:
                 body = message.get("body", b"") or b""
-                if target in body:
-                    body = body.replace(target, replacement)
+                for find, repl in replacements:
+                    if find in body:
+                        body = body.replace(find, repl)
                 await send({**message, "body": body})
             else:
                 await send(message)
@@ -105,7 +114,7 @@ async def build_app():
             "('Widget', 5), ('Gadget', 12), ('Sprocket', 7)"
         )
     STATE["ds"] = ds
-    STATE["app"] = jump_base_url_fix(ds.app(), "/app/")
+    STATE["app"] = datasette_base_url_fixes(ds.app(), "/app/")
     return STATE["app"]
 `;
 // PYTHON-END datasette

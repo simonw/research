@@ -67,6 +67,16 @@ def test_jump_url_is_prefixed_with_base_url():
     assert b'"/-/jump"' not in res["body"]
 
 
+def test_export_links_are_not_double_prefixed():
+    # Datasette double-applies base_url to table export links (urls.path() is
+    # given a path that already includes it) -> /app/app/...; the worker collapses
+    # it back to a single prefix so the json link resolves instead of 404ing.
+    res = serve(["/app/demo/items"])["/app/demo/items"]
+    assert res["status"] == 200
+    assert b'"/app/demo/items.json"' in res["body"]
+    assert b"/app/app/" not in res["body"]
+
+
 def test_datasette_table_page_shows_data():
     res = serve(["/app/demo/items"])["/app/demo/items"]
     assert res["status"] == 200

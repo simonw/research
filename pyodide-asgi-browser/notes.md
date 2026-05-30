@@ -163,6 +163,12 @@ the back button works.
   response. Rationale: the iframe requirement is imposed by *our* architecture, so neutralising
   frame-busting belongs at the bridge for any hosted app, not per-app. (Datasette's CodeMirror
   hides the raw textarea, so the browser test asserts it is *attached*, not visible.)
+- **Double-applied base_url on export links:** `views/table.py` builds the table/row/query
+  "json"/export links as `urls.path(path_with_format(request=request, ...))`. `path_with_format`
+  derives from `request.path` which *already* contains base_url, then `urls.path()` prepends it
+  again -> `/app/app/demo/items.json`. Clicking it -> Datasette strips one `/app/` -> database
+  `app` -> 404 "Database not found" (and the hash showed `#/app/...`). Cheap fix: the same HTML
+  middleware collapses `/app/app/` -> `/app/`. Genuinely a Datasette base_url bug; fix upstream.
 
 ## TDD plan
 1. Pure-Python unit tests of the ASGI bridge harness (scope building, receive/send,

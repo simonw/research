@@ -131,6 +131,17 @@ def test_execute_write_page_loads_in_iframe(ds_page):
     expect(frame.locator("textarea#sql-editor")).to_be_attached()
 
 
+def test_table_json_export_link_resolves(ds_page):
+    # Datasette double-prefixes export links (/app/app/...); after the fix the
+    # "json" link must resolve to data, not a "Database not found" 404, and the
+    # parent hash must reflect the clean path.
+    frame = goto_app(ds_page, "/app/demo/items")
+    frame.locator("a[href='/app/demo/items.json']").first.click()
+    expect(frame.locator("body")).to_contain_text("Widget")
+    expect(frame.locator("body")).not_to_contain_text("Database not found")
+    ds_page.wait_for_function("() => location.hash === '#/demo/items.json'")
+
+
 def test_hash_routing_syncs_parent_url(ds_page):
     goto_app(ds_page, "/app/")
     frame = ds_page.frame_locator("#appframe")

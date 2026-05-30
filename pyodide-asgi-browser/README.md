@@ -165,6 +165,11 @@ interception assumes the app honours `base_url` for *every* URL, which isn't gua
   `frame-ancestors` CSP directive from every app response — the iframe requirement is imposed
   by this mechanism, so neutralising frame-busting belongs at the bridge, not in a per-app
   plugin.
+- **Double-applied `base_url`.** Datasette builds table/row/query export links as
+  `urls.path(path_with_format(request=request, …))`; `path_with_format` derives from
+  `request.path` (which already includes `base_url`) and `urls.path()` then prepends it again,
+  yielding `/app/app/…` — a 404. The HTML-rewrite middleware collapses `/app/app/` → `/app/`.
+  (Also a genuine Datasette bug, to be fixed upstream.)
 
 ## Testing (red/green TDD)
 
@@ -189,16 +194,18 @@ python3 -m pytest tests/                  # everything (unit + browser, both app
 
 ### Results
 
-All **25 tests pass**:
+All **27 tests pass**:
 
 - `tests/test_bridge.py`: **8** (FastAPI bridge — incl. the synthesized-`Host`-header-with-port
   regression).
 - `tests/test_browser.py`: **4** (FastAPI in Chromium — home, link nav, form→303, own `fetch()`).
-- `tests/test_datasette_bridge.py`: **6** (Datasette bridge — prefixed links, table data,
-  query-string passthrough, root login, an authorized POST insert, and the `/-/jump` rewrite).
-- `tests/test_datasette_browser.py`: **7** (Datasette in Chromium — home, db→table navigation,
-  intercepted `.json` `fetch()`, prefixed+intercepted `/-/jump`, the execute-write page
-  rendering despite its frame-busting headers, `#fragment` hash-routing, and root + POST write).
+- `tests/test_datasette_bridge.py`: **7** (Datasette bridge — prefixed links, table data,
+  query-string passthrough, root login, an authorized POST insert, the `/-/jump` rewrite, and
+  the double-`base_url` export-link fix).
+- `tests/test_datasette_browser.py`: **8** (Datasette in Chromium — home, db→table navigation,
+  intercepted `.json` `fetch()`, prefixed+intercepted `/-/jump`, the json export link resolving,
+  the execute-write page rendering despite its frame-busting headers, `#fragment` hash-routing,
+  and root + POST write).
 
 ## Trying it by hand
 
