@@ -110,6 +110,16 @@ def test_datasette_json_api_fetch_is_intercepted(ds_page):
     assert result["names"] == ["Gadget", "Sprocket", "Widget"]
 
 
+def test_jump_endpoint_is_prefixed_and_intercepted(ds_page):
+    # The "Jump to" search component's endpoint must be rewritten under /app/ so
+    # its client-side fetch is intercepted (Datasette hardcodes it without base_url).
+    frame = goto_app(ds_page, "/app/")
+    expect(frame.locator("navigation-search")).to_have_attribute("url", "/app/-/jump")
+    f = app_frame(ds_page)
+    status = f.evaluate("async () => (await fetch('/app/-/jump?q=d')).status")
+    assert status == 200
+
+
 def test_hash_routing_syncs_parent_url(ds_page):
     goto_app(ds_page, "/app/")
     frame = ds_page.frame_locator("#appframe")

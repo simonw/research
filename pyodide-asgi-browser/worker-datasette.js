@@ -40,6 +40,47 @@ def _ensure_root_plugin():
         pm.register(RootAuthPlugin(), name="pyodide_root_auth")
 
 
+def jump_base_url_fix(app, base_url):
+    # Cheap workaround for a Datasette bug: base.html hardcodes the navigation
+    # search ("Jump to") endpoint as url="/-/jump" without the base_url prefix,
+    # so its client-side fetch() escapes the service worker's /app/ scope. Rewrite
+    # the attribute in HTML responses to the prefixed URL. (To be fixed upstream.)
+    target = b'"/-/jump"'
+    replacement = ('"' + base_url.rstrip("/") + '/-/jump"').encode("latin-1")
+
+    async def wrapped(scope, receive, send):
+        if scope["type"] != "http":
+            await app(scope, receive, send)
+            return
+        state = {"html": False}
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = message.get("headers", [])
+                for key, value in headers:
+                    if key.lower() == b"content-type" and b"text/html" in value.lower():
+                        state["html"] = True
+                if state["html"]:
+                    # Body length changes, so drop content-length and let the
+                    # bridge/Response report the real length.
+                    headers = [
+                        (k, v) for k, v in headers if k.lower() != b"content-length"
+                    ]
+                    message = {**message, "headers": headers}
+                await send(message)
+            elif message["type"] == "http.response.body" and state["html"]:
+                body = message.get("body", b"") or b""
+                if target in body:
+                    body = body.replace(target, replacement)
+                await send({**message, "body": body})
+            else:
+                await send(message)
+
+        await app(scope, receive, send_wrapper)
+
+    return wrapped
+
+
 async def build_app():
     _ensure_root_plugin()
     # base_url keeps every generated URL under /app/; num_sql_threads=0 runs
@@ -64,7 +105,7 @@ async def build_app():
             "('Widget', 5), ('Gadget', 12), ('Sprocket', 7)"
         )
     STATE["ds"] = ds
-    STATE["app"] = ds.app()
+    STATE["app"] = jump_base_url_fix(ds.app(), "/app/")
     return STATE["app"]
 `;
 // PYTHON-END datasette

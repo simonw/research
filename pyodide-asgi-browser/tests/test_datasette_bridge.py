@@ -58,6 +58,15 @@ def test_datasette_home_served_with_prefixed_links():
     assert b"/app/-/static/" in body
 
 
+def test_jump_url_is_prefixed_with_base_url():
+    # Datasette hardcodes the navigation-search endpoint as "/-/jump" without the
+    # base_url prefix; the worker rewrites it so the fetch stays inside /app/.
+    res = serve(["/app/"])["/app/"]
+    assert res["status"] == 200
+    assert b'"/app/-/jump"' in res["body"]
+    assert b'"/-/jump"' not in res["body"]
+
+
 def test_datasette_table_page_shows_data():
     res = serve(["/app/demo/items"])["/app/demo/items"]
     assert res["status"] == 200
