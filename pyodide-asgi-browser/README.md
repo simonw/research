@@ -152,6 +152,20 @@ The Datasette demo seeds an in-memory `demo` database with an `items` table, the
 navigate database → table pages, run SQL, insert rows, and hit `/app/demo/items.json` — all
 answered in the browser.
 
+Two leaks of the iframe/prefix model that needed handling (the general lesson: prefix-scoped
+interception assumes the app honours `base_url` for *every* URL, which isn't guaranteed):
+
+- **Hardcoded client-side URL.** Datasette's `base.html` hardcodes the "Jump to" search
+  endpoint as `url="/-/jump"` *without* the `base_url` prefix, so its `fetch()` escapes the
+  `/app/` scope. A small Datasette-side ASGI middleware rewrites `"/-/jump"` → `"/app/-/jump"`
+  in HTML responses. (Genuinely a Datasette bug — to be fixed upstream.)
+- **Frame-busting headers.** Datasette's write/execute-write pages send `X-Frame-Options: DENY`
+  and `Content-Security-Policy: frame-ancestors 'none'`, which the browser enforces on the
+  framed document and would block. The **service worker** strips `X-Frame-Options` and the
+  `frame-ancestors` CSP directive from every app response — the iframe requirement is imposed
+  by this mechanism, so neutralising frame-busting belongs at the bridge, not in a per-app
+  plugin.
+
 ## Testing (red/green TDD)
 
 Two layers per app, all written test-first:
@@ -175,15 +189,16 @@ python3 -m pytest tests/                  # everything (unit + browser, both app
 
 ### Results
 
-All **22 tests pass**:
+All **25 tests pass**:
 
 - `tests/test_bridge.py`: **8** (FastAPI bridge — incl. the synthesized-`Host`-header-with-port
   regression).
 - `tests/test_browser.py`: **4** (FastAPI in Chromium — home, link nav, form→303, own `fetch()`).
-- `tests/test_datasette_bridge.py`: **5** (Datasette bridge — prefixed links, table data,
-  query-string passthrough, root login, and an authorized POST insert).
-- `tests/test_datasette_browser.py`: **5** (Datasette in Chromium — home, db→table navigation,
-  intercepted `.json` `fetch()`, `#fragment` hash-routing, and root + POST write).
+- `tests/test_datasette_bridge.py`: **6** (Datasette bridge — prefixed links, table data,
+  query-string passthrough, root login, an authorized POST insert, and the `/-/jump` rewrite).
+- `tests/test_datasette_browser.py`: **7** (Datasette in Chromium — home, db→table navigation,
+  intercepted `.json` `fetch()`, prefixed+intercepted `/-/jump`, the execute-write page
+  rendering despite its frame-busting headers, `#fragment` hash-routing, and root + POST write).
 
 ## Trying it by hand
 

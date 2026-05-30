@@ -120,6 +120,17 @@ def test_jump_endpoint_is_prefixed_and_intercepted(ds_page):
     assert status == 200
 
 
+def test_execute_write_page_loads_in_iframe(ds_page):
+    # Datasette's write pages send X-Frame-Options: DENY + CSP frame-ancestors,
+    # which would block iframe rendering; the service worker strips them so the
+    # page (root-only) renders inside our frame.
+    frame = goto_app(ds_page, "/app/demo/-/execute-write")
+    # The framed document only has this DOM if framing wasn't blocked (a blocked
+    # frame shows a browser error page instead). The textarea itself is hidden
+    # behind Datasette's CodeMirror editor, so assert it is attached, not visible.
+    expect(frame.locator("textarea#sql-editor")).to_be_attached()
+
+
 def test_hash_routing_syncs_parent_url(ds_page):
     goto_app(ds_page, "/app/")
     frame = ds_page.frame_locator("#appframe")

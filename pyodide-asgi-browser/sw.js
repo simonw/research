@@ -73,6 +73,19 @@ async function handleAppRequest(request) {
 
   const responseHeaders = new Headers();
   for (const [name, value] of msg.headers) {
+    const lower = name.toLowerCase();
+    // We host every app inside an iframe, so neutralise frame-busting headers
+    // the app may send (e.g. Datasette's write pages set these). This is a
+    // property of the bridge, not of any one app, so it lives here.
+    if (lower === "x-frame-options") continue;
+    if (lower === "content-security-policy") {
+      const kept = value
+        .split(";")
+        .map((directive) => directive.trim())
+        .filter((directive) => directive && !/^frame-ancestors\b/i.test(directive));
+      if (kept.length) responseHeaders.append(name, kept.join("; "));
+      continue;
+    }
     responseHeaders.append(name, value);
   }
   const status = msg.status;

@@ -148,6 +148,22 @@ drives the iframe from the parent URL. A `syncing` guard breaks the feedback loo
 starting path is read from the `#fragment`, so Datasette URLs are shareable/bookmarkable and
 the back button works.
 
+## Two follow-up Datasette fixes
+- **`/-/jump` escaping the SW scope:** Datasette's `base.html` hardcodes the navigation-search
+  ("Jump to") endpoint as `url="/-/jump"` without the base_url prefix (the line above it
+  correctly uses `{{ urls.static(...) }}`). Its client-side `fetch("/-/jump?q=...")` therefore
+  hits the origin root, outside `/app/`, so the SW ignores it. Cheap fix: a small ASGI
+  middleware (`jump_base_url_fix`) rewrites `"/-/jump"` -> `"/app/-/jump"` in HTML responses
+  (and drops the now-stale content-length). Real fix belongs upstream in Datasette.
+- **Anti-clickjacking headers on write pages:** `views/query_helpers.py:_block_framing` sets
+  `X-Frame-Options: DENY` + `Content-Security-Policy: frame-ancestors 'none'` on the
+  execute-write page, which the browser enforces on the framed document (even though the SW
+  synthesised it), blocking the iframe. Fix lives in the **service worker** (not a Datasette
+  plugin): it strips `X-Frame-Options` and the `frame-ancestors` CSP directive from every app
+  response. Rationale: the iframe requirement is imposed by *our* architecture, so neutralising
+  frame-busting belongs at the bridge for any hosted app, not per-app. (Datasette's CodeMirror
+  hides the raw textarea, so the browser test asserts it is *attached*, not visible.)
+
 ## TDD plan
 1. Pure-Python unit tests of the ASGI bridge harness (scope building, receive/send,
    header/body round-trip) — fast, no browser. RED then GREEN.
