@@ -124,20 +124,33 @@ the shipped code cannot drift apart.
 
 ## Datasette on the same bridge
 
-`datasette.html` runs the full Datasette ASGI app through the identical bridge — proving the
-mechanism isn't FastAPI-specific. Two Datasette-specific details:
+`datasette.html` runs the full **Datasette 1.0 alpha** ASGI app through the identical bridge —
+proving the mechanism isn't FastAPI-specific. Details:
 
 - **`base_url="/app/"`** — Datasette's own setting for running under a path prefix makes every
   link, static asset and `.json` URL root-relative under `/app/`, so they all stay inside the
   intercepted scope. (No ASGI `root_path` needed; the bridge passes the full path through.)
 - **`num_sql_threads=0`** — Pyodide has no threads, so SQLite runs inline on the event loop.
-- **Vendoring** — Datasette 0.65 is pure-Python. Its heavy/compiled deps (MarkupSafe, PyYAML,
+- **Logged in as root** — the demo is the in-browser equivalent of `datasette --root`: it sets
+  `ds.root_enabled = True` (without which the root actor is denied) and registers a tiny
+  `actor_from_request` plugin that returns `{"id": "root"}` for every request. A service worker
+  cannot read the `Cookie` header, so cookie sessions can't round-trip the bridge — the hook
+  authenticates directly instead. This unlocks Datasette's **write/POST features** (create
+  table, insert/edit rows, …). 1.0a's new Sec-Fetch-Site-based CSRF passes because the
+  requests are genuinely same-origin.
+- **Fullscreen + shareable URLs** — the iframe fills the viewport, and `bootstrap.js`
+  hash-routing mirrors the in-app location into the parent URL `#fragment`
+  (`/app/demo/items` ↔ `#/demo/items`), restoring it on load so Datasette URLs are
+  bookmarkable and the back button works.
+- **Vendoring** — Datasette 1.0a is pure-Python. Its heavy/compiled deps (MarkupSafe, PyYAML,
   Jinja2, httpx, …) and the `sqlite3` package (unvendored from the stdlib in Pyodide) come
-  from the local Pyodide lock; ~14 pure-Python wheels (datasette, asgi-csrf, uvicorn, …) are
-  fetched from PyPI into `vendor/` with a `datasette.json` manifest.
+  from the local Pyodide lock; ~13 pure-Python wheels (datasette, sqlite-utils, asyncinject,
+  uvicorn, …) are fetched from PyPI (with `--pre`) into `vendor/` with a `datasette.json`
+  manifest.
 
 The Datasette demo seeds an in-memory `demo` database with an `items` table, then lets you
-navigate database → table pages and hit `/app/demo/items.json` — all answered in the browser.
+navigate database → table pages, run SQL, insert rows, and hit `/app/demo/items.json` — all
+answered in the browser.
 
 ## Testing (red/green TDD)
 
@@ -152,24 +165,25 @@ Two layers per app, all written test-first:
    page-initiated `fetch()` are all served by Python in the browser.
 
 ```bash
-pip install playwright pytest fastapi python-multipart datasette
+pip install playwright pytest fastapi python-multipart
+pip install --pre datasette              # 1.0 alpha (used by the unit tests too)
 python3 -m playwright install chromium
-python3 vendor.py                       # download Pyodide + all wheels into ./vendor
+python3 vendor.py                        # download Pyodide + all wheels into ./vendor
 
-python3 -m pytest tests/                 # everything (unit + browser, both apps)
+python3 -m pytest tests/                  # everything (unit + browser, both apps)
 ```
 
 ### Results
 
-All **18 tests pass**:
+All **22 tests pass**:
 
 - `tests/test_bridge.py`: **8** (FastAPI bridge — incl. the synthesized-`Host`-header-with-port
   regression).
 - `tests/test_browser.py`: **4** (FastAPI in Chromium — home, link nav, form→303, own `fetch()`).
-- `tests/test_datasette_bridge.py`: **3** (Datasette bridge — prefixed links, table data,
-  query-string passthrough).
-- `tests/test_datasette_browser.py`: **3** (Datasette in Chromium — home, db→table navigation,
-  intercepted `.json` API `fetch()`).
+- `tests/test_datasette_bridge.py`: **5** (Datasette bridge — prefixed links, table data,
+  query-string passthrough, root login, and an authorized POST insert).
+- `tests/test_datasette_browser.py`: **5** (Datasette in Chromium — home, db→table navigation,
+  intercepted `.json` `fetch()`, `#fragment` hash-routing, and root + POST write).
 
 ## Trying it by hand
 

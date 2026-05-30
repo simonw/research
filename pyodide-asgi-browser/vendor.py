@@ -38,7 +38,7 @@ BUNDLED_SEED = [
     "typing-extensions", "annotated-types",
     # Datasette side (jinja2->markupsafe, httpx->httpcore/h11/certifi, etc.)
     "jinja2", "pyyaml", "httpx", "h11", "click",
-    "pluggy", "platformdirs", "setuptools",
+    "pluggy", "platformdirs", "setuptools", "python-dateutil",
     # sqlite3 is unvendored from the stdlib in Pyodide; Datasette imports it.
     "sqlite3",
 ]
@@ -50,10 +50,11 @@ FASTAPI_PYPI = [
     "fastapi", "starlette", "python-multipart",
     "annotated-doc", "typing-inspection",
 ]
+# Datasette 1.0 alpha (note: sqlite-utils 4.x is also a pre-release).
 DATASETTE_PYPI = [
-    "datasette", "aiofiles", "asgi-csrf", "asgiref", "click-default-group",
-    "flexcache", "flexparser", "hupper", "itsdangerous", "janus", "mergedeep",
-    "pip", "python-multipart", "uvicorn",
+    "datasette", "aiofiles", "asgiref", "asyncinject", "click-default-group",
+    "hupper", "itsdangerous", "mergedeep", "pip", "sqlite-fts4", "sqlite-utils",
+    "tabulate", "uvicorn",
 ]
 
 
@@ -83,13 +84,14 @@ def bundled_closure(lock):
     return sorted(pk[n]["file_name"] for n in seen)
 
 
-def download_pypi(packages, manifest):
+def download_pypi(packages, manifest, pre=False):
     """Download pure-Python wheels for `packages` and write an install manifest
     listing exactly which wheels the worker should hand to micropip.install()."""
     print(f"PyPI wheels for {manifest}:")
     subprocess.check_call([
         sys.executable, "-m", "pip", "download",
         "--only-binary", ":all:", "--no-deps",
+        *(["--pre"] if pre else []),
         "--dest", str(VENDOR), *packages,
     ])
     wheels = []
@@ -117,7 +119,7 @@ def main():
         fetch(CDN + file_name, VENDOR / file_name)
 
     download_pypi(FASTAPI_PYPI, "install.json")
-    download_pypi(DATASETTE_PYPI, "datasette.json")
+    download_pypi(DATASETTE_PYPI, "datasette.json", pre=True)
     print("Done. vendor/ is ready.")
 
 

@@ -12,10 +12,61 @@
 const statusEl = document.getElementById("status");
 const frame = document.getElementById("appframe");
 
+const APP_PREFIX = "/app";
+// Opt-in (set by datasette.html): mirror the iframe's location into the parent
+// URL bar as a #fragment, and restore it on load. Lets the captured app behave
+// like a normal full-page app with shareable/bookmarkable URLs and a back button.
+const HASH_ROUTING = !!self.ASGI_HASH_ROUTING;
+
 function setStatus(state) {
   statusEl.textContent = state;
   statusEl.dataset.state = state;
   console.log("[shell]", state);
+}
+
+// The path to show in the iframe on boot: from the URL #fragment if present.
+function initialAppPath() {
+  if (HASH_ROUTING && location.hash.length > 1) {
+    return APP_PREFIX + location.hash.slice(1);
+  }
+  return APP_PREFIX + "/";
+}
+
+function setupHashSync() {
+  let syncing = false;
+
+  // iframe navigated (link, form redirect, hashchange-driven reload) -> update
+  // the parent URL bar to reflect the page inside Datasette.
+  frame.addEventListener("load", () => {
+    let path;
+    try {
+      const loc = frame.contentWindow.location;
+      path = loc.pathname + loc.search;
+    } catch (e) {
+      return; // shouldn't happen (same origin)
+    }
+    if (!path.startsWith(APP_PREFIX)) return;
+    const newHash = "#" + (path.slice(APP_PREFIX.length) || "/");
+    if (location.hash !== newHash) {
+      syncing = true; // suppress the hashchange we are about to cause
+      location.hash = newHash;
+    }
+  });
+
+  // Parent URL #fragment changed by the user (back/forward, edited URL) -> point
+  // the iframe at the corresponding app path.
+  window.addEventListener("hashchange", () => {
+    if (syncing) {
+      syncing = false;
+      return;
+    }
+    const target = APP_PREFIX + (location.hash.slice(1) || "/");
+    try {
+      const loc = frame.contentWindow.location;
+      if (loc.pathname + loc.search === target) return;
+    } catch (e) { /* fall through */ }
+    frame.src = target;
+  });
 }
 
 // --- talk to the Pyodide worker over a private MessageChannel ----------------
@@ -92,7 +143,8 @@ async function main() {
 
   await ready;
   setStatus("ready");
-  frame.src = "/app/";
+  if (HASH_ROUTING) setupHashSync();
+  frame.src = initialAppPath();
 }
 
 main().catch((err) => setStatus("error: " + (err && err.message ? err.message : err)));

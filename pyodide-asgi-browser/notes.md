@@ -114,6 +114,40 @@ Datasette is itself an ASGI app, so it drops into the same bridge.
 - Tests: `test_datasette_bridge.py` (pure Python, 3) + `test_datasette_browser.py` (Playwright:
   home, db→table navigation, and an intercepted `fetch()` of the `.json` API).
 
+## Datasette 1.0 alpha + root login (follow-up)
+Upgraded the Datasette demo to the latest 1.0 alpha (`datasette==1.0a31`, pulls
+`sqlite-utils` 4.0a1 too, so `vendor.py` downloads that set with `--pre`). Closure changed:
+asgi-csrf/janus/flexparser dropped; asyncinject/sqlite-utils/sqlite-fts4/tabulate/
+python-dateutil added.
+
+**Log in as root (equiv. of `datasette --root`):** found in 1.0a source that
+`Datasette.__init__` sets `self.root_enabled = False`, and `default_permissions/root.py`
+only grants the root actor permissions when `datasette.root_enabled` is true (the `--root`
+CLI flag sets it). So:
+- set `ds.root_enabled = True`, and
+- register a tiny plugin implementing the `actor_from_request` hook that returns
+  `{"id": "root"}` for every request.
+
+Why a hook instead of the real auth-token cookie flow: **a service worker cannot read the
+`Cookie` request header** (forbidden header), so cookie-based sessions can't round-trip
+through this bridge. The hook authenticates every request as root directly — no cookies.
+
+**CSRF / POST:** 1.0a replaced asgi-csrf with `CrossOriginProtectionMiddleware`
+(Sec-Fetch-Site/Origin based, Filippo Valsorda's algorithm). It allows unsafe methods when
+the request looks same-origin (`Sec-Fetch-Site: same-origin`) OR carries no browser headers
+at all. Both hold here (real same-origin fetch in the browser; header-less request in the
+pure-Python tests), so POST writes are accepted. Verified end-to-end: `GET /-/actor.json` ->
+`{"id":"root"}` and `POST /demo/items/-/insert` -> `201 {"ok": true}`.
+
+## Fullscreen + URL #fragment routing (follow-up)
+`datasette.html` makes the iframe fill the viewport (100vw/100vh, fixed) with a boot overlay
+that hides via `#boot:has(#status[data-state="ready"])`. `bootstrap.js` gained opt-in
+hash-routing (`self.ASGI_HASH_ROUTING`): on iframe `load` it mirrors the iframe path into the
+parent `#fragment` (e.g. `/app/demo/items` -> `#/demo/items`), and a `hashchange` handler
+drives the iframe from the parent URL. A `syncing` guard breaks the feedback loop. On boot the
+starting path is read from the `#fragment`, so Datasette URLs are shareable/bookmarkable and
+the back button works.
+
 ## TDD plan
 1. Pure-Python unit tests of the ASGI bridge harness (scope building, receive/send,
    header/body round-trip) — fast, no browser. RED then GREEN.

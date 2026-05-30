@@ -64,6 +64,40 @@ def test_datasette_table_page_shows_data():
     assert b"Widget" in res["body"]
 
 
+def test_logged_in_as_root():
+    res = serve(["/app/-/actor.json"])["/app/-/actor.json"]
+    assert res["status"] == 200
+    assert json.loads(res["body"]) == {"actor": {"id": "root"}}
+
+
+def test_post_insert_is_authorized_for_root():
+    # With root_enabled + the root actor, the write API POST must be allowed
+    # (and the new same-origin CSRF passes for a header-less request).
+    async def go():
+        ns = load()
+        app = await ns["build_app"]()
+        bridge = ns["ASGIBridge"](app, root_path="")
+        await bridge.startup()
+        payload = json.dumps({"rows": [{"name": "Cog", "qty": 99}]}).encode()
+        post = await bridge.handle(
+            "POST", "/app/demo/items/-/insert", "",
+            [("host", "127.0.0.1:8000"),
+             ("content-type", "application/json"),
+             ("content-length", str(len(payload)))],
+            payload, host="127.0.0.1", port=8000,
+        )
+        after = await bridge.handle(
+            "GET", "/app/demo/items.json", "_shape=array",
+            [("host", "127.0.0.1:8000")], b"", host="127.0.0.1", port=8000,
+        )
+        return post, after
+
+    post, after = asyncio.run(go())
+    assert post["status"] == 201, post["body"]
+    names = sorted(r["name"] for r in json.loads(after["body"]))
+    assert "Cog" in names
+
+
 def test_datasette_query_string_is_passed_through():
     async def go():
         ns = load()

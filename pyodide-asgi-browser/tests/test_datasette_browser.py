@@ -108,3 +108,41 @@ def test_datasette_json_api_fetch_is_intercepted(ds_page):
     )
     assert result["status"] == 200
     assert result["names"] == ["Gadget", "Sprocket", "Widget"]
+
+
+def test_hash_routing_syncs_parent_url(ds_page):
+    goto_app(ds_page, "/app/")
+    frame = ds_page.frame_locator("#appframe")
+    # Navigating inside the iframe updates the parent URL #fragment...
+    frame.locator("a[href='/app/demo']").click()
+    ds_page.wait_for_function("() => location.hash === '#/demo'")
+    # ...and editing the parent #fragment drives the iframe.
+    ds_page.evaluate("() => { location.hash = '#/demo/items'; }")
+    expect(frame.locator("body")).to_contain_text("Widget")
+    ds_page.wait_for_function(
+        "() => document.getElementById('appframe').contentWindow.location.pathname"
+        " === '/app/demo/items'"
+    )
+
+
+def test_logged_in_as_root_and_post_write_works(ds_page):
+    # Runs last: it inserts a row. Proves the user is root AND a POST write
+    # (with real same-origin Sec-Fetch-Site headers) is intercepted + accepted.
+    goto_app(ds_page, "/app/")
+    ds_page.wait_for_timeout(500)
+    frame = app_frame(ds_page)
+    result = frame.evaluate(
+        """async () => {
+            const actor = (await (await fetch('/app/-/actor.json')).json()).actor;
+            const resp = await fetch('/app/demo/items/-/insert', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ rows: [{ name: 'Cog', qty: 99 }] }),
+            });
+            const rows = await (await fetch('/app/demo/items.json?_shape=array')).json();
+            return { actor, status: resp.status, names: rows.map(r => r.name) };
+        }"""
+    )
+    assert result["actor"] == {"id": "root"}
+    assert result["status"] == 201
+    assert "Cog" in result["names"]

@@ -16,17 +16,42 @@ importScripts("bridge-python.js");
 // PYTHON-BEGIN datasette
 const DATASETTE_PY = String.raw`
 from datasette.app import Datasette
+from datasette import hookimpl
+from datasette.plugins import pm
 
 STATE = {"ds": None, "app": None}
 
 
+class RootAuthPlugin:
+    """Logs every request in as the root actor. The browser tab is single-user,
+    so this is the in-Pyodide equivalent of running 'datasette --root' and then
+    visiting the one-time auth-token URL."""
+
+    __name__ = "RootAuthPlugin"
+
+    @hookimpl
+    def actor_from_request(self, datasette, request):
+        return {"id": "root"}
+
+
+def _ensure_root_plugin():
+    # pm is process-global; register the plugin once.
+    if pm.get_plugin("pyodide_root_auth") is None:
+        pm.register(RootAuthPlugin(), name="pyodide_root_auth")
+
+
 async def build_app():
+    _ensure_root_plugin()
     # base_url keeps every generated URL under /app/; num_sql_threads=0 runs
     # SQLite inline (Pyodide has no threads).
     ds = Datasette(
         memory=True,
         settings={"base_url": "/app/", "num_sql_threads": 0},
     )
+    # Equivalent of the --root CLI flag: lets the root actor hold full
+    # permissions (without it, root_enabled defaults to False and root is
+    # denied), which unlocks the write/POST features in the UI.
+    ds.root_enabled = True
     db = ds.add_memory_database("demo")
     await db.execute_write(
         "create table if not exists items "
