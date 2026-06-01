@@ -14,14 +14,14 @@ a real server does is hand over the static bootstrap files.
 
 Two apps run on the **same** bridge:
 
-- **FastAPI demo** (`index.html`) — links, a form POST→303 redirect, a JSON API, and a page
+- **[FastAPI demo](https://simonw.github.io/research/pyodide-asgi-browser/)** (`index.html`) — links, a form POST→303 redirect, a JSON API, and a page
   that runs its own intercepted `fetch()`.
-- **Datasette** (`datasette.html`) — the full [Datasette](https://datasette.io/) ASGI app,
+- **[Datasette](https://simonw.github.io/research/pyodide-asgi-browser/datasette.html)** (`datasette.html`) — the full [Datasette](https://datasette.io/) ASGI app,
   with database/table navigation, SQL, and its `.json` API, all answered in the browser.
 
 ```
  Browser tab
- ┌────────────────────────────────────────────────────────────────────────┐
+ ┌──────────────────────────────────────────────────────────────────────--──┐
  │  Shell page  (index.html + bootstrap.js)                                 │
  │    • registers the service worker                                        │
  │    • starts the long-lived Pyodide Web Worker                            │
@@ -30,17 +30,17 @@ Two apps run on the **same** bridge:
  │                                                                          │
  │   ┌─────────────────┐   postMessage + reply port   ┌──────────────────┐  │
  │   │  Service worker │  ───────────────────────────>│  Shell (window)  │  │
- │   │  (sw.js)        │   (SW finds the shell via     │   ──┐            │  │
- │   │  intercepts     │    clients.matchAll each      │     │ MessageChan│  │
- │   │  fetch() for    │<───────────────────────────── │   <─┘ to worker  │  │
- │   │  /app/*         │       request response        └────────┬─────────┘  │
- │   └─────────────────┘                                        v            │
- │            ▲  intercepts navigations / forms / ┌──────────────────────┐   │
- │            │  fetch from the iframe            │  Web Worker          │   │
- │   ┌────────┴───────────────────────────────┐  │  Pyodide + FastAPI   │   │
- │   │  <iframe src="/app/">  the FastAPI app  │  │  + ASGIBridge        │   │
- │   └─────────────────────────────────────────┘ └──────────────────────┘   │
- └────────────────────────────────────────────────────────────────────────┘
+ │   │  (sw.js)        │   (SW finds the shell via    │   ──┐            │  │
+ │   │  intercepts     │    clients.matchAll each     │     │ MessageChan│  │
+ │   │  fetch() for    │<──────────────────────────── │   <─┘ to worker  │  │
+ │   │  /app/*         │       request response       └────────┬─────────┘  │
+ │   └─────────────────┘                                       v            │
+ │            ▲  intercepts navigations / forms / ┌──────────────────────┐  │
+ │            │  fetch from the iframe            │  Web Worker          │  │
+ │   ┌────────┴───────────────────────────────┐   │  Pyodide + FastAPI   │  │
+ │   │  <iframe src="/app/">  the FastAPI app │   │  + ASGIBridge        │  │
+ │   └────────────────────────────────────────┘   └──────────────────────┘  │
+ └───────────────────────────────────────────────────────────────────────--─┘
 ```
 
 ## How a request flows
