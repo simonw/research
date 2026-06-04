@@ -1,0 +1,14 @@
+target/
+*.so
+*.pyc
+__pycache__/
+.venv/
+*.egg-info/
+dist/
+bundled_libs/
+pdfium/
+simpleqa.pdf
+.python-version
+Cargo.lock
+pdf2img-py/README.md
+pdf2img-py/main.py

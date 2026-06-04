@@ -1,0 +1,6 @@
+# Rule to detect ES6 namespace imports
+id: es6-import-namespace
+language: javascript
+rule:
+  pattern: import * as $NAME from "$SOURCE"
+message: "Found ES6 namespace import: $NAME from $SOURCE"

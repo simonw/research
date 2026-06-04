@@ -1,5 +1,10 @@
 # env86 Analysis Report
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 ## What is env86?
 
 env86 is a Go-based management tool for running x86 Linux virtual machines using the v86 JavaScript emulator. It provides a CLI and desktop application for creating, distributing, and running reproducible Linux environments that execute in a browser context via WebAssembly.

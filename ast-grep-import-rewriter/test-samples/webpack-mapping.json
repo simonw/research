@@ -1,0 +1,9 @@
+{
+  "./src/index_0xa1b2.js": "./src/index.js",
+  "./src/utils_0xc3d4.js": "./src/utils.js",
+  "./src/api_0xe5f6.js": "./src/api.js",
+  "./config_0xg7h8.json": "./config.json",
+  "./src/helpers_0xi9j0.js": "./src/helpers.js",
+  "./chunks/chunk_0xk1l2.js": "./chunks/user-dashboard.js",
+  "./chunks/chunk_0xm3n4.js": "./chunks/settings-page.js"
+}

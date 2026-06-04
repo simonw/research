@@ -1,0 +1,7 @@
+Investigating the feasibility of Vite as a browser-based bundler, this project demonstrates that while Vite itself cannot operate directly in the browser due to its Node.js dependencies, client-side file bundling is achievable using alternative strategies. Three approaches were prototyped: a pure JavaScript "simple" bundler for inlining assets, an esbuild-wasm browser integration for ES module support, and full Vite bundling via StackBlitz WebContainers using vite-plugin-singlefile. Each solution offers a different tradeoff between capability, speed, and complexity, with WebContainers standing out for its completeness but requiring Cross-Origin Isolation headers. The project includes live demos, automated Playwright tests, and step-by-step integration of core technologies such as [esbuild-wasm](https://www.npmjs.com/package/esbuild-wasm) and [Vite Single File Plugin](https://github.com/richardtallent/vite-plugin-singlefile).
+
+**Key Findings:**
+- Vite cannot run purely in-browser; heavy Node.js APIs and native integrations block direct use.
+- esbuild-wasm and @rollup/browser enable ES module bundling client-side but are less performant and require HTTP-based module plugins.
+- StackBlitz WebContainers offer full Node.js/Vite support in-browser, achieving identical output to local builds.
+- The simple bundler is fastest and most portable but lacks ES module support; WASM-based approaches are slower but more capable.

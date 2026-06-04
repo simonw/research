@@ -1,0 +1,25 @@
+{
+  "phrases": [
+    {
+      "role": "heading",
+      "text": "Welcome",
+      "phrase": "heading: Welcome"
+    },
+    {
+      "role": "static",
+      "text": "Welcome",
+      "phrase": "Welcome"
+    },
+    {
+      "role": "static",
+      "text": "Test paragraph",
+      "phrase": "Test paragraph"
+    },
+    {
+      "role": "push button",
+      "text": "Click",
+      "phrase": "push button: Click"
+    }
+  ],
+  "narration": "heading: Welcome. Welcome. Test paragraph. push button: Click"
+}

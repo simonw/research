@@ -1,0 +1,384 @@
+diff --git a/datasette_cluster_map/static/datasette-cluster-map.js b/datasette_cluster_map/static/datasette-cluster-map.js
+index cf063cd..db90d68 100644
+--- a/datasette_cluster_map/static/datasette-cluster-map.js
++++ b/datasette_cluster_map/static/datasette-cluster-map.js
+@@ -1,3 +1,6 @@
++// Modified datasette-cluster-map.js for SPA/reinit support
++// Original used DOMContentLoaded; now uses datasette_init event
++
+ const clusterMapCSS = `
+ dl.cluster-map-dl {
+     font-size: 1.1em;
+@@ -26,67 +29,121 @@ button.cluster-map-button {
+ }
+ `;
+ 
+-document.addEventListener("DOMContentLoaded", () => {
++// Track current map for cleanup
++let currentMapInstance = null;
++let currentMapElement = null;
++
++/**
++ * Cleanup previous map instance
++ */
++function cleanupClusterMap() {
++  if (currentMapInstance) {
++    try {
++      currentMapInstance.remove();
++    } catch (e) {
++      console.warn('Failed to remove map:', e);
++    }
++    currentMapInstance = null;
++  }
++  if (currentMapElement) {
++    currentMapElement.remove();
++    currentMapElement = null;
++  }
++  // Remove progress div if exists
++  const progressDiv = document.querySelector('.cluster-map-progress');
++  if (progressDiv) {
++    progressDiv.remove();
++  }
++}
++
++/**
++ * Main initialization - CHANGED from DOMContentLoaded to datasette_init
++ */
++document.addEventListener("datasette_init", (evt) => {
++  const { detail } = evt;
++  const root = detail.root || document;
++  const isReinit = detail.isReinit || false;
++
++  // Clean up previous map on reinit
++  if (isReinit) {
++    cleanupClusterMap();
++  }
++
+   // Only execute on table, query and row pages
+-  if (document.querySelector("body.table,body.row,body.query")) {
+-    // Does it have Latitude and Longitude columns?
+-    let columns = Array.prototype.map.call(
+-      document.querySelectorAll("table.rows-and-columns th"),
+-      (th) => (th.getAttribute("data-column") || th.textContent).trim()
+-    );
+-    let latitudeColumn = null;
+-    let longitudeColumn = null;
+-    columns.forEach((col) => {
+-      if (
+-        col.toLowerCase() ==
+-        (
+-          window.DATASETTE_CLUSTER_MAP_LATITUDE_COLUMN
+-        ).toLowerCase()
+-      ) {
+-        latitudeColumn = col;
+-      }
+-      if (
+-        col.toLowerCase() ==
+-        (
+-          window.DATASETTE_CLUSTER_MAP_LONGITUDE_COLUMN
+-        ).toLowerCase()
+-      ) {
+-        longitudeColumn = col;
++  // MODIFIED: Check within root element, not whole document
++  const body = root.querySelector ? root : document;
++  const pageBody = document.querySelector("body.table,body.row,body.query");
++
++  // For SPA mode, check for table presence instead of body class
++  const hasTable = root.querySelector("table.rows-and-columns");
++
++  if (!pageBody && !hasTable) {
++    return;
++  }
++
++  // Does it have Latitude and Longitude columns?
++  let columns = Array.prototype.map.call(
++    root.querySelectorAll("table.rows-and-columns th"),
++    (th) => (th.getAttribute("data-column") || th.textContent).trim()
++  );
++
++  let latitudeColumn = null;
++  let longitudeColumn = null;
++  const latColName = window.DATASETTE_CLUSTER_MAP_LATITUDE_COLUMN || 'latitude';
++  const lonColName = window.DATASETTE_CLUSTER_MAP_LONGITUDE_COLUMN || 'longitude';
++
++  columns.forEach((col) => {
++    if (col.toLowerCase() === latColName.toLowerCase()) {
++      latitudeColumn = col;
++    }
++    if (col.toLowerCase() === lonColName.toLowerCase()) {
++      longitudeColumn = col;
++    }
++  });
++
++  if (latitudeColumn && longitudeColumn) {
++    // Load dependencies and then add the map
++    const loadDependencies = (callback) => {
++      // Check if already loaded
++      if (window.L && window.L.markerClusterGroup) {
++        callback();
++        return;
+       }
+-    });
+-    if (latitudeColumn && longitudeColumn) {
+-      // Load dependencies and then add the map
+-      const loadDependencies = (callback) => {
+-        let loaded = [];
+-        function hasLoaded() {
+-          loaded.push(this);
+-          if (loaded.length == 3) {
+-            callback();
+-          }
++
++      let loaded = [];
++      function hasLoaded() {
++        loaded.push(this);
++        if (loaded.length == 3) {
++          callback();
+         }
+-        let stylesheet = document.createElement("link");
+-        stylesheet.setAttribute("rel", "stylesheet");
+-        stylesheet.setAttribute("href", datasette.leaflet.CSS_URL);
+-        stylesheet.onload = hasLoaded;
+-        document.head.appendChild(stylesheet);
+-        let stylesheet2 = document.createElement("link");
+-        stylesheet2.setAttribute("rel", "stylesheet");
+-        stylesheet2.setAttribute(
+-          "href",
+-          datasette.cluster_map.MARKERCLUSTER_CSS_URL
+-        );
+-        stylesheet2.onload = hasLoaded;
+-        document.head.appendChild(stylesheet2);
+-        // Leaflet needs to be loaded before Leaflet.clustermap
+-        import(datasette.leaflet.JAVASCRIPT_URL).then(() => {
+-            import(datasette.cluster_map.MARKERCLUSTER_URL).then(hasLoaded);
+-        });
+-      };
+-      loadDependencies(() => addClusterMap(latitudeColumn, longitudeColumn));
+-    }
++      }
++
++      let stylesheet = document.createElement("link");
++      stylesheet.setAttribute("rel", "stylesheet");
++      stylesheet.setAttribute("href", datasette.leaflet.CSS_URL);
++      stylesheet.onload = hasLoaded;
++      document.head.appendChild(stylesheet);
++
++      let stylesheet2 = document.createElement("link");
++      stylesheet2.setAttribute("rel", "stylesheet");
++      stylesheet2.setAttribute(
++        "href",
++        datasette.cluster_map.MARKERCLUSTER_CSS_URL
++      );
++      stylesheet2.onload = hasLoaded;
++      document.head.appendChild(stylesheet2);
++
++      import(datasette.leaflet.JAVASCRIPT_URL).then(() => {
++        import(datasette.cluster_map.MARKERCLUSTER_URL).then(hasLoaded);
++      });
++    };
++
++    loadDependencies(() => addClusterMap(latitudeColumn, longitudeColumn, root));
+   }
+ });
+ 
++// ... rest of helper functions remain the same as original ...
++
+ const clusterMapEscapeHTML = (s) =>
+   s
+     .replace(/&/g, "&amp;")
+@@ -96,10 +153,8 @@ const clusterMapEscapeHTML = (s) =>
+     .replace(/'/g, "&#039;");
+ 
+ const clusterMapMarkerContent = (row) => {
+-  // if row has popup, use that
+   let popup = row.popup;
+   if (popup) {
+-    // It may be JSON or a string
+     if (typeof popup === "string") {
+       try {
+         popup = JSON.parse(popup);
+@@ -108,7 +163,6 @@ const clusterMapMarkerContent = (row) => {
+       }
+     }
+     if (popup.image || popup.title || popup.description || popup.link) {
+-      // We have a valid popup configuration - render that
+       let html = [];
+       if (popup.link) {
+         html.push('<a href="' + clusterMapEscapeHTML(popup.link) + '">');
+@@ -142,7 +196,7 @@ const clusterMapMarkerContent = (row) => {
+       return html.join("");
+     }
+   }
+-  // Otherwise, use a <dl>
++
+   const dl = document.createElement("dl");
+   Object.keys(row).forEach((key) => {
+     const dt = document.createElement("dt");
+@@ -178,12 +232,20 @@ const clusterMapMarkerContent = (row) => {
+   );
+ };
+ 
+-const addClusterMap = (latitudeColumn, longitudeColumn) => {
++/**
++ * Add the cluster map to the page
++ * MODIFIED: Accepts root element for scoped queries
++ */
++const addClusterMap = (latitudeColumn, longitudeColumn, root = document) => {
+   let keepGoing = false;
+ 
+-  let style = document.createElement("style");
+-  style.innerText = clusterMapCSS;
+-  document.head.appendChild(style);
++  // Only add CSS once
++  if (!document.querySelector('style[data-cluster-map-css]')) {
++    let style = document.createElement("style");
++    style.setAttribute('data-cluster-map-css', 'true');
++    style.innerText = clusterMapCSS;
++    document.head.appendChild(style);
++  }
+ 
+   function isValidLatitude(latitude) {
+     latitude = parseFloat(latitude);
+@@ -192,6 +254,7 @@ const addClusterMap = (latitudeColumn, longitudeColumn) => {
+     }
+     return latitude >= -90 && latitude <= 90;
+   }
++
+   function isValidLongitude(longitude) {
+     longitude = parseFloat(longitude);
+     if (isNaN(longitude)) {
+@@ -219,21 +282,15 @@ const addClusterMap = (latitudeColumn, longitudeColumn) => {
+         count += data.rows.length;
+         markerClusterGroup.addLayers(markerList);
+         map.fitBounds(markerClusterGroup.getBounds());
+-        let percent = "";
+-        let button;
+-        // Fix for http v.s. https
++
+         let next_url = data.next_url;
+         if (next_url && location.protocol == "https:") {
+           next_url = next_url.replace(/^https?:/, "https:");
+         }
+         let total = data.count || data.filtered_table_rows_count;
+         if (next_url) {
+-          percent = ` (${
+-            Math.round((count / total) * 100 * 100) /
+-            100
+-          }%)`;
+-          // Add a control to either continue loading or pause
+-          button = document.createElement("button");
++          let percent = ` (${Math.round((count / total) * 100 * 100) / 100}%)`;
++          let button = document.createElement("button");
+           button.classList.add("cluster-map-button");
+           if (keepGoing) {
+             button.innerHTML = "pause";
+@@ -244,31 +301,16 @@ const addClusterMap = (latitudeColumn, longitudeColumn) => {
+             button.innerHTML = "load all";
+             button.addEventListener("click", () => {
+               keepGoing = true;
+-              loadMarkers(
+-                next_url,
+-                map,
+-                markerClusterGroup,
+-                progressDiv,
+-                count,
+-                keepGoing
+-              );
++              loadMarkers(next_url, map, markerClusterGroup, progressDiv, count);
+             });
+           }
+           progressDiv.innerHTML = `Showing ${count.toLocaleString()} of ${total.toLocaleString()}${percent} `;
+-          if (button) {
+-            progressDiv.appendChild(button);
+-          }
++          progressDiv.appendChild(button);
+         } else {
+           progressDiv.innerHTML = "";
+         }
+         if (next_url && keepGoing) {
+-          return loadMarkers(
+-            next_url,
+-            map,
+-            markerClusterGroup,
+-            progressDiv,
+-            count
+-          );
++          return loadMarkers(next_url, map, markerClusterGroup, progressDiv, count);
+         }
+       });
+   };
+@@ -276,39 +318,63 @@ const addClusterMap = (latitudeColumn, longitudeColumn) => {
+   let el = document.createElement("div");
+   el.style.width = "100%";
+   el.style.height = "500px";
++
+   let tiles = L.tileLayer(
+-      window.DATASETTE_CLUSTER_MAP_TILE_LAYER,
+-      window.DATASETTE_CLUSTER_MAP_TILE_LAYER_OPTIONS
+-    ),
+-    latlng = L.latLng(0, 0);
++    window.DATASETTE_CLUSTER_MAP_TILE_LAYER || 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
++    window.DATASETTE_CLUSTER_MAP_TILE_LAYER_OPTIONS || {}
++  );
++
+   let map = L.map(el, {
+-    //center: latlng,
+     zoom: 13,
+     layers: [tiles],
+   });
++
++  // Store reference for cleanup
++  currentMapInstance = map;
++  currentMapElement = el;
++
+   const container = window.DATASETTE_CLUSTER_MAP_CONTAINER;
+-  if (container && document.querySelector(container)) {
+-    document.querySelector(container).appendChild(el);
++  if (container && root.querySelector(container)) {
++    root.querySelector(container).appendChild(el);
+   } else {
+     let table =
+-      document.querySelector(".table-wrapper") ||
+-      document.querySelector("table.rows-and-columns");
+-    table.parentNode.insertBefore(el, table);
++      root.querySelector(".table-wrapper") ||
++      root.querySelector("table.rows-and-columns");
++    if (table) {
++      table.parentNode.insertBefore(el, table);
++    }
+   }
++
+   let progressDiv = document.createElement("div");
++  progressDiv.classList.add('cluster-map-progress');
+   progressDiv.style.marginBottom = "2em";
+   el.parentNode.insertBefore(progressDiv, el.nextSibling);
++
+   let markerClusterGroup = L.markerClusterGroup({
+     chunkedLoading: true,
+     maxClusterRadius: 50,
+   });
+   map.addLayer(markerClusterGroup);
+-  let path = location.pathname + ".json" + location.search;
++
++  // Build the JSON path - handle both normal and SPA modes
++  let basePath = location.pathname;
++  let queryString = location.search;
++
++  // In Datasette-lite SPA mode, the path might be in the hash
++  if (location.hash && location.hash.startsWith('#/')) {
++    const hashPath = location.hash.slice(1);
++    const [path, qs] = hashPath.split('?');
++    basePath = path;
++    queryString = qs ? '?' + qs : '';
++  }
++
++  let path = basePath + ".json" + queryString;
+   const qs = "_size=max&_labels=on&_extra=count&_extra=next_url&_shape=objects";
+   if (path.indexOf("?") > -1) {
+     path += "&" + qs;
+   } else {
+     path += "?" + qs;
+   }
++
+   loadMarkers(path, map, markerClusterGroup, progressDiv, 0);
+ };

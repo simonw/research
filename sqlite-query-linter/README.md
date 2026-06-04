@@ -1,5 +1,10 @@
 # SQLite Query Linter
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 A Python library that wraps `sqlite3` to provide configurable linting rules for SQL queries. Catch common SQLite mistakes before they cause runtime errors.
 
 ## Features

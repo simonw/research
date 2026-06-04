@@ -1,5 +1,10 @@
 # Self-Hosting Datasette Lite: Research Report
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 ## Overview
 
 [Datasette Lite](https://lite.datasette.io/) is a Pyodide-based web application that runs Datasette entirely in the browser using WebAssembly. This report documents how to create a fully self-hosted version that works offline without any external network requests.

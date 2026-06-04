@@ -1,0 +1,8 @@
+[package]
+name = "pdf2img"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pdfium-render = { version = "0.8", features = ["image"] }
+image = "0.25"

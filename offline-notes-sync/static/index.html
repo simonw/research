@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offline Notes</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #f5f5f7;
+            color: #1d1d1f;
+            min-height: 100vh;
+        }
+
+        .app {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 280px;
+            background: #ffffff;
+            border-right: 1px solid #d2d2d7;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 16px;
+            border-bottom: 1px solid #d2d2d7;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .sidebar-header h1 {
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .sync-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: #86868b;
+        }
+
+        .sync-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #34c759;
+        }
+
+        .sync-indicator.offline {
+            background: #ff9500;
+        }
+
+        .sync-indicator.syncing {
+            background: #007aff;
+            animation: pulse 1s infinite;
+        }
+
+        .sync-indicator.error {
+            background: #ff3b30;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .new-note-btn {
+            background: #007aff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            margin: 12px 16px;
+        }
+
+        .new-note-btn:hover {
+            background: #0056b3;
+        }
+
+        .notes-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .note-item {
+            padding: 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 4px;
+        }
+
+        .note-item:hover {
+            background: #f5f5f7;
+        }
+
+        .note-item.active {
+            background: #007aff;
+            color: white;
+        }
+
+        .note-item-title {
+            font-weight: 500;
+            font-size: 14px;
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .note-item-preview {
+            font-size: 12px;
+            color: #86868b;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .note-item.active .note-item-preview {
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        .note-item-date {
+            font-size: 11px;
+            color: #86868b;
+            margin-top: 4px;
+        }
+
+        .note-item.active .note-item-date {
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        /* Editor */
+        .editor {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #ffffff;
+        }
+
+        .editor-header {
+            padding: 16px;
+            border-bottom: 1px solid #d2d2d7;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .editor-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .editor-actions button {
+            background: none;
+            border: 1px solid #d2d2d7;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .editor-actions button:hover {
+            background: #f5f5f7;
+        }
+
+        .editor-actions button.delete {
+            color: #ff3b30;
+            border-color: #ff3b30;
+        }
+
+        .title-input {
+            width: 100%;
+            border: none;
+            font-size: 24px;
+            font-weight: 600;
+            padding: 16px;
+            outline: none;
+        }
+
+        .content-input {
+            flex: 1;
+            border: none;
+            padding: 0 16px 16px;
+            font-size: 16px;
+            line-height: 1.6;
+            resize: none;
+            outline: none;
+            font-family: inherit;
+        }
+
+        .empty-state {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #86868b;
+            font-size: 16px;
+        }
+
+        /* Conflict dialog */
+        .conflict-dialog {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .conflict-dialog.hidden {
+            display: none;
+        }
+
+        .conflict-content {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .conflict-content h2 {
+            margin-bottom: 16px;
+        }
+
+        .conflict-versions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .conflict-version {
+            border: 1px solid #d2d2d7;
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .conflict-version h3 {
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+
+        .conflict-version pre {
+            font-size: 12px;
+            white-space: pre-wrap;
+            background: #f5f5f7;
+            padding: 8px;
+            border-radius: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .conflict-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .conflict-actions button {
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .conflict-actions .use-local {
+            background: #007aff;
+            color: white;
+            border: none;
+        }
+
+        .conflict-actions .use-remote {
+            background: #34c759;
+            color: white;
+            border: none;
+        }
+
+        .conflict-actions .merge {
+            background: #ff9500;
+            color: white;
+            border: none;
+        }
+
+        /* Toast notifications */
+        .toast-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1001;
+        }
+
+        .toast {
+            background: #1d1d1f;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            margin-top: 8px;
+            animation: slideIn 0.3s ease;
+        }
+
+        .toast.error {
+            background: #ff3b30;
+        }
+
+        .toast.success {
+            background: #34c759;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h1>Notes</h1>
+                <div class="sync-status">
+                    <div class="sync-indicator" id="syncIndicator"></div>
+                    <span id="syncText">Synced</span>
+                </div>
+            </div>
+            <button class="new-note-btn" id="newNoteBtn">+ New Note</button>
+            <div class="notes-list" id="notesList"></div>
+        </div>
+        <div class="editor" id="editor">
+            <div class="empty-state" id="emptyState">
+                Select a note or create a new one
+            </div>
+            <div id="editorContent" style="display: none; flex-direction: column; flex: 1;">
+                <div class="editor-header">
+                    <span id="lastSaved"></span>
+                    <div class="editor-actions">
+                        <button id="syncNowBtn">Sync Now</button>
+                        <button id="deleteBtn" class="delete">Delete</button>
+                    </div>
+                </div>
+                <input type="text" class="title-input" id="titleInput" placeholder="Note title">
+                <textarea class="content-input" id="contentInput" placeholder="Start writing..."></textarea>
+            </div>
+        </div>
+    </div>
+
+    <div class="conflict-dialog hidden" id="conflictDialog">
+        <div class="conflict-content">
+            <h2>Sync Conflict</h2>
+            <p>This note was modified both locally and on the server. Choose how to resolve:</p>
+            <div class="conflict-versions">
+                <div class="conflict-version">
+                    <h3>Local Version</h3>
+                    <pre id="localVersion"></pre>
+                </div>
+                <div class="conflict-version">
+                    <h3>Server Version</h3>
+                    <pre id="remoteVersion"></pre>
+                </div>
+            </div>
+            <div class="conflict-actions">
+                <button class="use-local" id="useLocalBtn">Use Local</button>
+                <button class="use-remote" id="useRemoteBtn">Use Server</button>
+                <button class="merge" id="mergeBtn">Merge Both</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script>
+        // ============================================
+        // Configuration
+        // ============================================
+        const API_BASE = window.location.origin;
+        const DB_NAME = 'offline-notes';
+        const DB_VERSION = 1;
+        const SYNC_INTERVAL = 30000; // 30 seconds
+        const DEBOUNCE_DELAY = 500; // ms
+
+        // ============================================
+        // Utility Functions
+        // ============================================
+        function generateId() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0;
+                const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+        function getClientId() {
+            let clientId = localStorage.getItem('client_id');
+            if (!clientId) {
+                clientId = 'client_' + generateId();
+                localStorage.setItem('client_id', clientId);
+            }
+            return clientId;
+        }
+
+        function formatDate(isoString) {
+            const date = new Date(isoString);
+            const now = new Date();
+            const diff = now - date;
+
+            if (diff < 60000) return 'Just now';
+            if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+            if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+            return date.toLocaleDateString();
+        }
+
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        // ============================================
+        // IndexedDB Manager
+        // ============================================
+        class NotesDB {
+            constructor() {
+                this.db = null;
+            }
+
+            async init() {
+                return new Promise((resolve, reject) => {
+                    const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+                    request.onerror = () => reject(request.error);
+                    request.onsuccess = () => {
+                        this.db = request.result;
+                        resolve();
+                    };
+
+                    request.onupgradeneeded = (event) => {
+                        const db = event.target.result;
+
+                        // Notes store
+                        if (!db.objectStoreNames.contains('notes')) {
+                            const notesStore = db.createObjectStore('notes', { keyPath: 'id' });
+                            notesStore.createIndex('updated_at', 'updated_at', { unique: false });
+                            notesStore.createIndex('deleted', 'deleted', { unique: false });
+                        }
+
+                        // Pending operations store (for offline sync)
+                        if (!db.objectStoreNames.contains('pending_operations')) {
+                            const opsStore = db.createObjectStore('pending_operations', { keyPath: 'id' });
+                            opsStore.createIndex('timestamp', 'timestamp', { unique: false });
+                        }
+
+                        // Sync metadata store
+                        if (!db.objectStoreNames.contains('sync_meta')) {
+                            db.createObjectStore('sync_meta', { keyPath: 'key' });
+                        }
+                    };
+                });
+            }
+
+            async getAllNotes() {
+                return new Promise((resolve, reject) => {
+                    const tx = this.db.transaction('notes', 'readonly');
+                    const store = tx.objectStore('notes');
+                    const request = store.getAll();
+
+                    request.onsuccess = () => {
+                        const notes = request.result.filter(n => !n.deleted);
+                        notes.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+                        resolve(notes);
+                    };
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            async getNote(id) {
+                return new Promise((resolve, reject) => {
+                    const tx = this.db.transaction('notes', 'readonly');
+                    const store = tx.objectStore('notes');
+                    const request = store.get(id);
+
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            async saveNote(note) {
+                return new Promise((resolve, reject) => {
+                    const tx = this.db.transaction('notes', 'readwrite');
+                    const store = tx.objectStore('notes');
+                    const request = store.put(note);
+
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            async deleteNote(id) {
+                const note = await this.getNote(id);
+                if (note) {
+                    note.deleted = true;
+                    note.updated_at = new Date().toISOString();
+                    await this.saveNote(note);
+                }
+            }
+
+            async addPendingOperation(operation) {
+                return new Promise((resolve, reject) => {
+                    const tx = this.db.transaction('pending_operations', 'readwrite');
+                    const store = tx.objectStore('pending_operations');
+                    const request = store.put(operation);
+
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            async getPendingOperations() {
+                return new Promise((resolve, reject) => {
+                    const tx = this.db.transaction('pending_operations', 'readonly');
+                    const store = tx.objectStore('pending_operations');
+                    const request = store.getAll();
+
+                    request.onsuccess = () => {
+                        const ops = request.result;
+                        ops.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                        resolve(ops);
+                    };
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            async clearPendingOperations() {
+                return new Promise((resolve, reject) => {
+                    const tx = this.db.transaction('pending_operations', 'readwrite');
+                    const store = tx.objectStore('pending_operations');
+                    const request = store.clear();
+
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            async getLastSync() {
+                return new Promise((resolve, reject) => {
+                    const tx = this.db.transaction('sync_meta', 'readonly');
+                    const store = tx.objectStore('sync_meta');
+                    const request = store.get('last_sync');
+
+                    request.onsuccess = () => resolve(request.result?.value || null);
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            async setLastSync(timestamp) {
+                return new Promise((resolve, reject) => {
+                    const tx = this.db.transaction('sync_meta', 'readwrite');
+                    const store = tx.objectStore('sync_meta');
+                    const request = store.put({ key: 'last_sync', value: timestamp });
+
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                });
+            }
+        }
+
+        // ============================================
+        // Sync Manager
+        // ============================================
+        class SyncManager {
+            constructor(db, clientId) {
+                this.db = db;
+                this.clientId = clientId;
+                this.isOnline = navigator.onLine;
+                this.isSyncing = false;
+                this.syncInterval = null;
+                this.onSyncStatusChange = null;
+                this.onNotesUpdate = null;
+                this.onConflict = null;
+
+                // Listen for online/offline events
+                window.addEventListener('online', () => this.handleOnline());
+                window.addEventListener('offline', () => this.handleOffline());
+            }
+
+            handleOnline() {
+                this.isOnline = true;
+                this.updateStatus('online');
+                this.sync(); // Sync immediately when coming online
+            }
+
+            handleOffline() {
+                this.isOnline = false;
+                this.updateStatus('offline');
+            }
+
+            updateStatus(status) {
+                if (this.onSyncStatusChange) {
+                    this.onSyncStatusChange(status);
+                }
+            }
+
+            startPeriodicSync() {
+                this.sync();
+                this.syncInterval = setInterval(() => this.sync(), SYNC_INTERVAL);
+            }
+
+            stopPeriodicSync() {
+                if (this.syncInterval) {
+                    clearInterval(this.syncInterval);
+                    this.syncInterval = null;
+                }
+            }
+
+            async sync() {
+                if (!this.isOnline || this.isSyncing) {
+                    return;
+                }
+
+                this.isSyncing = true;
+                this.updateStatus('syncing');
+
+                try {
+                    const lastSync = await this.db.getLastSync();
+                    const pendingOps = await this.db.getPendingOperations();
+
+                    const response = await fetch(`${API_BASE}/api/sync`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            client_id: this.clientId,
+                            last_sync: lastSync,
+                            operations: pendingOps
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Sync failed: ${response.status}`);
+                    }
+
+                    const result = await response.json();
+
+                    // Process server operations and detect conflicts
+                    for (const op of result.operations) {
+                        await this.applyServerOperation(op);
+                    }
+
+                    // Update local notes with server state
+                    for (const note of result.notes) {
+                        const localNote = await this.db.getNote(note.id);
+
+                        if (localNote && this.hasConflict(localNote, note)) {
+                            // Handle conflict
+                            if (this.onConflict) {
+                                await this.onConflict(localNote, note);
+                            } else {
+                                // Default: server wins
+                                await this.db.saveNote(note);
+                            }
+                        } else {
+                            await this.db.saveNote(note);
+                        }
+                    }
+
+                    // Clear pending operations after successful sync
+                    await this.db.clearPendingOperations();
+                    await this.db.setLastSync(result.sync_timestamp);
+
+                    this.updateStatus('synced');
+
+                    if (this.onNotesUpdate) {
+                        this.onNotesUpdate();
+                    }
+
+                } catch (error) {
+                    console.error('Sync error:', error);
+                    this.updateStatus('error');
+                } finally {
+                    this.isSyncing = false;
+                }
+            }
+
+            async applyServerOperation(op) {
+                const note = await this.db.getNote(op.note_id);
+
+                if (op.op_type === 'create' && !note) {
+                    // Note doesn't exist locally, will be created from notes array
+                    return;
+                }
+
+                if (op.op_type === 'delete' && note) {
+                    note.deleted = true;
+                    await this.db.saveNote(note);
+                }
+
+                // Updates are handled via the notes array in sync response
+            }
+
+            hasConflict(localNote, serverNote) {
+                // Compare version vectors to detect concurrent edits
+                const localVV = localNote.version_vector || {};
+                const serverVV = serverNote.version_vector || {};
+
+                // Check if either dominates the other
+                let localDominates = false;
+                let serverDominates = false;
+
+                const allKeys = new Set([...Object.keys(localVV), ...Object.keys(serverVV)]);
+
+                for (const key of allKeys) {
+                    const localV = localVV[key] || 0;
+                    const serverV = serverVV[key] || 0;
+
+                    if (localV > serverV) localDominates = true;
+                    if (serverV > localV) serverDominates = true;
+                }
+
+                // Conflict if both have changes the other doesn't know about
+                return localDominates && serverDominates;
+            }
+
+            async createNote(title, content) {
+                const now = new Date().toISOString();
+                const id = generateId();
+
+                const note = {
+                    id,
+                    title,
+                    content,
+                    created_at: now,
+                    updated_at: now,
+                    version_vector: { [this.clientId]: 1 },
+                    deleted: false
+                };
+
+                await this.db.saveNote(note);
+
+                // Queue operation for sync
+                const operation = {
+                    id: generateId(),
+                    note_id: id,
+                    client_id: this.clientId,
+                    timestamp: now,
+                    op_type: 'create',
+                    new_value: { title, content },
+                    base_version_vector: '{}'
+                };
+
+                await this.db.addPendingOperation(operation);
+
+                // Try to sync immediately
+                if (this.isOnline) {
+                    this.sync();
+                }
+
+                return note;
+            }
+
+            async updateNote(id, updates) {
+                const note = await this.db.getNote(id);
+                if (!note) return null;
+
+                const now = new Date().toISOString();
+                const oldVersionVector = note.version_vector || {};
+
+                // Update version vector
+                const newVersionVector = { ...oldVersionVector };
+                newVersionVector[this.clientId] = (newVersionVector[this.clientId] || 0) + 1;
+
+                const updatedNote = {
+                    ...note,
+                    ...updates,
+                    updated_at: now,
+                    version_vector: newVersionVector
+                };
+
+                await this.db.saveNote(updatedNote);
+
+                // Queue operations for each changed field
+                if (updates.title !== undefined && updates.title !== note.title) {
+                    await this.db.addPendingOperation({
+                        id: generateId(),
+                        note_id: id,
+                        client_id: this.clientId,
+                        timestamp: now,
+                        op_type: 'update',
+                        field: 'title',
+                        old_value: note.title,
+                        new_value: updates.title,
+                        base_version_vector: JSON.stringify(oldVersionVector)
+                    });
+                }
+
+                if (updates.content !== undefined && updates.content !== note.content) {
+                    await this.db.addPendingOperation({
+                        id: generateId(),
+                        note_id: id,
+                        client_id: this.clientId,
+                        timestamp: now,
+                        op_type: 'update',
+                        field: 'content',
+                        old_value: note.content,
+                        new_value: updates.content,
+                        base_version_vector: JSON.stringify(oldVersionVector)
+                    });
+                }
+
+                return updatedNote;
+            }
+
+            async deleteNote(id) {
+                const note = await this.db.getNote(id);
+                if (!note) return;
+
+                const now = new Date().toISOString();
+
+                await this.db.deleteNote(id);
+
+                await this.db.addPendingOperation({
+                    id: generateId(),
+                    note_id: id,
+                    client_id: this.clientId,
+                    timestamp: now,
+                    op_type: 'delete',
+                    base_version_vector: JSON.stringify(note.version_vector || {})
+                });
+
+                if (this.isOnline) {
+                    this.sync();
+                }
+            }
+        }
+
+        // ============================================
+        // UI Manager
+        // ============================================
+        class NotesApp {
+            constructor() {
+                this.db = new NotesDB();
+                this.syncManager = null;
+                this.currentNoteId = null;
+                this.saveTimeout = null;
+
+                // DOM elements
+                this.elements = {
+                    notesList: document.getElementById('notesList'),
+                    newNoteBtn: document.getElementById('newNoteBtn'),
+                    syncIndicator: document.getElementById('syncIndicator'),
+                    syncText: document.getElementById('syncText'),
+                    emptyState: document.getElementById('emptyState'),
+                    editorContent: document.getElementById('editorContent'),
+                    titleInput: document.getElementById('titleInput'),
+                    contentInput: document.getElementById('contentInput'),
+                    deleteBtn: document.getElementById('deleteBtn'),
+                    syncNowBtn: document.getElementById('syncNowBtn'),
+                    lastSaved: document.getElementById('lastSaved'),
+                    conflictDialog: document.getElementById('conflictDialog'),
+                    localVersion: document.getElementById('localVersion'),
+                    remoteVersion: document.getElementById('remoteVersion'),
+                    useLocalBtn: document.getElementById('useLocalBtn'),
+                    useRemoteBtn: document.getElementById('useRemoteBtn'),
+                    mergeBtn: document.getElementById('mergeBtn'),
+                    toastContainer: document.getElementById('toastContainer')
+                };
+            }
+
+            async init() {
+                await this.db.init();
+
+                this.syncManager = new SyncManager(this.db, getClientId());
+                this.syncManager.onSyncStatusChange = (status) => this.updateSyncStatus(status);
+                this.syncManager.onNotesUpdate = () => this.renderNotesList();
+                this.syncManager.onConflict = (local, remote) => this.handleConflict(local, remote);
+
+                this.bindEvents();
+                await this.renderNotesList();
+                this.syncManager.startPeriodicSync();
+
+                // Register service worker
+                this.registerServiceWorker();
+            }
+
+            async registerServiceWorker() {
+                if ('serviceWorker' in navigator) {
+                    try {
+                        const registration = await navigator.serviceWorker.register('/static/sw.js');
+                        console.log('Service Worker registered:', registration.scope);
+                    } catch (error) {
+                        console.log('Service Worker registration failed:', error);
+                    }
+                }
+            }
+
+            bindEvents() {
+                // New note button
+                this.elements.newNoteBtn.addEventListener('click', () => this.createNewNote());
+
+                // Title and content inputs with debounced saving
+                const debouncedSave = debounce(() => this.saveCurrentNote(), DEBOUNCE_DELAY);
+                this.elements.titleInput.addEventListener('input', debouncedSave);
+                this.elements.contentInput.addEventListener('input', debouncedSave);
+
+                // Delete button
+                this.elements.deleteBtn.addEventListener('click', () => this.deleteCurrentNote());
+
+                // Sync now button
+                this.elements.syncNowBtn.addEventListener('click', () => {
+                    this.syncManager.sync();
+                    this.showToast('Syncing...', 'info');
+                });
+
+                // Conflict resolution buttons
+                this.elements.useLocalBtn.addEventListener('click', () => this.resolveConflict('local'));
+                this.elements.useRemoteBtn.addEventListener('click', () => this.resolveConflict('remote'));
+                this.elements.mergeBtn.addEventListener('click', () => this.resolveConflict('merge'));
+            }
+
+            updateSyncStatus(status) {
+                const indicator = this.elements.syncIndicator;
+                const text = this.elements.syncText;
+
+                indicator.className = 'sync-indicator';
+
+                switch (status) {
+                    case 'online':
+                    case 'synced':
+                        text.textContent = 'Synced';
+                        break;
+                    case 'offline':
+                        indicator.classList.add('offline');
+                        text.textContent = 'Offline';
+                        break;
+                    case 'syncing':
+                        indicator.classList.add('syncing');
+                        text.textContent = 'Syncing...';
+                        break;
+                    case 'error':
+                        indicator.classList.add('error');
+                        text.textContent = 'Sync Error';
+                        break;
+                }
+            }
+
+            async renderNotesList() {
+                const notes = await this.db.getAllNotes();
+
+                if (notes.length === 0) {
+                    this.elements.notesList.innerHTML = '<div style="padding: 16px; color: #86868b; text-align: center;">No notes yet</div>';
+                    return;
+                }
+
+                this.elements.notesList.innerHTML = notes.map(note => `
+                    <div class="note-item ${note.id === this.currentNoteId ? 'active' : ''}" data-id="${note.id}">
+                        <div class="note-item-title">${note.title || 'Untitled'}</div>
+                        <div class="note-item-preview">${note.content ? note.content.substring(0, 50) : 'No content'}</div>
+                        <div class="note-item-date">${formatDate(note.updated_at)}</div>
+                    </div>
+                `).join('');
+
+                // Bind click events
+                this.elements.notesList.querySelectorAll('.note-item').forEach(item => {
+                    item.addEventListener('click', () => this.selectNote(item.dataset.id));
+                });
+            }
+
+            async selectNote(id) {
+                this.currentNoteId = id;
+                const note = await this.db.getNote(id);
+
+                if (!note) {
+                    this.showEmptyState();
+                    return;
+                }
+
+                this.elements.emptyState.style.display = 'none';
+                this.elements.editorContent.style.display = 'flex';
+
+                this.elements.titleInput.value = note.title || '';
+                this.elements.contentInput.value = note.content || '';
+                this.elements.lastSaved.textContent = `Last saved: ${formatDate(note.updated_at)}`;
+
+                await this.renderNotesList();
+            }
+
+            showEmptyState() {
+                this.currentNoteId = null;
+                this.elements.emptyState.style.display = 'flex';
+                this.elements.editorContent.style.display = 'none';
+            }
+
+            async createNewNote() {
+                const note = await this.syncManager.createNote('', '');
+                await this.renderNotesList();
+                await this.selectNote(note.id);
+                this.elements.titleInput.focus();
+                this.showToast('Note created', 'success');
+            }
+
+            async saveCurrentNote() {
+                if (!this.currentNoteId) return;
+
+                const title = this.elements.titleInput.value;
+                const content = this.elements.contentInput.value;
+
+                await this.syncManager.updateNote(this.currentNoteId, { title, content });
+
+                this.elements.lastSaved.textContent = `Last saved: Just now`;
+                await this.renderNotesList();
+            }
+
+            async deleteCurrentNote() {
+                if (!this.currentNoteId) return;
+
+                if (confirm('Are you sure you want to delete this note?')) {
+                    await this.syncManager.deleteNote(this.currentNoteId);
+                    this.showEmptyState();
+                    await this.renderNotesList();
+                    this.showToast('Note deleted', 'success');
+                }
+            }
+
+            // Conflict handling
+            conflictResolveCallback = null;
+            conflictLocal = null;
+            conflictRemote = null;
+
+            async handleConflict(local, remote) {
+                return new Promise((resolve) => {
+                    this.conflictLocal = local;
+                    this.conflictRemote = remote;
+                    this.conflictResolveCallback = resolve;
+
+                    this.elements.localVersion.textContent = `Title: ${local.title}\n\nContent:\n${local.content}`;
+                    this.elements.remoteVersion.textContent = `Title: ${remote.title}\n\nContent:\n${remote.content}`;
+                    this.elements.conflictDialog.classList.remove('hidden');
+                });
+            }
+
+            async resolveConflict(choice) {
+                let resolvedNote;
+
+                switch (choice) {
+                    case 'local':
+                        resolvedNote = this.conflictLocal;
+                        break;
+                    case 'remote':
+                        resolvedNote = this.conflictRemote;
+                        break;
+                    case 'merge':
+                        // Simple merge: concatenate content
+                        resolvedNote = {
+                            ...this.conflictRemote,
+                            title: this.conflictLocal.title || this.conflictRemote.title,
+                            content: `${this.conflictLocal.content}\n\n---\n\n${this.conflictRemote.content}`
+                        };
+                        break;
+                }
+
+                // Merge version vectors
+                resolvedNote.version_vector = this.mergeVersionVectors(
+                    this.conflictLocal.version_vector || {},
+                    this.conflictRemote.version_vector || {}
+                );
+
+                await this.db.saveNote(resolvedNote);
+
+                this.elements.conflictDialog.classList.add('hidden');
+                this.conflictResolveCallback();
+
+                await this.renderNotesList();
+                if (this.currentNoteId === resolvedNote.id) {
+                    await this.selectNote(resolvedNote.id);
+                }
+
+                this.showToast('Conflict resolved', 'success');
+            }
+
+            mergeVersionVectors(vv1, vv2) {
+                const result = { ...vv1 };
+                for (const key in vv2) {
+                    result[key] = Math.max(result[key] || 0, vv2[key]);
+                }
+                return result;
+            }
+
+            showToast(message, type = 'info') {
+                const toast = document.createElement('div');
+                toast.className = `toast ${type}`;
+                toast.textContent = message;
+                this.elements.toastContainer.appendChild(toast);
+
+                setTimeout(() => {
+                    toast.remove();
+                }, 3000);
+            }
+        }
+
+        // ============================================
+        // Initialize App
+        // ============================================
+        const app = new NotesApp();
+        app.init().then(() => {
+            console.log('Notes app initialized');
+        }).catch(error => {
+            console.error('Failed to initialize app:', error);
+        });
+
+        // Expose app for debugging
+        window.notesApp = app;
+    </script>
+</body>
+</html>

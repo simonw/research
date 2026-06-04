@@ -1,0 +1,25 @@
+diff --git a/clicker/internal/browser/launcher.go b/clicker/internal/browser/launcher.go
+index 7b0a209..fb96e01 100644
+--- a/clicker/internal/browser/launcher.go
++++ b/clicker/internal/browser/launcher.go
+@@ -191,6 +191,7 @@ func createSession(baseURL, chromePath string, headless, verbose bool) (string,
+ 	args := []string{
+ 		"--no-first-run",
+ 		"--no-default-browser-check",
++		"--no-sandbox",
+ 		"--disable-infobars",
+ 		"--disable-blink-features=AutomationControlled",
+ 		"--disable-crash-reporter",
+diff --git a/clients/javascript/package.json b/clients/javascript/package.json
+index 94c3440..b9bcc43 100644
+--- a/clients/javascript/package.json
++++ b/clients/javascript/package.json
+@@ -26,5 +26,7 @@
+   },
+   "dependencies": {
+     "ws": "^8.18.3"
+-  }
++  },
++  "keywords": [],
++  "author": ""
+ }

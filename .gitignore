@@ -1,2 +1,12 @@
 .DS_Store
 __pycache__
+_site/
+
+# npm dependencies
+node_modules/
+package.json
+package-lock.json
+
+# Pyodide cross-build environment
+.pyodide-xbuildenv/
+quickjs-async-sandbox/.venv/

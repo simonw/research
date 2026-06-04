@@ -1,0 +1,219 @@
+diff --git a/CLI/src/Web.cpp b/CLI/src/Web.cpp
+index 60fe6e2..e545723 100644
+--- a/CLI/src/Web.cpp
++++ b/CLI/src/Web.cpp
+@@ -1,70 +1,44 @@
+-// This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
++// Modified from Luau CLI/src/Web.cpp
++// Changes: captures print() output into a buffer and returns it,
++// instead of writing to stdout.
+ #include "lua.h"
+ #include "lualib.h"
+ #include "luacode.h"
+ 
+ #include "Luau/Common.h"
+-#include "Luau/Frontend.h"
+-#include "Luau/BuiltinDefinitions.h"
+ 
+ #include <string>
+ #include <memory>
+-
+ #include <string.h>
+ 
+-// Simple FileResolver for type checking on luau.org/demo
+-struct DemoFileResolver : Luau::FileResolver
+-{
+-    std::optional<Luau::SourceCode> readSource(const Luau::ModuleName& name) override
+-    {
+-        auto it = source.find(name);
+-        if (it == source.end())
+-            return std::nullopt;
+-
+-        return Luau::SourceCode{it->second, Luau::SourceCode::Module};
+-    }
+-
+-    std::optional<Luau::ModuleInfo> resolveModule(const Luau::ModuleInfo* context, Luau::AstExpr* expr, const Luau::TypeCheckLimits& limits) override
+-    {
+-        if (Luau::AstExprGlobal* g = expr->as<Luau::AstExprGlobal>())
+-            return Luau::ModuleInfo{g->name.value};
+-
+-        return std::nullopt;
+-    }
+-
+-    std::string getHumanReadableModuleName(const Luau::ModuleName& name) const override
+-    {
+-        return name;
+-    }
+-
+-    std::optional<std::string> getEnvironmentForModule(const Luau::ModuleName& name) const override
+-    {
+-        return std::nullopt;
+-    }
+-
+-    std::unordered_map<Luau::ModuleName, std::string> source;
+-};
++// Global output buffer for capturing print() calls
++static std::string g_output;
+ 
+-// Simple ConfigResolver for type checking on luau.org/demo that defaults to Strict mode
+-struct DemoConfigResolver : Luau::ConfigResolver
++// Custom print function that appends to g_output
++static int customPrint(lua_State* L)
+ {
+-    DemoConfigResolver()
+-    {
+-        defaultConfig.mode = Luau::Mode::Strict;
+-    }
+-
+-    virtual const Luau::Config& getConfig(const Luau::ModuleName& name, const Luau::TypeCheckLimits& limits) const override
++    int n = lua_gettop(L);
++    for (int i = 1; i <= n; i++)
+     {
+-        return defaultConfig;
++        size_t len;
++        const char* s = luaL_tolstring(L, i, &len);
++        if (i > 1)
++            g_output += "\t";
++        g_output.append(s, len);
++        lua_pop(L, 1);
+     }
+-
+-    Luau::Config defaultConfig;
+-};
++    g_output += "\n";
++    return 0;
++}
+ 
+ static void setupState(lua_State* L)
+ {
+     luaL_openlibs(L);
+ 
++    // Override print with our capturing version
++    lua_pushcfunction(L, customPrint, "print");
++    lua_setglobal(L, "print");
++
+     luaL_sandbox(L);
+ }
+ 
+@@ -79,10 +53,8 @@ static std::string runCode(lua_State* L, const std::string& source)
+     {
+         size_t len;
+         const char* msg = lua_tolstring(L, -1, &len);
+-
+         std::string error(msg, len);
+         lua_pop(L, 1);
+-
+         return error;
+     }
+ 
+@@ -139,55 +111,16 @@ static std::string runCode(lua_State* L, const std::string& source)
+     }
+ }
+ 
+-extern "C" const char* checkScript(const char* source, int useNewSolver)
+-{
+-    static std::string finalCheckResult;
+-    finalCheckResult.clear();
+-
+-    try
+-    {
+-        DemoFileResolver fileResolver;
+-        DemoConfigResolver configResolver;
+-        Luau::FrontendOptions options;
+-
+-        Luau::Frontend frontend(&fileResolver, &configResolver, options);
+-        frontend.setLuauSolverMode(useNewSolver ? Luau::SolverMode::New : Luau::SolverMode::Old);
+-        // Add Luau builtins
+-        Luau::unfreeze(frontend.globals.globalTypes);
+-        Luau::registerBuiltinGlobals(frontend, frontend.globals);
+-        Luau::freeze(frontend.globals.globalTypes);
+-
+-        // restart
+-        frontend.clear();
+-        fileResolver.source.clear();
+-
+-        fileResolver.source["main"] = source;
+-
+-        Luau::CheckResult checkResult = frontend.check("main");
+-        for (const Luau::TypeError& err : checkResult.errors)
+-        {
+-            if (!finalCheckResult.empty())
+-                finalCheckResult += "\n";
+-            finalCheckResult += std::to_string(err.location.begin.line + 1);
+-            finalCheckResult += ": ";
+-            finalCheckResult += Luau::toString(err);
+-        }
+-    }
+-    catch (const std::exception& e)
+-    {
+-        finalCheckResult = e.what();
+-    }
+-
+-    return finalCheckResult.empty() ? nullptr : finalCheckResult.c_str();
+-}
+-
+ extern "C" const char* executeScript(const char* source)
+ {
+-    // setup flags
++    // setup flags - enable all Luau feature flags
+     for (Luau::FValue<bool>* flag = Luau::FValue<bool>::list; flag; flag = flag->next)
+         if (strncmp(flag->name, "Luau", 4) == 0)
+             flag->value = true;
+ 
++    // Clear output buffer
++    g_output.clear();
++
+     // create new state
+     std::unique_ptr<lua_State, void (*)(lua_State*)> globalState(luaL_newstate(), lua_close);
+     lua_State* L = globalState.get();
+@@ -198,11 +131,22 @@ extern "C" const char* executeScript(const char* source)
+     // sandbox thread
+     luaL_sandboxthread(L);
+ 
+-    // static string for caching result (prevents dangling ptr on function exit)
++    // static string for caching result
+     static std::string result;
+ 
+     // run code + collect error
+-    result = runCode(L, source);
++    std::string error = runCode(L, source);
++
++    if (!error.empty())
++    {
++        // Return error prefixed with "ERROR:" so JS can distinguish
++        result = "ERROR:" + error;
++    }
++    else
++    {
++        // Return captured output
++        result = g_output;
++    }
+ 
+-    return result.empty() ? nullptr : result.c_str();
++    return result.c_str();
+ }
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f8060b8..6025cc3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -304,16 +304,16 @@ endif()
+ 
+ if(LUAU_BUILD_WEB)
+     target_compile_options(Luau.Web PRIVATE ${LUAU_OPTIONS})
+-    target_link_libraries(Luau.Web PRIVATE Luau.Compiler Luau.VM Luau.Analysis)
++    target_link_libraries(Luau.Web PRIVATE Luau.Compiler Luau.VM)
+ 
+     # declare exported functions to emscripten
+-    target_link_options(Luau.Web PRIVATE -sEXPORTED_FUNCTIONS=["_executeScript","_checkScript"] -sEXPORTED_RUNTIME_METHODS=["ccall","cwrap"])
++    target_link_options(Luau.Web PRIVATE -sEXPORTED_FUNCTIONS=["_executeScript"] -sEXPORTED_RUNTIME_METHODS=["ccall","cwrap"])
+ 
+     # add -fexceptions for emscripten to allow exceptions to be caught in C++
+     target_link_options(Luau.Web PRIVATE -fexceptions)
+ 
+-    # the output is a single .js file with an embedded wasm blob
+-    target_link_options(Luau.Web PRIVATE -sSINGLE_FILE=1)
++    # modularize for clean loading
++    target_link_options(Luau.Web PRIVATE -sMODULARIZE=1 -sEXPORT_NAME=createLuau -O1)
+ endif()
+ 
+ # validate dependencies for internal libraries

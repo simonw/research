@@ -1,0 +1,296 @@
+(whenwords library in Rockstar)
+(A rock ballad that computes relative time)
+(Transpiles to Python via rockstar-py)
+
+(The timeago function - takes timestamp and reference)
+Timeago takes the moment and the present
+Put the present minus the moment into the distance
+Put the distance into the raw
+If the raw is less than 0
+Put 0 minus the raw into the raw
+
+(Check thresholds from smallest to largest)
+If the raw is less than 45
+Give back "just now"
+
+If the raw is less than 90
+If the distance is less than 0
+Give back "in 1 minute"
+
+Give back "1 minute ago"
+
+If the raw is less than 2700
+Put the raw plus 30 into temp
+Put temp over 60 into mins
+Put mins minus mins mod 1 into mins
+If the distance is less than 0
+Put "in " plus mins into msg
+Put msg plus " minutes" into msg
+Give back msg
+
+Put mins plus " minutes ago" into msg
+Give back msg
+
+If the raw is less than 5400
+If the distance is less than 0
+Give back "in 1 hour"
+
+Give back "1 hour ago"
+
+If the raw is less than 79200
+Put the raw plus 1800 into temp
+Put temp over 3600 into hrs
+Put hrs minus hrs mod 1 into hrs
+If hrs is 1
+If the distance is less than 0
+Give back "in 1 hour"
+
+Give back "1 hour ago"
+
+If the distance is less than 0
+Put "in " plus hrs into msg
+Put msg plus " hours" into msg
+Give back msg
+
+Put hrs plus " hours ago" into msg
+Give back msg
+
+If the raw is less than 129600
+If the distance is less than 0
+Give back "in 1 day"
+
+Give back "1 day ago"
+
+If the raw is less than 2246400
+Put the raw plus 43200 into temp
+Put temp over 86400 into days
+Put days minus days mod 1 into days
+If days is 1
+If the distance is less than 0
+Give back "in 1 day"
+
+Give back "1 day ago"
+
+If the distance is less than 0
+Put "in " plus days into msg
+Put msg plus " days" into msg
+Give back msg
+
+Put days plus " days ago" into msg
+Give back msg
+
+If the raw is less than 3888000
+If the distance is less than 0
+Give back "in 1 month"
+
+Give back "1 month ago"
+
+If the raw is less than 27648000
+Put the raw plus 1296000 into temp
+Put temp over 2592000 into mons
+Put mons minus mons mod 1 into mons
+If mons is 1
+If the distance is less than 0
+Give back "in 1 month"
+
+Give back "1 month ago"
+
+If the distance is less than 0
+Put "in " plus mons into msg
+Put msg plus " months" into msg
+Give back msg
+
+Put mons plus " months ago" into msg
+Give back msg
+
+If the raw is less than 47304000
+If the distance is less than 0
+Give back "in 1 year"
+
+Give back "1 year ago"
+
+Put the raw plus 15768000 into temp
+Put temp over 31536000 into yrs
+Put yrs minus yrs mod 1 into yrs
+If yrs is 0
+Put 1 into yrs
+
+If yrs is 1
+If the distance is less than 0
+Give back "in 1 year"
+
+Give back "1 year ago"
+
+If the distance is less than 0
+Put "in " plus yrs into msg
+Put msg plus " years" into msg
+Give back msg
+
+Put yrs plus " years ago" into msg
+Give back msg
+
+
+(Duration function)
+Duration takes secs and compact and maxunits
+If secs is 0
+If compact is true
+Give back "0s"
+
+Give back "0 seconds"
+
+Put secs into remaining
+Put "" into result
+Put 0 into units
+
+(Years)
+Put remaining over 31536000 into yrs
+Put yrs minus yrs mod 1 into yrs
+Put remaining mod 31536000 into remaining
+If yrs is greater than 0
+If units is less than maxunits
+If compact is true
+Put result plus yrs into result
+Put result plus "y" into result
+
+Else
+If result is not ""
+Put result plus ", " into result
+
+If yrs is 1
+Put result plus "1 year" into result
+
+Else
+Put result plus yrs into result
+Put result plus " years" into result
+
+
+
+Put units plus 1 into units
+
+
+
+(Days)
+Put remaining over 86400 into days
+Put days minus days mod 1 into days
+Put remaining mod 86400 into remaining
+If days is greater than 0
+If units is less than maxunits
+If compact is true
+If result is not ""
+Put result plus " " into result
+
+Put result plus days into result
+Put result plus "d" into result
+
+Else
+If result is not ""
+Put result plus ", " into result
+
+If days is 1
+Put result plus "1 day" into result
+
+Else
+Put result plus days into result
+Put result plus " days" into result
+
+
+
+Put units plus 1 into units
+
+
+
+(Hours)
+Put remaining over 3600 into hrs
+Put hrs minus hrs mod 1 into hrs
+Put remaining mod 3600 into remaining
+If hrs is greater than 0
+If units is less than maxunits
+If compact is true
+If result is not ""
+Put result plus " " into result
+
+Put result plus hrs into result
+Put result plus "h" into result
+
+Else
+If result is not ""
+Put result plus ", " into result
+
+If hrs is 1
+Put result plus "1 hour" into result
+
+Else
+Put result plus hrs into result
+Put result plus " hours" into result
+
+
+
+Put units plus 1 into units
+
+
+
+(Minutes)
+Put remaining over 60 into mins
+Put mins minus mins mod 1 into mins
+Put remaining mod 60 into remaining
+If mins is greater than 0
+If units is less than maxunits
+If compact is true
+If result is not ""
+Put result plus " " into result
+
+Put result plus mins into result
+Put result plus "m" into result
+
+Else
+If result is not ""
+Put result plus ", " into result
+
+If mins is 1
+Put result plus "1 minute" into result
+
+Else
+Put result plus mins into result
+Put result plus " minutes" into result
+
+
+
+Put units plus 1 into units
+
+
+
+(Seconds)
+If remaining is greater than 0
+If units is less than maxunits
+If compact is true
+If result is not ""
+Put result plus " " into result
+
+Put result plus remaining into result
+Put result plus "s" into result
+
+Else
+If result is not ""
+Put result plus ", " into result
+
+If remaining is 1
+Put result plus "1 second" into result
+
+Else
+Put result plus remaining into result
+Put result plus " seconds" into result
+
+
+
+Put units plus 1 into units
+
+
+
+If result is ""
+If compact is true
+Give back "0s"
+
+Give back "0 seconds"
+
+Give back result
+

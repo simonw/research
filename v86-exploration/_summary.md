@@ -1,0 +1,6 @@
+Exploring the v86 Linux Emulator (see [v86 Linux Emulator tool](https://tools.simonwillison.net/v86)), this project evaluates a browser-based Buildroot 2024.05.2 x86 environment with a constrained 39 MB RAM, featuring BusyBox utilities, Lua 5.4.6 scripting, and core text-processing tools. Although it boasts comprehensive shell utilities, file management tools, and basic network utilities (curl, wget, links), actual internet access is unavailable due to the lack of a configured network relay. The platform is suitable for teaching Linux basics, running Lua scripts, or experimenting with text pipelines and system administration, but is limited by single-core emulated hardware, no persistent storage, and absence of modern programming languages or compiler toolchains. Demonstrations confirm reliable Lua and bc scripting, standard Unix command chains, and hashing features.
+
+Key findings:
+- **Most useful features:** Lua scripting with sockets, cryptographic hash tools, robust BusyBox pipelines, file management, and basic system utilities.
+- **Major limitations:** No internet access, no package management, no compilers (GCC, Make, etc.), and a maximum of 39 MB RAM.
+- **Ideal for:** Linux shell tutorials, lightweight scripting, and disposable browser-based experimentation.

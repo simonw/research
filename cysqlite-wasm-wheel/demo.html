@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>cysqlite WebAssembly Demo</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #58a6ff;
+            margin-bottom: 8px;
+            font-size: 1.6em;
+        }
+        .subtitle {
+            color: #8b949e;
+            margin-bottom: 20px;
+            font-size: 0.95em;
+        }
+        .info-panel {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .info-panel h2 {
+            color: #58a6ff;
+            font-size: 1.1em;
+            margin-bottom: 8px;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 8px;
+        }
+        .info-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+        }
+        .info-label { color: #8b949e; }
+        .info-value { color: #f0f6fc; font-weight: 600; }
+        .progress-section {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .progress-bar-container {
+            background: #21262d;
+            border-radius: 4px;
+            height: 24px;
+            overflow: hidden;
+            margin: 8px 0;
+            position: relative;
+        }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #238636, #2ea043);
+            transition: width 0.3s ease;
+            border-radius: 4px;
+        }
+        .progress-bar.has-failures {
+            background: linear-gradient(90deg, #238636 var(--pass-pct), #da3633 var(--pass-pct));
+        }
+        .progress-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 0.85em;
+            font-weight: 600;
+            color: #f0f6fc;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+        }
+        .stats {
+            display: flex;
+            gap: 20px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+        .stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.9em;
+        }
+        .stat .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .dot.pass { background: #238636; }
+        .dot.fail { background: #da3633; }
+        .dot.skip { background: #d29922; }
+        .dot.error { background: #f85149; }
+        #status-line {
+            font-size: 1em;
+            margin-bottom: 4px;
+        }
+        .test-results {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .test-results h2 {
+            color: #58a6ff;
+            font-size: 1.1em;
+            margin-bottom: 12px;
+        }
+        .test-class {
+            margin-bottom: 12px;
+            border: 1px solid #21262d;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .test-class-header {
+            background: #21262d;
+            padding: 8px 12px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+        }
+        .test-class-header:hover { background: #292e36; }
+        .test-class-header .badge {
+            font-size: 0.8em;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 600;
+        }
+        .badge.all-pass { background: #238636; color: #fff; }
+        .badge.has-fail { background: #da3633; color: #fff; }
+        .badge.running { background: #1f6feb; color: #fff; }
+        .test-class-body {
+            display: none;
+            padding: 4px 0;
+        }
+        .test-class-body.open { display: block; }
+        .test-row {
+            padding: 4px 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.88em;
+            border-bottom: 1px solid #161b22;
+        }
+        .test-row:last-child { border-bottom: none; }
+        .test-icon { width: 18px; text-align: center; font-size: 1em; }
+        .test-icon.pass { color: #3fb950; }
+        .test-icon.fail { color: #f85149; }
+        .test-icon.skip { color: #d29922; }
+        .test-icon.running { color: #58a6ff; }
+        .test-name { flex: 1; }
+        .test-error {
+            background: #1c1010;
+            border: 1px solid #da3633;
+            border-radius: 4px;
+            padding: 8px 12px;
+            margin: 4px 12px 8px;
+            font-size: 0.82em;
+            color: #f85149;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: monospace;
+        }
+        #log-output {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 0.82em;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .log-info { color: #8b949e; }
+        .log-success { color: #3fb950; }
+        .log-error { color: #f85149; }
+        .log-warn { color: #d29922; }
+        footer {
+            text-align: center;
+            color: #484f58;
+            margin-top: 20px;
+            font-size: 0.85em;
+        }
+        footer a { color: #58a6ff; text-decoration: none; }
+        footer a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <h1>cysqlite &mdash; WebAssembly Demo</h1>
+    <p class="subtitle">
+        Testing <a href="https://github.com/coleifer/cysqlite" style="color:#58a6ff;">cysqlite</a>
+        compiled to WebAssembly via Emscripten, running in Pyodide in the browser.
+    </p>
+
+    <div class="info-panel" id="env-info">
+        <h2>Environment</h2>
+        <div class="info-grid">
+            <div class="info-item">
+                <span class="info-label">Pyodide</span>
+                <span class="info-value" id="val-pyodide">loading...</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Python</span>
+                <span class="info-value" id="val-python">loading...</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">cysqlite</span>
+                <span class="info-value" id="val-cysqlite">loading...</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">SQLite</span>
+                <span class="info-value" id="val-sqlite">loading...</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Platform</span>
+                <span class="info-value" id="val-platform">loading...</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Wheel file</span>
+                <span class="info-value" id="val-wheel">loading...</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="progress-section">
+        <div id="status-line">Initializing Pyodide...</div>
+        <div class="progress-bar-container">
+            <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
+            <div class="progress-text" id="progress-text">0%</div>
+        </div>
+        <div class="stats">
+            <div class="stat"><span class="dot pass"></span> Passed: <strong id="stat-pass">0</strong></div>
+            <div class="stat"><span class="dot fail"></span> Failed: <strong id="stat-fail">0</strong></div>
+            <div class="stat"><span class="dot error"></span> Errors: <strong id="stat-error">0</strong></div>
+            <div class="stat"><span class="dot skip"></span> Skipped: <strong id="stat-skip">0</strong></div>
+            <div class="stat">Total: <strong id="stat-total">0</strong></div>
+        </div>
+    </div>
+
+    <div class="test-results" id="test-results">
+        <h2>Test Results</h2>
+        <div id="test-container"></div>
+    </div>
+
+    <details style="margin-bottom: 16px;">
+        <summary style="cursor: pointer; color: #58a6ff; padding: 8px 0;">Console Log</summary>
+        <div id="log-output"></div>
+    </details>
+
+    <footer>
+        <p>
+            <a href="https://github.com/coleifer/cysqlite">cysqlite</a> by Charles Leifer
+            &middot; Compiled with <a href="https://emscripten.org/">Emscripten</a>
+            &middot; Running on <a href="https://pyodide.org/">Pyodide</a>
+        </p>
+    </footer>
+
+<script src="https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js"></script>
+<script>
+// Wheel filename - fetched from same directory
+const WHEEL_FILENAME = "cysqlite-0.1.4-cp311-cp311-emscripten_3_1_46_wasm32.whl";
+const TESTS_URL = "https://raw.githubusercontent.com/coleifer/cysqlite/69fd34dc093fabed286a984a22d26788dc6f95a1/tests.py";
+
+// Test classes to skip (threading not available in Pyodide)
+const SKIP_CLASSES = ["TestThreading"];
+
+// State
+let stats = { pass: 0, fail: 0, error: 0, skip: 0, total: 0 };
+let testClasses = {};
+
+function log(msg, cls = "log-info") {
+    const el = document.getElementById("log-output");
+    const span = document.createElement("span");
+    span.className = cls;
+    span.textContent = msg + "\n";
+    el.appendChild(span);
+    el.scrollTop = el.scrollHeight;
+}
+
+function setStatus(msg) {
+    document.getElementById("status-line").textContent = msg;
+}
+
+function updateStats() {
+    document.getElementById("stat-pass").textContent = stats.pass;
+    document.getElementById("stat-fail").textContent = stats.fail;
+    document.getElementById("stat-error").textContent = stats.error;
+    document.getElementById("stat-skip").textContent = stats.skip;
+    document.getElementById("stat-total").textContent = stats.total;
+
+    const done = stats.pass + stats.fail + stats.error + stats.skip;
+    const pct = stats.total > 0 ? Math.round((done / stats.total) * 100) : 0;
+    const bar = document.getElementById("progress-bar");
+    bar.style.width = pct + "%";
+    document.getElementById("progress-text").textContent = pct + "%";
+
+    if (stats.fail > 0 || stats.error > 0) {
+        const passPct = stats.total > 0 ? Math.round((stats.pass / done) * 100) : 100;
+        bar.style.setProperty("--pass-pct", passPct + "%");
+        bar.classList.add("has-failures");
+    }
+}
+
+function getClassContainer(className) {
+    if (!testClasses[className]) {
+        const container = document.getElementById("test-container");
+        const div = document.createElement("div");
+        div.className = "test-class";
+        div.id = "tc-" + className;
+
+        const header = document.createElement("div");
+        header.className = "test-class-header";
+        header.innerHTML = `<span>${className}</span><span class="badge running">running</span>`;
+        header.addEventListener("click", () => {
+            body.classList.toggle("open");
+        });
+
+        const body = document.createElement("div");
+        body.className = "test-class-body";
+
+        div.appendChild(header);
+        div.appendChild(body);
+        container.appendChild(div);
+
+        testClasses[className] = { div, header, body, passed: 0, failed: 0, total: 0 };
+    }
+    return testClasses[className];
+}
+
+function addTestResult(className, testName, status, errorMsg) {
+    const cls = getClassContainer(className);
+    cls.total++;
+    if (status === "pass") cls.passed++;
+    else cls.failed++;
+
+    const icons = { pass: "\u2713", fail: "\u2717", skip: "\u25CB", error: "\u2717" };
+    const row = document.createElement("div");
+    row.className = "test-row";
+    row.innerHTML = `<span class="test-icon ${status}">${icons[status] || "?"}</span><span class="test-name">${testName}</span>`;
+    cls.body.appendChild(row);
+
+    if (errorMsg) {
+        const errDiv = document.createElement("div");
+        errDiv.className = "test-error";
+        errDiv.textContent = errorMsg;
+        cls.body.appendChild(errDiv);
+        // Auto-open classes with failures
+        cls.body.classList.add("open");
+    }
+}
+
+function finalizeClass(className) {
+    const cls = testClasses[className];
+    if (!cls) return;
+    const badge = cls.header.querySelector(".badge");
+    if (cls.failed > 0) {
+        badge.className = "badge has-fail";
+        badge.textContent = `${cls.passed}/${cls.total} passed`;
+    } else {
+        badge.className = "badge all-pass";
+        badge.textContent = `${cls.passed}/${cls.total} passed`;
+    }
+}
+
+async function main() {
+    try {
+        // Step 1: Load Pyodide
+        log("Loading Pyodide runtime...");
+        setStatus("Loading Pyodide runtime...");
+        const pyodide = await loadPyodide();
+        log("Pyodide loaded successfully.", "log-success");
+
+        // Step 2: Install the wheel via micropip from same-origin HTTP URL
+        log("Installing cysqlite wheel: " + WHEEL_FILENAME);
+        setStatus("Installing cysqlite wheel...");
+        const wheelUrl = new URL(WHEEL_FILENAME, window.location.href).href;
+        await pyodide.loadPackage("micropip");
+        await pyodide.runPythonAsync(`
+import micropip
+await micropip.install("${wheelUrl}")
+`);
+        log("cysqlite wheel installed.", "log-success");
+
+        // Step 3: Gather environment info
+        setStatus("Gathering environment info...");
+        const envInfo = pyodide.runPython(`
+import json, sys, platform
+import cysqlite
+info = {
+    "pyodide": "${pyodide.version}",
+    "python": sys.version.split()[0],
+    "cysqlite": cysqlite.version,
+    "sqlite": cysqlite.sqlite_version,
+    "platform": platform.platform(),
+    "wheel": "${WHEEL_FILENAME}",
+}
+json.dumps(info)
+`);
+        const info = JSON.parse(envInfo);
+        document.getElementById("val-pyodide").textContent = info.pyodide;
+        document.getElementById("val-python").textContent = info.python;
+        document.getElementById("val-cysqlite").textContent = info.cysqlite;
+        document.getElementById("val-sqlite").textContent = info.sqlite;
+        document.getElementById("val-platform").textContent = info.platform;
+        document.getElementById("val-wheel").textContent = info.wheel;
+        log(`Environment: Python ${info.python}, cysqlite ${info.cysqlite}, SQLite ${info.sqlite}`, "log-success");
+
+        // Step 4: Fetch tests from GitHub
+        log("Fetching test suite from GitHub...");
+        setStatus("Fetching test suite from GitHub...");
+        const testsResp = await fetch(TESTS_URL);
+        if (!testsResp.ok) throw new Error("Failed to fetch tests: " + testsResp.status);
+        const testsCode = await testsResp.text();
+        pyodide.FS.writeFile("/tmp/tests.py", testsCode);
+        log(`Tests fetched: ${(testsCode.length / 1024).toFixed(1)} KB`, "log-success");
+
+        // Step 5: Setup the test runner in Python
+        setStatus("Discovering tests...");
+        log("Setting up test runner...");
+
+        // Expose JS callback
+        const reportResult = (className, testName, status, errorMsg) => {
+            addTestResult(className, testName, status, errorMsg || "");
+            if (status === "pass") stats.pass++;
+            else if (status === "fail") stats.fail++;
+            else if (status === "error") stats.error++;
+            else if (status === "skip") stats.skip++;
+            updateStats();
+        };
+        const reportClassDone = (className) => {
+            finalizeClass(className);
+        };
+        const reportStatus = (msg) => {
+            setStatus(msg);
+            log(msg);
+        };
+        const reportTotal = (n) => {
+            stats.total = n;
+            updateStats();
+        };
+
+        pyodide.globals.set("js_report_result", reportResult);
+        pyodide.globals.set("js_report_class_done", reportClassDone);
+        pyodide.globals.set("js_report_status", reportStatus);
+        pyodide.globals.set("js_report_total", reportTotal);
+
+        // Run the test suite
+        await pyodide.runPythonAsync(`
+import sys
+import os
+import importlib
+import traceback
+
+sys.path.insert(0, '/tmp')
+
+# Provide /tmp directory for file-based tests
+os.makedirs('/tmp', exist_ok=True)
+
+# Import the test module
+import tests
+
+import unittest
+
+SKIP_CLASSES = ${JSON.stringify(SKIP_CLASSES)}
+
+# Discover all test classes
+loader = unittest.TestLoader()
+all_classes = []
+for name in dir(tests):
+    obj = getattr(tests, name)
+    if isinstance(obj, type) and issubclass(obj, unittest.TestCase) and obj is not unittest.TestCase:
+        if name in SKIP_CLASSES:
+            continue
+        if name == 'BaseTestCase':
+            continue
+        all_classes.append((name, obj))
+
+# Sort by order of appearance
+all_classes.sort(key=lambda x: x[0])
+
+# Count total tests
+total = 0
+for class_name, cls in all_classes:
+    suite = loader.loadTestsFromTestCase(cls)
+    total += suite.countTestCases()
+
+js_report_total(total)
+js_report_status(f"Running {total} tests across {len(all_classes)} test classes...")
+
+# Run tests class by class
+for class_name, cls in all_classes:
+    js_report_status(f"Running {class_name}...")
+    suite = loader.loadTestsFromTestCase(cls)
+
+    for test in suite:
+        test_name = str(test).split()[0]
+        try:
+            # Run setUp
+            test.setUp()
+            try:
+                # Run the test method
+                method = getattr(test, test._testMethodName)
+                method()
+                js_report_result(class_name, test_name, "pass", "")
+            except unittest.SkipTest as e:
+                js_report_result(class_name, test_name, "skip", str(e))
+            except AssertionError as e:
+                js_report_result(class_name, test_name, "fail", traceback.format_exc())
+            except Exception as e:
+                js_report_result(class_name, test_name, "error", traceback.format_exc())
+            finally:
+                try:
+                    test.tearDown()
+                except Exception:
+                    pass
+        except unittest.SkipTest as e:
+            js_report_result(class_name, test_name, "skip", str(e))
+        except Exception as e:
+            js_report_result(class_name, test_name, "error", f"setUp failed: {traceback.format_exc()}")
+
+    js_report_class_done(class_name)
+`);
+
+        // Final summary
+        const done = stats.pass + stats.fail + stats.error + stats.skip;
+        if (stats.fail === 0 && stats.error === 0) {
+            setStatus(`All ${stats.pass} tests passed! (${stats.skip} skipped)`);
+            log(`\nSUCCESS: All ${stats.pass} tests passed! (${stats.skip} skipped)`, "log-success");
+        } else {
+            setStatus(`Done: ${stats.pass} passed, ${stats.fail} failed, ${stats.error} errors, ${stats.skip} skipped`);
+            log(`\nDone: ${stats.pass} passed, ${stats.fail} failed, ${stats.error} errors, ${stats.skip} skipped`, "log-warn");
+        }
+
+    } catch (err) {
+        log("FATAL: " + err.message, "log-error");
+        setStatus("Error: " + err.message);
+        console.error(err);
+    }
+}
+
+main();
+</script>
+</body>
+</html>

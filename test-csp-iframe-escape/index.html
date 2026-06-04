@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head><title>CSP Meta Tag Iframe Escape Tests</title></head>
+<body>
+<h1>CSP Meta Tag Iframe Escape Tests</h1>
+<p>Each test iframe attempts to bypass the CSP meta tag restriction from inside the sandbox.</p>
+<p>Results are reported to the parent via postMessage (allowed by sandbox="allow-scripts").</p>
+
+<div id="results"></div>
+
+<h2>Test 1: Baseline - CSP blocks fetch</h2>
+<iframe id="test1" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    (async () => {
+      try {
+        const r = await fetch('/canary.txt');
+        const t = await r.text();
+        parent.postMessage({test: 1, result: 'FAIL - fetch succeeded: ' + t}, '*');
+      } catch(e) {
+        parent.postMessage({test: 1, result: 'PASS - fetch blocked: ' + e.message}, '*');
+      }
+    })();
+  </script>
+"></iframe>
+
+<h2>Test 2: Remove the meta tag then fetch</h2>
+<iframe id="test2" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    // Try to remove the CSP meta tag
+    const meta = document.querySelector('meta[http-equiv=Content-Security-Policy]');
+    if (meta) meta.remove();
+
+    (async () => {
+      try {
+        const r = await fetch('/canary.txt');
+        const t = await r.text();
+        parent.postMessage({test: 2, result: 'FAIL - fetch succeeded after meta removal: ' + t}, '*');
+      } catch(e) {
+        parent.postMessage({test: 2, result: 'PASS - fetch still blocked after meta removal: ' + e.message}, '*');
+      }
+    })();
+  </script>
+"></iframe>
+
+<h2>Test 3: Replace meta tag content with permissive policy</h2>
+<iframe id="test3" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    // Try to modify the CSP meta tag to be permissive
+    const meta = document.querySelector('meta[http-equiv=Content-Security-Policy]');
+    if (meta) meta.setAttribute('content', 'default-src *');
+
+    (async () => {
+      try {
+        const r = await fetch('/canary.txt');
+        const t = await r.text();
+        parent.postMessage({test: 3, result: 'FAIL - fetch succeeded after meta modification: ' + t}, '*');
+      } catch(e) {
+        parent.postMessage({test: 3, result: 'PASS - fetch still blocked after meta modification: ' + e.message}, '*');
+      }
+    })();
+  </script>
+"></iframe>
+
+<h2>Test 4: Add a second permissive meta CSP tag</h2>
+<iframe id="test4" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    // Try adding a second, more permissive CSP meta tag
+    const newMeta = document.createElement('meta');
+    newMeta.httpEquiv = 'Content-Security-Policy';
+    newMeta.content = 'default-src *; connect-src *;';
+    document.head.appendChild(newMeta);
+
+    (async () => {
+      try {
+        const r = await fetch('/canary.txt');
+        const t = await r.text();
+        parent.postMessage({test: 4, result: 'FAIL - fetch succeeded with added permissive meta: ' + t}, '*');
+      } catch(e) {
+        parent.postMessage({test: 4, result: 'PASS - added permissive meta ignored: ' + e.message}, '*');
+      }
+    })();
+  </script>
+"></iframe>
+
+<h2>Test 5: document.write to replace entire document (no CSP meta)</h2>
+<iframe id="test5" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    // Try to replace the entire document via document.write
+    document.open();
+    document.write('<html><body><script>(async()=>{try{const r=await fetch(&quot;/canary.txt&quot;);const t=await r.text();parent.postMessage({test:5,result:&quot;FAIL - fetch after doc.write: &quot;+t},&quot;*&quot;)}catch(e){parent.postMessage({test:5,result:&quot;PASS - fetch blocked after doc.write: &quot;+e.message},&quot;*&quot;)}})()<\/script></body></html>');
+    document.close();
+  </script>
+"></iframe>
+
+<h2>Test 6: Create new iframe inside sandbox to escape CSP</h2>
+<iframe id="test6" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    // Try creating a child iframe without CSP
+    try {
+      const inner = document.createElement('iframe');
+      inner.srcdoc = '<script>fetch(&quot;/canary.txt&quot;).then(r=>r.text()).then(t=>parent.parent.postMessage({test:6,result:&quot;FAIL - nested iframe fetch: &quot;+t},&quot;*&quot;)).catch(e=>parent.parent.postMessage({test:6,result:&quot;PASS - nested iframe blocked: &quot;+e.message},&quot;*&quot;))<\/script>';
+      document.body.appendChild(inner);
+    } catch(e) {
+      parent.postMessage({test: 6, result: 'PASS - could not create iframe: ' + e.message}, '*');
+    }
+  </script>
+"></iframe>
+
+<h2>Test 7: Image beacon exfiltration</h2>
+<iframe id="test7" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    // Try image-based exfiltration
+    try {
+      const img = new Image();
+      img.onload = () => parent.postMessage({test: 7, result: 'FAIL - image loaded'}, '*');
+      img.onerror = () => parent.postMessage({test: 7, result: 'PASS - image blocked by CSP'}, '*');
+      img.src = '/canary.txt';
+      document.body.appendChild(img);
+      // Timeout fallback
+      setTimeout(() => parent.postMessage({test: 7, result: 'PASS - image blocked (timeout)'}, '*'), 2000);
+    } catch(e) {
+      parent.postMessage({test: 7, result: 'PASS - image creation blocked: ' + e.message}, '*');
+    }
+  </script>
+"></iframe>
+
+<h2>Test 8: WebSocket escape attempt</h2>
+<iframe id="test8" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    try {
+      const ws = new WebSocket('ws://localhost:8000/');
+      ws.onopen = () => parent.postMessage({test: 8, result: 'FAIL - WebSocket connected'}, '*');
+      ws.onerror = () => parent.postMessage({test: 8, result: 'PASS - WebSocket blocked'}, '*');
+      setTimeout(() => parent.postMessage({test: 8, result: 'PASS - WebSocket blocked (timeout)'}, '*'), 2000);
+    } catch(e) {
+      parent.postMessage({test: 8, result: 'PASS - WebSocket blocked: ' + e.message}, '*');
+    }
+  </script>
+"></iframe>
+
+<h2>Test 9: Remove meta then document.write with fetch</h2>
+<iframe id="test9" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    // Remove meta, then document.write a completely new page
+    const meta = document.querySelector('meta[http-equiv=Content-Security-Policy]');
+    if (meta) meta.remove();
+    document.open();
+    document.write('<html><head></head><body><script>(async()=>{try{const r=await fetch(&quot;/canary.txt&quot;);const t=await r.text();parent.postMessage({test:9,result:&quot;FAIL - fetch after remove+write: &quot;+t},&quot;*&quot;)}catch(e){parent.postMessage({test:9,result:&quot;PASS - still blocked after remove+write: &quot;+e.message},&quot;*&quot;)}})()</scr' + 'ipt></body></html>');
+    document.close();
+  </script>
+"></iframe>
+
+<h2>Test 10: setTimeout-delayed fetch after meta removal</h2>
+<iframe id="test10" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    const meta = document.querySelector('meta[http-equiv=Content-Security-Policy]');
+    if (meta) meta.remove();
+    // Wait a tick for the removal to 'take effect'
+    setTimeout(async () => {
+      try {
+        const r = await fetch('/canary.txt');
+        const t = await r.text();
+        parent.postMessage({test: 10, result: 'FAIL - delayed fetch after removal: ' + t}, '*');
+      } catch(e) {
+        parent.postMessage({test: 10, result: 'PASS - delayed fetch still blocked: ' + e.message}, '*');
+      }
+    }, 500);
+  </script>
+"></iframe>
+
+<script>
+  // Collect results
+  const results = {};
+  const total = 10;
+  window.addEventListener('message', (e) => {
+    if (e.data && e.data.test) {
+      results[e.data.test] = e.data.result;
+      const div = document.getElementById('results');
+      div.innerHTML = '<h2>Results So Far</h2><pre>' +
+        Object.entries(results)
+          .sort(([a],[b]) => a-b)
+          .map(([k,v]) => 'Test ' + k + ': ' + v)
+          .join('\n') +
+        '</pre>';
+
+      // When all done, set a flag
+      if (Object.keys(results).length >= total) {
+        window.__allDone = true;
+        div.innerHTML += '<p><strong>ALL TESTS COMPLETE</strong></p>';
+      }
+    }
+  });
+
+  // Timeout for tests that may never report
+  setTimeout(() => {
+    for (let i = 1; i <= total; i++) {
+      if (!results[i]) {
+        results[i] = 'TIMEOUT - no response received';
+      }
+    }
+    const div = document.getElementById('results');
+    div.innerHTML = '<h2>Final Results</h2><pre>' +
+      Object.entries(results)
+        .sort(([a],[b]) => a-b)
+        .map(([k,v]) => 'Test ' + k + ': ' + v)
+        .join('\n') +
+      '</pre><p><strong>ALL TESTS COMPLETE</strong></p>';
+    window.__allDone = true;
+  }, 5000);
+</script>
+</body>
+</html>

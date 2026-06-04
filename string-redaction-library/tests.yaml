@@ -1,0 +1,222 @@
+# String Redaction Library Test Cases
+# Format designed for cross-language portability
+
+metadata:
+  version: "1.0"
+  description: "Test cases for secret string detection based on statistical patterns"
+
+# Test cases for the detect_secrets function
+# Each test has:
+#   - input: the text to scan
+#   - expected: list of detected secrets with start/end indexes
+#   - description: what this test verifies
+
+test_cases:
+  # Basic cases - should NOT detect normal English words
+  - name: "normal_english_sentence"
+    input: "The quick brown fox jumps over the lazy dog"
+    expected: []
+    description: "Normal English text should not trigger detection"
+
+  - name: "longer_english_words"
+    input: "The extraordinary circumstances required investigation"
+    expected: []
+    description: "Long but normal English words should not be detected"
+
+  - name: "common_english_words"
+    input: "beautiful restaurant information technology"
+    expected: []
+    description: "Common long English words should pass"
+
+  # Basic cases - SHOULD detect obvious secrets
+  - name: "obvious_api_key"
+    input: "key=sk_live_xJ7kLmNpQrStUvWx"
+    expected:
+      - value: "sk_live_xJ7kLmNpQrStUvWx"
+        start: 4
+        end: 28
+    description: "API key pattern should be detected"
+
+  - name: "random_string"
+    input: "token: xK9mNpQrStVwXyZb"
+    expected:
+      - value: "xK9mNpQrStVwXyZb"
+        start: 7
+        end: 23
+    description: "Random alphanumeric string should be detected"
+
+  - name: "consonant_heavy_string"
+    input: "password=zxcvbnmqwrtyp"
+    expected:
+      - value: "zxcvbnmqwrtyp"
+        start: 9
+        end: 22
+    description: "Consonant-heavy string should be detected"
+
+  # Edge cases
+  - name: "exactly_8_chars"
+    input: "secret=xK9mNpQr"
+    expected: []
+    description: "Exactly 8 characters should NOT be detected (need >8)"
+
+  - name: "9_char_secret"
+    input: "secret=xK9mNpQrs"
+    expected:
+      - value: "xK9mNpQrs"
+        start: 7
+        end: 16
+    description: "9 characters should be detected"
+
+  - name: "empty_string"
+    input: ""
+    expected: []
+    description: "Empty string should return empty list"
+
+  - name: "short_text"
+    input: "hi"
+    expected: []
+    description: "Short text should return empty list"
+
+  # Multiple secrets in one string
+  - name: "multiple_secrets"
+    input: "API_KEY=xK9mNpQrStVw and SECRET=zYbNmCvXwQpLk"
+    expected:
+      - value: "xK9mNpQrStVw"
+        start: 8
+        end: 20
+      - value: "zYbNmCvXwQpLk"
+        start: 32
+        end: 45
+    description: "Should detect multiple secrets in one input"
+
+  # Should NOT detect - word-like patterns
+  - name: "camelcase_words"
+    input: "getUserInformation processDataEntry"
+    expected: []
+    description: "CamelCase combinations of English words should pass"
+
+  # Hash-like strings
+  - name: "md5_hash"
+    input: "hash: d41d8cd98f00b204e9800998ecf8427e"
+    expected:
+      - value: "d41d8cd98f00b204e9800998ecf8427e"
+        start: 6
+        end: 38
+    description: "MD5 hash should be detected"
+
+  - name: "base64_string"
+    input: "data=SGVsbG8gV29ybGQhIQ=="
+    expected:
+      - value: "SGVsbG8gV29ybGQhIQ"
+        start: 5
+        end: 23
+    description: "Base64-like strings should be detected"
+
+  # Mixed content
+  - name: "mixed_content"
+    input: "The API key is xK9mNpQrStVwXyZb and the user is John"
+    expected:
+      - value: "xK9mNpQrStVwXyZb"
+        start: 15
+        end: 31
+    description: "Should detect secret in mixed normal/secret content"
+
+  # Numbers and special patterns
+  - name: "numeric_string"
+    input: "id=123456789012345"
+    expected: []
+    description: "Pure numeric strings should not be detected as they're not secrets in this context"
+
+  - name: "uuid_like"
+    input: "uuid=a1b2c3d4e5f6g7h8i9j0"
+    expected:
+      - value: "a1b2c3d4e5f6g7h8i9j0"
+        start: 5
+        end: 25
+    description: "UUID-like alphanumeric strings should be detected"
+
+  # Vowel ratio tests
+  - name: "vowel_heavy_nonsense"
+    input: "word: aeiouaeiouaei"
+    expected:
+      - value: "aeiouaeiouaei"
+        start: 6
+        end: 19
+    description: "Extremely vowel-heavy strings are not normal words"
+
+  - name: "consonant_cluster_word"
+    input: "The word strengths is English"
+    expected: []
+    description: "Words like 'strengths' with consonant clusters are still valid English"
+
+  # Real-world secret patterns
+  # Note: AWS keys with good vowel ratios may not be detected by heuristics alone
+  # This tests a more random-looking key format
+  - name: "random_api_key"
+    input: "API_KEY=xK9mNqRsTvWxYz2b4d"
+    expected:
+      - value: "xK9mNqRsTvWxYz2b4d"
+        start: 8
+        end: 26
+    description: "Random alphanumeric API key should be detected"
+
+  - name: "github_token"
+    input: "token=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    expected:
+      - value: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        start: 6
+        end: 46
+    description: "GitHub personal access token pattern should be detected"
+
+  - name: "jwt_like_segment"
+    input: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+    expected:
+      - value: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+        start: 0
+        end: 36
+    description: "JWT-like base64 segment should be detected"
+
+  # More English words that should pass
+  - name: "more_english_words"
+    input: "synchronization internationalization"
+    expected: []
+    description: "Long compound English words should pass"
+
+  - name: "programming_identifiers"
+    input: "calculateTotalAmount getCustomerData"
+    expected: []
+    description: "Common camelCase programming identifiers should pass"
+
+  - name: "snake_case_code"
+    input: "calculate_total get_user_data"
+    expected: []
+    description: "Snake_case identifiers made of words should pass"
+
+  # Edge cases with numbers
+  - name: "version_string"
+    input: "version=1234567890123"
+    expected: []
+    description: "Pure numeric version string should not be detected"
+
+  - name: "mixed_alphanumeric_secret"
+    input: "secret=abc123def456ghi789"
+    expected:
+      - value: "abc123def456ghi789"
+        start: 7
+        end: 25
+    description: "Alternating letters and numbers should be detected"
+
+  # Short secrets boundary
+  - name: "exactly_9_char_lowercase"
+    input: "key=abcdefghi"
+    expected: []
+    description: "9 char all-lowercase without unusual patterns might be a word"
+
+  - name: "mixed_case_with_digits"
+    input: "key=xK7mNp9Qr"
+    expected:
+      - value: "xK7mNp9Qr"
+        start: 4
+        end: 13
+    description: "9 char mixed case with digits is suspicious"
+

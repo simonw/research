@@ -1,0 +1,728 @@
+{
+  "description": "Language-agnostic test suite for the REXC (rx) encoder/decoder",
+  "format_version": 1,
+  "notes": {
+    "value_encoding": "Values use JSON types. Special values use {\"__special\": \"...\"} wrappers.",
+    "special_values": {
+      "NaN": {"__special": "NaN"},
+      "Infinity": {"__special": "Infinity"},
+      "-Infinity": {"__special": "-Infinity"},
+      "undefined": {"__special": "undefined"}
+    },
+    "options": "Encode options may include indexThreshold, stringChainThreshold, stringChainDelimiter."
+  },
+
+  "b64_stringify": {
+    "description": "Encode non-negative integer to base64 string",
+    "tests": [
+      {"input": 0, "expected": ""},
+      {"input": 1, "expected": "1"},
+      {"input": 9, "expected": "9"},
+      {"input": 10, "expected": "a"},
+      {"input": 35, "expected": "z"},
+      {"input": 36, "expected": "A"},
+      {"input": 61, "expected": "Z"},
+      {"input": 62, "expected": "-"},
+      {"input": 63, "expected": "_"},
+      {"input": 64, "expected": "10"},
+      {"input": 256, "expected": "40"},
+      {"input": 4096, "expected": "100"},
+      {"input": 65536, "expected": "g00"},
+      {"input": 1048576, "expected": "4000"},
+      {"input": 16777216, "expected": "10000"},
+      {"input": 268435456, "expected": "g0000"},
+      {"input": 4294967296, "expected": "400000"},
+      {"input": 68719476736, "expected": "1000000"},
+      {"input": 1099511627776, "expected": "g000000"},
+      {"input": 17592186044416, "expected": "40000000"},
+      {"input": 281474976710656, "expected": "100000000"},
+      {"input": 4503599627370496, "expected": "g00000000"}
+    ]
+  },
+
+  "b64_parse": {
+    "description": "Decode base64 string to non-negative integer",
+    "tests": [
+      {"input": "", "expected": 0},
+      {"input": "1", "expected": 1},
+      {"input": "9", "expected": 9},
+      {"input": "a", "expected": 10},
+      {"input": "z", "expected": 35},
+      {"input": "A", "expected": 36},
+      {"input": "Z", "expected": 61},
+      {"input": "-", "expected": 62},
+      {"input": "_", "expected": 63},
+      {"input": "10", "expected": 64},
+      {"input": "40", "expected": 256},
+      {"input": "100", "expected": 4096},
+      {"input": "g00", "expected": 65536},
+      {"input": "4000", "expected": 1048576},
+      {"input": "10000", "expected": 16777216},
+      {"input": "g0000", "expected": 268435456},
+      {"input": "400000", "expected": 4294967296},
+      {"input": "1000000", "expected": 68719476736},
+      {"input": "g000000", "expected": 1099511627776},
+      {"input": "40000000", "expected": 17592186044416},
+      {"input": "100000000", "expected": 281474976710656},
+      {"input": "g00000000", "expected": 4503599627370496},
+      {"input": "v________", "expected": 9007199254740991},
+      {"input": "f__", "expected": 65535},
+      {"input": "3_____", "expected": 4294967295}
+    ]
+  },
+
+  "zigzag_encode": {
+    "description": "Encode signed integer to unsigned zigzag value",
+    "tests": [
+      {"input": 0, "expected": 0},
+      {"input": -1, "expected": 1},
+      {"input": 1, "expected": 2},
+      {"input": -2, "expected": 3},
+      {"input": 2, "expected": 4},
+      {"input": 1073741823, "expected": 2147483646},
+      {"input": -1073741824, "expected": 2147483647},
+      {"input": 1073741824, "expected": 2147483648},
+      {"input": -1073741825, "expected": 2147483649},
+      {"input": 2147483647, "expected": 4294967294},
+      {"input": -2147483648, "expected": 4294967295},
+      {"input": 2147483648, "expected": 4294967296},
+      {"input": -2147483649, "expected": 4294967297}
+    ]
+  },
+
+  "zigzag_decode": {
+    "description": "Decode unsigned zigzag value to signed integer",
+    "tests": [
+      {"input": 0, "expected": 0},
+      {"input": 1, "expected": -1},
+      {"input": 2, "expected": 1},
+      {"input": 3, "expected": -2},
+      {"input": 4, "expected": 2},
+      {"input": 2147483646, "expected": 1073741823},
+      {"input": 2147483647, "expected": -1073741824},
+      {"input": 2147483648, "expected": 1073741824},
+      {"input": 2147483649, "expected": -1073741825},
+      {"input": 4294967294, "expected": 2147483647},
+      {"input": 4294967295, "expected": -2147483648},
+      {"input": 4294967296, "expected": 2147483648},
+      {"input": 4294967297, "expected": -2147483649}
+    ]
+  },
+
+  "stringify": {
+    "description": "Encode a value to its rexc string representation",
+    "tests": [
+      {
+        "name": "integer zero",
+        "input": 0,
+        "expected": "+"
+      },
+      {
+        "name": "positive integer 1",
+        "input": 1,
+        "expected": "+2"
+      },
+      {
+        "name": "negative integer -1",
+        "input": -1,
+        "expected": "+1"
+      },
+      {
+        "name": "integer 42",
+        "input": 42,
+        "expected": "+1k"
+      },
+      {
+        "name": "integer -42",
+        "input": -42,
+        "expected": "+1j"
+      },
+      {
+        "name": "decimal 3.14",
+        "input": 3.14,
+        "expected": "+9Q*3"
+      },
+      {
+        "name": "decimal 0.5",
+        "input": 0.5,
+        "expected": "+a*1"
+      },
+      {
+        "name": "integer 1000000 (trailing zeroes become float)",
+        "input": 1000000,
+        "expected": "+2*c"
+      },
+      {
+        "name": "string with spaces",
+        "input": "hello world",
+        "expected": "hello world,b"
+      },
+      {
+        "name": "string foo bar",
+        "input": "foo bar",
+        "expected": "foo bar,7"
+      },
+      {
+        "name": "boolean true",
+        "input": true,
+        "expected": "'t"
+      },
+      {
+        "name": "boolean false",
+        "input": false,
+        "expected": "'f"
+      },
+      {
+        "name": "null",
+        "input": null,
+        "expected": "'n"
+      },
+      {
+        "name": "undefined",
+        "input": {"__special": "undefined"},
+        "expected": "'u"
+      },
+      {
+        "name": "NaN",
+        "input": {"__special": "NaN"},
+        "expected": "'nan"
+      },
+      {
+        "name": "Infinity",
+        "input": {"__special": "Infinity"},
+        "expected": "'inf"
+      },
+      {
+        "name": "-Infinity",
+        "input": {"__special": "-Infinity"},
+        "expected": "'nif"
+      },
+      {
+        "name": "simple array [1,2,3]",
+        "input": [1, 2, 3],
+        "expected": "+6+4+2;6"
+      },
+      {
+        "name": "nested array [[1,2,3]]",
+        "input": [[1, 2, 3]],
+        "expected": "+6+4+2;6;8"
+      },
+      {
+        "name": "empty array",
+        "input": [],
+        "expected": ";"
+      },
+      {
+        "name": "nested arrays [[1],[2]]",
+        "input": [[1], [2]],
+        "expected": "+4;2+2;2;8"
+      },
+      {
+        "name": "simple object",
+        "input": {"color": "red", "size": 42},
+        "expected": "+1ksize,4red,3color,5:l"
+      },
+      {
+        "name": "empty object",
+        "input": {},
+        "expected": ":"
+      },
+      {
+        "name": "object in array",
+        "input": [{"a": 1}],
+        "expected": "+2a,1:5;7"
+      },
+      {
+        "name": "deduplicated strings",
+        "input": ["hello", "hello"],
+        "expected": "hello,5^;8"
+      },
+      {
+        "name": "deduplicated objects",
+        "input": [{"x": 1}, {"x": 1}],
+        "expected": "+2x,1:5^;8"
+      },
+      {
+        "name": "array with index",
+        "input": [1, 2, 3],
+        "options": {"indexThreshold": 2},
+        "expected": "+6+4+2024#o;b"
+      },
+      {
+        "name": "object with index and sorted keys",
+        "input": {"c": 3, "a": 1, "b": 2},
+        "options": {"indexThreshold": 2},
+        "expected": "+4b,1+2a,1+6c,15a0#o:k"
+      },
+      {
+        "name": "path /",
+        "input": "/",
+        "expected": "/,1"
+      },
+      {
+        "name": "path /about",
+        "input": "/about",
+        "expected": "/about,6"
+      },
+      {
+        "name": "ref encodes as shorthand",
+        "input": "hello",
+        "options": {"refs": {"H": "hello"}},
+        "expected": "'H"
+      },
+      {
+        "name": "number ref",
+        "input": 42,
+        "options": {"refs": {"X": 42}},
+        "expected": "'X"
+      },
+      {
+        "name": "refs inside arrays",
+        "input": ["hello", "world"],
+        "options": {"refs": {"H": "hello"}},
+        "expected": "world,5'H;9"
+      },
+      {
+        "name": "schema ref for repeated shapes",
+        "input": [{"a": 1, "b": 2}, {"a": 3, "b": 4}],
+        "options": {"refs": {"S": ["a", "b"]}},
+        "expected": "+8+6'S:6+4+2'S:6;g"
+      },
+      {
+        "name": "shared schemas",
+        "input": [
+          {"name": "alice", "age": 1},
+          {"name": "bob", "age": 2},
+          {"name": "charlie", "age": 3}
+        ],
+        "expected": "+6age,3charlie,7name,4:m+4bob,3^7:9+2alice,5^k:b;M"
+      },
+      {
+        "name": "single object no schema",
+        "input": [{"name": "alice"}],
+        "expected": "alice,5name,4:d;f"
+      },
+      {
+        "name": "array ref as schema target",
+        "input": {"a": 1, "b": 2},
+        "options": {"refs": {"K": ["a", "b"]}},
+        "expected": "+4+2'K:6"
+      },
+      {
+        "name": "object ref as schema target",
+        "input": {"a": 1, "b": 2},
+        "options": {"refs": {"O": {"a": 3, "b": 4}}},
+        "expected": "+4+2'O:6"
+      },
+      {
+        "name": "colored fruits",
+        "input": [
+          {"color": "red", "fruits": ["apple", "strawberry"]},
+          {"color": "green", "fruits": ["apple"]},
+          {"color": "yellow", "fruits": ["apple", "banana"]},
+          {"color": "orange", "fruits": ["orange"]}
+        ],
+        "expected": "orange,6;8fruits,6^acolor,5:rbanana,6apple,5;fyellow,6^p:r^e;2green,5^E:dstrawberry,a^F;ered,3^11:o;1z"
+      }
+    ]
+  },
+
+  "parse": {
+    "description": "Decode a rexc string to a value",
+    "tests": [
+      {
+        "name": "integer zero",
+        "input": "+",
+        "expected": 0
+      },
+      {
+        "name": "integer 1",
+        "input": "+2",
+        "expected": 1
+      },
+      {
+        "name": "integer -1",
+        "input": "+1",
+        "expected": -1
+      },
+      {
+        "name": "integer 42",
+        "input": "+1k",
+        "expected": 42
+      },
+      {
+        "name": "integer -42",
+        "input": "+1j",
+        "expected": -42
+      },
+      {
+        "name": "decimal 3.14",
+        "input": "+9Q*3",
+        "expected": 3.14
+      },
+      {
+        "name": "decimal 0.5",
+        "input": "+a*1",
+        "expected": 0.5
+      },
+      {
+        "name": "empty string",
+        "input": ",",
+        "expected": ""
+      },
+      {
+        "name": "string hello world",
+        "input": "hello world,b",
+        "expected": "hello world"
+      },
+      {
+        "name": "string foo bar",
+        "input": "foo bar,7",
+        "expected": "foo bar"
+      },
+      {
+        "name": "boolean true",
+        "input": "'t",
+        "expected": true
+      },
+      {
+        "name": "boolean false",
+        "input": "'f",
+        "expected": false
+      },
+      {
+        "name": "null",
+        "input": "'n",
+        "expected": null
+      },
+      {
+        "name": "undefined",
+        "input": "'u",
+        "expected": {"__special": "undefined"}
+      },
+      {
+        "name": "NaN",
+        "input": "'nan",
+        "expected": {"__special": "NaN"}
+      },
+      {
+        "name": "Infinity",
+        "input": "'inf",
+        "expected": {"__special": "Infinity"}
+      },
+      {
+        "name": "-Infinity",
+        "input": "'nif",
+        "expected": {"__special": "-Infinity"}
+      },
+      {
+        "name": "simple array",
+        "input": "+6+4+2;6",
+        "expected": [1, 2, 3]
+      },
+      {
+        "name": "empty array",
+        "input": ";",
+        "expected": []
+      },
+      {
+        "name": "simple object",
+        "input": "+1ksize,4red,3color,5:l",
+        "expected": {"color": "red", "size": 42}
+      },
+      {
+        "name": "empty object",
+        "input": ":",
+        "expected": {}
+      },
+      {
+        "name": "pointer references",
+        "input": "hello,5^;8",
+        "expected": ["hello", "hello"]
+      }
+    ]
+  },
+
+  "roundtrip": {
+    "description": "Values that should survive encode→decode unchanged",
+    "tests": [
+      {
+        "name": "integer 0",
+        "value": 0
+      },
+      {
+        "name": "integer 1",
+        "value": 1
+      },
+      {
+        "name": "integer -1",
+        "value": -1
+      },
+      {
+        "name": "integer 42",
+        "value": 42
+      },
+      {
+        "name": "float 3.14",
+        "value": 3.14
+      },
+      {
+        "name": "string hello",
+        "value": "hello"
+      },
+      {
+        "name": "string hello world",
+        "value": "hello world"
+      },
+      {
+        "name": "empty string",
+        "value": ""
+      },
+      {
+        "name": "boolean true",
+        "value": true
+      },
+      {
+        "name": "boolean false",
+        "value": false
+      },
+      {
+        "name": "null",
+        "value": null
+      },
+      {
+        "name": "undefined",
+        "value": {"__special": "undefined"}
+      },
+      {
+        "name": "Infinity",
+        "value": {"__special": "Infinity"}
+      },
+      {
+        "name": "-Infinity",
+        "value": {"__special": "-Infinity"}
+      },
+      {
+        "name": "empty array",
+        "value": []
+      },
+      {
+        "name": "simple int array",
+        "value": [1, 2, 3]
+      },
+      {
+        "name": "string array",
+        "value": ["a", "b", "c"]
+      },
+      {
+        "name": "nested arrays",
+        "value": [[1, 2], [3, 4]]
+      },
+      {
+        "name": "empty object",
+        "value": {}
+      },
+      {
+        "name": "simple object",
+        "value": {"a": 1, "b": 2}
+      },
+      {
+        "name": "nested object",
+        "value": {"name": "rex", "nested": {"ok": true}}
+      },
+      {
+        "name": "object with array",
+        "value": {"items": [10, 20, 30]}
+      },
+      {
+        "name": "array of objects",
+        "value": [{"x": 1}, {"x": 2}]
+      },
+      {
+        "name": "complex nested structure",
+        "value": {
+          "routes": [
+            {"path": "/api/users", "handler": "getUsers", "methods": ["GET"]},
+            {"path": "/api/users", "handler": "createUser", "methods": ["POST"]}
+          ],
+          "metadata": {"version": 1, "generated": true}
+        }
+      },
+      {
+        "name": "duplicated values",
+        "value": ["hello", "hello"]
+      },
+      {
+        "name": "duplicated objects",
+        "value": [{"type": "page", "status": 200}, {"type": "page", "status": 200}, {"type": "page", "status": 200}]
+      },
+      {
+        "name": "large indexed array",
+        "value": [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99],
+        "options": {"indexThreshold": 10}
+      },
+      {
+        "name": "schema objects",
+        "value": [
+          {"name": "alice", "age": 30},
+          {"name": "bob", "age": 25},
+          {"name": "carol", "age": 20}
+        ]
+      },
+      {
+        "name": "objects with overlapping key sets",
+        "value": [{"a": 1, "b": 2}, {"a": 3}]
+      },
+      {
+        "name": "string containing rexc tag characters",
+        "value": ["+", ",", ":", ";", "^", ".", "'", "#", "*"]
+      },
+      {
+        "name": "strings with null bytes",
+        "value": "\u0000"
+      },
+      {
+        "name": "control characters",
+        "value": "\u0001\u0002\u0003"
+      },
+      {
+        "name": "newline tab carriage return",
+        "value": "\n\r\t"
+      },
+      {
+        "name": "unicode emoji",
+        "value": "\ud83d\ude80"
+      },
+      {
+        "name": "unicode CJK",
+        "value": "\u65e5\u672c\u8a9e\u30c6\u30b9\u30c8"
+      },
+      {
+        "name": "unicode accented",
+        "value": "caf\u00e9"
+      },
+      {
+        "name": "mixed types in array",
+        "value": [0, -1, 3.14, "", "hello", true, false, null]
+      },
+      {
+        "name": "single element array",
+        "value": [42]
+      },
+      {
+        "name": "single key object",
+        "value": {"only": "one"}
+      },
+      {
+        "name": "deeply nested object",
+        "value": {"v": {"v": {"v": {"v": {"v": {"v": {"v": {"v": {"v": {"v": 42}}}}}}}}}}
+      },
+      {
+        "name": "empty string as key",
+        "value": {"": 1, "a": ""}
+      },
+      {
+        "name": "path with trailing slashes",
+        "value": ["/foo/bar/", "/foo/baz/"]
+      },
+      {
+        "name": "paths with no shared prefix",
+        "value": ["/alpha/one", "/beta/two"]
+      },
+      {
+        "name": "different shapes interleaved",
+        "value": [{"a": 1}, {"b": 2}, {"a": 3}, {"b": 4}, {"c": 5}]
+      },
+      {
+        "name": "same keys different value types",
+        "value": [{"x": 1, "y": "hello"}, {"x": "world", "y": 2}]
+      },
+      {
+        "name": "number string keys",
+        "value": {"0": "zero", "1": "one", "10": "ten"}
+      },
+      {
+        "name": "keys that are prefixes of each other",
+        "value": {"a": 1, "ab": 2, "abc": 3, "abcd": 4}
+      },
+      {
+        "name": "powers of 10",
+        "value": [10, 100, 1000, 10000]
+      },
+      {
+        "name": "negative powers of 10",
+        "value": [-10, -100, -1000, -10000]
+      },
+      {
+        "name": "small float",
+        "value": 1.5e-10
+      },
+      {
+        "name": "large float",
+        "value": 1.23e15
+      },
+      {
+        "name": "nested empty containers",
+        "value": [[]]
+      },
+      {
+        "name": "nested empty object",
+        "value": [{}]
+      },
+      {
+        "name": "object with empty array value",
+        "value": {"a": []}
+      },
+      {
+        "name": "object with empty object value",
+        "value": {"a": {}}
+      },
+      {
+        "name": "schema with nested containers",
+        "value": [
+          {"list": [1, 2], "meta": {"ok": true}},
+          {"list": [3, 4], "meta": {"ok": false}}
+        ]
+      },
+      {
+        "name": "string appears as both key and value",
+        "value": {"hello": "hello", "world": "world"}
+      },
+      {
+        "name": "all values identical",
+        "value": {"k0": 999, "k1": 999, "k2": 999, "k3": 999, "k4": 999}
+      },
+      {
+        "name": "path splitting",
+        "value": ["/foo/bar/baz", "/foo/bar/qux"]
+      },
+      {
+        "name": "colored fruits",
+        "value": [
+          {"color": "red", "fruits": ["apple", "strawberry"]},
+          {"color": "green", "fruits": ["apple"]},
+          {"color": "yellow", "fruits": ["apple", "banana"]},
+          {"color": "orange", "fruits": ["orange"]}
+        ]
+      }
+    ]
+  },
+
+  "split_number": {
+    "description": "Split a number into [base, exponent] where value = base * 10^exponent",
+    "tests": [
+      {"input": 0, "base": 0, "exponent": 0},
+      {"input": 1, "base": 1, "exponent": 0},
+      {"input": -1, "base": -1, "exponent": 0},
+      {"input": 42, "base": 42, "exponent": 0},
+      {"input": 100, "base": 1, "exponent": 2},
+      {"input": 1000, "base": 1, "exponent": 3},
+      {"input": 1000000, "base": 1, "exponent": 6},
+      {"input": 3.14, "base": 314, "exponent": -2},
+      {"input": 0.5, "base": 5, "exponent": -1},
+      {"input": -3.14, "base": -314, "exponent": -2},
+      {"input": 1200, "base": 12, "exponent": 2},
+      {"input": -2500, "base": -25, "exponent": 2}
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+[package]
+name = "pymemchr"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "_pymemchr"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+memchr = "2.7"

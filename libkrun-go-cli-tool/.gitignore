@@ -1,0 +1,8 @@
+# Compiled binary
+krunsh
+
+# Vendored dependencies (copied from libkrun-go repo, not original work)
+# To build: copy krun/ from https://github.com/mishushakov/libkrun-go
+# and libkrun/include/libkrun.h from https://github.com/containers/libkrun
+krun/
+libkrun/

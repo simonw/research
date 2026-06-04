@@ -1,0 +1,25 @@
+# Compiled binaries
+/jsrunner
+/pyrunner
+
+# Python virtual environment
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+
+# Downloaded runtime files (see README for download instructions)
+runtime/python.wasm
+runtime/lib/
+runtime/cpython-wasi.zip
+*.wasm
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# uv lock file
+uv.lock
+main.py
+.python-version

@@ -1,0 +1,14 @@
+[project]
+name = "py-worker"
+version = "0.1.0"
+description = "Python Cloudflare Worker with Starlette"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "starlette"
+]
+
+[tool.uv]
+dev-dependencies = [
+    "workers-py"
+]

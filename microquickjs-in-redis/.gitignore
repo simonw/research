@@ -1,0 +1,14 @@
+# Build artifacts
+build/
+*.so
+*.o
+*.a
+
+# Editor files
+*.swp
+*~
+.vscode/
+
+# Logs
+*.log
+dump.rdb

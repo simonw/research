@@ -1,0 +1,248 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 2d55855..885c644 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1134,9 +1134,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
+ dependencies = [
+  "cfg-if",
++ "js-sys",
+  "libc",
+  "r-efi",
+  "wasip2",
++ "wasm-bindgen",
+ ]
+ 
+ [[package]]
+@@ -1576,6 +1578,17 @@ dependencies = [
+  "serde",
+ ]
+ 
++[[package]]
++name = "monty-wasm"
++version = "0.0.3"
++dependencies = [
++ "getrandom 0.3.4",
++ "monty",
++ "serde",
++ "serde_json",
++ "wasm-bindgen",
++]
++
+ [[package]]
+ name = "monty_type_checking"
+ version = "0.0.3"
+diff --git a/Cargo.toml b/Cargo.toml
+index 13bac91..5ba636f 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,6 +1,6 @@
+ [workspace]
+ resolver = "2"
+-members = ["crates/monty", "crates/monty-cli", "crates/monty-python", "crates/monty-js", "crates/monty-type-checking", "crates/monty-typeshed"]
++members = ["crates/monty", "crates/monty-cli", "crates/monty-python", "crates/monty-js", "crates/monty-type-checking", "crates/monty-typeshed", "crates/monty-wasm"]
+ 
+ [workspace.package]
+ edition = "2024"
+
+=== NEW FILES ===
+
+--- /dev/null
++++ b/crates/monty-wasm/Cargo.toml
++[package]
++name = "monty-wasm"
++version = "0.0.3"
++edition = "2024"
++rust-version = "1.90"
++
++[lib]
++crate-type = ["cdylib"]
++
++[dependencies]
++monty = { path = "../monty" }
++wasm-bindgen = "0.2"
++serde = { workspace = true }
++serde_json = "1.0"
++getrandom = { version = "0.3", features = ["wasm_js"] }
++
++[package.metadata.wasm-pack.profile.release]
++wasm-opt = false
++
++[lints]
++workspace = true
+
+--- /dev/null
++++ b/crates/monty-wasm/src/lib.rs
++use monty::{CollectStringPrint, DictPairs, MontyObject, MontyRun, NoLimitTracker};
++use wasm_bindgen::prelude::*;
++
++/// A sandboxed Python interpreter that runs in WebAssembly.
++#[wasm_bindgen]
++pub struct Monty {
++    runner: MontyRun,
++    input_names: Vec<String>,
++}
++
++#[wasm_bindgen]
++impl Monty {
++    /// Create a new Monty interpreter by parsing the given Python code.
++    #[wasm_bindgen(constructor)]
++    pub fn new(code: &str) -> Result<Monty, JsValue> {
++        let runner = MontyRun::new(code.to_string(), "main.py", vec![], vec![])
++            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
++        Ok(Monty {
++            runner,
++            input_names: vec![],
++        })
++    }
++
++    /// Create a new Monty interpreter with named input variables.
++    #[wasm_bindgen(js_name = "withInputs")]
++    pub fn with_inputs(code: &str, inputs_json: &str) -> Result<Monty, JsValue> {
++        let inputs: Vec<String> = serde_json::from_str(inputs_json)
++            .map_err(|e| JsValue::from_str(&format!("Invalid inputs JSON: {e}")))?;
++        let runner = MontyRun::new(code.to_string(), "main.py", inputs.clone(), vec![])
++            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
++        Ok(Monty {
++            runner,
++            input_names: inputs,
++        })
++    }
++
++    /// Run the code and return the result as a JSON string.
++    pub fn run(&self) -> Result<String, JsValue> {
++        let mut print_output = CollectStringPrint::default();
++        let result = self
++            .runner
++            .run(vec![], NoLimitTracker, &mut print_output)
++            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
++        Ok(monty_to_json(&result))
++    }
++
++    /// Run the code with input values provided as a JSON object string.
++    #[wasm_bindgen(js_name = "runWithInputs")]
++    pub fn run_with_inputs(&self, inputs_json: &str) -> Result<String, JsValue> {
++        let inputs_map: serde_json::Map<String, serde_json::Value> =
++            serde_json::from_str(inputs_json)
++                .map_err(|e| JsValue::from_str(&format!("Invalid inputs JSON: {e}")))?;
++
++        let input_values: Vec<MontyObject> = self
++            .input_names
++            .iter()
++            .map(|name| {
++                let value = inputs_map
++                    .get(name)
++                    .ok_or_else(|| JsValue::from_str(&format!("Missing input: {name}")))?;
++                json_to_monty(value)
++                    .ok_or_else(|| JsValue::from_str(&format!("Cannot convert input {name}")))
++            })
++            .collect::<Result<Vec<_>, _>>()?;
++
++        let mut print_output = CollectStringPrint::default();
++        let result = self
++            .runner
++            .run(input_values, NoLimitTracker, &mut print_output)
++            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
++        Ok(monty_to_json(&result))
++    }
++
++    /// Run the code and return any print output as a string.
++    #[wasm_bindgen(js_name = "runCapturePrint")]
++    pub fn run_capture_print(&self) -> Result<String, JsValue> {
++        let mut print_output = CollectStringPrint::default();
++        let _result = self
++            .runner
++            .run(vec![], NoLimitTracker, &mut print_output)
++            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
++        Ok(print_output.into_output())
++    }
++
++    /// Get the version of the monty interpreter.
++    pub fn version() -> String {
++        env!("CARGO_PKG_VERSION").to_string()
++    }
++}
++
++fn monty_to_json(obj: &MontyObject) -> String {
++    match obj {
++        MontyObject::None => "null".to_string(),
++        MontyObject::Bool(b) => b.to_string(),
++        MontyObject::Int(i) => i.to_string(),
++        MontyObject::Float(f) => {
++            if f.is_nan() {
++                "null".to_string()
++            } else if f.is_infinite() {
++                if f.is_sign_positive() {
++                    "\"Infinity\"".to_string()
++                } else {
++                    "\"-Infinity\"".to_string()
++                }
++            } else {
++                f.to_string()
++            }
++        }
++        MontyObject::String(s) => serde_json::to_string(s.as_str()).unwrap_or_else(|_| format!("\"{s}\"")),
++        MontyObject::Bytes(b) => {
++            let encoded: Vec<u8> = b.iter().copied().collect();
++            serde_json::to_string(&encoded).unwrap_or_else(|_| "[]".to_string())
++        }
++        MontyObject::List(items) => {
++            let items_json: Vec<String> = items.iter().map(monty_to_json).collect();
++            format!("[{}]", items_json.join(","))
++        }
++        MontyObject::Tuple(items) => {
++            let items_json: Vec<String> = items.iter().map(monty_to_json).collect();
++            format!("[{}]", items_json.join(","))
++        }
++        MontyObject::Set(items) => {
++            let items_json: Vec<String> = items.iter().map(monty_to_json).collect();
++            format!("[{}]", items_json.join(","))
++        }
++        MontyObject::FrozenSet(items) => {
++            let items_json: Vec<String> = items.iter().map(monty_to_json).collect();
++            format!("[{}]", items_json.join(","))
++        }
++        MontyObject::Dict(pairs) => {
++            let mut pairs_json = Vec::new();
++            for (k, v) in pairs {
++                let key = match k {
++                    MontyObject::String(s) => {
++                        serde_json::to_string(s.as_str()).unwrap_or_else(|_| format!("\"{s}\""))
++                    }
++                    other => monty_to_json(&other),
++                };
++                pairs_json.push(format!("{}:{}", key, monty_to_json(&v)));
++            }
++            format!("{{{}}}", pairs_json.join(","))
++        }
++        _ => "\"<monty object>\"".to_string(),
++    }
++}
++
++fn json_to_monty(value: &serde_json::Value) -> Option<MontyObject> {
++    match value {
++        serde_json::Value::Null => Some(MontyObject::None),
++        serde_json::Value::Bool(b) => Some(MontyObject::Bool(*b)),
++        serde_json::Value::Number(n) => {
++            if let Some(i) = n.as_i64() {
++                Some(MontyObject::Int(i.into()))
++            } else if let Some(f) = n.as_f64() {
++                Some(MontyObject::Float(f))
++            } else {
++                None
++            }
++        }
++        serde_json::Value::String(s) => Some(MontyObject::String(s.clone())),
++        serde_json::Value::Array(arr) => {
++            let items: Option<Vec<MontyObject>> = arr.iter().map(json_to_monty).collect();
++            items.map(MontyObject::List)
++        }
++        serde_json::Value::Object(map) => {
++            let pairs: Option<Vec<(MontyObject, MontyObject)>> = map
++                .iter()
++                .map(|(k, v)| json_to_monty(v).map(|v| (MontyObject::String(k.clone()), v)))
++                .collect();
++            pairs.map(|p| MontyObject::Dict(DictPairs::from(p)))
++        }
++    }
++}

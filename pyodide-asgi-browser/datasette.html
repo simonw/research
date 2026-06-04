@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Datasette in the browser</title>
+  <style>
+    html, body { margin: 0; height: 100%; }
+    /* The captured Datasette app fills the whole viewport, as if it were the
+       page itself. */
+    #appframe { position: fixed; inset: 0; width: 100vw; height: 100vh; border: 0; }
+    /* Boot overlay, shown until Pyodide + Datasette are ready. */
+    #boot {
+      position: fixed; inset: 0; z-index: 10;
+      display: flex; flex-direction: column; gap: 1rem;
+      align-items: center; justify-content: center;
+      background: #fff; font-family: system-ui, sans-serif; color: #222;
+    }
+    #boot:has(#status[data-state="ready"]) { display: none; }
+    #boot h1 { font-size: 1.3rem; font-weight: 600; margin: 0; }
+    #status { font-family: ui-monospace, monospace; padding: .4rem .6rem;
+              background: #f3f3f3; border-radius: .4rem; }
+    .hint { color: #666; max-width: 28rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <div id="boot" data-state="starting">
+    <h1>Loading Datasette in your browser…</h1>
+    <p class="hint">
+      The full Datasette ASGI app is being installed into Pyodide and served by a
+      service worker. This takes a few seconds on first load.
+    </p>
+    <span id="status">starting</span>
+  </div>
+  <iframe id="appframe" title="Datasette"></iframe>
+
+  <script>
+    // Use the Datasette worker, and mirror in-app navigation to the URL #fragment.
+    self.ASGI_WORKER = "worker-datasette.js";
+    self.ASGI_HASH_ROUTING = true;
+  </script>
+  <script src="bootstrap.js"></script>
+</body>
+</html>

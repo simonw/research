@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head><title>CSP Escape Tests - Round 3 (Deep Dive)</title></head>
+<body>
+<h1>Deep Dive: sendBeacon and meta refresh findings</h1>
+<div id="results"></div>
+
+<h2>Test 21: sendBeacon - verify it actually reaches the server</h2>
+<p>sendBeacon returned true in round 2, but did the request actually go through? Check server logs.</p>
+<iframe id="test21" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    try {
+      const sent = navigator.sendBeacon('/beacon-test-21', 'secret-data-leaked');
+      parent.postMessage({test: 21, result: 'sendBeacon returned: ' + sent}, '*');
+    } catch(e) {
+      parent.postMessage({test: 21, result: 'PASS - sendBeacon blocked: ' + e.message}, '*');
+    }
+  </script>
+"></iframe>
+
+<h2>Test 22: Meta refresh to data: URI - can the new page fetch?</h2>
+<p>Even if meta refresh works, does the new data: page inherit the sandbox? Can it fetch?</p>
+<iframe id="test22" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    try {
+      const meta = document.createElement('meta');
+      meta.httpEquiv = 'refresh';
+      meta.content = '0;url=data:text/html,<script>fetch(&quot;/canary.txt&quot;).then(r=>r.text()).then(t=>parent.postMessage({test:22,result:&quot;CRITICAL FAIL - meta refresh + fetch worked: &quot;+t},&quot;*&quot;)).catch(e=>parent.postMessage({test:22,result:&quot;meta refresh landed but fetch blocked: &quot;+e.message},&quot;*&quot;))<\/script>';
+      document.head.appendChild(meta);
+      setTimeout(() => parent.postMessage({test: 22, result: 'meta refresh did not navigate (timeout)'}, '*'), 3000);
+    } catch(e) {
+      parent.postMessage({test: 22, result: 'PASS - meta refresh error: ' + e.message}, '*');
+    }
+  </script>
+"></iframe>
+
+<h2>Test 23: Static meta refresh (not dynamically inserted) to data: URI with fetch</h2>
+<iframe id="test23" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <meta http-equiv='refresh' content=&quot;0;url=data:text/html,<script>fetch('/canary.txt').then(r=>r.text()).then(t=>parent.postMessage({test:23,result:'CRITICAL FAIL - static meta refresh escaped: '+t},'*')).catch(e=>parent.postMessage({test:23,result:'static meta refresh landed but fetch blocked: '+e.message},'*'))<\/script>&quot;>
+  <script>
+    setTimeout(() => parent.postMessage({test: 23, result: 'static meta refresh did not navigate (timeout)'}, '*'), 3000);
+  </script>
+"></iframe>
+
+<h2>Test 24: Meta refresh to javascript: URI</h2>
+<iframe id="test24" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    try {
+      const meta = document.createElement('meta');
+      meta.httpEquiv = 'refresh';
+      meta.content = '0;url=javascript:parent.postMessage({test:24,result:&quot;CRITICAL FAIL - javascript: URI via meta refresh&quot;},&quot;*&quot;)';
+      document.head.appendChild(meta);
+      setTimeout(() => parent.postMessage({test: 24, result: 'PASS - javascript: meta refresh blocked'}, '*'), 2000);
+    } catch(e) {
+      parent.postMessage({test: 24, result: 'PASS - blocked: ' + e.message}, '*');
+    }
+  </script>
+"></iframe>
+
+<h2>Test 25: location.href to data: URI (no CSP)</h2>
+<iframe id="test25" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    try {
+      location.href = 'data:text/html,<script>fetch(&quot;/canary.txt&quot;).then(r=>r.text()).then(t=>parent.postMessage({test:25,result:&quot;CRITICAL FAIL - location.href data: escaped: &quot;+t},&quot;*&quot;)).catch(e=>parent.postMessage({test:25,result:&quot;location.href data: landed but blocked: &quot;+e.message},&quot;*&quot;))<\/script>';
+    } catch(e) {
+      parent.postMessage({test: 25, result: 'PASS - location.href data: blocked: ' + e.message}, '*');
+    }
+    setTimeout(() => parent.postMessage({test: 25, result: 'location.href data: - no navigation (timeout)'}, '*'), 3000);
+  </script>
+"></iframe>
+
+<h2>Test 26: sendBeacon with connect-src in CSP</h2>
+<p>Test if adding connect-src 'none' explicitly blocks sendBeacon</p>
+<iframe id="test26" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none';&quot;>
+  <script>
+    try {
+      const sent = navigator.sendBeacon('/beacon-test-26', 'secret-data-26');
+      parent.postMessage({test: 26, result: 'sendBeacon with explicit connect-src none returned: ' + sent}, '*');
+    } catch(e) {
+      parent.postMessage({test: 26, result: 'PASS - sendBeacon blocked: ' + e.message}, '*');
+    }
+  </script>
+"></iframe>
+
+<h2>Test 27: Verify original Test 17 - can the data: URI page actually run JS?</h2>
+<iframe id="test27" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    const meta = document.createElement('meta');
+    meta.httpEquiv = 'refresh';
+    meta.content = '0;url=data:text/html,<script>parent.postMessage({test:27,result:&quot;data: URI JS executed after meta refresh&quot;},&quot;*&quot;)<\/script>';
+    document.head.appendChild(meta);
+    setTimeout(() => parent.postMessage({test: 27, result: 'meta refresh did not navigate (timeout)'}, '*'), 3000);
+  </script>
+"></iframe>
+
+<h2>Test 28: document.write replaces document with new permissive CSP, then delayed fetch</h2>
+<iframe id="test28" sandbox="allow-scripts" srcdoc="
+  <meta http-equiv='Content-Security-Policy'
+        content=&quot;default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';&quot;>
+  <script>
+    document.open();
+    document.write('<meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src *; connect-src *; script-src * &apos;unsafe-inline&apos;;&quot;><script>setTimeout(async()=>{try{const r=await fetch(&quot;/canary.txt&quot;);const t=await r.text();parent.postMessage({test:28,result:&quot;FAIL - doc.write+delay+permissive CSP: &quot;+t},&quot;*&quot;)}catch(e){parent.postMessage({test:28,result:&quot;PASS - still blocked: &quot;+e.message},&quot;*&quot;)}},500)<\/script>');
+    document.close();
+  </script>
+"></iframe>
+
+<script>
+  const results = {};
+  const testIds = [21,22,23,24,25,26,27,28];
+  window.addEventListener('message', (e) => {
+    if (e.data && e.data.test) {
+      results[e.data.test] = e.data.result;
+      const div = document.getElementById('results');
+      div.innerHTML = '<h2>Results So Far</h2><pre>' +
+        Object.entries(results)
+          .sort(([a],[b]) => a-b)
+          .map(([k,v]) => 'Test ' + k + ': ' + v)
+          .join('\n') +
+        '</pre>';
+      if (Object.keys(results).length >= testIds.length) {
+        window.__allDone = true;
+        div.innerHTML += '<p><strong>ALL TESTS COMPLETE</strong></p>';
+      }
+    }
+  });
+
+  setTimeout(() => {
+    for (const i of testIds) {
+      if (!results[i]) results[i] = 'TIMEOUT - no response received';
+    }
+    const div = document.getElementById('results');
+    div.innerHTML = '<h2>Final Results</h2><pre>' +
+      Object.entries(results)
+        .sort(([a],[b]) => a-b)
+        .map(([k,v]) => 'Test ' + k + ': ' + v)
+        .join('\n') +
+      '</pre><p><strong>ALL TESTS COMPLETE</strong></p>';
+    window.__allDone = true;
+  }, 8000);
+</script>
+</body>
+</html>

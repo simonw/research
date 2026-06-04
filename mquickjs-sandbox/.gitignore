@@ -1,0 +1,18 @@
+# Vendor directory (mquickjs source)
+vendor/
+
+# Compiled Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Build artifacts
+*.o
+*.d
+build/
+dist/
+*.egg-info/
+
+# Generated C files (keep mquickjs_ext.c, but exclude generated combined)
+mquickjs_ext_combined.c

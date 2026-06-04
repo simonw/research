@@ -1,0 +1,8 @@
+name = "hello-worker"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "page-counter"
+database_id = "local-dev-db"

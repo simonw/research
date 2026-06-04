@@ -1,0 +1,7 @@
+Exploring the capabilities of [just-bash](https://github.com/vercel-labs/just-bash), this project integrates the TypeScript-based bash emulator into a persistent, JSONL-over-stdio server in Deno, accessible via a robust Python client library. The solution enables sandboxed bash scripting with comprehensive built-in commands, a virtual filesystem, and optional network access, with persistent state and fine-grained request control (env, cwd, timeout) supported. The Python package (`just_bash_py`) provides both sync and async interfaces for seamless interaction with the server, supporting advanced bash constructs, file operations, pipelines, and state reset. Extensive testing confirms compatibility for essential scripting tasks, though some components like sqlite3 and yq are limited by Deno-specific constraints. The project serves as a practical foundation for plugin development and AI agent sandboxing, leveraging Deno's flexibility and Python's accessibility.
+
+Key findings:
+- [just-bash](https://github.com/vercel-labs/just-bash) in Deno provides virtualized bash with ~97 commands, persistent state, and network support.
+- JSONL protocol ensures reliable client-server communication with UUID tracking and stateful operations.
+- [Python client](https://pypi.org/project/just-bash-py/) enables sync/async usage, file manipulation, pipelines, and environment overrides.
+- All standard bash scripting and data-wrangling features work; known Deno issues affect sqlite3 and yq functionality.

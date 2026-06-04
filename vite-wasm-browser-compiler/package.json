@@ -1,0 +1,21 @@
+{
+  "name": "vite-wasm-browser-compiler",
+  "version": "1.0.0",
+  "description": "Browser-based single file bundler using esbuild-wasm and WebContainers",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "start:coi": "node server-coi.js",
+    "test": "PLAYWRIGHT_CHROMIUM_SANDBOX=false npx playwright test bundler-simple.spec.js",
+    "test:webcontainer": "PLAYWRIGHT_CHROMIUM_SANDBOX=false npx playwright test bundler-webcontainer.spec.js",
+    "test:all": "PLAYWRIGHT_CHROMIUM_SANDBOX=false npx playwright test",
+    "test:manual": "node test-manual.js"
+  },
+  "keywords": ["esbuild", "wasm", "bundler", "browser", "vite", "webcontainer"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@playwright/test": "^1.57.0",
+    "playwright": "^1.57.0"
+  }
+}

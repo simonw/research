@@ -1,0 +1,17 @@
+[project]
+name = "tre-py"
+version = "0.0.1"
+description = "Python ctypes binding for the TRE regex library"
+requires-python = ">=3.10"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+filterwarnings = ["error"]
+
+[tool.uv]
+package = false

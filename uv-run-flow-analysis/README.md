@@ -1,5 +1,10 @@
 # UV Run Flow Analysis: Deep Dive into `uv run myscript.py`
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 ## Executive Summary
 
 This report provides a comprehensive analysis of what happens when a user runs `uv run myscript.py` in a directory containing a `pyproject.toml` file with dependencies. The investigation was conducted by analyzing the uv source code (v0.9.8) written in Rust.

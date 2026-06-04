@@ -1,0 +1,16 @@
+[package]
+name = "servo-shot"
+version = "0.1.0"
+edition = "2021"
+description = "Tiny CLI that renders a URL (or local HTML file) to a PNG using the servo crate."
+license = "MPL-2.0"
+
+[dependencies]
+# The new embedding crate from https://servo.org/blog/2026/04/13/servo-0.1.0-release/.
+servo = "0.1.0"
+url = "2"
+image = { version = "0.25", default-features = false, features = ["png"] }
+euclid = "0.22"
+dpi = "0.1"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }

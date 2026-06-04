@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monty via Pyodide - Sandboxed Python in the Browser</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 { margin-bottom: 10px; font-size: 28px; }
+        .description { margin-top: 0; color: #666; margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; font-weight: 600; color: #333; }
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 16px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+            min-height: 200px;
+            resize: vertical;
+            tab-size: 2;
+        }
+        textarea:focus { outline: none; border-color: #007bff; box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25); }
+        .button-group { display: flex; gap: 10px; margin-bottom: 20px; }
+        button {
+            padding: 12px 24px;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+        button:hover:not(:disabled) { background-color: #0056b3; }
+        button:disabled { background-color: #6c757d; cursor: wait; opacity: 0.7; }
+        button.secondary { background-color: #6c757d; }
+        button.secondary:hover:not(:disabled) { background-color: #545b62; }
+        #status {
+            padding: 12px; margin-bottom: 20px; border-radius: 4px; display: none;
+        }
+        #status.visible { display: block; }
+        #status.info { background-color: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        #status.error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        #status.success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        #output-section { display: none; }
+        #output-section.visible { display: block; }
+        .output-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .output-header h2 { margin: 0; font-size: 20px; }
+        #output {
+            background-color: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 4px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+            font-size: 14px; white-space: pre-wrap; word-wrap: break-word;
+            min-height: 100px; max-height: 500px; overflow-y: auto;
+        }
+        .execution-time { font-size: 12px; color: #666; margin-top: 8px; }
+        .examples-section { margin-bottom: 20px; }
+        .examples-section h3 { font-size: 14px; color: #666; margin: 0 0 10px 0; font-weight: 500; }
+        .examples-list { display: flex; flex-wrap: wrap; gap: 8px; }
+        .example-btn {
+            padding: 6px 12px; font-size: 13px; background: #f8f9fa; border: 1px solid #dee2e6;
+            border-radius: 20px; color: #495057; cursor: pointer; transition: all 0.15s ease;
+        }
+        .example-btn:hover { background: #e9ecef; border-color: #adb5bd; color: #212529; }
+    </style>
+</head>
+<body>
+    <h1>Monty via Pyodide</h1>
+    <p class="description">
+        Run <a href="https://github.com/pydantic/monty">Monty</a> (a sandboxed Python interpreter by Pydantic) inside
+        <a href="https://pyodide.org">Pyodide</a> (CPython compiled to WebAssembly).
+        This loads the <code>pydantic-monty</code> wheel and uses its full Python API.
+        Code is saved in the URL for sharing.
+    </p>
+
+    <div id="status" class="info visible">Loading Pyodide and pydantic-monty...</div>
+
+    <div class="examples-section">
+        <h3>Examples:</h3>
+        <div class="examples-list">
+            <button class="example-btn" data-example="basic">Basic</button>
+            <button class="example-btn" data-example="inputs">Inputs</button>
+            <button class="example-btn" data-example="reuse">Reuse</button>
+            <button class="example-btn" data-example="errors">Error Handling</button>
+            <button class="example-btn" data-example="fibonacci">Fibonacci</button>
+            <button class="example-btn" data-example="classes">Classes</button>
+        </div>
+    </div>
+
+    <div class="input-group">
+        <label for="code">Python Code (runs inside Monty sandbox via Pyodide):</label>
+        <textarea id="code">import pydantic_monty
+
+# Create a Monty interpreter with some Python code
+m = pydantic_monty.Monty('''
+result = 0
+for i in range(10):
+    result = result + i
+result
+''')
+
+output = m.run()
+print(f"Sum of 0..9 = {output}")</textarea>
+    </div>
+
+    <div class="button-group">
+        <button id="run-btn" disabled>Run Code</button>
+        <button id="clear-btn" class="secondary">Clear</button>
+    </div>
+
+    <div id="output-section">
+        <div class="output-header">
+            <h2>Output</h2>
+            <button id="copy-btn" class="secondary" style="padding: 6px 12px; font-size: 14px;">Copy</button>
+        </div>
+        <div id="output"></div>
+        <div class="execution-time" id="exec-time"></div>
+    </div>
+
+    <script>
+        const EXAMPLES = {
+            basic: `import pydantic_monty
+
+m = pydantic_monty.Monty('1 + 2 * 3')
+result = m.run()
+print(f"1 + 2 * 3 = {result}")
+
+m2 = pydantic_monty.Monty('"hello " + "world"')
+print(f"String concat: {m2.run()}")`,
+            inputs: `import pydantic_monty
+
+# Create interpreter with input variables
+m = pydantic_monty.Monty('x + y', inputs=['x', 'y'])
+
+# Run with different inputs
+result1 = m.run(inputs={"x": 10, "y": 20})
+print(f"10 + 20 = {result1}")
+
+result2 = m.run(inputs={"x": 100, "y": 200})
+print(f"100 + 200 = {result2}")`,
+            reuse: `import pydantic_monty
+
+# Parse once, run many times
+m = pydantic_monty.Monty('x ** 2 + y ** 2', inputs=['x', 'y'])
+
+pairs = [(3, 4), (5, 12), (8, 15)]
+for x, y in pairs:
+    result = m.run(inputs={"x": x, "y": y})
+    print(f"{x}^2 + {y}^2 = {result}")`,
+            errors: `import pydantic_monty
+
+# Monty propagates Python exceptions
+m = pydantic_monty.Monty('1 / 0')
+try:
+    m.run()
+except ZeroDivisionError as e:
+    print(f"Caught: ZeroDivisionError")
+
+# Syntax errors are caught at parse time
+try:
+    m2 = pydantic_monty.Monty('def')
+except pydantic_monty.MontySyntaxError as e:
+    print(f"Syntax error caught at parse time")
+
+print("Error handling works!")`,
+            fibonacci: `import pydantic_monty
+
+code = '''
+def fib(n):
+    if n <= 1:
+        return n
+    a = 0
+    b = 1
+    for _ in range(2, n + 1):
+        a, b = b, a + b
+    return b
+
+[fib(i) for i in range(15)]
+'''
+
+m = pydantic_monty.Monty(code)
+result = m.run()
+print(f"First 15 Fibonacci numbers: {result}")`,
+            classes: `import pydantic_monty
+
+code = '''
+class Counter:
+    def __init__(self):
+        self.count = 0
+    def increment(self):
+        self.count = self.count + 1
+    def get(self):
+        return self.count
+
+c = Counter()
+for _ in range(5):
+    c.increment()
+c.get()
+'''
+
+m = pydantic_monty.Monty(code)
+print(f"Counter after 5 increments: {m.run()}")`,
+        };
+
+        const codeEl = document.getElementById('code');
+        const runBtn = document.getElementById('run-btn');
+        const clearBtn = document.getElementById('clear-btn');
+        const copyBtn = document.getElementById('copy-btn');
+        const statusEl = document.getElementById('status');
+        const outputSection = document.getElementById('output-section');
+        const outputEl = document.getElementById('output');
+        const execTimeEl = document.getElementById('exec-time');
+        let pyodide = null;
+
+        function setStatus(msg, type) {
+            statusEl.textContent = msg;
+            statusEl.className = type + ' visible';
+        }
+
+        // Load code from URL hash
+        if (window.location.hash) {
+            try { codeEl.value = decodeURIComponent(window.location.hash.slice(1)); } catch {}
+        }
+        codeEl.addEventListener('input', () => {
+            history.replaceState(null, '', '#' + encodeURIComponent(codeEl.value));
+        });
+        codeEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const start = codeEl.selectionStart;
+                codeEl.value = codeEl.value.substring(0, start) + '    ' + codeEl.value.substring(codeEl.selectionEnd);
+                codeEl.selectionStart = codeEl.selectionEnd = start + 4;
+            }
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                runBtn.click();
+            }
+        });
+
+        document.querySelectorAll('.example-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                codeEl.value = EXAMPLES[btn.dataset.example];
+                history.replaceState(null, '', '#' + encodeURIComponent(codeEl.value));
+            });
+        });
+
+        // Initialize Pyodide and install pydantic-monty
+        async function initPyodide() {
+            try {
+                setStatus('Loading Pyodide...', 'info');
+                pyodide = await loadPyodide();
+
+                setStatus('Installing pydantic-monty wheel...', 'info');
+                await pyodide.loadPackage('micropip');
+                const micropip = pyodide.pyimport('micropip');
+                const wheelUrl = new URL(
+                    'pydantic_monty-0.0.3-cp313-cp313-emscripten_4_0_9_wasm32.whl',
+                    window.location.href
+                ).href;
+                await micropip.install(wheelUrl);
+
+                // Verify it works
+                pyodide.runPython('import pydantic_monty');
+                const version = pyodide.runPython('pydantic_monty.__version__');
+                setStatus(`Ready! pydantic-monty v${version} loaded via Pyodide.`, 'success');
+                runBtn.disabled = false;
+            } catch (e) {
+                setStatus('Failed to initialize: ' + e.message, 'error');
+                console.error(e);
+            }
+        }
+
+        initPyodide();
+
+        runBtn.addEventListener('click', () => {
+            const code = codeEl.value;
+            if (!code.trim() || !pyodide) return;
+
+            try {
+                const start = performance.now();
+
+                // Capture stdout
+                pyodide.runPython(`
+import io, sys
+_captured_output = io.StringIO()
+sys.stdout = _captured_output
+`);
+
+                let result;
+                try {
+                    result = pyodide.runPython(code);
+                } finally {
+                    pyodide.runPython('sys.stdout = sys.__stdout__');
+                }
+
+                const captured = pyodide.runPython('_captured_output.getvalue()');
+                const elapsed = performance.now() - start;
+
+                let display = '';
+                if (captured) display += captured;
+                if (result !== undefined && result !== null && result !== pyodide.globals.get('None')) {
+                    if (display && !display.endsWith('\n')) display += '\n';
+                    display += '=> ' + result;
+                }
+                if (!display) display = '(no output)';
+
+                outputSection.className = 'visible';
+                outputEl.textContent = display;
+                execTimeEl.textContent = `Executed in ${elapsed.toFixed(1)}ms`;
+                setStatus('Code executed successfully!', 'success');
+            } catch (e) {
+                outputSection.className = 'visible';
+                outputEl.textContent = e.message || String(e);
+                execTimeEl.textContent = '';
+                setStatus('Execution failed', 'error');
+            }
+        });
+
+        clearBtn.addEventListener('click', () => {
+            codeEl.value = '';
+            outputSection.className = '';
+            statusEl.className = '';
+            history.replaceState(null, '', window.location.pathname);
+        });
+
+        copyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(outputEl.textContent);
+            copyBtn.textContent = 'Copied!';
+            setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+        });
+    </script>
+</body>
+</html>

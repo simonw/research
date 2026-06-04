@@ -1,0 +1,7 @@
+After the April 2026 release of the `servo` v0.1.0 crate ([blog post](https://servo.org/blog/2026/04/13/servo-0.1.0-release/)), a concise investigation shows that Servo is now an embeddable browser engine for Rust, with a clear API centered on the `ServoBuilder`, `WebView`, and pixel readback methods. A headless CLI (`servo-shot`) successfully renders URLs or HTML files to PNG, building against stable Rust with a robust software-based rendering pipeline. However, compiling the full engine to WebAssembly remains impractical due to SpiderMonkey and multi-threading limitations, though key Servo sub-crates like `html5ever` (HTML5 parser) can be compiled to wasm for in-browser single-page apps, as demonstrated in the [`html5ever-wasm-demo`](html5ever-wasm-demo) project. Documentation is thorough on [docs.rs/servo/0.1.0](https://docs.rs/servo/0.1.0).
+
+**Key findings:**
+- Servo's public embedding API is stable, modular, and developer-friendly for browser-like tasks in Rust.
+- Native CLI (`servo-shot`) renders web content to PNG using software rendering, suitable for headless environments.
+- Whole-engine WebAssembly compilation is blocked by non-wasm JS engine, threading, GL, and font dependencies; only subsystems like HTML parsing are wasm-ready.
+- In-browser SPAs using Servo sub-crates (like HTML parsing) are feasible and lightweight, supporting educational tools and client-side content processing.

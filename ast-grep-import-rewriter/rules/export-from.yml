@@ -1,0 +1,6 @@
+# Rule to detect re-exports
+id: export-from
+language: javascript
+rule:
+  pattern: export { $$$NAMES } from "$SOURCE"
+message: "Found re-export from $SOURCE"

@@ -1,5 +1,10 @@
 # yt-dlp[default] Installation Analysis
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 ## Overview
 
 This report documents a detailed analysis of installing `yt-dlp[default]` via pip, including all packages installed, file sizes, and binary dependencies.
