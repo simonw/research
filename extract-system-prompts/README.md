@@ -11,7 +11,7 @@ This folder extracts that document into a set of files and a git history shaped 
 
 Browse the per-family history pages on GitHub:
 
-- [`claude-opus.md` history](https://github.com/simonw/research/commits/main/extract-system-prompts/claude-opus.md) — Opus 3 → Opus 4.7
+- [`claude-opus.md` history](https://github.com/simonw/research/commits/main/extract-system-prompts/claude-opus.md) — Opus 3 → Opus 4.8
 - [`claude-sonnet.md` history](https://github.com/simonw/research/commits/main/extract-system-prompts/claude-sonnet.md) — Sonnet 3.5 → Sonnet 4.6
 - [`claude-haiku.md` history](https://github.com/simonw/research/commits/main/extract-system-prompts/claude-haiku.md) — Haiku 3 → Haiku 4.5
 - [`latest-prompt.md` history](https://github.com/simonw/research/commits/main/extract-system-prompts/latest-prompt.md) — every prompt across every model
@@ -22,19 +22,19 @@ For every `<section title="...">` block in the source document the extractor pro
 
 1. **`<model-slug>-YYYY-MM-DD.md`** — one file per prompt revision. Created exactly once, in a commit whose author + committer date is the date from the heading. Good for permalinking a specific prompt at a specific moment.
 2. **`<model-slug>.md`** — one file per model, overwritten with the latest prompt for that model on every new date. Run `git log -p extract-system-prompts/claude-sonnet-4-5.md` to watch a single model evolve.
-3. **`claude-<family>.md`** — one file per model family (`claude-opus.md`, `claude-sonnet.md`, `claude-haiku.md`), overwritten with every prompt in that family in chronological order. Useful for watching how the Opus line has evolved from Opus 3 through Opus 4.7.
+3. **`claude-<family>.md`** — one file per model family (`claude-opus.md`, `claude-sonnet.md`, `claude-haiku.md`), overwritten with every prompt in that family in chronological order. Useful for watching how the Opus line has evolved from Opus 3 through Opus 4.8.
 4. **`latest-prompt.md`** — a single file that receives every prompt for every model in chronological order. `git log -p extract-system-prompts/latest-prompt.md` is the full firehose.
 
-Every commit is authored by `Claude <noreply@anthropic.com>` with both `GIT_AUTHOR_DATE` and `GIT_COMMITTER_DATE` pinned to the prompt's own date. The commit subject always starts with the exact filename that commit modifies (e.g. `claude-opus.md: Claude Opus 4.7 — April 16, 2026`), so `git log --oneline` is unambiguous even when four commits share a faked timestamp.
+Every commit is authored by `Claude <noreply@anthropic.com>` with both `GIT_AUTHOR_DATE` and `GIT_COMMITTER_DATE` pinned to the prompt's own date. The commit subject always starts with the exact filename that commit modifies (e.g. `claude-opus.md: Claude Opus 4.8 — May 28, 2026`), so `git log --oneline` is unambiguous even when four commits share a faked timestamp.
 
 ## Numbers
 
-- 14 models (Opus 3 through Opus 4.7, plus Sonnet and Haiku variants)
+- 15 models (Opus 3 through Opus 4.8, plus Sonnet and Haiku variants)
 - 3 model families (Opus, Sonnet, Haiku)
-- 26 prompt revisions
-- 104 faked-date commits (4 per revision)
+- 27 prompt revisions
+- 108 faked-date commits (4 per revision)
 - Earliest: 2024-07-12 (Sonnet 3.5, Opus 3, Haiku 3)
-- Latest: 2026-04-16 (Opus 4.7)
+- Latest: 2026-05-28 (Opus 4.8)
 
 ## How it works
 
@@ -52,7 +52,7 @@ Show every prompt, newest first:
 git log --pretty=format:"%ad  %s" --date=short -- extract-system-prompts/latest-prompt.md
 ```
 
-Watch the Opus family evolve from 3 to 4.7:
+Watch the Opus family evolve from 3 to 4.8:
 
 ```bash
 git log --pretty=format:"%ad  %s" --date=short -- extract-system-prompts/claude-opus.md
@@ -70,7 +70,7 @@ git diff <old>..<new> -- extract-system-prompts/claude-sonnet-4-5.md
 Blame a particular line within a specific revision (each per-prompt file was only ever written once, so blame pins to the prompt's own date):
 
 ```bash
-git blame extract-system-prompts/claude-opus-4-7-2026-04-16.md
+git blame extract-system-prompts/claude-opus-4-8-2026-05-28.md
 ```
 
 ## What's in this folder
@@ -79,8 +79,8 @@ git blame extract-system-prompts/claude-opus-4-7-2026-04-16.md
 - `notes.md` — running notes from the investigation.
 - `README.md` — this file.
 - `.gitignore` — keeps `system-prompts.md` (the source dump) out of the commit, per the project AGENTS.md rule against checking in full copies of fetched material.
-- 26 `claude-*-YYYY-MM-DD.md` per-prompt files.
-- 14 `claude-*.md` per-model files.
+- 27 `claude-*-YYYY-MM-DD.md` per-prompt files.
+- 15 `claude-*.md` per-model files.
 - 3 `claude-opus.md` / `claude-sonnet.md` / `claude-haiku.md` per-family files.
 - `latest-prompt.md` — the firehose.
 
@@ -90,7 +90,13 @@ git blame extract-system-prompts/claude-opus-4-7-2026-04-16.md
 cd extract-system-prompts
 curl -sS https://platform.claude.com/docs/en/release-notes/system-prompts.md \
     -o system-prompts.md
-python3 extract.py
+uv run python extract.py
 ```
 
 The script is idempotent in the sense that re-running it on the same source document will produce four new commits per entry (identical content, new SHAs). If you want to regenerate from scratch, reset the branch first.
+
+For incremental refreshes against a source that mostly overlaps the existing generated files, use the helper added during the 2026-06-05 refresh:
+
+```bash
+uv run python 2026-06-05-claude-system-prompts-refresh/extract_incremental.py
+```
