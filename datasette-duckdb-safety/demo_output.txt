@@ -1,0 +1,82 @@
+$ python3 exp1_readonly.py
+duckdb 1.5.3
+
+=== read_only=True connection ===
+  [ALLOWED] SELECT: [(1, 'alice'), (2, 'bob')]
+  [blocked] INSERT: InvalidInputException: Invalid Input Error: Cannot execute statement of type "INSERT" on database "data" which is attached in read-only mode!
+  [blocked] CREATE TABLE: InvalidInputException: Invalid Input Error: Cannot execute statement of type "CREATE" on database "data" which is attached in read-only mode!
+  [ALLOWED] CREATE TEMP TABLE: [(1,)]
+  [ALLOWED] COPY TO file (exfil): [(2,)]
+    exfil.csv exists after COPY TO: True
+  [ALLOWED] read_csv arbitrary file: [('TOP SECRET CONTENTS',)]
+  [blocked] read_text arbitrary file: InvalidInputException: Invalid Input Error: Required module 'pytz' failed to import, due to the following Python exception:
+  [blocked] ATTACH rw db: IOException: IO Error: Cannot open database "/tmp/duckdb_exp_b2q4qhdc/extra.duckdb" in read-only mode: database does not exist
+  [ALLOWED] INSTALL httpfs: []
+  [ALLOWED] SET memory_limit: []
+  [ALLOWED] PRAGMA database_list: [(20631, 'data', '/tmp/duckdb_exp_b2q4qhdc/data.duckdb')]
+  [ALLOWED] PRAGMA version: [('v1.5.3', '14eca11bd9', 'Variegata')]
+
+workdir: /tmp/duckdb_exp_b2q4qhdc
+
+$ python3 exp2_lockdown.py
+duckdb 1.5.3
+
+=== read_only=True + hardened config ===
+  [ALLOWED] SELECT: [(2,)]
+  [blocked] INSERT: InvalidInputException: Invalid Input Error: Cannot execute statement of type "INSERT" on database "data" which is attached in read-on
+  [blocked] COPY TO file: PermissionException: Permission Error: Cannot access file "/tmp/duckdb_lock_acpx6mcv/exfil.csv" - file system operations are disabl
+    exfil.csv exists: False
+  [blocked] read_csv arbitrary file: PermissionException: Permission Error: Cannot access file "/tmp/duckdb_lock_acpx6mcv/secret.txt" - file system operations are disab
+  [ALLOWED] ATTACH: []
+  [blocked] INSTALL httpfs: PermissionException: Permission Error: Cannot access directory "/root/.duckdb/extensions/v1.5.3/linux_amd64" - file system operatio
+  [blocked] LOAD httpfs: PermissionException: Permission Error: Loading external extensions is disabled through configuration
+  [blocked] read parquet over http: PermissionException: Permission Error: Cannot access file "https://example.com/x.parquet" - file system operations are disabled by 
+  [blocked] SET enable_external_access=true (undo): InvalidInputException: Invalid Input Error: Cannot change configuration option "enable_external_access" - the configuration has been 
+  [blocked] COPY TO after undo attempt: PermissionException: Permission Error: Cannot access file "/tmp/duckdb_lock_acpx6mcv/exfil.csv" - file system operations are disabl
+    exfil.csv exists after undo attempt: False
+
+workdir: /tmp/duckdb_lock_acpx6mcv
+
+$ python3 exp3_timeout.py
+duckdb 1.5.3
+
+=== (A) Watchdog interrupt() with 1.0s timeout ===
+  status=InterruptException: INTERRUPT Error: Interrupted!  elapsed=1.001s
+
+=== (B) Same query, no timeout (baseline, capped query) ===
+  small query result=[(2389959,)] elapsed=0.084s
+
+=== ATTACH arbitrary path with external access disabled ===
+  [blocked] ATTACH: PermissionException: Permission Error: Cannot access file "/tmp/duckdb_attach_0_a7czos/other.duckdb" - file sys
+
+$ python3 serve_demo.py
+=== 1. Table introspection (homepage JSON) ===
+   status 200 tables: ['moons', 'planets']
+
+=== 2. Browse a table: /demo/planets.json ===
+   status 200
+    {'rowid': 0, 'id': 1, 'name': 'Mercury', 'moons': 0}
+    {'rowid': 1, 'id': 2, 'name': 'Venus', 'moons': 0}
+    {'rowid': 2, 'id': 3, 'name': 'Earth', 'moons': 1}
+    {'rowid': 3, 'id': 4, 'name': 'Mars', 'moons': 2}
+
+=== 3. Ad-hoc SQL query with a JOIN ===
+   status 200
+    {'planet': 'Earth', 'moon': 'Luna'}
+    {'planet': 'Mars', 'moon': 'Phobos'}
+
+=== 4. Aggregate query ===
+   status 200 -> [{'total_moons': 3}]
+
+=== 5. SAFETY: write attempt is blocked (read-only) ===
+   status 400 ok: False error: Statement must be a SELECT
+
+=== 6. SAFETY: filesystem escape blocked (COPY TO) ===
+   status 400 ok: False error: Statement must be a SELECT
+   /tmp/exfil_demo.csv exists: False
+
+=== 7. SAFETY: arbitrary file read blocked (read_csv) ===
+   status 400 ok: False error: Permission Error: Cannot access file "/etc/hostname" - file system ope
+
+=== 8. SAFETY: time limit interrupts a heavy query ===
+   status 400 ok: False after 0.51s error: <p>SQL query took too long. The time limit is controlled by 
