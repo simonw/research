@@ -1,0 +1,10 @@
+1) ordinary SELECT
+   rows: [(1, 'item 1'), (2, 'item 2'), (3, 'item 3')] truncated: False
+2) row cap / truncation (10000 rows, cap 1000)
+   returned: 1000 truncated: True
+3) time limit on runaway recursive CTE
+   QueryInterrupted: canceling statement due to statement timeout
+4) write attempt is rejected (read-only + least privilege)
+   blocked: not permitted: cannot execute INSERT in a read-only transact
+5) custom (tighter) per-query time limit, 200ms
+   QueryInterrupted (tight limit): canceling statement due to statement tim
