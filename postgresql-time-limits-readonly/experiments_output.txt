@@ -1,0 +1,31 @@
+
+======================================================================
+1. statement_timeout aborts a runaway query
+======================================================================
+[ERR]  infinite recursive CTE (expect timeout ~1s): QueryCanceled: canceling statement due to statement timeout  (1016ms)
+[ERR]  pg_sleep(10) (expect timeout ~1s): QueryCanceled: canceling statement due to statement timeout  (1004ms)
+[OK ]  statement_timeout setting on untrusted role: 1s  (4ms)
+[OK ]  per-connection SET statement_timeout=300ms on superuser: cancelled after 301ms  (304ms)
+
+======================================================================
+2. Read-only enforcement
+======================================================================
+[ERR]  INSERT as untrusted role (expect read-only error): ReadOnlySqlTransaction: cannot execute INSERT in a read-only transaction  (5ms)
+[ERR]  UPDATE as untrusted role (expect read-only error): ReadOnlySqlTransaction: cannot execute UPDATE in a read-only transaction  (4ms)
+[ERR]  CREATE TABLE as untrusted role (expect error): ReadOnlySqlTransaction: cannot execute CREATE TABLE in a read-only transaction  (3ms)
+[OK ]  SELECT as untrusted role (expect success): count=1000  (4ms)
+[OK ]  conn.read_only=True blocks write even for superuser: blocked by conn.read_only=True even as superuser  (3ms)
+[OK ]  untrusted tries SET read_only=off then INSERT: still blocked: ReadOnlySqlTransaction  (3ms)
+
+======================================================================
+3. Resource limits: rows, memory, temp files
+======================================================================
+[OK ]  server-side cursor + fetchmany caps rows streamed: fetched 1001 rows then stopped (no full materialise)  (1005ms)
+[OK ]  temp_file_limit=10MB caps disk spill of large sort: blocked by temp_file_limit: temporary file size exceeds temp_file_limit (10240kB)  (168ms)
+
+======================================================================
+4. Read-only is soft; GRANTs are the hard barrier
+======================================================================
+[OK ]  untrusted flips read_only=off in fresh txn: read_only flipped off, but blocked by GRANTs (the real barrier)  (7ms)
+[OK ]  server-side cursor + fetchmany bounds client memory: pulled 1001 of 5M wide rows; client memory bounded  (501ms)
+psycopg version: 3.3.4
