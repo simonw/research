@@ -1,0 +1,7 @@
+Investigating the security of running untrusted SQL in DuckDB compared to Datasette with SQLite, this project establishes that DuckDB can be sandboxed to match—and sometimes exceed—the safety of SQLite, but requires more than its basic `read_only=True` option. Datasette achieves safe SQL exposure by using engine-level read-only connections and opcode-based time limits in SQLite, which inherently prevents unauthorized file or network access. DuckDB, by contrast, demands a hardened configuration (`enable_external_access=false`, `lock_configuration=true`) to block filesystem and network escapes, and lacks built-in query timeout, so the project introduces a watchdog thread to interrupt runaway queries. The provided [safe_duckdb.py](https://github.com/simonw/datasette/blob/main/safe_duckdb.py) helper encapsulates these safeguards, and a prototype ([datasette_duckdb.py](https://github.com/simonw/datasette/blob/main/datasette_duckdb.py)) demonstrates Datasette serving a DuckDB file securely via its web interface.  
+
+**Key findings:**
+- `read_only=True` alone on DuckDB cannot prevent file/network access—extra settings and configuration lock are required.
+- DuckDB lacks a progress-handler timeout, but a thread calling `connection.interrupt()` works reliably.
+- DuckDB brings a hard memory limit and more configurable resource caps than SQLite.
+- With proper hardening, DuckDB can safely expose public SQL query execution just as SQLite does in Datasette.

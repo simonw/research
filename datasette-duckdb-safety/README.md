@@ -1,5 +1,10 @@
 # Can DuckDB run untrusted SQL as safely as Datasette runs SQLite?
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 Datasette can expose a SQL query box to the public internet because it leans
 on two SQLite features to run untrusted `SELECT`s safely: an engine-level
 **read-only** connection and an opcode-granularity **time limit**. This
