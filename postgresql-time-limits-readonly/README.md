@@ -1,5 +1,10 @@
 # Running untrusted queries: Datasette/SQLite vs psycopg/PostgreSQL
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 Datasette lets anyone type arbitrary SQL into a public box and run it against a
 database without fear of data corruption or resource exhaustion. This
 investigation documents exactly how it achieves that with SQLite, then
