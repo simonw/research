@@ -1,5 +1,10 @@
 # Mapping SQLite result columns back to their source `table.column`
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 **Question:** given an arbitrary SQL query executed against SQLite from Python,
 how do we figure out which columns in the result set correspond to specific
 columns in the underlying tables?
