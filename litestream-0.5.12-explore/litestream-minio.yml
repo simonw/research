@@ -1,0 +1,24 @@
+# Litestream 0.5.12 - MinIO (S3-compatible) backend
+access-key-id: minioadmin
+secret-access-key: minioadmin
+
+socket:
+  enabled: true
+  path: /home/user/research/litestream-0.5.12-explore/work/run/litestream.sock
+
+snapshot:
+  interval: 1h
+  retention: 24h
+
+dbs:
+  - path: /home/user/research/litestream-0.5.12-explore/work/data/app.db
+    replica:
+      type: s3
+      bucket: litestream
+      path: app
+      endpoint: http://localhost:9000
+      region: us-east-1
+      force-path-style: true
+
+# Built-in MCP server (Streamable HTTP) for AI agents
+mcp-addr: localhost:9999

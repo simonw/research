@@ -1,0 +1,74 @@
+server: {'name': 'Litestream MCP Server', 'version': '1.0.0'}
+
+TOOLS:
+  - litestream_databases: List databases and their replicas as defined in the Litestream config 
+  - litestream_info: Get a comprehensive summary of Litestream's current status including d
+  - litestream_ltx: List all LTX files for a database or replica URL.
+  - litestream_reset: Clear local Litestream state for a database. Removes local LTX files, 
+  - litestream_restore: Restore a database from a Litestream replica.
+  - litestream_status: Display replication status including database path, status, local tran
+  - litestream_version: Print the Litestream binary version.
+
+== version ==
+v0.5.12
+
+
+== databases ==
+path                                                            replica
+/home/user/research/litestream-0.5.12-explore/work/data/app.db  s3
+
+
+== info ==
+=== Litestream Status Report ===
+
+Version Information:
+v0.5.12
+
+Current Config Path:
+litestream-minio.yml
+
+Databases:
+path                                                            replica
+/home/user/research/litestream-0.5.12-explore/work/data/app.db  s3
+
+LTX Files:
+Database: /home/user/research/litestream-0.5.12-explore/work/data/app.db
+level  min_txid          max_txid          size  created
+0      0000000000000001  0000000000000001  1581  2026-06-15T12:13:48Z
+0      0000000000000002  0000000000000002  1647  2026-06-15T12:13:48Z
+0      0000000000000003  0000000000000003  290   2026-06-15T12:13:48Z
+0      0000000000000004  0000000000000004  314   2026-06-15T12:13:48Z
+0      0000000000000005  0000000000000005  206   2026-06-15T12:13:48Z
+0      0000000000000006  0000000000000006  378   2026-06-15T12:13:48Z
+0      0000000000000007  0000000000000007  206   2026-06-15T12:13:48Z
+0      0000000000000008  0000000000000008  449   2026-06-15T12:13:48Z
+0      0000000000000009  0000000000000009  206   2026-06-15T12:13:48Z
+0      000000000000000a  000000000000000a  668   2026-06-15T12:14:21Z
+0      000000000000000b  000000000000000b  206   2026-06-15T12:14:31Z
+0      000000000000000c  000000000000000c  206   2026-06-15T12:15:31Z
+
+
+
+== status ==
+database                                                        status  local txid        wal size
+/home/user/research/litestream-0.5.12-explore/work/data/app.db  ok      000000000000000c  99 kB
+
+
+== ltx (level all, S3 replica) ==
+level  min_txid          max_txid          size  created
+0      0000000000000001  0000000000000001  1581  2026-06-15T12:13:48Z
+0      0000000000000002  0000000000000002  1647  2026-06-15T12:13:48Z
+0      0000000000000003  0000000000000003  290   2026-06-15T12:13:48Z
+0      0000000000000004  0000000000000004  314   2026-06-15T12:13:48Z
+0      0000000000000005  0000000000000005  206   2026-06-15T12:13:48Z
+0      0000000000000006  0000000000000006  378   2026-06-15T12:13:48Z
+0      0000000000000007  0000000000000007  206   2026-06-15T12:13:48Z
+0      0000000000000008  0000000000000008  449   2026-06-15T12:13:48Z
+0      0000000000000009  0000000000000009  206   2026-06-15T12:13:48Z
+0      000000000000000a  000000000000000a  668   2026-06-15T12:14:21Z
+0      000000000000000b  000000000000000b  206   2026-06-15T12:14:31Z
+0      000000000000000c  000000000000000c  206   2026-06-15T12:15:31Z
+
+
+== restore via MCP (from MinIO S3 to /tmp/mcp-restore.db) ==
+

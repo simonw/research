@@ -1,0 +1,15 @@
+# Litestream 0.5.12 - file backend daemon config
+socket:
+  enabled: true
+  path: /home/user/research/litestream-0.5.12-explore/work/run/litestream.sock
+
+# Frequent snapshots/compaction so we can observe LTX levels quickly
+snapshot:
+  interval: 1h
+  retention: 24h
+
+dbs:
+  - path: /home/user/research/litestream-0.5.12-explore/work/data/app.db
+    replica:
+      type: file
+      path: /home/user/research/litestream-0.5.12-explore/work/backup/app
