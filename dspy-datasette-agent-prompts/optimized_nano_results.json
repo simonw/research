@@ -1,0 +1,8 @@
+{
+  "program": "optimized_program.json",
+  "model": "openai/gpt-4.1-nano",
+  "scores": {
+    "train": 95.0,
+    "test": 85.0
+  }
+}
