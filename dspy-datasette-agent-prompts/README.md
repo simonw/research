@@ -1,5 +1,10 @@
 # Using DSPy to evaluate and improve Datasette Agent's SQL system prompts
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 **Task:** Install the latest Datasette alpha, `datasette-agent` and `dspy`, then
 figure out how to use DSPy to evaluate and improve the main system prompts used
 by Datasette Agent for its read-only SQL question answering feature.

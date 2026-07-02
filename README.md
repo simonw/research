@@ -181,7 +181,17 @@ for dirname, _ in subdirs_with_dates:
             readme_path.write_text('\n'.join(new_lines))
 
 ]]]-->
-## 92 research projects
+## 93 research projects
+
+### [Using DSPy to evaluate and improve Datasette Agent's SQL system prompts](https://github.com/simonw/research/tree/main/dspy-datasette-agent-prompts#readme) (2026-07-02 18:25)
+
+Leveraging the DSPy framework, this project evaluates and refines the core production system prompts used by Datasette Agent’s read-only SQL question answerer. The methodology involves a harness where DSPy agents invoke Datasette Agent’s actual tool implementations and prompts against a live in-process Datasette, and a gold-standard, auto-generated dataset provides rigorous evaluation via custom metrics. GEPA, DSPy’s reflective prompt optimizer, succeeded in patching a documented training shortfall but overfit the small dataset, causing a regression due to interactions with Datasette’s `display`-mode semantics. Key lessons include the critical importance of debugged metrics during optimization and the necessity to harden prompt guidance based on real regression findings. The harness doubles as a regression test suite for prompt changes in Datasette Agent.
+
+**Key findings:**
+- Prompt optimization fixed a training failure but introduced a genuine regression on a test question due to prompt-tool interaction.
+- Most apparent baseline failures were due to metric bugs, highlighting metric quality as a primary constraint in optimization.
+- Concrete improvement candidates: clarify `display`-mode usage, prefer human-readable identifiers, and enhance schema listings to reduce agent error loops.
+- The harness and dataset are reusable; see [DSPy](https://github.com/stanford-dspy/dspy) and [Datasette Agent](https://github.com/simonw/datasette-agent) for tooling.
 
 ### [Mapping SQLite result columns back to their source `table.column`](https://github.com/simonw/research/tree/main/sqlite-column-provenance#readme) (2026-06-13 23:05)
 
