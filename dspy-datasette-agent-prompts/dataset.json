@@ -1,0 +1,293 @@
+[
+  {
+    "question": "How many orders included more than 2 distinct books?",
+    "gold_sql": "SELECT COUNT(*) FROM (SELECT order_id FROM order_items GROUP BY order_id HAVING COUNT(DISTINCT book_id) > 2)",
+    "gold_answer": "58",
+    "checks": [
+      58
+    ],
+    "split": "train"
+  },
+  {
+    "question": "Which genre has sold the most copies overall (by total quantity across all order items)?",
+    "gold_sql": "SELECT b.genre, SUM(oi.quantity) c FROM order_items oi JOIN books b ON b.id = oi.book_id GROUP BY b.genre ORDER BY c DESC LIMIT 1",
+    "gold_answer": "Science Fiction",
+    "checks": [
+      "Science Fiction"
+    ],
+    "split": "train"
+  },
+  {
+    "question": "How much revenue have Mystery books generated in total (across all orders, including cancelled ones)?",
+    "gold_sql": "SELECT ROUND(SUM(oi.quantity * oi.unit_price), 2) FROM order_items oi JOIN books b ON b.id = oi.book_id WHERE b.genre = 'Mystery'",
+    "gold_answer": "1079.63",
+    "checks": [
+      1079.63
+    ],
+    "split": "train"
+  },
+  {
+    "question": "What percentage of all orders were delivered? Round to one decimal place.",
+    "gold_sql": "SELECT ROUND(100.0 * SUM(status = 'delivered') / COUNT(*), 1) FROM orders",
+    "gold_answer": "65.8",
+    "checks": [
+      65.8
+    ],
+    "split": "train"
+  },
+  {
+    "question": "What is the average price of a book, rounded to two decimal places?",
+    "gold_sql": "SELECT ROUND(AVG(price), 2) FROM books",
+    "gold_answer": "23.24",
+    "checks": [
+      23.24
+    ],
+    "split": "train"
+  },
+  {
+    "question": "How many French authors have published at least one book in 2015 or later?",
+    "gold_sql": "SELECT COUNT(DISTINCT a.id) FROM authors a JOIN books b ON b.author_id = a.id WHERE a.country = 'France' AND b.published_year >= 2015",
+    "gold_answer": "3",
+    "checks": [
+      3
+    ],
+    "split": "train"
+  },
+  {
+    "question": "How many orders were cancelled?",
+    "gold_sql": "SELECT COUNT(*) FROM orders WHERE status = 'cancelled'",
+    "gold_answer": "15",
+    "checks": [
+      15
+    ],
+    "split": "train"
+  },
+  {
+    "question": "How many books are in the database?",
+    "gold_sql": "SELECT COUNT(*) FROM books",
+    "gold_answer": "40",
+    "checks": [
+      40
+    ],
+    "split": "train"
+  },
+  {
+    "question": "How many customers have never placed an order?",
+    "gold_sql": "SELECT COUNT(*) FROM customers c LEFT JOIN orders o ON o.customer_id = c.id WHERE o.id IS NULL",
+    "gold_answer": "5",
+    "checks": [
+      5
+    ],
+    "split": "train"
+  },
+  {
+    "question": "Which calendar month of 2024 had the most orders placed, and how many orders was that?",
+    "gold_sql": "SELECT strftime('%m', order_date) m, COUNT(*) c FROM orders WHERE order_date LIKE '2024%' GROUP BY m ORDER BY c DESC LIMIT 1",
+    "gold_answer": "August (11 orders)",
+    "checks": [
+      "August",
+      11
+    ],
+    "split": "train"
+  },
+  {
+    "question": "How many customers joined in 2022 or earlier?",
+    "gold_sql": "SELECT COUNT(*) FROM customers WHERE joined_date <= '2022-12-31'",
+    "gold_answer": "14",
+    "checks": [
+      14
+    ],
+    "split": "train"
+  },
+  {
+    "question": "How many distinct customers placed at least one order in 2023?",
+    "gold_sql": "SELECT COUNT(DISTINCT customer_id) FROM orders WHERE order_date LIKE '2023%'",
+    "gold_answer": "19",
+    "checks": [
+      19
+    ],
+    "split": "train"
+  },
+  {
+    "question": "On average, how many total copies (sum of quantities) does an order contain? Round to two decimal places.",
+    "gold_sql": "SELECT ROUND(AVG(n), 2) FROM (SELECT SUM(quantity) n FROM order_items GROUP BY order_id)",
+    "gold_answer": "5.09",
+    "checks": [
+      5.09
+    ],
+    "split": "train"
+  },
+  {
+    "question": "Which publication year appears most often among our books?",
+    "gold_sql": "SELECT published_year, COUNT(*) c FROM books GROUP BY published_year ORDER BY c DESC LIMIT 1",
+    "gold_answer": "2000",
+    "checks": [
+      2000
+    ],
+    "split": "train"
+  },
+  {
+    "question": "Which author's books have generated the most total revenue?",
+    "gold_sql": "SELECT a.name, ROUND(SUM(oi.quantity * oi.unit_price), 2) r FROM order_items oi JOIN books b ON b.id = oi.book_id JOIN authors a ON a.id = b.author_id GROUP BY a.id ORDER BY r DESC LIMIT 1",
+    "gold_answer": "Rosa Gupta (3184.51)",
+    "checks": [
+      "Rosa Gupta"
+    ],
+    "split": "train"
+  },
+  {
+    "question": "How many order items were sold at a discount, meaning the unit price was lower than the book's list price?",
+    "gold_sql": "SELECT COUNT(*) FROM order_items oi JOIN books b ON b.id = oi.book_id WHERE oi.unit_price < b.price",
+    "gold_answer": "60",
+    "checks": [
+      60
+    ],
+    "split": "train"
+  },
+  {
+    "question": "How many books do we not know the page count for?",
+    "gold_sql": "SELECT COUNT(*) FROM books WHERE pages IS NULL",
+    "gold_answer": "10",
+    "checks": [
+      10
+    ],
+    "split": "train"
+  },
+  {
+    "question": "How many customers do not have an email address on file?",
+    "gold_sql": "SELECT COUNT(*) FROM customers WHERE email IS NULL",
+    "gold_answer": "7",
+    "checks": [
+      7
+    ],
+    "split": "train"
+  },
+  {
+    "question": "Which city has the most customers?",
+    "gold_sql": "SELECT city, COUNT(*) c FROM customers GROUP BY city ORDER BY c DESC LIMIT 1",
+    "gold_answer": "Denver (7 customers)",
+    "checks": [
+      "Denver"
+    ],
+    "split": "train"
+  },
+  {
+    "question": "How many authors have no books in the Science Fiction genre?",
+    "gold_sql": "SELECT COUNT(*) FROM authors a WHERE a.id NOT IN (SELECT author_id FROM books WHERE genre = 'Science Fiction')",
+    "gold_answer": "4",
+    "checks": [
+      4
+    ],
+    "split": "train"
+  },
+  {
+    "question": "How many books have never been ordered by anyone?",
+    "gold_sql": "SELECT COUNT(*) FROM books b LEFT JOIN order_items oi ON oi.book_id = b.id WHERE oi.id IS NULL",
+    "gold_answer": "0",
+    "checks": [
+      {
+        "any": [
+          0,
+          "none",
+          "no books",
+          "all books have been ordered",
+          "every book has been ordered"
+        ]
+      }
+    ],
+    "split": "test"
+  },
+  {
+    "question": "How many books were written by authors from Japan?",
+    "gold_sql": "SELECT COUNT(*) FROM books b JOIN authors a ON a.id = b.author_id WHERE a.country = 'Japan'",
+    "gold_answer": "1",
+    "checks": [
+      1
+    ],
+    "split": "test"
+  },
+  {
+    "question": "What is the total revenue from all orders that were not cancelled? Revenue is quantity times unit price of each order item.",
+    "gold_sql": "SELECT ROUND(SUM(quantity * unit_price), 2) FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.status != 'cancelled'",
+    "gold_answer": "12501.38",
+    "checks": [
+      12501.38
+    ],
+    "split": "test"
+  },
+  {
+    "question": "Who is the oldest author in the database and what year were they born?",
+    "gold_sql": "SELECT name, birth_year FROM authors ORDER BY birth_year ASC LIMIT 1",
+    "gold_answer": "Hiro Quiroga (1936)",
+    "checks": [
+      "Hiro Quiroga",
+      1936
+    ],
+    "split": "test"
+  },
+  {
+    "question": "Which author has written the most books in this database, and how many?",
+    "gold_sql": "SELECT a.name, COUNT(*) c FROM books b JOIN authors a ON a.id = b.author_id GROUP BY a.id ORDER BY c DESC LIMIT 1",
+    "gold_answer": "Rosa Gupta (8 books)",
+    "checks": [
+      "Rosa Gupta",
+      8
+    ],
+    "split": "test"
+  },
+  {
+    "question": "How many different genres of books do we carry?",
+    "gold_sql": "SELECT COUNT(DISTINCT genre) FROM books",
+    "gold_answer": "6",
+    "checks": [
+      6
+    ],
+    "split": "test"
+  },
+  {
+    "question": "What is the longest book by page count?",
+    "gold_sql": "SELECT title, pages FROM books WHERE pages IS NOT NULL ORDER BY pages DESC LIMIT 1",
+    "gold_answer": "Shadows of Lighthouse (717 pages)",
+    "checks": [
+      "Shadows of Lighthouse",
+      717
+    ],
+    "split": "test"
+  },
+  {
+    "question": "What are the top 3 best-selling books by total copies sold?",
+    "gold_sql": "SELECT b.title, SUM(oi.quantity) c FROM order_items oi JOIN books b ON b.id = oi.book_id GROUP BY b.id ORDER BY c DESC LIMIT 3",
+    "gold_answer": "The Last Orchard, Whispers of Empire, Songs of River (3rd place is a tie on 24 copies: Songs of River, The Last Harbor)",
+    "checks": [
+      "The Last Orchard",
+      "Whispers of Empire",
+      {
+        "any": [
+          "Songs of River",
+          "The Last Harbor"
+        ]
+      }
+    ],
+    "split": "test"
+  },
+  {
+    "question": "Which customer spent the most money on non-cancelled orders placed in 2024, and how much did they spend?",
+    "gold_sql": "SELECT c.name, ROUND(SUM(oi.quantity * oi.unit_price), 2) s FROM order_items oi JOIN orders o ON o.id = oi.order_id JOIN customers c ON c.id = o.customer_id WHERE o.order_date LIKE '2024%' AND o.status != 'cancelled' GROUP BY c.id ORDER BY s DESC LIMIT 1",
+    "gold_answer": "Wen Novak (943.82)",
+    "checks": [
+      "Wen Novak",
+      943.82
+    ],
+    "split": "test"
+  },
+  {
+    "question": "What is the cheapest book we sell, and what does it cost?",
+    "gold_sql": "SELECT title, price FROM books ORDER BY price ASC LIMIT 1",
+    "gold_answer": "The Glass River (6.23)",
+    "checks": [
+      "The Glass River",
+      6.23
+    ],
+    "split": "test"
+  }
+]

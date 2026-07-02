@@ -1,0 +1,8 @@
+{
+  "program": "baseline",
+  "model": "openai/gpt-4.1-nano",
+  "scores": {
+    "train": 90.0,
+    "test": 95.0
+  }
+}
