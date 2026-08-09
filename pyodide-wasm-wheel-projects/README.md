@@ -1,5 +1,10 @@
 # Projects That Compiled WASM Wheels for Pyodide
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 This scan looked through the research repo for projects that actually produced Python wheel artifacts targeting Pyodide/WebAssembly. I counted a project only when both were true:
 
 - The repo contains, or the report names, a wheel with an Emscripten/Pyodide WASM platform tag.

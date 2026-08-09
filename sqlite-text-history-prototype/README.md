@@ -1,5 +1,10 @@
 # SQLite compressed text-history prototypes
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 This directory contains working Python prototypes for storing every previous
 version of an edited text value in SQLite.
 
