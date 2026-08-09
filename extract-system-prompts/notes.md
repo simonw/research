@@ -53,3 +53,16 @@ Using the source document order as a secondary sort key and encoding it into the
 - First pass I forgot that `<section>` tags aren't properly nested inside the document's own XML-escaped content — they're plain `<section>...</section>` blocks while the prompt bodies use escaped forms like `\<claude_behavior\>`. A simple regex on `<section title="...">` and `</section>` is safe.
 - `git commit --date` sets only the author date; the committer date needs `GIT_COMMITTER_DATE` env var. Setting both so `git log --pretty=fuller` shows the faked date in both fields.
 - Regenerating required `git reset --hard` back to the original branch tip before re-running, then force-pushing. Since the downloaded `system-prompts.md` is gitignored (never tracked), it survived the reset and the script could re-run without re-fetching.
+
+## 2026-08-09 refresh
+
+- Anthropic changed the source markup from `<section title="...">` to Mintlify
+  `<Accordion title="...">` blocks, with each prompt body indented four spaces.
+- Updated the parser to accept both formats and remove only the Accordion
+  presentation indentation.
+- The current source has 29 revisions across 17 models and adds Claude Fable 5
+  (June 9, 2026) and Claude Opus 5 (July 24, 2026).
+- Generalized family filenames to support new model families such as
+  `claude-fable.md`.
+- Added `--no-commit` to the incremental helper so a refresh can be generated
+  for review without staging or committing any files.
