@@ -12,7 +12,6 @@ on:
 
 permissions:
   contents: write
-  models: read
   pages: write
   id-token: write
 
@@ -40,7 +39,7 @@ jobs:
 
       - name: Update README with cogapp
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: uv run --with-requirements requirements.txt cog -r -P README.md
 
       - name: Commit README updates
