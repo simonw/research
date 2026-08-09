@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sqlite-text-history-prototype"
+version = "0.1.0"
+description = "Experimental compressed snapshot histories for SQLite text columns"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+zstd = ["zstandard>=0.23"]
+
+[tool.setuptools]
+py-modules = ["text_history", "benchmark", "sensitivity", "make_demo_databases"]

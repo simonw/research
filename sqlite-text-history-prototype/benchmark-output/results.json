@@ -1,0 +1,359 @@
+{
+  "config": {
+    "document_bytes": 20000,
+    "database_benchmark_revisions": 300,
+    "scaling_revisions": 1000,
+    "random_reads_per_strategy": 31,
+    "trials_per_strategy": 3,
+    "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+    "sqlite": "3.46.1"
+  },
+  "strategies": [
+    {
+      "strategy": "current_only_reference",
+      "revisions": 300,
+      "history_available": false,
+      "write_total_ms": 10.806675,
+      "write_mean_ms": 0.03602225,
+      "write_p50_ms": 0.0366505,
+      "write_p95_ms": 0.040498,
+      "first_25_p50_ms": 0.031487,
+      "last_25_p50_ms": 0.038235,
+      "latency_growth_ratio": 1.2378224402595348,
+      "read_all_median_ms": 0.00813,
+      "random_read_median_ms": 0.0082,
+      "db_bytes_before_checkpoint": 4096,
+      "wal_bytes_before_checkpoint": 13797912,
+      "compact_db_bytes": 28672,
+      "sqlite": {
+        "page_size": 4096,
+        "page_count": 12,
+        "freelist_count": 5,
+        "database_pages_bytes": 49152,
+        "freelist_bytes": 20480
+      },
+      "storage": {
+        "revision_count": 300,
+        "current_text_bytes": 20815,
+        "history_blob_bytes": 0,
+        "timestamp_json_bytes": 0
+      }
+    },
+    {
+      "strategy": "plain_rows",
+      "revisions": 300,
+      "history_available": true,
+      "write_total_ms": 15.664118,
+      "write_mean_ms": 0.05221372666666667,
+      "write_p50_ms": 0.050457,
+      "write_p95_ms": 0.0624,
+      "first_25_p50_ms": 0.047801,
+      "last_25_p50_ms": 0.051859,
+      "latency_growth_ratio": 1.0878577817531305,
+      "read_all_median_ms": 3.508701,
+      "random_read_median_ms": 0.016524,
+      "db_bytes_before_checkpoint": 4096,
+      "wal_bytes_before_checkpoint": 22342792,
+      "compact_db_bytes": 6311936,
+      "sqlite": {
+        "page_size": 4096,
+        "page_count": 1546,
+        "freelist_count": 5,
+        "database_pages_bytes": 6332416,
+        "freelist_bytes": 20480
+      },
+      "storage": {
+        "revision_count": 300,
+        "current_text_bytes": 20815,
+        "history_row_count": 300,
+        "history_blob_bytes": 6204199,
+        "timestamp_json_bytes": 2400
+      }
+    },
+    {
+      "strategy": "zstd_per_row",
+      "revisions": 300,
+      "history_available": true,
+      "write_total_ms": 57.916348,
+      "write_mean_ms": 0.19305449333333333,
+      "write_p50_ms": 0.1802745,
+      "write_p95_ms": 0.259045,
+      "first_25_p50_ms": 0.178809,
+      "last_25_p50_ms": 0.18284,
+      "latency_growth_ratio": 1.0225436079839383,
+      "read_all_median_ms": 21.238637,
+      "random_read_median_ms": 0.072524,
+      "db_bytes_before_checkpoint": 4096,
+      "wal_bytes_before_checkpoint": 18552392,
+      "compact_db_bytes": 2494464,
+      "sqlite": {
+        "page_size": 4096,
+        "page_count": 614,
+        "freelist_count": 5,
+        "database_pages_bytes": 2514944,
+        "freelist_bytes": 20480
+      },
+      "storage": {
+        "revision_count": 300,
+        "current_text_bytes": 20815,
+        "history_row_count": 300,
+        "history_blob_bytes": 2224551,
+        "timestamp_json_bytes": 2400
+      }
+    },
+    {
+      "strategy": "whole_json_zstd",
+      "revisions": 300,
+      "history_available": true,
+      "write_total_ms": 1899.599464,
+      "write_mean_ms": 6.331998213333334,
+      "write_p50_ms": 6.8498555,
+      "write_p95_ms": 12.8816,
+      "first_25_p50_ms": 0.607539,
+      "last_25_p50_ms": 12.864053,
+      "latency_growth_ratio": 21.346236048838605,
+      "read_all_median_ms": 11.016932,
+      "random_read_median_ms": 10.891578,
+      "db_bytes_before_checkpoint": 4096,
+      "wal_bytes_before_checkpoint": 23961952,
+      "compact_db_bytes": 57344,
+      "sqlite": {
+        "page_size": 4096,
+        "page_count": 26,
+        "freelist_count": 12,
+        "database_pages_bytes": 106496,
+        "freelist_bytes": 49152
+      },
+      "storage": {
+        "current_text_bytes": 20815,
+        "history_blob_bytes": 26187,
+        "timestamp_json_bytes": 3301,
+        "revision_count": 300
+      }
+    },
+    {
+      "strategy": "whole_framed_zstd",
+      "revisions": 300,
+      "history_available": true,
+      "write_total_ms": 1665.740147,
+      "write_mean_ms": 5.552467156666666,
+      "write_p50_ms": 3.2505905,
+      "write_p95_ms": 12.091742,
+      "first_25_p50_ms": 0.432413,
+      "last_25_p50_ms": 12.184514,
+      "latency_growth_ratio": 27.406037746321225,
+      "read_all_median_ms": 5.357812,
+      "random_read_median_ms": 5.244175,
+      "db_bytes_before_checkpoint": 4096,
+      "wal_bytes_before_checkpoint": 24398672,
+      "compact_db_bytes": 57344,
+      "sqlite": {
+        "page_size": 4096,
+        "page_count": 26,
+        "freelist_count": 12,
+        "database_pages_bytes": 106496,
+        "freelist_bytes": 49152
+      },
+      "storage": {
+        "current_text_bytes": 20815,
+        "history_blob_bytes": 27859,
+        "timestamp_json_bytes": 3301,
+        "revision_count": 300
+      }
+    },
+    {
+      "strategy": "whole_json_zlib",
+      "revisions": 300,
+      "history_available": true,
+      "write_total_ms": 5076.862746,
+      "write_mean_ms": 16.92287582,
+      "write_p50_ms": 14.813972,
+      "write_p95_ms": 32.645813,
+      "first_25_p50_ms": 1.855602,
+      "last_25_p50_ms": 31.945874,
+      "latency_growth_ratio": 17.186794307688725,
+      "read_all_median_ms": 12.487876,
+      "random_read_median_ms": 12.151492,
+      "db_bytes_before_checkpoint": 4096,
+      "wal_bytes_before_checkpoint": 34451472,
+      "compact_db_bytes": 90112,
+      "sqlite": {
+        "page_size": 4096,
+        "page_count": 42,
+        "freelist_count": 20,
+        "database_pages_bytes": 172032,
+        "freelist_bytes": 81920
+      },
+      "storage": {
+        "current_text_bytes": 20815,
+        "history_blob_bytes": 57970,
+        "timestamp_json_bytes": 3301,
+        "revision_count": 300
+      }
+    },
+    {
+      "strategy": "chunked_framed_zstd_32",
+      "revisions": 300,
+      "history_available": true,
+      "write_total_ms": 147.161299,
+      "write_mean_ms": 0.4905376633333333,
+      "write_p50_ms": 0.46783949999999996,
+      "write_p95_ms": 0.705763,
+      "first_25_p50_ms": 0.431039,
+      "last_25_p50_ms": 0.514606,
+      "latency_growth_ratio": 1.193873408206682,
+      "read_all_median_ms": 2.433135,
+      "random_read_median_ms": 0.243919,
+      "db_bytes_before_checkpoint": 4096,
+      "wal_bytes_before_checkpoint": 16908512,
+      "compact_db_bytes": 126976,
+      "sqlite": {
+        "page_size": 4096,
+        "page_count": 43,
+        "freelist_count": 5,
+        "database_pages_bytes": 176128,
+        "freelist_bytes": 20480
+      },
+      "storage": {
+        "revision_count": 300,
+        "current_text_bytes": 20815,
+        "chunk_count": 10,
+        "history_blob_bytes": 84403,
+        "timestamp_json_bytes": 3310
+      }
+    }
+  ],
+  "compression_scaling": [
+    {
+      "versions": 1,
+      "raw_snapshot_bytes": 20000,
+      "json_payload_bytes": 20078,
+      "framed_payload_bytes": 20003,
+      "timestamp_json_bytes": 12,
+      "json_zstd_bytes": 7044,
+      "framed_zstd_bytes": 7058,
+      "json_zlib_bytes": 6963,
+      "framed_zlib_bytes": 6967
+    },
+    {
+      "versions": 10,
+      "raw_snapshot_bytes": 200166,
+      "json_payload_bytes": 200937,
+      "framed_payload_bytes": 200196,
+      "timestamp_json_bytes": 111,
+      "json_zstd_bytes": 7255,
+      "framed_zstd_bytes": 7303,
+      "json_zlib_bytes": 8903,
+      "framed_zlib_bytes": 8946
+    },
+    {
+      "versions": 50,
+      "raw_snapshot_bytes": 1008438,
+      "json_payload_bytes": 1012289,
+      "framed_payload_bytes": 1008588,
+      "timestamp_json_bytes": 551,
+      "json_zstd_bytes": 8516,
+      "framed_zstd_bytes": 8711,
+      "json_zlib_bytes": 15791,
+      "framed_zlib_bytes": 16057
+    },
+    {
+      "versions": 100,
+      "raw_snapshot_bytes": 2025509,
+      "json_payload_bytes": 2033036,
+      "framed_payload_bytes": 2025809,
+      "timestamp_json_bytes": 1101,
+      "json_zstd_bytes": 10335,
+      "framed_zstd_bytes": 10725,
+      "json_zlib_bytes": 24063,
+      "framed_zlib_bytes": 24538
+    },
+    {
+      "versions": 300,
+      "raw_snapshot_bytes": 6204199,
+      "json_payload_bytes": 6225622,
+      "framed_payload_bytes": 6205099,
+      "timestamp_json_bytes": 3301,
+      "json_zstd_bytes": 26187,
+      "framed_zstd_bytes": 27859,
+      "json_zlib_bytes": 57970,
+      "framed_zlib_bytes": 59206
+    },
+    {
+      "versions": 1000,
+      "raw_snapshot_bytes": 21387200,
+      "json_payload_bytes": 21440408,
+      "framed_payload_bytes": 21390200,
+      "timestamp_json_bytes": 11001,
+      "json_zstd_bytes": 82254,
+      "framed_zstd_bytes": 87551,
+      "json_zlib_bytes": 180657,
+      "framed_zlib_bytes": 184506
+    }
+  ],
+  "chunk_size_tradeoff": [
+    {
+      "chunk_size": 1,
+      "chunk_count": 1000,
+      "compressed_history_bytes": 7854080,
+      "largest_chunk_bytes": 8660,
+      "raw_history_bytes": 21387200
+    },
+    {
+      "chunk_size": 4,
+      "chunk_count": 250,
+      "compressed_history_bytes": 1986124,
+      "largest_chunk_bytes": 8821,
+      "raw_history_bytes": 21387200
+    },
+    {
+      "chunk_size": 8,
+      "chunk_count": 125,
+      "compressed_history_bytes": 1013270,
+      "largest_chunk_bytes": 8981,
+      "raw_history_bytes": 21387200
+    },
+    {
+      "chunk_size": 16,
+      "chunk_count": 63,
+      "compressed_history_bytes": 526886,
+      "largest_chunk_bytes": 9178,
+      "raw_history_bytes": 21387200
+    },
+    {
+      "chunk_size": 32,
+      "chunk_count": 32,
+      "compressed_history_bytes": 286270,
+      "largest_chunk_bytes": 9740,
+      "raw_history_bytes": 21387200
+    },
+    {
+      "chunk_size": 64,
+      "chunk_count": 16,
+      "compressed_history_bytes": 162876,
+      "largest_chunk_bytes": 11069,
+      "raw_history_bytes": 21387200
+    },
+    {
+      "chunk_size": 128,
+      "chunk_count": 8,
+      "compressed_history_bytes": 117469,
+      "largest_chunk_bytes": 16066,
+      "raw_history_bytes": 21387200
+    },
+    {
+      "chunk_size": 256,
+      "chunk_count": 4,
+      "compressed_history_bytes": 100986,
+      "largest_chunk_bytes": 25831,
+      "raw_history_bytes": 21387200
+    },
+    {
+      "chunk_size": 1000,
+      "chunk_count": 1,
+      "compressed_history_bytes": 87551,
+      "largest_chunk_bytes": 87551,
+      "raw_history_bytes": 21387200
+    }
+  ]
+}

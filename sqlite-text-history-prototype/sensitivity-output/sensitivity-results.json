@@ -1,0 +1,58 @@
+{
+  "config": {
+    "document_bytes": 20000,
+    "revisions": 1000
+  },
+  "scenarios": [
+    {
+      "scenario": "pseudo-English, small mixed edits",
+      "versions": 1000,
+      "raw_snapshot_bytes": 21387200,
+      "zstd_per_row_bytes": 7841600,
+      "whole_json_zstd_bytes": 82254,
+      "chunked_json_zstd_64_bytes": 158630,
+      "chunked_json_zstd_128_bytes": 112547,
+      "whole_vs_raw_percent": 0.384594523827336
+    },
+    {
+      "scenario": "high-entropy, 20-byte replacements",
+      "versions": 1000,
+      "raw_snapshot_bytes": 20000000,
+      "zstd_per_row_bytes": 16584471,
+      "whole_json_zstd_bytes": 46939,
+      "chunked_json_zstd_64_bytes": 297561,
+      "chunked_json_zstd_128_bytes": 164225,
+      "whole_vs_raw_percent": 0.234695
+    },
+    {
+      "scenario": "high-entropy, 1% replaced/edit",
+      "versions": 1000,
+      "raw_snapshot_bytes": 20000000,
+      "zstd_per_row_bytes": 16587927,
+      "whole_json_zstd_bytes": 204544,
+      "chunked_json_zstd_64_bytes": 452145,
+      "chunked_json_zstd_128_bytes": 320399,
+      "whole_vs_raw_percent": 1.02272
+    },
+    {
+      "scenario": "high-entropy, 10% replaced/edit",
+      "versions": 1000,
+      "raw_snapshot_bytes": 20000000,
+      "zstd_per_row_bytes": 16585403,
+      "whole_json_zstd_bytes": 1705527,
+      "chunked_json_zstd_64_bytes": 1937287,
+      "chunked_json_zstd_128_bytes": 1815052,
+      "whole_vs_raw_percent": 8.527635
+    },
+    {
+      "scenario": "independent high-entropy snapshots",
+      "versions": 1000,
+      "raw_snapshot_bytes": 20000000,
+      "zstd_per_row_bytes": 16586027,
+      "whole_json_zstd_bytes": 16765996,
+      "chunked_json_zstd_64_bytes": 16765968,
+      "chunked_json_zstd_128_bytes": 16765859,
+      "whole_vs_raw_percent": 83.82998
+    }
+  ]
+}
