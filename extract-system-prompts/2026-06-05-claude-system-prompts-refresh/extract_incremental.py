@@ -3,9 +3,11 @@
 This script reads the ignored ../system-prompts.md fetched from Anthropic,
 reuses ../extract.py for parsing and formatting, and creates the same four
 faked-date commits as the original extractor only for revisions whose dated
-per-model file does not already exist.
+per-model file does not already exist. Pass --no-commit to update the files
+without staging or committing them.
 """
 
+import argparse
 from pathlib import Path
 import sys
 
@@ -18,6 +20,14 @@ import extract  # noqa: E402
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--no-commit",
+        action="store_true",
+        help="write prompt files without staging or committing them",
+    )
+    args = parser.parse_args()
+
     text = SOURCE.read_text(encoding="utf-8")
     entries = list(extract.parse_source(text))
     entries.sort(key=lambda e: (e[2], e[4]))
@@ -45,7 +55,8 @@ def main() -> None:
 
         for path, contents, subject in writes:
             path.write_text(contents, encoding="utf-8")
-            extract.git_commit(path, subject, when, REPO_ROOT)
+            if not args.no_commit:
+                extract.git_commit(path, subject, when, REPO_ROOT)
 
         print(f"created {date_str} {model_name}")
         created += 1

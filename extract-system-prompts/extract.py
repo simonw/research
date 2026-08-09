@@ -1,14 +1,14 @@
 """Extract per-prompt, per-model, per-family, and latest-prompt files.
 
 Reads system-prompts.md (fetched separately with curl) and walks every
-`## Claude <Model>` heading followed by one or more `<section title="...">`
-blocks. For each (model, date, content) entry in chronological order this
+`## Claude <Model>` heading followed by one or more dated prompt blocks. For
+each (model, date, content) entry in chronological order this
 script writes four files and commits each one separately with a faked
 GIT_AUTHOR_DATE / GIT_COMMITTER_DATE derived from the section's date heading:
 
   1. <slug>-YYYY-MM-DD.md           — per-prompt dated file (created once).
   2. <slug>.md                      — per-model rolling file.
-  3. claude-<family>.md             — per-family rolling file (opus/sonnet/haiku).
+  3. claude-<family>.md             — per-family rolling file.
   4. latest-prompt.md               — firehose of every prompt for every model.
 
 Each commit's subject starts with the exact filename that commit modifies, so
@@ -18,6 +18,7 @@ Each commit's subject starts with the exact filename that commit modifies, so
 import os
 import re
 import subprocess
+import textwrap
 from datetime import datetime
 from pathlib import Path
 
@@ -47,7 +48,12 @@ SECTION_RE = re.compile(
     r'<section title="([^"]+)">\s*(.*?)\s*</section>',
     re.DOTALL,
 )
-FAMILY_RE = re.compile(r"^Claude\s+(Opus|Sonnet|Haiku)\b", re.IGNORECASE)
+ACCORDION_RE = re.compile(
+    r'^[ \t]*<Accordion title="([^"]+)">[ \t]*\r?\n'
+    r'(.*?)^[ \t]*</Accordion>[ \t]*$',
+    re.DOTALL | re.MULTILINE,
+)
+FAMILY_RE = re.compile(r"^Claude\s+([A-Za-z0-9]+)\b", re.IGNORECASE)
 
 
 def parse_date(title: str) -> datetime:
@@ -87,9 +93,15 @@ def parse_source(text: str):
     source_index = 0
     for model_name, start, end in spans:
         chunk = text[start:end]
-        for sm in SECTION_RE.finditer(chunk):
+        matches = [*SECTION_RE.finditer(chunk), *ACCORDION_RE.finditer(chunk)]
+        for sm in sorted(matches, key=lambda match: match.start()):
             title = sm.group(1)
             content = sm.group(2)
+            if sm.re is ACCORDION_RE:
+                # Mintlify indents Accordion content by four spaces. Remove only
+                # that presentation indentation, preserving the prompt itself.
+                content = textwrap.dedent(content)
+            content = content.strip()
             date_obj = parse_date(title)
             yield model_name, title, date_obj, content, source_index
             source_index += 1
