@@ -19,6 +19,8 @@ The two implementations are:
 
 The detailed findings and recommendations are in [`REPORT.md`](REPORT.md).
 
+You can explore the demo databases [in Datasette Lite](https://lite.datasette.io/?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsimonw%2Fresearch%2Fmain%2Fsqlite-text-history-prototype%2Fdemo-databases%2Fchunked-history.db&url=https://github.com/simonw/research/blob/main/sqlite-text-history-prototype/demo-databases/whole-history.db).
+
 ## Minimal example
 
 ```python
