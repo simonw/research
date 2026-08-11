@@ -1,0 +1,72 @@
+
+======================================================================
+1. Evaluating a script and getting Python values back
+======================================================================
+  returned a dict: {'avg_name_len': 5.25, 'colony': 'Brackish Bay', 'names': ['Percy', 'Petra', 'Pip', 'Gulliver'], 'size': 4, 'thriving': True}
+  result['names'] is a list: ['Percy', 'Petra', 'Pip', 'Gulliver']
+  result['thriving'] is a bool
+  rhai version: 1.25.1
+
+======================================================================
+2. Passing Python data into the script scope
+======================================================================
+  total pelicans seen : 22
+  notable species     : ['Brown', 'Great White']
+  widest wingspan     : Dalmatian
+  read back from scope: tagged = 2
+
+======================================================================
+3. Calling Python functions from inside a Rhai script
+======================================================================
+  [python:info] Brackish Bay: 220 fish, send the pelicans
+  [python:info] Mangrove Island: 91 fish, send the pelicans
+  [python:warn] Salt Marsh: only 14 fish, ration carefully
+  [python:error] Dry Gulch: no data, do not send the flock
+  callback exception propagated: ScriptRuntimeError: Runtime error: Python callback raised: ValueError: this pelican refuses to be counted (line 1, position 1)
+
+======================================================================
+4. Capturing script print() output
+======================================================================
+  captured: pelican 1 reporting for duty
+  captured: pelican 2 reporting for duty
+  captured: pelican 3 reporting for duty
+  captured: [debug script:line 3, position 5] "pouch check complete"
+  after clear_output(): []
+
+======================================================================
+5. Rejecting bad syntax before running anything
+======================================================================
+  check() rejected it: Unexpected ';' (line 1, position 9)
+  check() accepted a valid script
+
+======================================================================
+6. THE SANDBOX: hostile scripts cannot hurt the Python process
+======================================================================
+  infinite loop (CPU)                TooManyOperations  after   62.33 ms
+  infinite loop (wall clock)         ScriptTimeout      after  250.06 ms
+  array bomb (RAM)                   DataTooLarge       after  234.59 ms
+  string bomb (RAM)                  DataTooLarge       after    0.23 ms
+  infinite recursion (stack)         StackOverflow      after    0.30 ms
+  deeply nested expression (parser)  ScriptParseError   after    0.02 ms
+  map bomb via index assignment      TooManyOperations  after  884.59 ms
+
+  ...and the Python process is still perfectly healthy:
+  2 + 2 = 4
+
+======================================================================
+7. The one limit that needs help: max_map_size
+======================================================================
+  max_map_size=1000 but the script built a map with 50000 keys
+  engine.check_size() catches it after the fact: Size of object map too large
+  adding max_operations stops it properly: TooManyOperations: Too many operations (line 1, position 37)
+
+======================================================================
+8. A practical use: user-supplied rules, safely
+======================================================================
+  [sensible ] sightings.filter(|s| s.count > 5).map(|s| s.sp -> ['Brown', 'Great White']
+  [also fine] sightings.reduce(|a, s| a + s.count, 0) > 20   -> True
+  [malicious] loop { }                                       -> BLOCKED (TooManyOperations)
+  [malicious] let a = []; loop { a.push(1); }                -> BLOCKED (DataTooLarge)
+  [broken   ] sightings.frobnicate()                         -> BLOCKED (ScriptRuntimeError)
+
+All demos complete. The colony is safe. SQUAWK!

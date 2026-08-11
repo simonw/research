@@ -1,0 +1,35 @@
+Each case runs in a subprocess capped at 2 GB of address space.
+
+bomb               limits                 outcome                    time    peak RAM
+-------------------------------------------------------------------------------------
+string doubling    no limits at all       OOM-KILLED                    -       >2 GB
+string doubling    max_operations=5M      OOM-KILLED                    -       >2 GB
+string doubling    timeout_ms=500         ScriptTimeout          1211.3ms    576.7 MB
+string doubling    ops=5M + timeout=500   ScriptTimeout           525.3ms    576.7 MB
+string doubling    size limits only       DataTooLarge              0.9ms      1.9 MB
+string doubling    size limits + ops=5M   DataTooLarge              1.0ms      1.9 MB
+
+array doubling     no limits at all       OOM-KILLED                    -       >2 GB
+array doubling     max_operations=5M      OOM-KILLED                    -       >2 GB
+array doubling     timeout_ms=500         ScriptTimeout           746.8ms    512.9 MB
+array doubling     ops=5M + timeout=500   ScriptTimeout           563.9ms    384.9 MB
+array doubling     size limits only       DataTooLarge             13.2ms      4.7 MB
+array doubling     size limits + ops=5M   DataTooLarge              5.6ms      4.7 MB
+
+array push         no limits at all       OOM-KILLED                    -       >2 GB
+array push         max_operations=5M      TooManyOperations       341.2ms     13.5 MB
+array push         timeout_ms=500         ScriptTimeout           500.1ms     13.9 MB
+array push         ops=5M + timeout=500   TooManyOperations       495.0ms     13.5 MB
+array push         size limits only       DataTooLarge          22612.5ms      2.4 MB
+array push         size limits + ops=5M   DataTooLarge          22495.3ms      2.4 MB
+
+map index-assign   no limits at all       OOM-KILLED                    -       >2 GB
+map index-assign   max_operations=5M      TooManyOperations      2167.2ms     44.7 MB
+map index-assign   timeout_ms=500         ScriptTimeout           500.1ms     10.6 MB
+map index-assign   ops=5M + timeout=500   ScriptTimeout           500.1ms     10.6 MB
+map index-assign   size limits only       OOM-KILLED                    -       >2 GB
+map index-assign   size limits + ops=5M   TooManyOperations      2180.6ms     44.7 MB
+
+Takeaway: time and operation budgets do NOT bound memory — a single
+operation can double a buffer. Only the explicit size limits do, and
+max_map_size has a hole (index assignment), so pair it with max_operations.
