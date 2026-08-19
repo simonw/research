@@ -6,7 +6,6 @@ on:
   push:
     branches: [claude/smolmachines-untrusted-sandbox-dkh3gd]
     paths:
-      - smolmachines-untrusted-sandbox/run-tests.sh
       - .github/workflows/smolvm-sandbox-test.yml
   workflow_dispatch:
 
@@ -31,7 +30,7 @@ jobs:
 
       - name: Run test battery
         run: |
-          bash smolmachines-untrusted-sandbox/run-tests.sh 2>&1 | tee test-output.log
+          bash smolmachines-untrusted-sandbox/run-tests-round2.sh 2>&1 | tee test-output.log
 
       - name: Upload results
         if: always()
