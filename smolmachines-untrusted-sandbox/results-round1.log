@@ -1,0 +1,59 @@
+# Round 1 test battery — GitHub Actions ubuntu-latest (run 32312341067), smolvm 1.8.3
+# Timestamps stripped from CI logs; full log in the run's smolvm-test-results artifact.
+
+=== environment ===
+Linux runnervm76f27 6.17.0-1022-azure #22-Ubuntu SMP x86_64 GNU/Linux
+crw-rw-rw- 1 root kvm 10, 232 Aug 19 23:13 /dev/kvm
+smolvm 1.8.3
+4 CPUs, 15989 MB RAM, /dev/root 145G (59G used)
+
+=== fetch images offline (docker save) ===
+alpine.tar 8102912 bytes / python.tar 51165696 bytes / node.tar 167306752 bytes
+
+=== T1: cold-boot latency, offline alpine tar, no net ===
+run 1: 643 ms — boot-ok
+run 2: 580 ms — boot-ok
+run 3: 577 ms — boot-ok
+run 4: 591 ms — boot-ok
+run 5: 588 ms — boot-ok
+::: RESULT PASS T1-boot — 5 cold runs, ms: 643 580 577 591 588
+=== T2: Python hello, no net ===
+::: RESULT PASS T2-python — python3 prints 42
+=== T3: Node hello, no net ===
+::: RESULT PASS T3-node — node prints 42
+=== T4: network is really off ===
+::: RESULT PASS T4-no-net — wget and DNS both blocked without --net
+=== T4b: registry image without --net is refused up front ===
+::: RESULT PASS T4b-pull-refusal — refused, rc=1: Starting ephemeral machine (vm-2cb7353a)... Pulling image alpine:3.20...
+(round 2 R4 shows the underlying error: in-guest pull gets "network is unreachable")
+=== T5: while-true CPU spin killed by --timeout ===
+::: RESULT PASS T5-cpu-spin — rc=124 after 11s, no leftover VMM processes
+=== T6: memory bomb contained by --mem 256 ===
+::: RESULT PASS T6-mem-bomb — 1GiB alloc failed in 256MiB VM (rc=1); host MemAvailable 15407928->15140432 kB
+=== T7: fork bomb contained (--cpus 1, --timeout 20s) ===
+::: RESULT PASS T7-fork-bomb — returned in 1s (rc=2), host load 0.69, no leftovers
+=== T8: disk bomb contained by --overlay 1 ===
+4294967296 bytes (4.0GB) copied, 4.778733 seconds, 857.1MB/s
+none                     19.6G      4.0G     15.6G  20% /
+::: RESULT FAIL T8-disk-bomb — rc=0 host_delta=2973MB
+(FINDING: --overlay does not bound "/" writes; guest / is backed by the 20GiB
+ storage disk. Round 2 R1 shows --storage 3 caps writes at 2.9GB.)
+=== T9: filesystem — designated dirs only, ro enforced ===
+::: RESULT PASS T9-fs-isolation — ro mount enforced, rw output round-trips
+(the "HOST-FILES-VISIBLE" marker in the raw log was a bad heuristic — it saw
+ the guest's own /root & /home; round 2 R3 lists the actual shared mounts)
+=== T10: end-to-end data transformation demo (Python + Node) ===
+::: RESULT PASS T10-transform — CSV->JSON (python) and JSON->TSV (node) with ro input, rw output, no net
+=== T11: persistent machine — warm exec latency ===
+::: RESULT PASS T11-warm-pool — start 1524ms; 5 warm execs ms: 162 79 48 48 48; exec --timeout killed spin in 5s (rc=124), machine still healthy
+=== T12: HTTP API (serve) — exec with timeout_secs, file up/download ===
+exec response: {"exitCode":0,"stdout":"42\n","stderr":"","stdoutB64":"NDIK","stderrB64":""}
+::: RESULT FAIL T12-http-api — spin ran 300s: snake_case timeout_secs silently ignored
+(FINDING: ExecRequest is serde camelCase — the field is timeoutSecs. Round 2
+ R2 shows it kills the spin at 5s with exitCode 124.)
+=== T13: --unprivileged drops capabilities ===
+default:      CapEff: 000001ffffffffff
+unprivileged: CapEff: 00000000a80425fb
+::: RESULT PASS T13-unprivileged
+
+PASS=12 FAIL=2
