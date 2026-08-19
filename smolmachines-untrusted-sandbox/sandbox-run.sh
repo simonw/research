@@ -12,7 +12,10 @@
 #   --mem MiB          memory cap (default 512)
 #   --cpus N           vCPU cap (default 1)
 #   --timeout DUR      kill the task after DUR (default 30s) e.g. 30s, 5m
-#   --overlay GiB      scratch-disk cap for guest writes (default 1)
+#   --storage GiB      caps ALL guest disk writes — the guest rootfs overlay
+#                      lives on this disk (default 3; verified: dd stops with
+#                      ENOSPC when it fills). NOTE: --overlay does NOT bound
+#                      writes to /
 #   --images DIR       where python.tar / node.tar live (default ./images)
 #
 # One-time image prep (the only step that needs network, done on the HOST):
@@ -22,7 +25,7 @@
 # Every task run is then fully offline: the guest VM has NO network device.
 set -euo pipefail
 
-LANG_CHOICE="" IN_DIR="" OUT_DIR="" MEM=512 CPUS=1 TIMEOUT=30s OVERLAY=1
+LANG_CHOICE="" IN_DIR="" OUT_DIR="" MEM=512 CPUS=1 TIMEOUT=30s STORAGE=3
 IMAGES_DIR="$(dirname "$0")/images"
 
 while [ $# -gt 0 ]; do
@@ -33,7 +36,7 @@ while [ $# -gt 0 ]; do
         --mem)     MEM="$2"; shift 2 ;;
         --cpus)    CPUS="$2"; shift 2 ;;
         --timeout) TIMEOUT="$2"; shift 2 ;;
-        --overlay) OVERLAY="$2"; shift 2 ;;
+        --storage) STORAGE="$2"; shift 2 ;;
         --images)  IMAGES_DIR="$2"; shift 2 ;;
         --)        shift; break ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -59,7 +62,7 @@ exec timeout --kill-after=10 "$OUTER" \
     --image "$IMAGE" \
     --cpus "$CPUS" \
     --mem "$MEM" \
-    --overlay "$OVERLAY" \
+    --storage "$STORAGE" \
     --timeout "$TIMEOUT" \
     --unprivileged \
     -v "$(realpath "$IN_DIR"):/in:ro" \

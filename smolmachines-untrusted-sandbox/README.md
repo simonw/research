@@ -13,7 +13,7 @@ smolvm machine run \
   --image ./python.tar \        # local docker-save tar → no network ever needed
   --cpus 1 --mem 512 \          # CPU + RAM caps
   --timeout 30s \               # kills "while True" (enforced by guest agent)
-  --overlay 1 \                 # caps guest disk writes at 1 GiB
+  --storage 3 \                 # caps ALL guest disk writes at 3 GiB
   --unprivileged \              # defense-in-depth caps drop inside the guest
   -v "$PWD/in:/in:ro" \         # designated input, read-only
   -v "$PWD/out:/out" \          # designated output, read-write
@@ -25,16 +25,19 @@ WHP) with its own guest kernel — not a shared-kernel container. With no `--net
 the VM gets **no network device at all** (verified in source:
 `plan_launch_network` returns backend `None`).
 
-See `notes.md` for the full investigation log, `run-tests.sh` for the test
-battery, and `sandbox-run.sh` for a ready-to-use wrapper.
+See `notes.md` for the full investigation log, `run-tests.sh` /
+`run-tests-round2.sh` for the test batteries (with results in
+`results-round1.log` / `results-round2.log`), and `sandbox-run.sh` for a
+ready-to-use wrapper.
 
 ## Test results (GitHub Actions ubuntu runner, KVM)
 
 This container has no KVM (it's itself a Firecracker guest without nested
 virt), so the battery ran on a GitHub Actions `ubuntu-latest` runner, which
-exposes `/dev/kvm` ([run 1](https://github.com/simonw/research/actions/runs/32312341067)).
-14 tests, 12 passed as designed; the 2 "failures" were both real findings, and
-a second round confirmed the fixes for them (see below).
+exposes `/dev/kvm` ([run 1](https://github.com/simonw/research/actions/runs/32312341067),
+[run 2](https://github.com/simonw/research/actions/runs/32312932052)).
+14 tests in round 1, 12 passed as designed; the 2 "failures" were both real
+findings, and round 2 confirmed the fixes for them (see below).
 
 | Test | Result |
 |---|---|
@@ -49,7 +52,8 @@ a second round confirmed the fixes for them (see below).
 | T11 persistent machine | start 1.5 s, then **warm `exec` 48 ms**; `exec --timeout 5s` kills spin, machine stays healthy |
 | T12 HTTP API | exec + file upload/download work. **FINDING: field is `timeoutSecs`** (camelCase); a `timeout_secs` field is silently ignored and the spin ran to a 300 s connection timeout. With correct casing (round 2): killed at 5 s, machine healthy |
 | T13 `--unprivileged` | CapEff drops from `1ffffffffff` (full) to `a80425fb` (standard unprivileged set) |
-| T4b registry image with no `--net` | run does not execute the workload; see notes — pull egress is auto-allowed for the pull itself, so prefer local tars for a strictly offline guarantee |
+| T4b registry image with no `--net` | workload never executes: the in-guest pull itself gets "network is unreachable" (round-2 R4) — the no-net VM has no network path at all. `machine create` refuses this combination up front; `machine run` fails at pull time with a helpful hint |
+| R3 (round 2) mount inventory | only the two requested virtiofs shares cross the VM boundary (`/in` ro, `/out` rw); `/`, `/workspace`, `/tmp` are all guest-local |
 
 ## What each requirement maps to
 
@@ -57,16 +61,18 @@ a second round confirmed the fixes for them (see below).
 |---|---|---|
 | RAM cap | `--mem <MiB>` — VM-level allocation, elastic via virtio-balloon | T6: 1 GiB alloc in a 256 MiB VM fails; host unaffected |
 | CPU cap | `--cpus <N>` — vCPU count limits host CPU consumption | T5/T7 |
-| "while true" protection | `--timeout <dur>` on `run` and `exec`; `timeout_secs` in HTTP API | T5: spin killed on schedule, VM torn down, no leftover processes |
+| "while true" protection | `--timeout <dur>` on `run` and `exec`; `timeoutSecs` in the HTTP API | T5: spin killed on schedule, VM torn down, no leftover processes |
 | No network | Default. No device attached without `--net` | T4: wget + DNS both fail |
 | Designated files only | `-v HOST:GUEST[:ro]` (directory granularity) or `machine cp` (file granularity); guest sees nothing else of the host | T9: ro enforced, rw round-trips |
-| Disk-fill protection | `--overlay <GiB>` (ephemeral scratch, default 2) | T8: ENOSPC inside guest, host safe |
+| Disk-fill protection | `--storage <GiB>` — the guest rootfs overlay lives on this disk (`--overlay` does NOT bound `/` writes) | T8 + round-2 R1: `--storage 3` → guest fs 100% full at 2.9 GB, dd stops |
 | Fork bombs | Guest kernel owns the PID space; `--cpus`+`--timeout` bound the damage | T7 |
 
 ## Things to know before building on it
 
 1. **Image pulls happen inside the guest**, so `--image python:3.12-alpine`
-   with no `--net` is refused up front. For a fully offline sandbox, feed it
+   with no `--net` cannot work — `machine create` refuses the combination up
+   front, and `machine run` fails at pull time with "network is unreachable"
+   (the no-net VM genuinely has no route out). For a fully offline sandbox, feed it
    local images: `docker save python:3.12-alpine -o python.tar` once, then
    `--image ./python.tar` forever. Alternatives: pack a `.smolmachine` artifact
    (`pack create`), or use `--allow-host`/`--allow-cidr` egress filtering
@@ -109,12 +115,12 @@ a second round confirmed the fixes for them (see below).
  user data ──►   │   stage task dir:   /tasks/<id>/in  (code + data)   │
                  │   collect results:  /tasks/<id>/out                 │
                  └──────────────────────────────────────────────────────┘
-   per task: --cpus 1 --mem 512 --overlay 1 --timeout 30s --unprivileged
+   per task: --cpus 1 --mem 512 --storage 3 --timeout 30s --unprivileged
              -v /tasks/<id>/in:/in:ro  -v /tasks/<id>/out:/out   (no --net)
 ```
 
 - One `machine run` per task = zero cross-task contamination; everything the
-  task can touch is `/in` (ro), `/out` (rw), and a 1 GiB throwaway overlay.
+  task can touch is `/in` (ro), `/out` (rw), and a 3 GiB throwaway storage disk.
 - Exit code, stdout, stderr propagate through the CLI; timeouts surface as a
   non-zero exit.
 - Scale-up path: `smolvm serve` on a unix socket + persistent machines or fork

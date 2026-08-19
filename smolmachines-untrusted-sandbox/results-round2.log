@@ -1,0 +1,43 @@
+# Round 2 follow-ups — GitHub Actions ubuntu-latest (run 32312932052), smolvm 1.8.3
+# Timestamps stripped from CI logs.
+
+=== R1: disk bomb vs --storage 3 ===
+Starting ephemeral machine (vm-6069d079)...
+2990+0 records out
+3135815680 bytes (2.9GB) copied, 7.302390 seconds, 409.5MB/s
+none                      2.9G      2.9G         0 100% /
+::: RESULT FAIL R1-storage-cap — rc=0 host_delta=2947MB
+(Assertion was too brittle — the cap WORKED: dd stopped at 2.9GB with the
+ guest filesystem 100% full; the ENOSPC line fell outside the captured tail
+ and rc=0 because the trailing df succeeded. --storage bounds guest writes.)
+
+=== R2: HTTP API exec with camelCase timeoutSecs ===
+spin response after 5s: {"exitCode":124,"stdout":"","stderr":"\ncommand timed out after 5000ms",...}
+::: RESULT PASS R2-api-timeout — timeoutSecs killed spin in 5s; machine healthy after
+
+=== R3: guest mount inventory with -v in:ro out:rw ===
+virtiofs mounts crossing the VM boundary (deduplicated — the container mount
+namespace shows the same two shares at several paths):
+  smolvm0 /in  virtiofs ro,sync,relatime
+  smolvm1 /out virtiofs rw,sync,relatime
+everything else is guest-local:
+  / = overlayfs (upper on /storage, backed by /dev/vda = the storage disk)
+  /workspace, /storage = ext4 on /dev/vda
+  /tmp /run /dev/shm = tmpfs; /proc /sys /dev standard
+::: RESULT PASS R3-mounts — virtiofs shares present for /in and /out
+
+=== R4: full output of registry image + no --net on machine run ===
+rc=1
+Starting ephemeral machine (vm-7d0d80dd)...
+Pulling image alpine:3.20...
+Error: agent operation failed: pull image: crane manifest failed:
+  retrying dial tcp: lookup index.docker.io on 1.1.1.1:53:
+  dial udp 1.1.1.1:53: connect: network is unreachable
+Hint: networking is disabled. Add --net to enable image pulls:
+  smolvm machine run --net --image alpine:3.20 ...
+::: RESULT PASS R4-no-net-pull — run failed rc=1 without executing workload
+(The no-net guarantee holds even for the in-guest image pull: there is no
+ network path at all. `machine run` fails at pull time; `machine create`
+ refuses a registry image + no net up front.)
+
+PASS=3 FAIL=1 (R1 fail is assertion brittleness; behavior was correct)

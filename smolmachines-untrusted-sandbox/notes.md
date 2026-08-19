@@ -129,6 +129,27 @@ FAILURES (both informative):
   auto-allowed just for the pull, per allow_image_pull_egress) and still
   failed rc=1 before running the workload. Round 2 captures the full error.
 
-## Round 2 (run-tests-round2.sh)
+## Round 2 (run 32312932052) — PASS=3 FAIL=1 (the FAIL was my assertion)
 
-(pending)
+- R1 (--storage 3 disk bomb): dd stopped at 2.9GB, guest / 100% full → the
+  cap works. My grep asserted on "no space" but the dd error line fell
+  outside the `tail -2` capture and rc=0 came from the trailing df. Verdict:
+  use --storage for disk caps, not --overlay.
+- R2 (API timeoutSecs): {"exitCode":124,"stderr":"command timed out after
+  5000ms"} at exactly 5s; machine healthy after. Round 1's T12 failure was
+  purely the snake_case field being silently ignored.
+- R3 (mount inventory): only smolvm0:/in (ro,sync) and smolvm1:/out (rw,sync)
+  virtiofs shares cross the boundary. Guest / is overlayfs with upper on
+  /storage (= /dev/vda, the --storage disk) — which is why --storage is the
+  write bound. /workspace also on /dev/vda. /tmp tmpfs.
+- R4 (registry + no net, machine run): pull fails in-guest with "dial udp
+  1.1.1.1:53: network is unreachable" + friendly hint to add --net. So round
+  1's "Pulling... done." line was cosmetic; no data was fetched. The no-net
+  guarantee covers the pull path too. (`create` refuses up front instead.)
+
+## Wrap-up
+
+- sandbox-run.sh updated to use --storage 3 (not --overlay).
+- Temporary workflow .github/workflows/smolvm-sandbox-test.yml removed in the
+  final commit; both CI runs remain viewable under the repo's Actions tab.
+- Cleaned CI logs saved as results-round1.log / results-round2.log.
