@@ -74,3 +74,33 @@ udev rule to chmod /dev/kvm 0666 (standard Android-emulator-on-Actions trick).
 
 Images delivered offline via `docker save` tars so every sandbox run is
 `--net`-free end to end.
+
+## More source findings (while CI ran)
+
+- **Timeout enforcement**: guest agent kills the child on deadline
+  (`wait_with_timeout_cleanup_and_liveness`, crates/smolvm-agent/src/process.rs)
+  and also kills it if the client disconnects; host client sets its own read
+  timeout guard (src/agent/client.rs `set_exec_timeout`). Output captured up to
+  the kill is returned.
+- **No-net = no device**: `plan_launch_network` (src/network/launch.rs:89)
+  returns backend `None` unless --net/ports/egress policy/fabric requested.
+  Comment notes TSI's in-libkrun egress filter is NOT trusted — egress policies
+  force the virtio-net backend where the host-side stack enforces the
+  allow-list. Fleet mode adds a hard floor denying metadata/internal/loopback.
+- **Volumes**: virtiofs (krun_add_virtiofs), root uses a 512MB DAX window.
+- **serve API**: unauthenticated on the plain listener — bind to a unix socket
+  for local services. Fleet mode: mTLS port has full API; loopback door
+  restricted to health/capacity/metrics specifically to close an SSRF pivot
+  (attacker-supplied registry ref pointing at 127.0.0.1). Tests enforce this.
+- **File upload cap via API**: 100 MiB per request (MAX_FILE_UPLOAD_BYTES);
+  `machine cp` caps at 4 GiB per transfer.
+- **Fork pools**: examples/headless-browser docs: golden VM cold-starts once,
+  CoW clones materialize in ~50–130ms with already-warm processes. Fork pool
+  records + leases in src/pool.rs; serve exposes /pools/{name}/leases.
+- **Cloud**: smolmachines.com/pricing — hosted microVMs w/ REST API, free tier
+  $10/mo credit, warm-pool starts. Same .smolmachine artifacts. Not tested
+  (needs account); local OSS tool was the focus.
+
+## CI results
+
+(pending)
