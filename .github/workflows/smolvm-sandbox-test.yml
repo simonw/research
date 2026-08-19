@@ -1,0 +1,41 @@
+# Temporary workflow for the smolmachines-untrusted-sandbox investigation.
+# Will be removed before the investigation branch is finalized.
+name: smolvm sandbox test battery
+
+on:
+  push:
+    branches: [claude/smolmachines-untrusted-sandbox-dkh3gd]
+    paths:
+      - smolmachines-untrusted-sandbox/run-tests.sh
+      - .github/workflows/smolvm-sandbox-test.yml
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+
+      - name: Install smolvm
+        run: |
+          curl -sSL https://smolmachines.com/install.sh | bash -s -- --version 1.8.3
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run test battery
+        run: |
+          bash smolmachines-untrusted-sandbox/run-tests.sh 2>&1 | tee test-output.log
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smolvm-test-results
+          path: test-output.log

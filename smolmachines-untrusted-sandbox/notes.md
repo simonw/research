@@ -1,0 +1,76 @@
+# Notes: smolmachines / smolvm as an untrusted-code sandbox
+
+Goal: evaluate https://smolmachines.com (smolvm) for running untrusted Python/JS with:
+- RAM limits and CPU-time limits (protection against `while true`)
+- No network access
+- Filesystem access restricted to designated files
+- Use case: executing user-provided data-transformation tasks
+
+## Initial research (web)
+
+- smolmachines.com = product site for `smolvm` (GitHub: smol-machines/smolvm, ~4.6k stars)
+- Portable, hardware-isolated Linux VMs; VMM is libkrun with custom kernel (libkrunfw)
+- Backends: KVM (Linux), Hypervisor.framework (macOS), WHP (Windows)
+- Claims: boots <200ms, network disabled by default, host allowlists, `.smolmachine`
+  portable artifacts, default 4 vCPU / 8GB RAM elastic
+- Install: `curl -sSL https://smolmachines.com/install.sh | bash`
+- Basic run: `smolvm machine run --image alpine -- sh -c "..."`
+
+## Environment check
+
+- This Claude Code container: Linux 6.18.5-fc-v20 (itself a Firecracker guest),
+  4 vCPU, 15GB RAM. **No /dev/kvm, no vmx/svm CPU flags** → no nested virt.
+- `smolvm machine run` fails as expected: "kvm not available".
+- Plan B: GitHub Actions ubuntu runners DO expose /dev/kvm → run the real test
+  battery via a temporary workflow on this branch, collect logs, remove
+  workflow in final commit.
+
+## Install experience
+
+- `install.sh` from smolmachines.com: detects platform, warns clearly about
+  missing KVM, verifies sha256 checksums. BUG: in this proxied environment the
+  installer's `api.github.com/releases/latest` call returned a proxy error JSON
+  and the script mis-parsed version "0.1.1" → 404. Workaround:
+  `bash install.sh --version 1.8.3` (real latest as of 2026-08-19).
+- Installs to ~/.smolvm, symlink in ~/.local/bin. No daemon.
+
+## Source review (cloned smol-machines/smolvm @ e432c7e, v1.8.3, Rust)
+
+Everything needed for the untrusted-code use case exists as first-class flags:
+
+| Need | Mechanism |
+|------|-----------|
+| RAM cap | `--mem <MiB>` (default 8192); elastic via virtio-balloon |
+| CPU cap | `--cpus <N>` (default 4) |
+| "while true" protection | `--timeout <DURATION>` on `machine run` AND `machine exec`; HTTP API exec takes `timeout_secs` (src/api/handlers/exec.rs:133) |
+| No network | off by default; `--net` is opt-in; egress filters `--allow-host`/`--allow-cidr`; `--outbound-localhost-only` |
+| Designated files only | `-v HOST:GUEST[:ro]` (directories only); `machine cp` for file-level; guest sees nothing else of host FS |
+| Disk-fill protection | `--overlay <GiB>` (default 2) + `--storage <GiB>` (default 20) |
+| Defense in depth | `--unprivileged` — restricted caps, read-only cgroup inside guest |
+
+Key subtleties found in source:
+
+1. **Image pulls run INSIDE the guest.** A registry ref (`--image alpine`)
+   with no `--net` is refused up front (`validate_image_fetchable`,
+   src/config.rs:834; comment at src/cli/vm_common.rs:691). No-net options:
+   - `--image ./img.tar` (docker/podman save archive) or `./rootfs/` dir
+   - `.smolmachine` packs (`pack create` once, then `--from pack.smolmachine`)
+   - `--allow-host`/`--allow-cidr`: first boot auto-allows the registry host
+     for the pull (`allow_image_pull_egress`, src/agent/launcher.rs:373)
+2. **Warm-pool pattern is intentional**: src/config.rs comment — "pooled VMs
+   are deliberately created network-less from a pack".
+3. **`machine fork`**: CoW clone (memfd RAM + disks) of a running "golden"
+   VM; `--hold` parks pre-booted pool slots; fork pools with leases exist in
+   `serve` (src/pool.rs). Aimed at CUDA but works for generic sandbox pools.
+4. Secrets: refs resolved host-side; HTTP API bodies may NOT carry secret refs
+   (arbitrary-host-file-read prevention) — good security posture.
+5. `/workspace` persists per-machine; `/tmp` is tmpfs.
+
+## Test battery via GitHub Actions
+
+Wrote `run-tests.sh` (committed in this folder) + temporary workflow
+`.github/workflows/smolvm-sandbox-test.yml`. Runner recipe for KVM:
+udev rule to chmod /dev/kvm 0666 (standard Android-emulator-on-Actions trick).
+
+Images delivered offline via `docker save` tars so every sandbox run is
+`--net`-free end to end.
