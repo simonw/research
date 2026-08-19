@@ -101,6 +101,34 @@ Images delivered offline via `docker save` tars so every sandbox run is
   $10/mo credit, warm-pool starts. Same .smolmachine artifacts. Not tested
   (needs account); local OSS tool was the focus.
 
-## CI results
+## CI results — round 1 (run 32312341067, ubuntu-latest, KVM OK)
+
+PASS=12 FAIL=2 of 14.
+
+- T1 cold boot from local alpine tar: 643/580/577/591/588 ms end-to-end.
+- T5 spin + --timeout 10s: rc=124 at 11s, no leftover processes. 
+- T6 --mem 256 vs 1GiB alloc: rc=1, host MemAvailable barely moved.
+- T7 fork bomb: returned in 1s rc=2 (guest sh dies), host load 0.69.
+- T11: create+start 1524ms; warm execs 162/79/48/48/48 ms; exec --timeout
+  killed spin at 5s and machine remained usable.
+- T13: CapEff 000001ffffffffff (default, VM-grade full caps) vs
+  00000000a80425fb (--unprivileged, standard container cap set).
+
+FAILURES (both informative):
+- T8: --overlay 1 did NOT bound writes to `/` — dd wrote 4GB fine; guest /
+  showed a 19.6G fs (the 20GiB storage disk). Host / lost ~3GB during the
+  test (returned after ephemeral cleanup). => disk cap needs --storage.
+- T12: HTTP API exec ran the spin for 300s ignoring my timeout field. Root
+  cause: ExecRequest is #[serde(rename_all = "camelCase")] (src/api/types.rs:134)
+  → field is `timeoutSecs`; unknown `timeout_secs` silently ignored (serde
+  default). My bug, but also an API footgun: no unknown-field rejection.
+- T9 footnote: my "HOST-FILES-VISIBLE" heuristic (ls /root /home non-empty)
+  just saw the guest's own dirs — bogus signal, mount isolation itself held.
+- T4b surprise: `machine run` with registry image + no --net did NOT refuse
+  up front (that's the `create` path); it pulled the image (pull egress is
+  auto-allowed just for the pull, per allow_image_pull_egress) and still
+  failed rc=1 before running the workload. Round 2 captures the full error.
+
+## Round 2 (run-tests-round2.sh)
 
 (pending)

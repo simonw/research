@@ -30,7 +30,26 @@ battery, and `sandbox-run.sh` for a ready-to-use wrapper.
 
 ## Test results (GitHub Actions ubuntu runner, KVM)
 
-RESULTS_PLACEHOLDER
+This container has no KVM (it's itself a Firecracker guest without nested
+virt), so the battery ran on a GitHub Actions `ubuntu-latest` runner, which
+exposes `/dev/kvm` ([run 1](https://github.com/simonw/research/actions/runs/32312341067)).
+14 tests, 12 passed as designed; the 2 "failures" were both real findings, and
+a second round confirmed the fixes for them (see below).
+
+| Test | Result |
+|---|---|
+| T1 cold boot (`machine run`, local alpine tar, no net) | **577–643 ms** per full create-boot-exec-teardown cycle |
+| T2/T3 Python & Node hello (offline images) | both work, stdout/exit codes propagate |
+| T4 network truly off | `wget` and DNS both fail with no `--net` |
+| T5 `while True:` spin, `--timeout 10s` | killed at 11 s wall, exit 124, **zero leftover VMM processes** |
+| T6 1 GiB alloc with `--mem 256` | MemoryError inside guest, exit 1; host memory unaffected |
+| T7 fork bomb, `--cpus 1` | VM exits in ~1 s (guest PID space exhausts), host load 0.69, clean teardown |
+| T8 disk bomb with `--overlay 1` | **FINDING: `--overlay` does not bound `/` writes** — guest wrote 4 GB to the 20 GiB storage disk. Use `--storage N` (round 2: `--storage 3` → ENOSPC as expected) |
+| T9/T10 ro/rw volumes + CSV→JSON (py), JSON→TSV (node) | ro enforced, only mounted dirs shared (virtiofs), transforms round-trip |
+| T11 persistent machine | start 1.5 s, then **warm `exec` 48 ms**; `exec --timeout 5s` kills spin, machine stays healthy |
+| T12 HTTP API | exec + file upload/download work. **FINDING: field is `timeoutSecs`** (camelCase); a `timeout_secs` field is silently ignored and the spin ran to a 300 s connection timeout. With correct casing (round 2): killed at 5 s, machine healthy |
+| T13 `--unprivileged` | CapEff drops from `1ffffffffff` (full) to `a80425fb` (standard unprivileged set) |
+| T4b registry image with no `--net` | run does not execute the workload; see notes — pull egress is auto-allowed for the pull itself, so prefer local tars for a strictly offline guarantee |
 
 ## What each requirement maps to
 
