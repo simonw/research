@@ -1,5 +1,10 @@
 # A shot-scraper-style JSON API on Bun 1.4's new Bun.WebView
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 **Verdict: entirely feasible, with a pleasantly small amount of code.** Bun 1.4's
 built-in `Bun.WebView` gives you navigate / evaluate-JS-returning-JSON /
 screenshot with no Puppeteer or Playwright dependency, and the whole service —

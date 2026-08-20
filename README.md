@@ -178,7 +178,11 @@ for dirname, _ in subdirs_with_dates:
             readme_path.write_text('\n'.join(new_lines))
 
 ]]]-->
-## 96 research projects
+## 97 research projects
+
+### [A shot-scraper-style JSON API on Bun 1.4's new Bun.WebView](https://github.com/simonw/research/tree/main/bun-webview-json-api#readme) (2026-08-20 15:37)
+
+A zero-dependency, roughly 150-line TypeScript service demonstrates that Bun 1.4’s experimental [`Bun.WebView`](https://bun.sh/docs/runtime/webview) can provide a shot-scraper-style JSON API for JavaScript evaluation and PNG/JPEG/WebP screenshots without Puppeteer or Playwright. It creates one browser tab per request, supporting concurrency while returning page results and errors as JSON through `/javascript`, `/screenshot`, and `/healthz`. Memory requirements range from about 56 MB for JavaScript-only workloads to 104 MB with Chromium’s `headless_shell` for screenshots, while measured latency was approximately 64 ms for JavaScript requests and 308 ms for heavy screenshots. The main caveats are experimental API stability, additional memory for complex pages, `--no-sandbox` when running as root, and occasional proxy/TLS configuration issues; the design closely mirrors [`shot-scraper`](https://github.com/simonw/shot-scraper)’s JavaScript semantics.
 
 ### [smolmachines / smolvm as a sandbox for untrusted Python & JavaScript](https://github.com/simonw/research/tree/main/smolmachines-untrusted-sandbox#readme) (2026-08-19 23:16)
 
