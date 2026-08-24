@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nyc 311 ~ drilldown cube over http range requests</title>
+<style>
+  :root {
+    --page: #f7f2ea; --card: #ffffff; --ink: #1c2430; --muted: #8b919b;
+    --faint: #aab0b9; --line: #4b7fc9; --area: #e9f0f9; --bar: #e3ecf7;
+    --bar-active: #c6dbf4; --border: #eee7da;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 48px; background: var(--page); color: var(--ink);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .card {
+    max-width: 1080px; margin: 0 auto; background: var(--card);
+    border: 1px solid var(--border); border-radius: 16px; padding: 28px 32px 32px;
+  }
+  .top { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 24px; margin: 0; letter-spacing: -0.01em; }
+  .subtitle { color: var(--muted); margin-top: 2px; }
+  .subtitle b { color: var(--ink); font-weight: 600; }
+  .stats { text-align: right; color: var(--muted); }
+  .stats .ms { font-size: 20px; }
+  .stats .ms b { color: var(--ink); }
+  .stats .detail { font-size: 13.5px; margin-top: 2px; }
+  #chart { margin-top: 18px; cursor: crosshair; }
+  #chart svg { display: block; width: 100%; }
+  .hint { color: var(--faint); margin: 10px 2px 4px; }
+  .hint b { color: var(--muted); font-weight: 600; }
+  .boards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px 40px; margin-top: 22px; }
+  @media (max-width: 760px) { .boards { grid-template-columns: 1fr; } }
+  .board h2 { font-size: 14px; font-weight: 600; color: var(--muted); margin: 14px 0 10px; }
+  .board:first-child h2, .col3 .board:first-child h2 { margin-top: 14px; }
+  .row {
+    position: relative; display: flex; justify-content: space-between; gap: 12px;
+    width: 100%; border: 0; background: none; font: inherit; color: inherit;
+    padding: 6px 10px; margin: 3px 0; border-radius: 8px; cursor: pointer; text-align: left;
+  }
+  .row .bar {
+    position: absolute; inset: 0 auto 0 0; border-radius: 8px;
+    background: var(--bar); z-index: 0; min-width: 8px;
+  }
+  .row.active .bar { background: var(--bar-active); }
+  .row.active .name { font-weight: 650; }
+  .row .name, .row .count { position: relative; z-index: 1; }
+  .row .name { text-transform: lowercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .count { color: #47506b; font-variant-numeric: tabular-nums; }
+  .row:focus-visible { outline: 2px solid var(--line); outline-offset: 1px; }
+  .foot { color: var(--faint); font-size: 13px; margin-top: 26px; border-top: 1px solid var(--border); padding-top: 14px; }
+  .foot a { color: #6b7fae; }
+  #boot { color: var(--muted); padding: 60px 0; text-align: center; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="top">
+    <div>
+      <h1>nyc 311 ~ daily requests</h1>
+      <div class="subtitle" id="subtitle">loading&hellip;</div>
+    </div>
+    <div class="stats" id="stats"></div>
+  </div>
+  <div id="chart"><div id="boot">opening the cube&hellip;</div></div>
+  <div class="hint" id="hint"></div>
+  <div class="boards" id="boards" hidden>
+    <div class="board" data-dim="agency"><h2>by agency</h2><div class="rows"></div></div>
+    <div class="board" data-dim="complaint"><h2>by complaint type</h2><div class="rows"></div></div>
+    <div class="col3">
+      <div class="board" data-dim="borough"><h2>by borough</h2><div class="rows"></div></div>
+      <div class="board" data-dim="channel"><h2>by channel</h2><div class="rows"></div></div>
+    </div>
+  </div>
+  <div class="foot">
+    every interaction on this page is served by plain <code>fetch()</code> range requests against one static
+    3.7MB file (<code>nyc311-demo.dcb2</code>) &mdash; no database, no query engine, no dependencies.
+    leaderboards come from a 4,794-row all-time section held in memory; each line is one contiguous slice of a
+    per-dimension daily section; brushes read a time-sorted weekly section and snap to whole weeks.
+    this demo applies one leaderboard filter at a time (the full-size cube carries all 2&#8308; dimension subsets).
+    formats, readers and pipeline: <a href="https://github.com/simonw/research/tree/main/http-range-drilldown-cubes">http-range-drilldown-cubes</a>.
+  </div>
+</div>
+
+<script type="module">
+import { CubeReader } from "./cube-reader2.js";
+
+const DAY_MS = 86400000;
+const days = iso => Math.floor(Date.parse(iso + "T00:00:00Z") / DAY_MS);
+const iso = d => new Date(d * DAY_MS).toISOString().slice(0, 10);
+const monday = d => d - (((d - 4) % 7) + 7) % 7;        // 1970-01-01 was a Thursday
+const fmtDate = d => new Date(d * DAY_MS)
+  .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
+  .toLowerCase();
+const fmtN = n => n.toLocaleString("en-US");
+
+const DIMS = ["agency", "complaint", "borough", "channel"];
+const ALL = "all:agency+complaint+borough+channel";
+const state = {
+  cube: null, fileSize: 0,
+  all: [],            // the 4,794-row all-time section, held in memory
+  daily: [],          // [{d, n}] for the current filter
+  brushRows: null,    // week:by-date slice rows for the current brush
+  filter: null,       // {dim, value} | null
+  brush: null,        // {gte, lt} ISO, Monday-aligned | null
+  lineCache: new Map(),
+  seq: 0,
+};
+
+const $ = id => document.getElementById(id);
+
+// ---------- data ----------
+
+async function timed(fn) {
+  const t0 = performance.now();
+  const before = { ...state.cube.stats };
+  await fn();
+  renderStats(performance.now() - t0, before);
+}
+
+async function fetchLine(filter) {
+  const key = filter ? `${filter.dim}:${filter.value}` : "overall";
+  if (!state.lineCache.has(key)) {
+    const rows = filter
+      ? await state.cube.query(`day:${filter.dim}`, { [filter.dim]: filter.value })
+      : await state.cube.query("day:overall", {});
+    state.lineCache.set(key, rows.map(r => ({ d: days(r.d), n: r.n })));
+  }
+  return state.lineCache.get(key);
+}
+
+async function init() {
+  const cube = await CubeReader.open("./nyc311-demo.dcb2", { speculative: 24576 });
+  state.cube = cube;
+  state.fileSize = cube.dataStart +
+    Math.max(...Object.values(cube.header.sections).map(s => s.offset + s.bytes));
+  const t0 = performance.now();
+  const before = { requests: 0, bytesFetched: 0 };
+  [state.all, state.daily] = await Promise.all([
+    cube.query(ALL, {}),
+    fetchLine(null),
+  ]);
+  renderStats(performance.now() - t0, before);
+  $("boards").hidden = false;
+  render();
+}
+
+async function setFilter(dim, value) {
+  const same = state.filter && state.filter.dim === dim && state.filter.value === value;
+  state.filter = same ? null : { dim, value };
+  const seq = ++state.seq;
+  await timed(async () => {
+    const line = await fetchLine(state.filter);
+    if (seq !== state.seq) return;
+    state.daily = line;
+  });
+  if (seq === state.seq) render();
+}
+
+async function setBrush(dLo, dHi) {              // day numbers, any alignment
+  const gte = iso(monday(dLo)), lt = iso(monday(dHi - 1) + 7);
+  state.brush = { gte, lt };
+  const seq = ++state.seq;
+  await timed(async () => {
+    const rows = await state.cube.query("week:by-date", { d: { gte, lt } });
+    if (seq !== state.seq) return;
+    state.brushRows = rows;
+  });
+  if (seq === state.seq) render();
+}
+
+function clearBrush() {
+  if (!state.brush) return;
+  state.brush = null;
+  state.brushRows = null;
+  ++state.seq;
+  render();
+}
+
+// ---------- derived ----------
+
+function viewPoints() {
+  if (!state.brush) return state.daily;
+  const lo = days(state.brush.gte), hi = days(state.brush.lt);
+  return state.daily.filter(p => p.d >= lo && p.d < hi);
+}
+
+function boardCounts(dim) {
+  const src = state.brush ? state.brushRows : state.all;
+  const restrict = state.filter && state.filter.dim !== dim ? state.filter : null;
+  const m = new Map();
+  for (const r of src) {
+    if (restrict && r[restrict.dim] !== restrict.value) continue;
+    m.set(r[dim], (m.get(r[dim]) ?? 0) + r.n);
+  }
+  return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+}
+
+// ---------- rendering ----------
+
+function renderStats(ms, before) {
+  const s = state.cube.stats;
+  const kb = s.bytesFetched / 1024;
+  $("stats").innerHTML =
+    `<div class="ms">fetched in <b>${Math.max(1, Math.round(ms))} ms</b></div>` +
+    `<div class="detail">${s.requests} range request${s.requests === 1 ? "" : "s"} &middot; ` +
+    `${kb >= 100 ? Math.round(kb) : kb.toFixed(1)} kb fetched &middot; ` +
+    `${(100 * s.bytesFetched / state.fileSize).toFixed(1)}% of the cube so far</div>`;
+}
+
+function render() {
+  const pts = viewPoints();
+  const total = pts.reduce((s, p) => s + p.n, 0);
+  const when = state.brush
+    ? `${fmtDate(days(state.brush.gte))} &ndash; ${fmtDate(days(state.brush.lt) - 1)}`
+    : "all time";
+  $("subtitle").innerHTML = `${when} ~ <b>${fmtN(total)}</b> requests in view`;
+
+  const bits = [];
+  if (state.filter) bits.push(`<b>${state.filter.dim} = ${state.filter.value.toLowerCase()}</b> ~ click the row again to clear`);
+  if (state.brush) bits.push(`brushed to whole weeks ~ click the chart to clear`);
+  if (!bits.length) bits.push(`no filters ~ click a leaderboard row, or brush the chart (click the chart to clear)`);
+  $("hint").innerHTML = bits.join(" &middot; ");
+
+  drawChart(pts);
+  for (const board of document.querySelectorAll(".board")) {
+    const dim = board.dataset.dim;
+    const rowsEl = board.querySelector(".rows");
+    rowsEl.textContent = "";
+    const counts = boardCounts(dim);
+    const max = counts.length ? counts[0][1] : 1;
+    for (const [value, n] of counts) {
+      const b = document.createElement("button");
+      b.className = "row" + (state.filter && state.filter.dim === dim && state.filter.value === value ? " active" : "");
+      const bar = document.createElement("span");
+      bar.className = "bar";
+      bar.style.width = (100 * n / max).toFixed(2) + "%";
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = value;
+      const count = document.createElement("span");
+      count.className = "count";
+      count.textContent = fmtN(n);
+      b.append(bar, name, count);
+      b.addEventListener("click", () => setFilter(dim, value));
+      rowsEl.append(b);
+    }
+  }
+}
+
+function drawChart(pts) {
+  const host = $("chart");
+  const W = Math.max(320, host.clientWidth), H = 300, padB = 26, padT = 8;
+  if (!pts.length) { host.innerHTML = `<div id="boot">no data in view</div>`; return; }
+  const d0 = pts[0].d, d1 = pts[pts.length - 1].d;
+  const span = Math.max(1, d1 - d0);
+  const yMax = Math.max(...pts.map(p => p.n)) * 1.06 || 1;
+  const X = d => ((d - d0) / span) * W;
+  const Y = n => padT + (1 - n / yMax) * (H - padT - padB);
+
+  let line = "", area = "";
+  for (let i = 0; i < pts.length; i++) {
+    const cmd = (i ? "L" : "M") + X(pts[i].d).toFixed(1) + " " + Y(pts[i].n).toFixed(1);
+    line += cmd; area += cmd;
+  }
+  area += `L${X(d1).toFixed(1)} ${H - padB}L${X(d0).toFixed(1)} ${H - padB}Z`;
+
+  let ticks = "";
+  const y0 = new Date(d0 * DAY_MS).getUTCFullYear(), y1 = new Date(d1 * DAY_MS).getUTCFullYear();
+  const marks = [];
+  if (span > 660) {
+    const step = span / 365.25 > 7 ? 2 : 1;
+    for (let y = y0; y <= y1; y++) {
+      if (y % step) continue;
+      const t = days(`${y}-01-01`);
+      if (t >= d0 && t <= d1) marks.push([t, String(y)]);
+    }
+  } else {
+    for (let y = y0; y <= y1; y++) for (let m = 1; m <= 12; m++) {
+      const t = days(`${y}-${String(m).padStart(2, "0")}-01`);
+      if (t >= d0 && t <= d1) marks.push([t, new Date(t * DAY_MS)
+        .toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" })
+        .toLowerCase().replace(" ", " '")]);
+    }
+    while (marks.length > 8) marks.splice(1, 1);
+  }
+  for (const [t, label] of marks) {
+    ticks += `<text x="${X(t).toFixed(1)}" y="${H - 6}" fill="var(--faint)" font-size="13">${label}</text>`;
+  }
+
+  host.innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-label="daily requests">` +
+    `<path d="${area}" fill="var(--area)"></path>` +
+    `<path d="${line}" fill="none" stroke="var(--line)" stroke-width="1.4"></path>` +
+    ticks +
+    `<rect id="brushRect" x="0" y="0" width="0" height="${H - padB}" fill="var(--line)" opacity="0.12"></rect>` +
+    `<rect id="hit" x="0" y="0" width="${W}" height="${H}" fill="transparent"></rect>` +
+    `</svg>`;
+
+  const svg = host.querySelector("svg");
+  const hit = host.querySelector("#hit");
+  const sel = host.querySelector("#brushRect");
+  let x0 = null;
+  const px = e => {
+    const r = svg.getBoundingClientRect();
+    return Math.min(W, Math.max(0, (e.clientX - r.left) / r.width * W));
+  };
+  hit.addEventListener("pointerdown", e => { x0 = px(e); hit.setPointerCapture(e.pointerId); });
+  hit.addEventListener("pointermove", e => {
+    if (x0 === null) return;
+    const x = px(e);
+    sel.setAttribute("x", Math.min(x0, x));
+    sel.setAttribute("width", Math.abs(x - x0));
+  });
+  hit.addEventListener("pointerup", e => {
+    if (x0 === null) return;
+    const x = px(e), lo = Math.min(x0, x), hi = Math.max(x0, x);
+    x0 = null;
+    sel.setAttribute("width", 0);
+    if (hi - lo < 5) { clearBrush(); return; }
+    setBrush(Math.round(d0 + lo / W * span), Math.round(d0 + hi / W * span) + 1);
+  });
+}
+
+// ---------- boot ----------
+
+async function main() {
+  if (typeof DecompressionStream === "undefined") {
+    $("boot").textContent = "this demo needs a browser with the DecompressionStream API (any modern browser since 2023).";
+    return;
+  }
+  try {
+    await init();
+  } catch (err) {
+    $("chart").innerHTML = `<div id="boot">could not open the cube: ${err?.message ?? err}. ` +
+      `if you are viewing this locally: generate nyc311-demo.dcb2 with <code>bash github-pages.sh</code>, ` +
+      `then serve this folder over http with range support (file:// and python3 -m http.server will not work).</div>`;
+  }
+  let raf = null;
+  addEventListener("resize", () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => state.cube && render());
+  });
+}
+
+if (typeof document !== "undefined") main();
+</script>
+</body>
+</html>
