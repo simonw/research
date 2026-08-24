@@ -200,3 +200,36 @@ the build cache.
   will take the rebuild path once, then every later deploy hits the cache.
 - demo.html's failure message now tells local viewers to run
   `bash github-pages.sh` to generate the data file.
+
+## ~19:00 — serve the complete cube from the browser demo
+
+Replaced the cut-down 3.75MB demo artifact with the complete DCB2 conversion.
+The full cube already contained every section used for the initial chart and
+leaderboard clicks, but not `week:by-date`: the original full-dimension weekly
+section is dimension-first, so a date-only brush would have fetched all 1.82MB
+of compressed weekly data instead of one contiguous time slice.
+
+- Added `--add-week-by-date` to `dcb1_to_dcb2.py`. Its default remains the
+  original lossless DCB1 → DCB2 conversion so the 41,225,608-byte benchmark is
+  still reproducible; the flag appends a date-first copy of the weekly section.
+  On the checked-in synthetic DCB1 fixture, default-mode output was byte-for-byte
+  identical to the original converter (matching SHA-256 over all 719,164 bytes).
+- A real rebuild from the 39,759,867-byte Parquet produced a 42,808,533-byte
+  demo-ready full cube: 79,557-byte compressed header, all 19 original sections,
+  and a 1.58MB `week:by-date` section (4.6x compression versus 4.0x for the
+  dimension-first copy). The DCB1 and DCB2 conversion stages took 5.9s and 1.5s
+  respectively after download.
+- `demo.html` now opens `nyc311-cube-v15.dcb2`. First paint against the full
+  file was 4 range requests / 108KB / 0.3%; selecting NYPD brought the cumulative
+  total to 127KB, and a multi-year brush brought it to 371KB. Counts matched the
+  prior demo (NYPD 10,214,317; top filtered complaint 3,166,908), brushing updated
+  the boards, and the browser console stayed free of warnings and errors.
+- Simplified `github-pages.sh` to build, cache, validate, and publish one artifact.
+  The cache version now hashes the two active converters, uses an explicit
+  `unknown` source identity when HEAD metadata is unavailable, and removes a
+  stale generated cube if the source download fails. A local stand-in for the
+  previously deployed site restored all 42,808,533 bytes through the cache path
+  with the same SHA-256 as the built artifact; the local-current path was also
+  verified as a no-op.
+- Removed the now-unused `build_demo_cube.py` and its generated filename from
+  `.gitignore`.

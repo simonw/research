@@ -76,10 +76,10 @@
   </div>
   <div class="foot">
     every interaction on this page is served by plain <code>fetch()</code> range requests against one static
-    3.7MB file (<code>nyc311-demo.dcb2</code>) &mdash; no database, no query engine, no dependencies.
+    full-data ~43MB file (<code>nyc311-cube-v15.dcb2</code>) &mdash; no database, no query engine, no dependencies.
     leaderboards come from a 4,794-row all-time section held in memory; each line is one contiguous slice of a
     per-dimension daily section; brushes read a time-sorted weekly section and snap to whole weeks.
-    this demo applies one leaderboard filter at a time (the full-size cube carries all 2&#8308; dimension subsets).
+    this demo applies one leaderboard filter at a time (the cube carries all 2&#8308; dimension subsets).
     formats, readers and pipeline: <a href="https://github.com/simonw/research/tree/main/http-range-drilldown-cubes">http-range-drilldown-cubes</a>.
   </div>
 </div>
@@ -132,7 +132,7 @@ async function fetchLine(filter) {
 }
 
 async function init() {
-  const cube = await CubeReader.open("./nyc311-demo.dcb2", { speculative: 24576 });
+  const cube = await CubeReader.open("./nyc311-cube-v15.dcb2", { speculative: 24576 });
   state.cube = cube;
   state.fileSize = cube.dataStart +
     Math.max(...Object.values(cube.header.sections).map(s => s.offset + s.bytes));
@@ -335,7 +335,7 @@ async function main() {
     await init();
   } catch (err) {
     $("chart").innerHTML = `<div id="boot">could not open the cube: ${err?.message ?? err}. ` +
-      `if you are viewing this locally: generate nyc311-demo.dcb2 with <code>bash github-pages.sh</code>, ` +
+      `if you are viewing this locally: generate nyc311-cube-v15.dcb2 with <code>bash github-pages.sh</code>, ` +
       `then serve this folder over http with range support (file:// and python3 -m http.server will not work).</div>`;
   }
   let raf = null;

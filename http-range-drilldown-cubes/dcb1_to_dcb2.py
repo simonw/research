@@ -7,20 +7,30 @@
 rows is transposed to columnar order and deflate-raw compressed; the sparse
 index gains a byte offset per block; the JSON header is itself deflated.
 
+Pass --add-week-by-date to append a second copy of the full-dimension weekly
+section sorted with the date first. The GitHub Pages build uses this mode so
+demo.html can query the complete cube while retaining efficient date brushes.
+
 DCB2 layout:
   bytes 0-3   magic "DCB2"
   bytes 4-7   uint32 LE: compressed header length H
   bytes 8..   deflate-raw( JSON header )
   8+H ..      compressed blocks, back to back, section by section
 """
-import json, struct, sys, time, zlib
+import argparse, json, struct, time, zlib
 import numpy as np
 
-SRC = sys.argv[1] if len(sys.argv) > 1 else "nyc311-cube-v15.dcb1"
-OUT = sys.argv[2] if len(sys.argv) > 2 else "nyc311-cube-v15.dcb2"
+parser = argparse.ArgumentParser()
+parser.add_argument("src", nargs="?", default="nyc311-cube-v15.dcb1")
+parser.add_argument("out", nargs="?", default="nyc311-cube-v15.dcb2")
+parser.add_argument("--add-week-by-date", action="store_true",
+                    help="append a date-first weekly section for demo brushing")
+args = parser.parse_args()
+SRC, OUT = args.src, args.out
 MIN_EVERY = 1024        # blocks below ~1KB compress poorly (measured 1.6x)
 MAX_INDEX_ENTRIES = 1024
 LEVEL = 6               # measured: level 9 and zstd-12 gain almost nothing
+FULL_WEEK = "week:agency+complaint+borough+channel"
 
 NP_TYPE = {"u8": "<u1", "u16": "<u2", "u32": "<u4", "date-u16": "<u2", "year-u16": "<u2"}
 deflate_raw = lambda b: (lambda c: c.compress(b) + c.flush())(
@@ -33,14 +43,8 @@ hlen = struct.unpack("<I", src.read(4))[0]
 v1 = json.loads(src.read(hlen))
 data_start = 8 + hlen
 
-sections, blobs, offset, raw_total = {}, [], 0, 0
-for name, s1 in v1["sections"].items():
-    src.seek(data_start + s1["offset"])
-    rec = np.frombuffer(src.read(s1["rows"] * s1["rowSize"]),
-                        dtype=np.dtype([(c, NP_TYPE[t]) for c, t in s1["columns"]]))
-    names = [c for c, _ in s1["columns"]]
-    key_cols = s1["sortKey"]
-
+def compress_section(rec, columns, key_cols):
+    names = [c for c, _ in columns]
     every = MIN_EVERY
     while -(-len(rec) // every) > MAX_INDEX_ENTRIES:
         every *= 2
@@ -53,17 +57,49 @@ for name, s1 in v1["sections"].items():
         comp = deflate_raw(payload)
         offsets.append(pos); parts.append(comp); pos += len(comp)
 
-    body = b"".join(parts)
-    sections[name] = {
-        "offset": offset, "bytes": pos, "rows": int(len(rec)),
-        "rowSize": s1["rowSize"], "codec": "deflate-raw", "layout": "columnar",
-        "columns": s1["columns"], "sortKey": key_cols,
+    return {
+        "bytes": pos, "rows": int(len(rec)),
+        "rowSize": rec.dtype.itemsize, "codec": "deflate-raw", "layout": "columnar",
+        "columns": columns, "sortKey": key_cols,
         "index": {"every": every, "keys": keys, "offsets": offsets},
-        "meta": s1.get("meta", {}),
+    }, b"".join(parts)
+
+sections, blobs, offset, raw_total = {}, [], 0, 0
+
+def append_section(name, rec, columns, key_cols, meta=None):
+    global offset, raw_total
+    packed, body = compress_section(rec, columns, key_cols)
+    # Preserve the original header key order so default-mode output remains
+    # byte-for-byte reproducible with the initial DCB2 conversion.
+    section = {
+        "offset": offset, "bytes": packed["bytes"], "rows": packed["rows"],
+        "rowSize": packed["rowSize"], "codec": packed["codec"],
+        "layout": packed["layout"], "columns": packed["columns"],
+        "sortKey": packed["sortKey"], "index": packed["index"],
+        "meta": meta or {},
     }
+    sections[name] = section
     blobs.append(body)
-    offset += pos
-    raw_total += len(rec) * s1["rowSize"]
+    offset += len(body)
+    raw_total += len(rec) * rec.dtype.itemsize
+
+for name, s1 in v1["sections"].items():
+    src.seek(data_start + s1["offset"])
+    rec = np.frombuffer(src.read(s1["rows"] * s1["rowSize"]),
+                        dtype=np.dtype([(c, NP_TYPE[t]) for c, t in s1["columns"]]))
+    append_section(name, rec, s1["columns"], s1["sortKey"], s1.get("meta"))
+
+    if args.add_week_by_date and name == FULL_WEEK:
+        types = dict(s1["columns"])
+        key_cols = ["d", "agency", "complaint", "borough", "channel"]
+        columns = [[c, types[c]] for c in key_cols] + [["n", types["n"]]]
+        order = np.lexsort(tuple(rec[c] for c in reversed(key_cols)))
+        date_first = rec[order]
+        meta = {**s1.get("meta", {}), "derivedFrom": FULL_WEEK}
+        append_section("week:by-date", date_first, columns, key_cols, meta)
+
+if args.add_week_by_date and "week:by-date" not in sections:
+    raise ValueError(f"--add-week-by-date requires a {FULL_WEEK!r} section")
 
 hjson = json.dumps({"format": "dcb2", "dicts": v1["dicts"], "sections": sections},
                    separators=(",", ":")).encode()

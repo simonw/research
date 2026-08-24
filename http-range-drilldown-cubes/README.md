@@ -11,13 +11,13 @@ The answer: yes, comfortably. **DCB1** is a format whose entire reader is 188 li
 
 ## Live demo
 
-**<https://simonw.github.io/research/http-range-drilldown-cubes/demo.html>** — a reimplementation of the post's dashboard UI (daily line chart, four clickable leaderboards, chart brushing) in one dependency-free HTML file, running against `nyc311-demo.dcb2`: a 3.75MB real-data cube carved from the full 130MB conversion by [`build_demo_cube.py`](build_demo_cube.py) — generated at deploy time by this folder's [`github-pages.sh`](github-pages.sh) hook rather than committed. GitHub Pages serves byte ranges, so the page works there as-is.
+**<https://simonw.github.io/research/http-range-drilldown-cubes/demo.html>** — a reimplementation of the post's dashboard UI (daily line chart, four clickable leaderboards, chart brushing) in one dependency-free HTML file, running directly against `nyc311-cube-v15.dcb2`: the complete DCB2 conversion of the source Parquet. The published 42,808,533-byte artifact contains all 19 source grouping sets plus one additional date-first view of the weekly full-dimension section for efficient chart brushing. It is generated at deploy time by this folder's [`github-pages.sh`](github-pages.sh) hook rather than committed. GitHub Pages serves byte ranges, so the page works there as-is without downloading the whole file.
 
 ## The Pages build caches itself
 
-[`github-pages.sh`](github-pages.sh) runs before the site rsync (via the repo's hook mechanism) and publishes two artifacts that are never committed: the **full real-data cube** `nyc311-cube-v15.dcb2` (41.2MB) and the demo cube (3.75MB). Producing them means downloading the 40MB source Parquet from `https://static.simonwillison.net/static/2026/nyc311-cube-v15.parquet` and converting it, so the hook first checks whether the *previous* deploy already published current copies — **GitHub Pages doubles as the build cache**. A version stamp (sha256 over the three converter scripts, plus the Parquet's `ETag` and `Content-Length` from a HEAD request) is published as `cube-build-version.txt`; when the live site's stamp matches, the hook downloads the published artifacts and ships them as-is — no Parquet download, no Python environment. Change a converter or replace the Parquet at that URL and the stamp changes, forcing a rebuild. The converter scripts carry PEP 723 inline metadata so `uv run` supplies pyarrow/numpy in CI.
+[`github-pages.sh`](github-pages.sh) runs before the site rsync (via the repo's hook mechanism) and publishes the full real-data cube `nyc311-cube-v15.dcb2` (42.8MB), which is never committed. Producing it means downloading the 40MB source Parquet from `https://static.simonwillison.net/static/2026/nyc311-cube-v15.parquet` and converting it, so the hook first checks whether the *previous* deploy already published the current copy — **GitHub Pages doubles as the build cache**. A version stamp (sha256 over the two converter scripts, plus the Parquet's `ETag` and `Content-Length` from a HEAD request) is published as `cube-build-version.txt`; when the live site's stamp matches, the hook downloads the published artifact and ships it as-is — no Parquet download, no Python environment. Change a converter or replace the Parquet at that URL and the stamp changes, forcing a rebuild. The converter scripts carry PEP 723 inline metadata so `uv run` supplies pyarrow/numpy in CI.
 
-All three paths are tested: full rebuild (28s end to end, output **byte-identical** to the original conversion — the pipeline is deterministic), cache reuse (0.25s against a stand-in server), and local no-op. The hook deliberately never fails the site build: if both the cache and a rebuild fail, it emits `::warning::` annotations and exits 0, so one broken data source can't block deploys of every other folder in the repo.
+The hook supports full rebuild, published-cache reuse, and local no-op paths. A real rebuild produces the 130.1MB DCB1 intermediate in 5.9s and the demo-ready full DCB2 in another 1.5s after the source download. The hook deliberately never fails the site build: if both the cache and a rebuild fail, it removes any stale generated artifact, emits `::warning::` annotations and exits 0, so one broken data source can't block deploys of every other folder in the repo.
 
 A side effect worth having: the published full cube means anyone can query all 34,163,328 NYC 311 events from a browser. From the demo page's devtools console:
 
@@ -28,7 +28,7 @@ await cube.query("day:agency+complaint",
   { agency: "NYPD", complaint: "Illegal Parking" }, { groupBy: "d" });
 ```
 
-The demo cube's section design is itself part of the research. Leaderboards for *any* filter come from the 4,794-row all-time section, fetched once and held in memory; each leaderboard click fetches one contiguous slice of a per-dimension daily section; and brushes read `week:by-date` — the full-dimension weekly section **re-sorted with the date first in the sort key**, which extends the post's "sorted by the columns its queries filter on" principle to time brushing: a brush becomes one contiguous range read, with dimension filters applied client-side after decode. The time-first sort also compresses better (4.5x vs 4.0x dimension-first, because each 1024-row block spans roughly one week and the date column collapses). Brushes snap to whole weeks so the weekly counts stay exact — verified: Monday-aligned brush totals match the daily lines to the request. First paint is 3 range requests, ~54KB, 1.5% of the file; the page shows its own fetch accounting live, like the original. It supports one leaderboard filter at a time — stacked filters are what the full-size cube's 2⁴ daily subsets are for.
+The demo's section design is itself part of the research. Leaderboards for *any* filter come from the 4,794-row all-time section, fetched once and held in memory; each leaderboard click fetches one contiguous slice of a per-dimension daily section; and brushes read `week:by-date` — an additional copy of the full-dimension weekly section **re-sorted with the date first in the sort key**. This extends the post's "sorted by the columns its queries filter on" principle to time brushing: a brush becomes one contiguous range read, with dimension filters applied client-side after decode. The time-first copy adds 1.58MB to the standard 41.2MB conversion and compresses better than the dimension-first original (4.6x vs 4.0x, because each 1024-row block spans roughly one week and the date column collapses). Brushes snap to whole weeks so the weekly counts stay exact — verified: Monday-aligned brush totals match the daily lines to the request. First paint against the full artifact is 4 range requests and 108KB, 0.3% of the file; the page shows its own fetch accounting live, like the original. It supports one leaderboard filter at a time — stacked filters are what the cube's 2⁴ daily subsets are for.
 
 ## Why this is possible
 
@@ -139,16 +139,15 @@ The one honest regression: the tiny 2013 brush costs slightly *more*, because th
 | [demo.js](demo.js) | Range-request HTTP server + instrumented queries against `cube.bin` |
 | [cube.bin](cube.bin) | The synthetic demo cube (3.6MB) so `node demo.js` runs as-is |
 | [demo.html](demo.html) | Browser dashboard demo (line chart, leaderboards, brushing) — [live on Pages](https://simonw.github.io/research/http-range-drilldown-cubes/demo.html) |
-| `nyc311-demo.dcb2` | 3.75MB real-data cube backing the browser demo — generated at deploy time, not committed |
-| [github-pages.sh](github-pages.sh) | Pages build hook: generates and publishes both cubes, using the live site as its cache |
-| [build_demo_cube.py](build_demo_cube.py) | Carves the demo cube out of the full 130MB DCB1 (adds the time-first `week:by-date` section) |
+| `nyc311-cube-v15.dcb2` | 42.8MB full-data cube backing the browser demo — generated at deploy time, not committed |
+| [github-pages.sh](github-pages.sh) | Pages build hook: generates and publishes the full cube, using the live site as its cache |
 | [parquet_to_dcb1.py](parquet_to_dcb1.py) | Vectorized converter from the NYC 311 Parquet cube to DCB1 |
-| [dcb1_to_dcb2.py](dcb1_to_dcb2.py) | Lossless DCB1 → DCB2 recompressor |
+| [dcb1_to_dcb2.py](dcb1_to_dcb2.py) | Lossless DCB1 → DCB2 recompressor; `--add-week-by-date` appends the demo's time-first weekly view |
 | [validate_nyc.js](validate_nyc.js) | Runs the post's dashboard interactions against the converted NYC cube |
 | [compare_v1_v2.js](compare_v1_v2.js) | Side-by-side v1/v2 byte costs with result-equality assertions |
 | [notes.md](notes.md) | Chronological work log |
 
-Not committed (over this folder's 5MB size limit): the source `nyc311-cube-v15.parquet` (39.8MB, fetched from static.simonwillison.net at build time), the intermediate `nyc311-cube-v15.dcb1` (130.1MB, a build temp), and `cube_demo.db` (38MB, regenerable via `make_demo_db.sh`). `nyc311-cube-v15.dcb2` (41.2MB) and `nyc311-demo.dcb2` (3.75MB) are published on the site by the build hook without ever being committed.
+Not committed (over this folder's 5MB size limit): the source `nyc311-cube-v15.parquet` (39.8MB, fetched from static.simonwillison.net at build time), the intermediate `nyc311-cube-v15.dcb1` (130.1MB, a build temp), and `cube_demo.db` (38MB, regenerable via `make_demo_db.sh`). The demo-ready `nyc311-cube-v15.dcb2` (42.8MB) is published on the site by the build hook without ever being committed.
 
 ## Reproducing
 
@@ -160,15 +159,17 @@ python3 pack_cube.py       # -> cube.bin (already included here)
 node demo.js               # serves it over HTTP ranges, prints bytes per interaction
 ```
 
-To view the browser demo locally, serve this folder with any static server that supports `Range` headers and open `demo.html` — `npx http-server` works; `python3 -m http.server` does **not** (it ignores Range requests, and the page will tell you so). To produce both generated cubes locally, run `bash github-pages.sh` — it reuses the published copies when it can reach the live site, and otherwise downloads the Parquet and rebuilds (`uv` supplies the Python dependencies).
+To view the browser demo locally, serve this folder with any static server that supports `Range` headers and open `demo.html` — `npx http-server` works; `python3 -m http.server` does **not** (it ignores Range requests, and the page will tell you so). To produce the generated full cube locally, run `bash github-pages.sh` — it reuses the published copy when it can reach the live site, and otherwise downloads the Parquet and rebuilds (`uv` supplies the Python dependencies).
 
 The NYC pipeline needs the source Parquet from the post's dashboard, then:
 
 ```bash
-python3 parquet_to_dcb1.py nyc311-cube-v15.parquet nyc311-cube-v15.dcb1
-python3 dcb1_to_dcb2.py    # -> nyc311-cube-v15.dcb2
+uv run parquet_to_dcb1.py nyc311-cube-v15.parquet nyc311-cube-v15.dcb1
+uv run dcb1_to_dcb2.py    # -> standard 41.2MB nyc311-cube-v15.dcb2
 node compare_v1_v2.js      # asserts identical results, prints the cost table
 ```
+
+Add `--add-week-by-date` to the second command to reproduce the 42.8MB artifact published by GitHub Pages and used by `demo.html`.
 
 ## Deployment notes and honest caveats
 
