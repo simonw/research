@@ -178,7 +178,14 @@ for dirname, _ in subdirs_with_dates:
             readme_path.write_text('\n'.join(new_lines))
 
 ]]]-->
-## 97 research projects
+## 98 research projects
+
+### [Drilldown dashboard cubes over HTTP range requests](https://github.com/simonw/research/tree/main/http-range-drilldown-cubes#readme) (2026-08-24 17:05)
+
+A purpose-built binary cube format, DCB1/DCB2, can replace Parquet plus [Hyparquet](https://github.com/hyparam/hyparquet) for static drilldown dashboards served through HTTP range requests. Its dependency-free JavaScript reader uses dictionary-encoded fixed-width rows and sparse indexes to answer each interaction with an in-memory binary search and one range request; DCB2 adds native browser deflate compression via `DecompressionStream`. Tested against the real 16.7-million-row NYC 311 cube, DCB1 produced byte-identical query results to DuckDB, while DCB2 reduced storage from 130.1 MB to 41.2 MB and a cold seven-interaction session to 230 KB. The [live demo](https://simonw.github.io/research/http-range-drilldown-cubes/demo.html) demonstrates the approach, though it trades Parquet interoperability and advanced compression for a much smaller, workload-specific reader.
+
+- DCB1 reader: 7.5 KB uncompressed, 2.8 KB gzipped; DCB2 reader: 9.1 KB uncompressed, 3.3 KB gzipped.
+- DCB2 is within 4% of the source Parquet size while preserving single-range-request access.
 
 ### [A shot-scraper-style JSON API on Bun 1.4's new Bun.WebView](https://github.com/simonw/research/tree/main/bun-webview-json-api#readme) (2026-08-20 15:37)
 
