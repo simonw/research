@@ -145,6 +145,27 @@ def bench_wasmtime():
     timed("QuickJS fib(27)", run)
 
 
+def bench_threads():
+    """The GIL is released during guest execution: N sandboxes on N threads scale."""
+    import threading
+
+    print("\n== wasmi: parallel QuickJS sandboxes on threads (GIL released during execution)")
+    code = "function fib(n){return n<2?n:fib(n-1)+fib(n-2)}; fib(25)"
+
+    def worker():
+        ws.QuickJS(timeout=60).eval(code)
+
+    for n in (1, 2, 4):
+        threads = [threading.Thread(target=worker) for _ in range(n)]
+        t = time.perf_counter()
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+        print(f"{n} x QuickJS fib(25) on {n} thread(s){'':28} {(time.perf_counter()-t)*1000:9.1f} ms wall")
+
+
 if __name__ == "__main__":
     bench_wasmi()
     bench_wasmtime()
+    bench_threads()

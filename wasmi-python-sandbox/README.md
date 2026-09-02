@@ -92,6 +92,15 @@ carries fuel), so fuel and host functions currently cannot be combined from C wi
 - **wasm stack limits**: wasmi traps at 1000 nested wasm frames / 1 MiB of value stack by default
   (`Engine(max_recursion_depth=, max_stack_height=)`). The guest wrappers raise these so that the
   guests' own, catchable checks fire first.
+- **The GIL is released while the guest runs** (`Python::detach` around the wasmi call in
+  `Store.call` and `instantiate`); host functions re-attach on entry. A Python thread spinning
+  alongside a 184 ms guest call keeps its full ~23M loop iterations/s, and four QuickJS sandboxes on
+  four threads finish `fib(25)` in 201 ms wall instead of 4 x 126 ms. Stores are thread-affine
+  (`unsendable`): create each sandbox on the thread that uses it. Cost: a guest->Python->guest
+  round trip goes from 0.18 µs to 0.22 µs. Beware the CPython convoy effect: QuickJS's periodic
+  `host_interrupt` callback must re-acquire the GIL, so with a busy Python thread `fib(27)` takes
+  997 ms instead of 272 ms (362 ms with `sys.setswitchinterval(0.0005)`); MicroPython, which
+  makes few host calls per second, is barely affected (280 -> 319 ms).
 
 ### Quick tour
 
@@ -265,7 +274,7 @@ capi_ctypes/              wasmi C API from ctypes: wasmi_capi.py + demo.py
 fuelcmp/                  wasmi 1.1 vs 2.0 fuel accounting comparison (Rust)
 benchmarks/bench.py       numbers above
 examples/                 untrusted_js.py, untrusted_python.py
-tests/                    30 pytest tests (bindings, limits, both guests)
+tests/                    34 pytest tests (bindings, limits, both guests, threads)
 tools/wasm_sections.py    tiny import/export lister for .wasm files
 notes.md                  running log of what was tried
 ```
@@ -289,7 +298,8 @@ make -C guests/micropython MICROPYTHON_TOP=... WASI_SDK=...
   the runtime to stay consistent.
 - MicroPython's deferred GC means a single `exec` that allocates without pause will hit the memory
   cap before anything is collected. Bump `max_memory` or split work into several `exec` calls.
-- Host functions run with the GIL held for the whole guest call; nothing here releases it.
+- The GIL is released during guest execution, so a chatty guest (many host calls per second)
+  competing with a busy Python thread pays the CPython GIL hand-off latency on every host call.
 - wasmi 2.0's fuel-for-never-executed-code behaviour and the non-resumable lazy-compilation fuel
   error both look worth reporting upstream.
 - Not done: `v128`/reference-type values in host function signatures, multiple instances per

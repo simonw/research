@@ -522,7 +522,9 @@ impl Store {
                     None => candidate,
                 });
             }
-            let result = run_call(ctx.as_context_mut(), func, &vals);
+            // Release the GIL while the interpreter runs: other Python threads
+            // can proceed, and host functions re-attach on entry.
+            let result = py.detach(|| run_call(ctx.as_context_mut(), func, &vals));
             if !nested {
                 ctx.data_mut().deadline = None;
             } else {
@@ -831,7 +833,7 @@ impl Store {
     }
 
     /// Instantiate `module` (running its start function) and make it the store's instance.
-    fn instantiate(&self, module: &Module) -> PyResult<()> {
+    fn instantiate(&self, py: Python<'_>, module: &Module) -> PyResult<()> {
         let mut store = self.store.try_borrow_mut().map_err(|_| PyRuntimeError::new_err("store is busy"))?;
         let linker = self.linker.borrow();
         // Give the start function a fuel allowance from the budget (no slicing).
@@ -840,7 +842,14 @@ impl Store {
             let grant = budget.unwrap_or(u64::MAX / 4);
             store.set_fuel(grant).map_err(|e| WasmError::new_err(e.to_string()))?;
         }
-        let result = linker.instantiate_and_start(&mut *store, &module.inner);
+        let result = {
+            // RefCell guards are not Send; plain references to the (Send + Sync)
+            // wasmi objects are, so detach with those.
+            let store_ref: &mut WStore<HostData> = &mut store;
+            let linker_ref: &Linker<HostData> = &linker;
+            let module_ref: &WModule = &module.inner;
+            py.detach(|| linker_ref.instantiate_and_start(store_ref, module_ref))
+        };
         if store.data().fuel_enabled {
             let grant = budget.unwrap_or(u64::MAX / 4);
             let left = store.get_fuel().unwrap_or(0);
@@ -1028,9 +1037,16 @@ fn wat2wasm(py: Python<'_>, text: &str) -> PyResult<Py<PyBytes>> {
     Ok(PyBytes::new(py, &bytes).unbind())
 }
 
+/// Test helper: sleep with the GIL released (verifies detach works).
+#[pyfunction]
+fn _sleep_detached(py: Python<'_>, seconds: f64) {
+    py.detach(|| std::thread::sleep(Duration::from_secs_f64(seconds)));
+}
+
 #[pymodule]
 fn _core(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(wat2wasm, m)?)?;
+    m.add_function(wrap_pyfunction!(_sleep_detached, m)?)?;
     m.add_class::<Engine>()?;
     m.add_class::<Module>()?;
     m.add_class::<Store>()?;

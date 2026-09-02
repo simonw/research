@@ -131,6 +131,22 @@ fib(27) 36 ms. C API via ctypes: 9.8 us per host round trip vs 1.0 us via PyO3.
 - Prebuilt guests are shipped as package data (micropython.wasm 406 KB, quickjs.wasm 1.3 MB); the build recipes
   (`guests/`) need wasi-sdk 27 plus clones of quickjs-ng and micropython, which are not included. The one change
   made to an upstream repo (quickjs-ng stack check on WASI) is saved as `guests/quickjs/quickjs-ng.patch`.
-- Things I would do next: report the two wasmi fuel issues upstream; release the GIL during guest execution;
-  cache compiled modules across sandboxes (wasmi `Module` is `Send + Sync`, so one eager-compiled QuickJS module
+- Things I would do next: report the two wasmi fuel issues upstream; cache compiled modules across sandboxes (wasmi `Module` is `Send + Sync`, so one eager-compiled QuickJS module
   could serve many stores); a Rust-side WASI instead of the Python one for guests that print a lot.
+
+## Releasing the GIL (follow-up)
+
+- `Store.call` and `instantiate` now wrap the wasmi call in `Python::detach`. Host-function closures already used
+  `Python::attach`, so they re-acquire the GIL on entry and release it on return.
+- Gotcha: `Ref<Linker>` / `RefMut<Store>` (RefCell guards) are not `Send`, so they cannot be captured by the
+  detach closure; capturing `&Linker` / `&mut Store` references instead compiles (wasmi's Store and Linker are
+  Send + Sync). My first build of this silently failed because a grep filter hid the compiler error and the old
+  .so got copied - the "GIL released" run then showed a Python spinner thread getting only 9% of a core. Lesson:
+  check the build exit status, not the log tail.
+- Verified: spinner thread keeps ~23M iter/s during a 184 ms guest call (same as during `time.sleep`);
+  4 x 50M-iteration wasm loops on 4 threads: 215 ms wall vs 184 ms for one; 4 x QuickJS fib(25): 201 ms vs 126 ms.
+- Cost: guest->Python->guest round trip 0.18 -> 0.22 us. Convoy effect: QuickJS calls `host_interrupt` every
+  ~10k JS ops; with a busy Python thread each re-attach waits for the 5 ms switch interval, fib(27) 272 -> 997 ms
+  (362 ms with sys.setswitchinterval(0.0005)). MicroPython (few host calls): 280 -> 319 ms.
+- Stores are `unsendable`: using one from another thread raises pyo3's PanicException (a BaseException) with
+  "unsendable, but sent to another thread". 34 tests pass.
