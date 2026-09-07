@@ -1,5 +1,11 @@
 # Claude system prompts as a git timeline
 
+**A new, better version of this project now lives at [simonw/claude-system-prompts](https://github.com/simonw/claude-system-prompts), as described [in this blog post](https://simonwillison.net/2026/Sep/2/claudes-new-system-prompt/#how-i-m-tracking-these-prompts).**
+
+----
+
+## Original research project follows
+
 <!-- AI-GENERATED-NOTE -->
 > [!NOTE]
 > This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
