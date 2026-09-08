@@ -1,0 +1,410 @@
+--- /home/user/research/bf-pointer-propagation/original_bf.py	2026-01-27 22:01:12.598405064 +0000
++++ /home/user/research/bf-pointer-propagation/rpypkgs/bf/bf.py	2026-01-27 22:00:08.036404052 +0000
+@@ -1,15 +1,10 @@
+-# BF interpreter
+-# Includes concepts from (c) 2011 Andrew Brown
+-# Major rewrite          (c) 2024 Corbin Simpson
+-
+-import os
+-import sys
+-
++# BF interpreter with pointer propagation
++# (c) 2011 Andrew Brown, 2024 Corbin Simpson, 2025 pointer propagation
++import os, sys
+ from rpython.jit.codewriter.policy import JitPolicy
+ from rpython.rlib.jit import JitDriver, unroll_safe
+ from rpython.rlib.objectmodel import import_from_mixin, specialize
+ 
+-# https://esolangs.org/wiki/Algebraic_Brainfuck
+ class BF(object):
+     def unit(self): pass
+     def join(self, l, r): pass
+@@ -29,12 +24,10 @@
+     def move(self, i): return self.scalemove(i, 1)
+     def move2(self, i, j): return self.scalemove2(i, 1, j, 1)
+     def scalemove(self, i, s):
+-        return self.loop(self.joinList([
+-            self.plus(-1), self.right(i), self.plus(s), self.right(-i)]))
++        return self.loop(self.joinList([self.plus(-1), self.right(i), self.plus(s), self.right(-i)]))
+     def scalemove2(self, i, s, j, t):
+-        return self.loop(self.joinList([
+-                self.plus(-1), self.right(i), self.plus(s), self.right(j - i),
+-                self.plus(t), self.right(-j)]))
++        return self.loop(self.joinList([self.plus(-1), self.right(i), self.plus(s), self.right(j-i), self.plus(t), self.right(-j)]))
++    def prop(self, adj, off, ds): pass
+ 
+ class AsStr(object):
+     import_from_mixin(BF)
+@@ -45,6 +38,18 @@
+     def loop(self, bfs): return '[' + bfs + ']'
+     def input(self): return ','
+     def output(self): return '.'
++    def prop(self, adj, off, ds):
++        r = []
++        if off > 0: r.append('>' * off)
++        elif off < 0: r.append('<' * -off)
++        for i, d in enumerate(ds):
++            if i > 0: r.append('>')
++            if d > 0: r.append('+' * d)
++            elif d < 0: r.append('-' * -d)
++        m = adj - (off + len(ds) - 1 if ds else off)
++        if m > 0: r.append('>' * m)
++        elif m < 0: r.append('<' * -m)
++        return ''.join(r)
+ 
+ jitdriver = JitDriver(greens=['op'], reds=['position', 'tape'])
+ 
+@@ -52,82 +57,86 @@
+ 
+ class _Input(Op):
+     _immutable_ = True
+-    def runOn(self, tape, position):
+-        tape[position] = ord(os.read(0, 1)[0])
+-        return position
++    def runOn(self, tape, pos): tape[pos] = ord(os.read(0, 1)[0]); return pos
+ Input = _Input()
++
+ class _Output(Op):
+     _immutable_ = True
+-    def runOn(self, tape, position):
+-        os.write(1, chr(tape[position]))
+-        return position
++    def runOn(self, tape, pos): os.write(1, chr(tape[pos])); return pos
+ Output = _Output()
++
+ class Add(Op):
+     _immutable_ = True
+     _immutable_fields_ = "imm",
+     def __init__(self, imm): self.imm = imm
+-    def runOn(self, tape, position):
+-        tape[position] += self.imm
+-        return position
++    def runOn(self, tape, pos): tape[pos] += self.imm; return pos
++
+ class Shift(Op):
+     _immutable_ = True
+     _immutable_fields_ = "width",
+-    def __init__(self, width): self.width = width
+-    def runOn(self, tape, position): return position + self.width
++    def __init__(self, w): self.width = w
++    def runOn(self, tape, pos): return pos + self.width
++
+ class _Zero(Op):
+     _immutable_ = True
+-    def runOn(self, tape, position):
+-        tape[position] = 0
+-        return position
++    def runOn(self, tape, pos): tape[pos] = 0; return pos
+ Zero = _Zero()
++
+ class ZeroScaleAdd(Op):
+     _immutable_ = True
+     _immutable_fields_ = "offset", "scale"
+-    def __init__(self, offset, scale):
+-        self.offset = offset
+-        self.scale = scale
+-    def runOn(self, tape, position):
+-        tape[position + self.offset] += tape[position] * self.scale
+-        tape[position] = 0
+-        return position
++    def __init__(self, o, s): self.offset, self.scale = o, s
++    def runOn(self, tape, pos):
++        tape[pos + self.offset] += tape[pos] * self.scale
++        tape[pos] = 0
++        return pos
++
+ class ZeroScaleAdd2(Op):
+     _immutable_ = True
+     _immutable_fields_ = "offset1", "scale1", "offset2", "scale2"
+-    def __init__(self, offset1, scale1, offset2, scale2):
+-        self.offset1 = offset1
+-        self.scale1 = scale1
+-        self.offset2 = offset2
+-        self.scale2 = scale2
+-    def runOn(self, tape, position):
+-        tape[position + self.offset1] += tape[position] * self.scale1
+-        tape[position + self.offset2] += tape[position] * self.scale2
+-        tape[position] = 0
+-        return position
++    def __init__(self, o1, s1, o2, s2): self.offset1, self.scale1, self.offset2, self.scale2 = o1, s1, o2, s2
++    def runOn(self, tape, pos):
++        tape[pos + self.offset1] += tape[pos] * self.scale1
++        tape[pos + self.offset2] += tape[pos] * self.scale2
++        tape[pos] = 0
++        return pos
++
++class Prop(Op):
++    _immutable_ = True
++    _immutable_fields_ = "adj", "off", "diffs[*]"
++    def __init__(self, adj, off, diffs): self.adj, self.off, self.diffs = adj, off, diffs
++    @unroll_safe
++    def runOn(self, tape, pos):
++        p = pos + self.off
++        for i in range(len(self.diffs)):
++            if self.diffs[i]: tape[p + i] = (tape[p + i] + self.diffs[i]) & 0xff
++        return pos + self.adj
++
+ class Loop(Op):
+     _immutable_ = True
+     _immutable_fields_ = "op",
+     def __init__(self, op): self.op = op
+-    def runOn(self, tape, position):
++    def runOn(self, tape, pos):
+         op = self.op
+-        while tape[position]:
+-            jitdriver.jit_merge_point(op=op, position=position, tape=tape)
+-            position = op.runOn(tape, position)
+-        return position
++        while tape[pos]:
++            jitdriver.jit_merge_point(op=op, position=pos, tape=tape)
++            pos = op.runOn(tape, pos)
++        return pos
++
+ class Seq(Op):
+     _immutable_ = True
+     _immutable_fields_ = "ops[*]",
+     def __init__(self, ops): self.ops = ops
+     @unroll_safe
+-    def runOn(self, tape, position):
+-        for op in self.ops: position = op.runOn(tape, position)
+-        return position
++    def runOn(self, tape, pos):
++        for op in self.ops: pos = op.runOn(tape, pos)
++        return pos
+ 
+ class AsOps(object):
+     import_from_mixin(BF)
+     def unit(self): return Shift(0)
+     def join(self, l, r):
+-        if isinstance(l, Seq) and isinstance(r, Seq):
+-            return Seq(l.ops + r.ops)
++        if isinstance(l, Seq) and isinstance(r, Seq): return Seq(l.ops + r.ops)
+         elif isinstance(l, Seq): return Seq(l.ops + [r])
+         elif isinstance(r, Seq): return Seq([l] + r.ops)
+         return Seq([l, r])
+@@ -139,91 +148,98 @@
+     def zero(self): return Zero
+     def scalemove(self, i, s): return ZeroScaleAdd(i, s)
+     def scalemove2(self, i, s, j, t): return ZeroScaleAdd2(i, s, j, t)
++    def prop(self, adj, off, ds):
++        if not ds: return Shift(adj) if adj else Shift(0)
++        if len(ds) == 1 and adj == 0 and off == 0: return Add(ds[0]) if ds[0] else Shift(0)
++        return Prop(adj, off, ds)
+ 
+ class AbstractDomain(object): pass
+-meh, aLoop, aZero, theIdentity, anAdd, aRight = [AbstractDomain() for _ in range(6)]
++meh, aLoop, aZero, theIdentity, anAdd, aRight, aProp = [AbstractDomain() for _ in range(7)]
++
++def _overlap(ds1, o, ds2):
++    n1, n2 = len(ds1), len(ds2)
++    if n1 < o: return ds1 + [0]*(o-n1) + ds2
++    rlen = n1 if n1 >= o+n2 else o+n2
++    rv = [0]*rlen
++    for i in range(n2): rv[o+i] = ds2[i]
++    for i in range(n1): rv[i] += ds1[i]
++    return rv
++
++def _concat(a1, o1, ds1, a2, o2, ds2):
++    if o1 < a1+o2: return (a1+a2, o1, _overlap(ds1, a1+o2-o1, ds2))
++    return (a1+a2, a1+o2, _overlap(ds2, o1-a1-o2, ds1))
++
++def _trim(ds):
++    while ds and ds[-1] == 0: ds = ds[:-1]
++    return ds
++
++def _toProp(ad, data):
++    if ad is anAdd: return (0, 0, [data])
++    if ad is aRight: return (data, 0, [])
++    return data  # already prop
+ 
+ def makePeephole(cls):
+-    # Optimization domain: tuple of underlying domain, abstract tag, integer
+-    # (integer only used for adds and shifts)
+     domain = cls()
+-    def stripDomain(bfs): return domain.joinList([t[0] for t in bfs])
+-    def isConstAdd(bf, i): return bf[1] is anAdd and bf[2] == i
+-    def oppositeShifts(bf1, bf2):
+-        return bf1[1] is bf2[1] is aRight and bf1[2] == -bf2[2]
+-    def oppositeShifts2(bf1, bf2, bf3):
+-        return (bf1[1] is bf2[1] is bf3[1] is aRight and
+-                bf1[2] + bf2[2] + bf3[2] == 0)
+-    def isALoop(ad): return ad is aZero or ad is aLoop
++    def strip(bfs): return domain.joinList([t[0] for t in bfs])
++    def isAdd(bf, i): return bf[1] is anAdd and bf[2] == i
++    def oppShifts(a, b): return a[1] is b[1] is aRight and a[2] == -b[2]
++    def oppShifts2(a, b, c): return a[1] is b[1] is c[1] is aRight and a[2]+b[2]+c[2] == 0
++    def isLoop(ad): return ad is aZero or ad is aLoop
++
++    def mkProp(a, o, ds):
++        ds = _trim(ds)
++        return domain.prop(a, o, ds)
+ 
+     class Peephole(object):
+         import_from_mixin(BF)
+         def unit(self): return []
+-        # Peephole optimizations according to the standard monoid.
+         def join(self, l, r):
+             if not l: return r
+             rv = l[:]
+-            bfHead, adHead, immHead = rv.pop()
+-            for bf, ad, imm in r:
++            hd = rv.pop()
++            for item in r:
++                bf, ad, data = item
++                hdBf, hdAd, hdData = hd
+                 if ad is theIdentity: continue
+-                elif isALoop(adHead) and isALoop(ad): continue
+-                elif adHead is theIdentity:
+-                    bfHead, adHead, immHead = bf, ad, imm
+-                elif adHead is anAdd and ad is aZero:
+-                    bfHead, adHead, immHead = bf, ad, imm
+-                elif adHead is anAdd and ad is anAdd:
+-                    immHead += imm
+-                    if immHead: bfHead = domain.plus(immHead)
+-                    elif rv: bfHead, adHead, immHead = rv.pop()
+-                    else:
+-                        bfHead = domain.unit()
+-                        adHead = theIdentity
+-                elif adHead is aRight and ad is aRight:
+-                    immHead += imm
+-                    if immHead: bfHead = domain.right(immHead)
+-                    elif rv: bfHead, adHead, immHead = rv.pop()
++                elif isLoop(hdAd) and isLoop(ad): continue
++                elif hdAd is theIdentity: hd = item
++                elif hdAd in (anAdd, aRight, aProp) and ad in (anAdd, aRight, aProp):
++                    p1 = _toProp(hdAd, hdData)
++                    p2 = _toProp(ad, data)
++                    a, o, ds = _concat(p1[0], p1[1], p1[2], p2[0], p2[1], p2[2])
++                    ds = _trim(ds)
++                    if not ds and a == 0:
++                        hd = rv.pop() if rv else (domain.unit(), theIdentity, 0)
+                     else:
+-                        bfHead = domain.unit()
+-                        adHead = theIdentity
+-                else:
+-                    rv.append((bfHead, adHead, immHead))
+-                    bfHead, adHead, immHead = bf, ad, imm
+-            rv.append((bfHead, adHead, immHead))
++                        hd = (mkProp(a, o, ds), aProp, (a, o, ds))
++                elif hdAd is anAdd and ad is aZero: hd = item
++                else: rv.append(hd); hd = item
++            rv.append(hd)
+             return rv
+         def plus(self, i): return [(domain.plus(i), anAdd, i)]
+         def right(self, i): return [(domain.right(i), aRight, i)]
+-        # Loopish pattern recognition.
+         def loop(self, bfs):
+             if len(bfs) == 1:
+-                bf, ad, imm = bfs[0]
+-                if ad is anAdd and imm in (1, -1):
+-                    return [(domain.zero(), aZero, 0)]
++                bf, ad, data = bfs[0]
++                if ad is anAdd and data in (1, -1): return [(domain.zero(), aZero, 0)]
++                if ad is aProp:
++                    a, o, ds = data
++                    if a == 0 and o == 0 and len(ds) == 1 and ds[0] in (1, -1):
++                        return [(domain.zero(), aZero, 0)]
+             elif len(bfs) == 4:
+-                if (isConstAdd(bfs[0], -1) and
+-                    bfs[2][1] is anAdd and
+-                    oppositeShifts(bfs[1], bfs[3])):
++                if isAdd(bfs[0], -1) and bfs[2][1] is anAdd and oppShifts(bfs[1], bfs[3]):
+                     return [(domain.scalemove(bfs[1][2], bfs[2][2]), aLoop, 0)]
+-                if (isConstAdd(bfs[3], -1) and
+-                    bfs[1][1] is anAdd and
+-                    oppositeShifts(bfs[0], bfs[2])):
++                if isAdd(bfs[3], -1) and bfs[1][1] is anAdd and oppShifts(bfs[0], bfs[2]):
+                     return [(domain.scalemove(bfs[0][2], bfs[1][2]), aLoop, 0)]
+             elif len(bfs) == 6:
+-                if (isConstAdd(bfs[0], -1) and
+-                    bfs[2][1] is bfs[4][1] is anAdd and
+-                    oppositeShifts2(bfs[1], bfs[3], bfs[5])):
+-                    return [(domain.scalemove2(bfs[1][2], bfs[2][2],
+-                                               bfs[1][2] + bfs[3][2],
+-                                               bfs[4][2]), aLoop, 0)]
+-                if (isConstAdd(bfs[5], -1) and
+-                    bfs[1][1] is bfs[3][1] is anAdd and
+-                    oppositeShifts2(bfs[0], bfs[2], bfs[4])):
+-                    return [(domain.scalemove2(bfs[0][2], bfs[1][2],
+-                                               bfs[0][2] + bfs[2][2],
+-                                               bfs[3][2]), aLoop, 0)]
+-            return [(domain.loop(stripDomain(bfs)), aLoop, 0)]
++                if isAdd(bfs[0], -1) and bfs[2][1] is bfs[4][1] is anAdd and oppShifts2(bfs[1], bfs[3], bfs[5]):
++                    return [(domain.scalemove2(bfs[1][2], bfs[2][2], bfs[1][2]+bfs[3][2], bfs[4][2]), aLoop, 0)]
++                if isAdd(bfs[5], -1) and bfs[1][1] is bfs[3][1] is anAdd and oppShifts2(bfs[0], bfs[2], bfs[4]):
++                    return [(domain.scalemove2(bfs[0][2], bfs[1][2], bfs[0][2]+bfs[2][2], bfs[3][2]), aLoop, 0)]
++            return [(domain.loop(strip(bfs)), aLoop, 0)]
+         def input(self): return [(domain.input(), meh, 0)]
+         def output(self): return [(domain.output(), meh, 0)]
+-    return Peephole, stripDomain
++    return Peephole, strip
+ 
+ AsStr, finishStr = makePeephole(AsStr)
+ AsOps, finishOps = makePeephole(AsOps)
+@@ -232,9 +248,6 @@
+ def parse(s, domain):
+     ops = [domain.unit()]
+     i = 0
+-
+-    # Skip initial comment-loops; this is easier than adding a special case to
+-    # the optimizers for non-obvious reasons.
+     while i < len(s) and s[i] == '[':
+         depth = 1
+         i += 1
+@@ -242,44 +255,35 @@
+             if s[i] == '[': depth += 1
+             elif s[i] == ']': depth -= 1
+             i += 1
+-
+     while i < len(s):
+-        char = s[i]
+-        if char == '+': ops[-1] = domain.join(ops[-1], domain.plus(1))
+-        elif char == '-': ops[-1] = domain.join(ops[-1], domain.plus(-1))
+-        elif char == '<': ops[-1] = domain.join(ops[-1], domain.right(-1))
+-        elif char == '>': ops[-1] = domain.join(ops[-1], domain.right(1))
+-        elif char == ',': ops[-1] = domain.join(ops[-1], domain.input())
+-        elif char == '.': ops[-1] = domain.join(ops[-1], domain.output())
+-        elif char == '[': ops.append(domain.unit())
+-        elif char == ']':
++        c = s[i]
++        if c == '+': ops[-1] = domain.join(ops[-1], domain.plus(1))
++        elif c == '-': ops[-1] = domain.join(ops[-1], domain.plus(-1))
++        elif c == '<': ops[-1] = domain.join(ops[-1], domain.right(-1))
++        elif c == '>': ops[-1] = domain.join(ops[-1], domain.right(1))
++        elif c == ',': ops[-1] = domain.join(ops[-1], domain.input())
++        elif c == '.': ops[-1] = domain.join(ops[-1], domain.output())
++        elif c == '[': ops.append(domain.unit())
++        elif c == ']':
+             loop = domain.loop(ops.pop())
+             ops[-1] = domain.join(ops[-1], loop)
+         i += 1
+-
+     return ops.pop()
+ 
+ def entryPoint(argv):
+     if len(argv) < 2 or "-h" in argv:
+         print "Usage: bf [-c <number of cells>] [-h] [-o] <program.bf>"
+-        print "To dump a minimized optimized program: bf -o <program.bf>"
+         return 1
+     cells = 30000
+-    if argv[1] == "-c":
+-        cells = int(argv[2])
+-        path = argv[3]
++    if argv[1] == "-c": cells, path = int(argv[2]), argv[3]
+     elif argv[1] == "-o": path = argv[2]
+     else: path = argv[1]
+-    with open(path) as handle: text = handle.read()
+-    if "-o" in argv:
+-        print finishStr(parse(text, AsStr()))
+-        return 0
++    with open(path) as f: text = f.read()
++    if "-o" in argv: print finishStr(parse(text, AsStr())); return 0
+     tape = bytearray("\x00" * cells)
+     finishOps(parse(text, AsOps())).runOn(tape, 0)
+     return 0
+ 
+ def target(*args): return entryPoint, None
+-
+ def jitpolicy(driver): return JitPolicy()
+-
+ if __name__ == "__main__": sys.exit(entryPoint(sys.argv))
