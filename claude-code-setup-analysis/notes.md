@@ -1,0 +1,196 @@
+# Claude Code Setup Analysis - Investigation Notes
+
+## Objective
+Understand how Claude Code is able to work successfully in this research repository environment and identify potential research projects.
+
+## Initial Observations
+
+### Repository Context
+- This is Simon Willison's research repository: https://github.com/simonw/research
+- Each subdirectory is a separate research project carried out by LLMs (primarily Claude Code)
+- All code and documentation is written by AI agents
+
+### Key Article: "Code Research Projects with Async Agents"
+Source: https://simonw.substack.com/p/code-research-projects-with-async
+
+Key insights from Simon's article:
+1. **Async/Fire-and-Forget Model**: Claude Code operates asynchronously - you pose a research question, it works on a server, and files a PR when done
+2. **Code validation through execution**: "LLMs hallucinate and make mistakes. This is far less important for code research tasks because the code itself doesn't lie: if they write code and execute it and it does the right things then they've demonstrated to both themselves and to you that something really does work."
+3. **Minimal time commitment**: Simon reports firing off 2-3 research projects daily with minimal involvement
+4. **Dedicated repositories**: Using separate GitHub repos for research frees agents from permission concerns and allows full network access
+
+### Repository Structure Investigation
+
+Files at root:
+- `CLAUDE.md` - Points to `AGENTS.md`
+- `AGENTS.md` - Instructions for agents on how to structure research
+- `README.md` - Auto-generated index of all research projects
+- `requirements.txt` - Contains: cogapp, llm, llm-github-models
+- `.github/workflows/update-readme.yml` - Auto-updates README after pushes
+
+Each research project folder contains:
+- `README.md` - Final report
+- `notes.md` - Working notes and investigation log
+- `_summary.md` - Auto-generated summary (created by GitHub Actions)
+- Additional files: code, diffs, diagrams, data files
+
+### AGENTS.md Instructions
+Key requirements for agents:
+1. Create a new folder with appropriate name
+2. Create notes.md and append notes as you work
+3. Build README.md report at the end
+4. Final commit should include:
+   - notes.md and README.md files
+   - Any code written
+   - Git diffs (not full repos) if modified existing code
+   - Binary files < 2MB
+5. Do NOT include full copies of fetched code
+6. Do NOT create _summary.md (added automatically)
+
+### GitHub Actions Automation
+The `.github/workflows/update-readme.yml` workflow:
+1. Triggers on push to main
+2. Runs `cog -r -P README.md` using cogapp
+3. Commits README.md and new _summary.md files
+4. Uses LLM (github/gpt-4.1 model) to generate summaries
+
+### Cogapp Integration
+The README.md uses cogapp (https://nedbatchelder.com/code/cog/) to:
+1. Discover all subdirectories
+2. Get first commit date for each (sorted most recent first)
+3. Check for cached _summary.md files
+4. If no cache, generate summary via: `llm -m github/gpt-4.1 -s prompt < README.md`
+5. Create GitHub links to each project folder
+6. Save summaries to _summary.md to avoid regeneration
+
+## Success Factors Analysis
+
+### Why Claude Code Works Well Here
+
+1. **Clear Constraints and Structure**
+   - AGENTS.md provides explicit instructions
+   - Folder structure is predictable and consistent
+   - Focus on documentation (notes.md + README.md)
+
+2. **Validation Through Code Execution**
+   - Research projects involve running code
+   - Code either works or doesn't - immediate feedback
+   - Less risk of hallucination when results are testable
+
+3. **Isolated Environment**
+   - Dedicated repo = full permissions
+   - No fear of breaking production code
+   - Can install dependencies, clone repos, run experiments
+   - Network access available for fetching resources
+
+4. **Self-Documenting Workflow**
+   - notes.md tracks the investigation process
+   - Shows what was tried, what worked, what didn't
+   - Creates audit trail of research methodology
+
+5. **Automation Reduces Friction**
+   - GitHub Actions auto-updates README
+   - Auto-generates summaries with LLM
+   - No manual index maintenance needed
+
+6. **Appropriate Scope**
+   - Research projects are time-boxed investigations
+   - Clear beginning and end
+   - Focused questions rather than open-ended development
+
+7. **Requirements Management**
+   - requirements.txt includes essential tools:
+     - cogapp: Template-based code generation
+     - llm: CLI access to LLMs for summaries
+     - llm-github-models: GitHub models integration
+
+### Example Research Project Structure
+Examined: `uv-run-flow-analysis/`
+
+Files included:
+- README.md (13KB) - Comprehensive report with phases, code locations, diagrams
+- notes.md (4KB) - Investigation log with attempts and findings
+- key-code-locations.md (6KB) - Reference for important code sections
+- flow-diagram.txt (11KB) - ASCII diagram of execution flow
+- _summary.md (1.5KB) - Auto-generated by GitHub Actions
+
+The approach:
+1. Started with objective in notes.md
+2. Documented each discovery step by step
+3. Created supplementary files (diagrams, code locations)
+4. Wrote comprehensive README with findings
+5. Did NOT include full uv codebase (followed instructions)
+
+## What Makes This Environment Special
+
+1. **Permission Model**: Full trust - agent can do anything
+2. **Git Integration**: Works on branches, creates PRs
+3. **Network Access**: Can fetch external resources
+4. **Tool Access**: bash, git, web search, file operations
+5. **Documentation Focus**: Emphasis on explaining process and findings
+6. **Verification**: Results can be validated by running code
+
+## Research Project Ideas Brainstorm
+
+Based on examining existing projects and the environment capabilities:
+
+### Category 1: Tool/Library Comparisons & Benchmarks
+Pattern from existing projects: h3-library-benchmark, python-markdown-comparison, minijinja-vs-jinja2
+- Python WSGI server benchmarks (gunicorn vs uvicorn vs hypercorn)
+- Python testing framework comparison (pytest vs unittest vs nose2)
+- Python HTTP client libraries (requests vs httpx vs aiohttp)
+- JSON parsing libraries in Python
+- Python date/time libraries performance
+- SQLite Python wrapper performance comparison
+
+### Category 2: Deep Dive Codebase Analysis
+Pattern from existing projects: uv-run-flow-analysis, env86-analysis, codex-sandbox-investigation
+- How does pytest discovery and collection work?
+- How does pip resolve dependencies (compared to uv)?
+- How does Django's ORM query builder work internally?
+- How does FastAPI's dependency injection system work?
+- How does Black (Python formatter) parse and reformat code?
+- How does mypy's type inference work?
+
+### Category 3: Proof-of-Concept Implementations
+Pattern from existing projects: sqlite-query-linter, sqlite-permissions-poc, llm-pyodide-openai-plugin
+- Git conflict resolution assistant using LLM
+- Python import analyzer/visualizer
+- SQLite-based job queue implementation
+- Minimal Python package manager
+- Python AST-based code refactoring tool
+- Markdown-based documentation generator
+
+### Category 4: Integration/Compatibility Research
+Pattern from existing projects: cmarkgfm-in-pyodide, wazero-python-claude, h3o-python
+- Running Rust-based Python packages in WebAssembly
+- Python package compatibility with different interpreters (CPython vs PyPy)
+- Testing framework compatibility matrix
+- Python 3.14 free-threading compatibility for popular packages
+- Cross-platform Python packaging challenges
+
+### Category 5: Data Analysis Projects
+Pattern from existing projects: blog-tags-scikit-learn, datasette-plugin-alpha-versions
+- GitHub API analysis: most popular Python features/patterns
+- PyPI package dependency graph analysis
+- Python version adoption rates across popular packages
+- Analysis of Python standard library usage patterns
+- LLM API pricing comparison and optimization strategies
+
+### Category 6: Security & Sandboxing
+Pattern from existing projects: codex-sandbox-investigation
+- Python sandbox implementations comparison
+- Analysis of Python security vulnerabilities over time
+- Subprocess security best practices analysis
+- Python secrets management approaches
+
+### Most Promising Ideas for This Environment
+
+1. **pip vs uv Dependency Resolution Deep Dive** - Compare algorithms, performance, lock file formats
+2. **Python Testing Framework Internals** - How pytest discovers, collects, and runs tests
+3. **Datasette Plugin Ecosystem Analysis** - Dependencies, patterns, migration paths
+4. **Python 3.14t Free-Threading Compatibility Research** - Test popular packages with free-threaded Python
+5. **LLM CLI Tools Comparison** - Compare llm, aichat, openai CLI, anthropic CLI features and performance
+6. **FastAPI vs Flask Performance & Architecture** - Deep comparison with benchmarks
+7. **Python Packaging Tool Comparison** - pip-tools vs poetry vs pdm vs uv for lock files and workflows
+
