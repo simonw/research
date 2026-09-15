@@ -13,11 +13,14 @@ const PYODIDE_URL = new URL("vendor/", self.location.href).href;
 const APP_BASE_URL = new URL("app/", self.location.href).pathname;
 
 // Shared ASGI bridge harness -> defines ASGI_BRIDGE_PY.
-importScripts("bridge-python.js");
+importScripts("bridge-python.js", "datasette-startup.js");
+
+const STARTUP_OPTIONS = parseDatasetteOptions(self.location.href);
 
 // PYTHON-BEGIN datasette
 const DATASETTE_PY = String.raw`
 from datasette.app import Datasette
+from datasette.database import Database
 from datasette import hookimpl
 from datasette.plugins import pm
 
@@ -44,19 +47,17 @@ def _ensure_root_plugin():
 
 
 def datasette_base_url_fixes(app, base_url):
-    # Cheap workarounds for two Datasette base_url bugs (to be fixed upstream),
-    # applied to HTML response bodies:
+    # Workarounds for Datasette base_url bugs, applied to responses:
     #   1. base.html hardcodes the navigation-search ("Jump to") endpoint as
     #      url="/-/jump" without the base_url prefix, so its client-side fetch()
     #      escapes the service worker's app scope.
     #   2. The table/row/query "export" links double-apply base_url, because
     #      urls.path(path_with_format(request=request, ...)) is given a path that
     #      already includes base_url -> double-prefix -> 404 ("Database not found").
-    # (Both assume no database is literally named "app".)
+    #   3. The legacy /db?sql= redirect to /db/-/query omits base_url.
     prefix = base_url.rstrip("/").encode("latin-1")
     replacements = [
         (b'"/-/jump"', b'"' + prefix + b'/-/jump"'),   # fix 1
-        (prefix + prefix + b"/", prefix + b"/"),        # fix 2: /app/app/ -> /app/
     ]
 
     async def wrapped(scope, receive, send):
@@ -64,10 +65,22 @@ def datasette_base_url_fixes(app, base_url):
             await app(scope, receive, send)
             return
         state = {"html": False}
+        # Only collapse the duplicated prefix of this page's export/sort links.
+        # A blanket /app/app/ replacement breaks databases literally named app.
+        path = scope["path"].encode("utf-8")
+        page_replacements = replacements + [
+            (prefix + path + suffix, path + suffix) for suffix in (b".", b"?")
+        ]
 
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
                 headers = message.get("headers", [])
+                headers = [
+                    (key, prefix + value if key.lower() == b"location"
+                     and value.startswith(b"/") and not value.startswith(b"//")
+                     and value != prefix and not value.startswith(prefix + b"/") else value)
+                    for key, value in headers
+                ]
                 for key, value in headers:
                     if key.lower() == b"content-type" and b"text/html" in value.lower():
                         state["html"] = True
@@ -77,11 +90,11 @@ def datasette_base_url_fixes(app, base_url):
                     headers = [
                         (k, v) for k, v in headers if k.lower() != b"content-length"
                     ]
-                    message = {**message, "headers": headers}
+                message = {**message, "headers": headers}
                 await send(message)
             elif message["type"] == "http.response.body" and state["html"]:
                 body = message.get("body", b"") or b""
-                for find, repl in replacements:
+                for find, repl in page_replacements:
                     if find in body:
                         body = body.replace(find, repl)
                 await send({**message, "body": body})
@@ -93,29 +106,46 @@ def datasette_base_url_fixes(app, base_url):
     return wrapped
 
 
-async def build_app():
+async def build_app(options=None, fetch_bytes=None, directory="."):
+    options = options or {}
+    files, metadata = await prepare_datasette(options, fetch_bytes, directory)
+    config_kwargs = {}
+    if options.get("config"):
+        config = await load_datasette_document(options["config"], fetch_bytes, "config")
+        if isinstance(config.get("settings"), dict):
+            # Datasette versions can reject duplicate constructor/config settings.
+            # These two are required by the bridge and are supplied below.
+            config["settings"] = {key: value for key, value in config["settings"].items()
+                                  if key not in ("base_url", "num_sql_threads")}
+        config_kwargs["config"] = config
     _ensure_root_plugin()
     # base_url keeps every generated URL under the service-worker-intercepted
     # app prefix; num_sql_threads=0 runs SQLite inline (Pyodide has no threads).
     ds = Datasette(
+        files=files,
         memory=True,
+        metadata=metadata,
         settings={"base_url": DATASETTE_BASE_URL, "num_sql_threads": 0},
+        **config_kwargs,
     )
     # Equivalent of the --root CLI flag: lets the root actor hold full
     # permissions (without it, root_enabled defaults to False and root is
     # denied), which unlocks the write/POST features in the UI.
     ds.root_enabled = True
-    db = ds.add_memory_database("demo")
-    await db.execute_write(
-        "create table if not exists items "
-        "(id integer primary key, name text, qty integer)"
-    )
-    existing = (await db.execute("select count(*) from items")).first()[0]
-    if not existing:
+    if not files:
+        # add_database/Database also work on stable Datasette versions selected
+        # with ?ref=; add_memory_database is only available in newer releases.
+        db = ds.add_database(Database(ds, memory_name="demo"), name="demo")
         await db.execute_write(
-            "insert into items (name, qty) values "
-            "('Widget', 5), ('Gadget', 12), ('Sprocket', 7)"
+            "create table if not exists items "
+            "(id integer primary key, name text, qty integer)"
         )
+        existing = (await db.execute("select count(*) from items")).first()[0]
+        if not existing:
+            await db.execute_write(
+                "insert into items (name, qty) values "
+                "('Widget', 5), ('Gadget', 12), ('Sprocket', 7)"
+            )
     STATE["ds"] = ds
     STATE["app"] = datasette_base_url_fixes(ds.app(), DATASETTE_BASE_URL)
     return STATE["app"]
@@ -127,13 +157,21 @@ const GLUE_PY = String.raw`
 import json
 from js import Object
 from pyodide.ffi import to_js
+from pyodide.http import pyfetch
 
 bridge = None
 
 
+async def fetch_bytes(url):
+    response = await pyfetch(url)
+    if not response.ok:
+        raise ValueError("Could not load {}: HTTP {}".format(url, response.status))
+    return await response.bytes()
+
+
 async def setup():
     global bridge
-    app = await build_app()
+    app = await build_app(DATASETTE_OPTIONS, fetch_bytes)
     # Datasette's base_url handles the /app prefix, so root_path stays empty.
     bridge = ASGIBridge(app, root_path="")
     await bridge.startup()
@@ -160,8 +198,15 @@ startAsgiWorker({
   installManifest: "datasette.json",
   installingMessage: "installing-datasette",
   loadPackages: ["sqlite3"], // unvendored stdlib module Datasette needs
+  installPackages: async (pyodide, wheelUrls) => {
+    // Pass values as data, never interpolate URL values into Python source.
+    pyodide.globals.set("_datasette_options_json", JSON.stringify(STARTUP_OPTIONS));
+    pyodide.globals.set("_datasette_wheels_json", JSON.stringify(wheelUrls));
+    await pyodide.runPythonAsync(DATASETTE_INSTALL_PY);
+  },
   pythonSources: [
     ASGI_BRIDGE_PY,
+    DATASETTE_STARTUP_PY,
     DATASETTE_PY,
     "DATASETTE_BASE_URL = " + JSON.stringify(APP_BASE_URL),
     GLUE_PY,

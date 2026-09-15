@@ -106,11 +106,14 @@ offline-capable. `vendor/` is gitignored; run `python3 vendor.py` to reproduce i
 | `worker-runtime.js` | Shared worker runtime: loads Pyodide, installs wheels, serves requests |
 | `worker.js` | FastAPI Web Worker (inline FastAPI app + glue) |
 | `worker-datasette.js` | Datasette Web Worker (inline Datasette setup + glue) |
+| `datasette-startup.js` | Datasette URL options, package selection, and data/config imports |
 | `vendor.py` | Downloads Pyodide + the needed wheels into `vendor/` (gitignored) |
 | `tests/test_bridge.py` | Pure-Python unit tests of the FastAPI bridge path |
 | `tests/test_datasette_bridge.py` | Pure-Python unit tests of the Datasette bridge path |
 | `tests/test_browser.py` | Playwright end-to-end tests (FastAPI) in real Chromium |
 | `tests/test_datasette_browser.py` | Playwright end-to-end tests (Datasette) in real Chromium |
+| `tests/test_datasette_startup.py` / `.mjs` | Data/config imports, package selection, and URL parsing tests |
+| `tests/test_datasette_startup_browser.py` | Browser tests for combined inputs, plugins, versions, and external config assets |
 
 The Python that runs in the browser lives in `String.raw` blocks (`ASGI_BRIDGE_PY` in
 `bridge-python.js`; `APP_PY` in `worker.js`; `DATASETTE_PY` in `worker-datasette.js`). The
@@ -153,11 +156,62 @@ proving the mechanism isn't FastAPI-specific. Details:
   uvicorn, …) are fetched from PyPI (with `--pre`) into `vendor/` with a `datasette.json`
   manifest.
 
-The Datasette demo seeds an in-memory `demo` database with an `items` table, then lets you
+By default the Datasette demo seeds an in-memory `demo` database with an `items` table, then lets you
 navigate database → table pages, run SQL, insert rows, and hit `/app/demo/items.json` — all
 answered in the browser.
 
-Two leaks of the iframe/prefix model that needed handling (the general lesson: prefix-scoped
+### Datasette startup URL options
+
+Put startup options in the query string **before** the `#` route:
+
+| Option | Behavior | Repeatable |
+| --- | --- | --- |
+| `url=URL` | Download a SQLite database; its filename determines its database name. | Yes |
+| `csv=URL` | Import CSV into `data.db`, inferring column types; comma and semicolon delimiters are supported. | Yes |
+| `json=URL` | Import JSON arrays, newline-delimited JSON, keyed objects, or an object's largest list of objects into `data.db`. | Yes |
+| `sql=URL` | Fetch and execute a SQL script against `data.db`, before CSV/JSON imports. | Yes |
+| `metadata=URL` | Load a JSON or YAML metadata object via Datasette's `metadata=` argument. | No |
+| `config=URL` | Load a JSON or YAML configuration object via Datasette's `config=` argument, like `datasette --config datasette.yaml`. | No |
+| `install=PACKAGE` | Install a Python package specification or wheel URL with micropip, before importing Datasette. | Yes |
+| `ref=VERSION` | Install a specific Datasette release from PyPI; `ref=pre` selects the latest prerelease-eligible version. | No |
+
+With no `ref`, the vendored Datasette wheel is used. With no data inputs, the seeded
+`demo.items` database remains available, including when only metadata/config/plugins are
+supplied. Supplying any `url`, `csv`, `json`, or `sql` input replaces that demo data.
+
+Data, metadata, and config URLs support relative paths and GitHub/Gist page links, which
+are converted to raw-file URLs. Cross-origin sources must permit browser CORS requests.
+Encode URLs with `encodeURIComponent()` or `URLSearchParams`, especially when they contain
+their own query string. Empty parameter values are ignored.
+
+Downloaded databases get unique names (`example`, `example_2`, …); the name `data` is
+reserved for the import database when importing CSV/JSON/SQL. Imported table names come
+from source filenames, with `_1`, `_2`, … suffixes for repeated names. SQL scripts run in
+parameter order, then CSVs, then JSON files. All data is local to the browser worker's
+volatile filesystem and is loaded again on refresh.
+
+Configuration can set plugins, permissions, table options, extra CSS/JavaScript URLs, and
+Datasette settings. The bridge always overrides `base_url` and `num_sql_threads` to keep
+requests inside its scope and SQLite running without threads. `config=` requires a
+Datasette release that supports that constructor argument, including the bundled 1.0
+prerelease; older releases selected with `ref` have their own feature limitations.
+Extra packages must be compatible with Pyodide. Explicit `ref`, external inputs, and
+unvendored plugins require network access; the default demo remains fully vendored.
+
+Examples (relative to this directory):
+
+```text
+datasette.html?url=https://example.com/example.db#/example
+datasette.html?csv=https://example.com/items.csv&sql=https://example.com/setup.sql#/data
+datasette.html?install=datasette-haversine&ref=pre#/demo
+datasette.html?config=https://example.com/config.yml#/demo/items
+```
+
+The query string **after** `#` is sent to Datasette normally. In particular, outer
+`?sql=URL` loads a setup script, while `#/data?sql=select+1` executes a query. Both
+startup options and the Datasette route are preserved during in-app navigation.
+
+Several leaks of the iframe/prefix model needed handling (the general lesson: prefix-scoped
 interception assumes the app honours `base_url` for *every* URL, which isn't guaranteed):
 
 - **Hardcoded client-side URL.** Datasette's `base.html` hardcodes the "Jump to" search
@@ -173,8 +227,13 @@ interception assumes the app honours `base_url` for *every* URL, which isn't gua
 - **Double-applied `base_url`.** Datasette builds table/row/query export links as
   `urls.path(path_with_format(request=request, …))`; `path_with_format` derives from
   `request.path` (which already includes `base_url`) and `urls.path()` then prepends it again,
-  yielding `/app/app/…` — a 404. The HTML-rewrite middleware collapses `/app/app/` → `/app/`.
+  yielding `/app/app/…` — a 404. The HTML-rewrite middleware removes the extra prefix
+  from the current page's export/sort links, including absolute URLs, while preserving
+  database/table names that happen to be `app`.
   (Also a genuine Datasette bug, to be fixed upstream.)
+- **Unprefixed SQL redirect.** The legacy `/database?sql=…` route redirects to
+  `/database/-/query?sql=…` without `base_url`. The middleware prefixes root-relative
+  redirect locations so the redirected request stays inside the service worker scope.
 
 ## Testing (red/green TDD)
 
@@ -189,17 +248,21 @@ Two layers per app, all written test-first:
    page-initiated `fetch()` are all served by Python in the browser.
 
 ```bash
-pip install playwright pytest fastapi python-multipart
-pip install --pre datasette              # 1.0 alpha (used by the unit tests too)
-python3 -m playwright install chromium
-python3 vendor.py                        # download Pyodide + all wheels into ./vendor
-
-python3 -m pytest tests/                  # everything (unit + browser, both apps)
+uv run python vendor.py                 # download Pyodide + wheels into ./vendor
+uv run --with playwright python -m playwright install chromium
+uv run --with pytest --with playwright --with fastapi --with python-multipart \
+  --with ./vendor/datasette-1.0a31-py3-none-any.whl \
+  --with ./vendor/sqlite_utils-4.0a1-py3-none-any.whl python -m pytest tests/
+node --test tests/test_datasette_startup.mjs
 ```
+
+Use the Datasette/sqlite-utils wheel filenames listed in `vendor/datasette.json` if they
+differ. The startup browser tests for `ref` and the linked table-treatments config exercise
+real external downloads and require network access.
 
 ### Results
 
-All **27 tests pass**:
+The original bridge/browser regression tests cover:
 
 - `tests/test_bridge.py`: **8** (FastAPI bridge — incl. the synthesized-`Host`-header-with-port
   regression).
@@ -211,6 +274,11 @@ All **27 tests pass**:
   intercepted `.json` `fetch()`, prefixed+intercepted `/-/jump`, the json export link resolving,
   the execute-write page rendering despite its frame-busting headers, `#fragment` hash-routing,
   and root + POST write).
+
+Startup tests additionally cover SQL-before-import ordering, repeated input names, CSV
+types/delimiters, JSON shapes, metadata/config parsing, plugin configuration, package
+selection, browser imports, HTTP errors, explicit stable/prerelease versions, and loading
+the linked table-treatments config's CSS and JavaScript in the iframe.
 
 ## Trying it by hand
 

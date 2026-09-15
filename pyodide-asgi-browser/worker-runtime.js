@@ -12,6 +12,7 @@
 //   pythonSources: [str, ...],  // Python blocks to exec (bridge, app, glue)
 //   setupExpr,                  // Python expression to await (e.g. "await setup()")
 //   installingMessage,          // status string while installing
+//   installPackages,            // optional async (pyodide, wheelUrls) installer
 // }
 function startAsgiWorker(config) {
   let bridgePort = null;
@@ -30,7 +31,12 @@ function startAsgiWorker(config) {
     // Install the non-bundled pure-Python wheels from the local vendor dir; their
     // bundled dependencies resolve from the local Pyodide lock.
     const install = await (await fetch(config.pyodideUrl + config.installManifest)).json();
-    await micropip.install(install.wheels.map((name) => config.pyodideUrl + name));
+    const wheelUrls = install.wheels.map((name) => config.pyodideUrl + name);
+    if (config.installPackages) {
+      await config.installPackages(pyodide, wheelUrls);
+    } else {
+      await micropip.install(wheelUrls);
+    }
 
     self.postMessage({ type: "status", message: "starting-app" });
     for (const src of config.pythonSources) {

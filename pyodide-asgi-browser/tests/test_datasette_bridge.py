@@ -26,6 +26,7 @@ def extract_python(const_name, js_file):
 def load():
     ns = {}
     exec(extract_python("ASGI_BRIDGE_PY", BRIDGE_JS), ns)
+    exec(extract_python("DATASETTE_STARTUP_PY", HERE / "datasette-startup.js"), ns)
     exec(extract_python("DATASETTE_PY", DATASETTE_JS), ns)
     return ns
 

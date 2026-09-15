@@ -111,7 +111,10 @@ async function main() {
 
   setStatus("starting-worker");
   // Which Pyodide worker to run (FastAPI demo by default, Datasette if set).
-  const worker = new Worker(self.ASGI_WORKER || "worker.js");
+  const workerUrl = new URL(self.ASGI_WORKER || "worker.js", location.href);
+  // Startup options belong to the shell query string, outside the app #route.
+  workerUrl.search = location.search;
+  const worker = new Worker(workerUrl);
 
   const ready = new Promise((resolve, reject) => {
     worker.onmessage = (event) => {
