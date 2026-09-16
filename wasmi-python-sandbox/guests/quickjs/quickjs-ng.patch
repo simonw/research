@@ -1,0 +1,22 @@
+diff --git a/quickjs.c b/quickjs.c
+index 137aee1..c71efb9 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -3122,15 +3122,13 @@ JSRuntime *JS_GetRuntime(JSContext *ctx)
+ 
+ static void update_stack_limit(JSRuntime *rt)
+ {
+-#if defined(__wasi__)
+-    rt->stack_limit = 0; /* no limit */
+-#else
++    /* wasmi-sandbox: also enforce the limit on WASI. __builtin_frame_address(0)
++       returns the shadow stack pointer on wasm32, which is what we want. */
+     if (rt->stack_size == 0) {
+         rt->stack_limit = 0; /* no limit */
+     } else {
+         rt->stack_limit = rt->stack_top - rt->stack_size;
+     }
+-#endif
+ }
+ 
+ void JS_SetMaxStackSize(JSRuntime *rt, size_t stack_size)
