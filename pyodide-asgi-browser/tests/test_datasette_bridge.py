@@ -87,7 +87,7 @@ def test_datasette_table_page_shows_data():
 def test_logged_in_as_root():
     res = serve(["/app/-/actor.json"])["/app/-/actor.json"]
     assert res["status"] == 200
-    assert json.loads(res["body"]) == {"actor": {"id": "root"}}
+    assert json.loads(res["body"]) == {"ok": True, "actor": {"id": "root"}}
 
 
 def test_post_insert_is_authorized_for_root():

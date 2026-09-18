@@ -120,8 +120,8 @@ def test_metadata_and_custom_database_are_used_by_app(tmp_path, content):
 def test_package_selection_and_plugin_install_order(monkeypatch, ref):
     install = AsyncMock()
     monkeypatch.setitem(sys.modules, "micropip", SimpleNamespace(install=install))
-    wheels = ["https://demo/vendor/datasette-1.0a31-py3-none-any.whl",
-              "https://demo/vendor/sqlite_utils-4.0a1-py3-none-any.whl"]
+    wheels = ["https://demo/vendor/datasette-1.0a40-py3-none-any.whl",
+              "https://demo/vendor/sqlite_utils-4.2.1-py3-none-any.whl"]
     plugins = ["datasette-plugin", "https://demo/plugin.whl"]
     ns = {"_datasette_options_json": json.dumps({"ref": ref, "install": plugins}),
           "_datasette_wheels_json": json.dumps(wheels)}

@@ -50,9 +50,11 @@ FASTAPI_PYPI = [
     "fastapi", "starlette", "python-multipart",
     "annotated-doc", "typing-inspection",
 ]
-# Datasette 1.0 alpha (note: sqlite-utils 4.x is also a pre-release).
+# Datasette 1.0 alpha. Newer click/idna wheels override the older Pyodide
+# versions to satisfy sqlite-utils/httpx2; httpx2-jsfetch supplies WASM fetch.
 DATASETTE_PYPI = [
-    "datasette", "aiofiles", "asgiref", "asyncinject", "click-default-group",
+    "datasette==1.0a40", "aiofiles", "asgiref", "asyncinject", "click-default-group",
+    "click", "httpx2", "httpx2-jsfetch", "idna",
     "hupper", "itsdangerous", "mergedeep", "pip", "sqlite-fts4", "sqlite-utils",
     "tabulate", "uvicorn",
 ]
@@ -96,7 +98,10 @@ def download_pypi(packages, manifest, pre=False):
     ])
     wheels = []
     for pkg in packages:
-        prefix = pkg.replace("-", "_").lower()
+        name, _, version = pkg.partition("==")
+        prefix = name.replace("-", "_").lower()
+        if version:
+            prefix += "-" + version
         matches = sorted(
             p.name for p in VENDOR.glob("*.whl")
             if p.name.lower().startswith(prefix + "-")

@@ -126,7 +126,7 @@ def test_missing_data_url_shows_boot_error(browser, server, inputs):
         assert "HTTP 404" in wait_for_boot(page)
 
 
-@pytest.mark.parametrize("ref", ["1.0a31", "0.65.2"])
+@pytest.mark.parametrize("ref", ["1.0a40", "0.65.2"])
 def test_ref_installs_requested_version(browser, server, ref):
     # Explicit refs intentionally use PyPI, unlike the fully vendored default.
     with browser.new_context() as context:

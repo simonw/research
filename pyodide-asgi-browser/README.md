@@ -132,7 +132,7 @@ the shipped code cannot drift apart.
 
 ## Datasette on the same bridge
 
-`datasette.html` runs the full **Datasette 1.0 alpha** ASGI app through the identical bridge —
+`datasette.html` runs the full **Datasette 1.0a40** ASGI app through the identical bridge —
 proving the mechanism isn't FastAPI-specific. Details:
 
 - **`base_url="/app/"`** — Datasette's own setting for running under a path prefix makes every
@@ -152,9 +152,9 @@ proving the mechanism isn't FastAPI-specific. Details:
   bookmarkable and the back button works.
 - **Vendoring** — Datasette 1.0a is pure-Python. Its heavy/compiled deps (MarkupSafe, PyYAML,
   Jinja2, httpx, …) and the `sqlite3` package (unvendored from the stdlib in Pyodide) come
-  from the local Pyodide lock; ~13 pure-Python wheels (datasette, sqlite-utils, asyncinject,
-  uvicorn, …) are fetched from PyPI (with `--pre`) into `vendor/` with a `datasette.json`
-  manifest.
+  from the local Pyodide lock; pure-Python wheels (datasette, sqlite-utils, asyncinject,
+  httpx2, httpx2-jsfetch, uvicorn, …) are fetched from PyPI (with `--pre`) into `vendor/`
+  with a `datasette.json` manifest.
 
 By default the Datasette demo seeds an in-memory `demo` database with an `items` table, then lets you
 navigate database → table pages, run SQL, insert rows, and hit `/app/demo/items.json` — all
@@ -175,9 +175,10 @@ Put startup options in the query string **before** the `#` route:
 | `install=PACKAGE` | Install a Python package specification or wheel URL with micropip, before importing Datasette. | Yes |
 | `ref=VERSION` | Install a specific Datasette release from PyPI; `ref=pre` selects the latest prerelease-eligible version. | No |
 
-With no `ref`, the vendored Datasette wheel is used. With no data inputs, the seeded
-`demo.items` database remains available, including when only metadata/config/plugins are
-supplied. Supplying any `url`, `csv`, `json`, or `sql` input replaces that demo data.
+With no `ref`, the vendored Datasette 1.0a40 wheel is used (pinned in `vendor.py`).
+With no data inputs, the seeded `demo.items` database remains available, including when
+only metadata/config/plugins are supplied. Supplying any `url`, `csv`, `json`, or `sql`
+input replaces that demo data.
 
 Data, metadata, and config URLs support relative paths and GitHub/Gist page links, which
 are converted to raw-file URLs. Cross-origin sources must permit browser CORS requests.
@@ -251,8 +252,8 @@ Two layers per app, all written test-first:
 uv run python vendor.py                 # download Pyodide + wheels into ./vendor
 uv run --with playwright python -m playwright install chromium
 uv run --with pytest --with playwright --with fastapi --with python-multipart \
-  --with ./vendor/datasette-1.0a31-py3-none-any.whl \
-  --with ./vendor/sqlite_utils-4.0a1-py3-none-any.whl python -m pytest tests/
+  --with ./vendor/datasette-1.0a40-py3-none-any.whl \
+  --with ./vendor/sqlite_utils-4.2.1-py3-none-any.whl python -m pytest tests/
 node --test tests/test_datasette_startup.mjs
 ```
 

@@ -82,6 +82,10 @@ def test_datasette_home_served_in_browser(ds_page):
     frame = goto_app(ds_page, "/app/")
     # The database created in lifespan setup is listed.
     expect(frame.locator("a[href='/app/demo']")).to_be_visible()
+    version = app_frame(ds_page).evaluate("""async () =>
+        (await (await fetch('/app/-/versions.json')).json()).datasette.version
+    """)
+    assert version == "1.0a40"
 
 
 def test_datasette_table_navigation(ds_page):
