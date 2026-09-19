@@ -1,0 +1,82 @@
+>>> 1. Variables, constants, shadowing, scopes
+  inner scope fish_count = 9999
+  colony Brackish Bay: fish_count=84, pouch max=13L
+>>> 2. Numbers: ints, floats, hex/octal/binary, bitwise, ranges
+  42 brown + 42 white = 84; wingspan 3.05m; dive 10.0; flags 15
+  int division 7/2=3, modulo 7%2=1, float 7.0/2=3.5
+  2 in 0..5? true; 3 in 1..=3? true
+>>> 3. Strings and chars
+  Multi-line interpolated string:
+  The pelican goes SQUAWK!!!
+
+  lower=squawk, clipped=SQ!, split=["SQU", "WK"], first char=S
+  contains 'QUA'? true, len=6, reversed...
+  reversed = KWAUQS
+>>> 4. Arrays and functional methods
+  flock (7): ["Percy", "Petra", "Pip", "Gulliver", "Beaky", "Scoop", "Dip"]
+  name lengths: [5, 5, 3, 8, 5, 5, 3], long names: ["Percy", "Petra", "Gulliver", "Beaky", "Scoop"], total letters: 34
+  sorted: ["Beaky", "Dip", "Gulliver", "Percy", "Petra", "Pip", "Scoop"]
+  "Pip" in flock? true; some len>6? true; all len>2? true
+  popped Dip, flock now 6 strong
+  slice flock[1..3] = ["Petra", "Pip"]
+>>> 5. Object maps (and nesting)
+  nest at Mangrove Island: 4 eggs, sticks=200
+  keys: ["eggs", "guard_on_duty", "height_m", "location", "materials", "parents"]
+  has 'eggs'? true
+  after remove: 5 keys
+>>> 6. Control flow: if / switch / while / do / loop / for
+  17 fish -> pelican is delighted
+  Dalmatian pelican: one of the heaviest flying birds
+  catch of 17: an odd-numbered feast
+  climbed to 30m by while-loop
+  glided 3 times (do-while)
+  after 4 dives, caught 12 fish (loop+break value)
+    even glide step 0
+    even glide step 2
+    even glide step 4
+    even glide step 8
+    roll-call #0: Percy
+    roll-call #1: Petra
+    roll-call #2: Pip
+>>> 7. Functions, recursion, function pointers, closures, currying
+  pouch_volume(0.4, 0.3) = 0.06
+  fish_stack(6) = 720 ways to stack 6 fish
+  via Fn pointer: 0.05
+  closure scaled_catch(7) = 21
+  curried add_ten(5) = 15
+  shared capture tally = 10
+>>> 8. OOP-style: object map + method closures + `this`
+  Percy has eaten 5 fish today
+  Fn("describe") bound to a map: a pelican with a 3.05m wingspan
+>>> 9. Error handling: throw / try-catch
+  caught a mullet at 1.5m
+  CAUGHT: TooDeep at 9.0m — pelicans only plunge ~3m
+  runtime error caught too: #{"error": "ErrorArithmetic", "message": "Division by zero: 1 / 0"}
+>>> 10. Type inspection & conversion
+  type_of(3.05) = f64, type_of("squawk") = string
+  type_of(#{{}}) = map, type_of([]) = array
+  "42".parse_int() + 1 = 43, 3.99.to_int()=3, 42.to_float()/5=8.4
+  to_string: 42!
+>>> 11. Timestamps
+  counted 1249975000 fish-scales in 5.612693999999999 ms
+>>> 12. Modules (registered from Rust) — import
+  motto: A wonderful bird is the pelican
+  colony::headcount(3, 4) = 7
+  colony::ration(10) = 5
+>>> 13. Custom Rust type: Pelican struct
+  SQUAWK! I am Gulliver, wingspan 3.10m, 8 fish down the pouch!
+  Gulliver wingspan=3.1 fish_eaten=8
+  as string: Pelican(Gulliver, 3.10m, 8 fish)
+  Gulliver outfishes Beaky? true
+>>> 14. eval — scripts running scripts
+  eval("MAX_BEAK_LITRES * 2 + 1") = 27
+
+>>> 15. Back in Rust: typed result extracted from the script
+  script returned an object map with 5 keys:
+  champion = Gulliver (8 fish), mood = delighted
+
+>>> 16. Calling a script function from Rust (call_fn)
+  pouch_volume(0.45, 0.25) called from Rust = 0.05625
+  describe() with bound `this` from Rust = a pelican with a 2.9m wingspan
+
+Tour complete. SQUAWK!

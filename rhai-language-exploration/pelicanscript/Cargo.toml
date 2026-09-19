@@ -1,0 +1,13 @@
+[package]
+name = "pelicanscript"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "pelicanscript"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Local clone of https://github.com/rhaiscript/rhai — see README.md
+rhai = { path = "/tmp/rhai" }
+pyo3 = { version = "0.27", features = ["extension-module"] }
