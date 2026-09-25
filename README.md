@@ -1,5 +1,8 @@
 # Research projects carried out by AI tools
 
+[![Run in Smithery](https://smithery.ai/badge/skills/simonw)](https://smithery.ai/skills?ns=simonw&utm_source=github&utm_medium=badge)
+
+
 Each directory in this repo is a separate research project carried out by an LLM tool - usually [Claude Code](https://www.claude.com/product/claude-code). Every single line of text and code was written by an LLM.
 
 See [Code research projects with async coding agents like Claude Code and Codex](https://simonwillison.net/2025/Nov/6/async-code-research/) for more details on how this works.
