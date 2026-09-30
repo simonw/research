@@ -1,0 +1,53 @@
+{
+  "canonical_text_accuracy": 0.22485207100591717,
+  "canonical_text_correct": 1140,
+  "completed_cases": 5070,
+  "expected_cases": 5070,
+  "finish_reason_counts": {
+    "stop": 5070
+  },
+  "generated_at": "2026-09-30T02:46:28.414158+00:00",
+  "instruction_compliance_accuracy": 0.9617357001972386,
+  "instruction_compliant": 4876,
+  "is_complete": true,
+  "mean_request_seconds": 1.5237687540433924,
+  "median_request_seconds": 1.575199,
+  "model": "/home/spark/Qwen3.8-27B-Q4_K_M.gguf",
+  "numeric_accuracy": 0.2357001972386588,
+  "numeric_accuracy_wilson_95_high": 0.24758063461993934,
+  "numeric_accuracy_wilson_95_low": 0.2242199681874435,
+  "numeric_correct": 1195,
+  "parse_error_counts": {
+    "invalid_hundred": 12,
+    "invalid_small_number_after_tens": 2,
+    "invalid_small_number_sequence": 2,
+    "invalid_tens_sequence": 4,
+    "misplaced_and": 2,
+    "non_descending_scale": 106,
+    "non_word_token:639": 1,
+    "non_word_token:eight19": 1,
+    "non_word_token:eight89": 1,
+    "non_word_token:five3": 1,
+    "non_word_token:five47": 1,
+    "non_word_token:five55": 1,
+    "non_word_token:five80": 1,
+    "non_word_token:five9598": 1,
+    "non_word_token:five97": 1,
+    "non_word_token:four1": 1,
+    "non_word_token:four44": 1,
+    "non_word_token:four99": 1,
+    "non_word_token:six1": 1,
+    "non_word_token:three2": 1,
+    "non_word_token:three7": 1,
+    "number_above_supported_maximum": 15,
+    "scale_without_value": 1,
+    "unknown_word:plus": 25,
+    "zero_in_nonzero_number": 10
+  },
+  "reasoning_content_nonempty": 0,
+  "system_fingerprints": [
+    "b1-c398c6e"
+  ],
+  "total_completion_tokens": 72480,
+  "total_request_seconds": 7725.507583
+}

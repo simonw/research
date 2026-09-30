@@ -1,0 +1,25 @@
+{
+  "builder_sha256": "2ff63a594723d28121283ea45416caac1dfea4e9aeed6dd66957010dfb6820be",
+  "generated_at": "2026-09-30T15:12:42.001321+00:00",
+  "report": "QWEN38_27B_REASONING_ON_VS_OFF_SHORT_REPORT.md",
+  "report_sha256": "0c704067d2b7982960eca333e3ad49eab6d6e4d26d82b99634c8038c8d49dbcf",
+  "selections": {
+    "easiest": "a01_b01_r01",
+    "hardest_correct": "a13_b13_r01",
+    "one_third": "a04_b08_r01",
+    "one_third_request_order": 56,
+    "wrong_cases": [
+      "a02_b08_r01",
+      "a12_b09_r01"
+    ]
+  },
+  "sources": {
+    "runs/qwen3.8-27b-q4_k_m-reasoning-medium-unlimited-one-per-cell-easiest-first-seed-20260929/attempts.jsonl": "7138d73c9a809f6eacc5e430e022c54956c720763a76d52f12f11cd41e8267bf",
+    "runs/qwen3.8-27b-q4_k_m-reasoning-medium-unlimited-one-per-cell-easiest-first-seed-20260929/manifest.json": "7a6f516a1879ba242b6899bc8329f9673a962045f935263347d8dd6a22dc4dc3",
+    "runs/qwen3.8-27b-q4_k_m-reasoning-medium-unlimited-one-per-cell-easiest-first-seed-20260929/pairs.csv": "d5c528ffd71cd4ad0be20dc54764e7ed9abdbb898dcf7873810e52a6a31dd59e",
+    "runs/qwen3.8-27b-q4_k_m-reasoning-medium-unlimited-one-per-cell-easiest-first-seed-20260929/results.csv": "fa2bcca26058d961358421564af4d8d611350afd7351431d5b24d20c66ccc79d",
+    "runs/qwen3.8-27b-q4_k_m-reasoning-medium-unlimited-one-per-cell-easiest-first-seed-20260929/summary.json": "f6850157fffb3dfae596222f1ce88ea5e52ccae6a41e19d45934550842b4af8d",
+    "runs/qwen3.8-27b-q4_k_m-seed-20260929/manifest.json": "56a02ebc2e9e2769c64ac9be795f40c3cd3c771437bc3bf384755dba0492dc8a",
+    "runs/qwen3.8-27b-q4_k_m-seed-20260929/results.csv": "be4c720fc9b1ec2d21621ed740d2fe9bd7720b83f04f4b46b47cb489870fb213"
+  }
+}

@@ -1,0 +1,22 @@
+2026-09-30T10:45:18.885462+00:00 Prepared 169 immutable cases in runs/qwen3.8-27b-q4_k_m-reasoning-medium-unlimited-one-per-cell-easiest-first-seed-20260929
+2026-09-30T10:45:57.737598+00:00 Smoke benchmark_reasoning_on_medium_unlimited: HTTP 200, 16.55s, reasoning_chars=469, visible='Ninety-three million eight hundred forty-seven thousand six hundred ninety-six'
+2026-09-30T10:47:10.778912+00:00 Run start: target=169, already_complete=0, pending=169
+2026-09-30T10:48:20.982656+00:00 Progress 10/169 (5.9%), running accuracy=100.0%, ETA=18.6m
+2026-09-30T10:49:53.406875+00:00 Progress 20/169 (11.8%), running accuracy=100.0%, ETA=20.2m
+2026-09-30T10:51:48.428560+00:00 Progress 30/169 (17.8%), running accuracy=100.0%, ETA=21.4m
+2026-09-30T10:54:50.019942+00:00 Progress 40/169 (23.7%), running accuracy=100.0%, ETA=24.7m
+2026-09-30T10:58:36.339841+00:00 Progress 50/169 (29.6%), running accuracy=100.0%, ETA=27.2m
+2026-09-30T11:02:18.551904+00:00 Progress 60/169 (35.5%), running accuracy=98.3%, ETA=27.5m
+2026-09-30T11:06:49.283132+00:00 Progress 70/169 (41.4%), running accuracy=98.6%, ETA=27.8m
+2026-09-30T11:13:18.456773+00:00 Progress 80/169 (47.3%), running accuracy=98.8%, ETA=29.0m
+2026-09-30T11:18:00.641090+00:00 Progress 90/169 (53.3%), running accuracy=98.9%, ETA=27.0m
+2026-09-30T11:29:10.922811+00:00 Progress 100/169 (59.2%), running accuracy=99.0%, ETA=29.0m
+2026-09-30T11:34:39.829018+00:00 Progress 110/169 (65.1%), running accuracy=99.1%, ETA=25.5m
+2026-09-30T11:53:06.293624+00:00 Progress 120/169 (71.0%), running accuracy=99.2%, ETA=26.9m
+2026-09-30T12:03:37.730454+00:00 Progress 130/169 (76.9%), running accuracy=99.2%, ETA=22.9m
+2026-09-30T12:19:19.326449+00:00 Progress 140/169 (82.8%), running accuracy=98.6%, ETA=19.1m
+2026-09-30T12:34:32.549548+00:00 Progress 150/169 (88.8%), running accuracy=98.7%, ETA=13.6m
+2026-09-30T12:49:43.713034+00:00 Progress 160/169 (94.7%), running accuracy=98.8%, ETA=6.9m
+2026-09-30T13:26:38.609285+00:00 Progress 169/169 (100.0%), running accuracy=98.8%, ETA=0.0m
+2026-09-30T13:27:12.654556+00:00 Regraded 169 raw responses: primary changes=0, compliance changes=0, parsed-answer changes=0
+2026-09-30T13:27:12.810034+00:00 Summary: 169/169 cases, numeric accuracy=98.82%
