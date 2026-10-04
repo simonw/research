@@ -1,0 +1,10 @@
+{
+  "completed_cases": 169,
+  "completion_fraction": 1.0,
+  "elapsed_this_invocation_seconds": 9567.826152243651,
+  "eta_seconds": 0.0,
+  "failed_or_pending_cases": 0,
+  "mean_request_seconds_this_invocation": 56.59918319669789,
+  "target_cases": 169,
+  "updated_at": "2026-09-30T13:26:38.605167+00:00"
+}

@@ -1,0 +1,48 @@
+{
+  "benchmark": "addition-in-words-one-per-cell-medium-reasoning-unlimited-pilot",
+  "benchmark_script_sha256": "7972eb8fa9d908689967de8a182a92ea1718c05d84f8c1003ae44498dc7fa3d5",
+  "benchmark_version": 1,
+  "chat_template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+  "decoding": {
+    "chat_template_kwargs": {
+      "enable_thinking": true
+    },
+    "max_tokens": -1,
+    "min_p": 0,
+    "note": "Reasoning enabled both by the server and by per-request enable_thinking=true. Every request explicitly selects medium reasoning effort and deepseek-format reasoning extraction. max_tokens=-1 removes the prediction-count limit in this llama.cpp build, and the client has no socket timeout. Generation still ends naturally on EOS/stop or runtime/context constraints.",
+    "reasoning_effort": "medium",
+    "reasoning_format": "deepseek",
+    "repeat_penalty": 1,
+    "request_timeout_seconds": null,
+    "stream": false,
+    "temperature": 0,
+    "top_k": 0,
+    "top_p": 1
+  },
+  "digit_range": [
+    1,
+    13
+  ],
+  "endpoint": "http://127.0.0.1:8082",
+  "expected_cases": 169,
+  "grading": {
+    "canonical_text_correct": "Normalized visible response exactly matches the canonical US-English rendering.",
+    "instruction_compliant": "Complete visible response contains only valid English-number syntax.",
+    "numeric_correct": "Complete visible response parses as number words and equals the integer sum."
+  },
+  "model": "/home/spark/Qwen3.8-27B-Q4_K_M.gguf",
+  "model_format": "Q4_K - Medium",
+  "model_sha256": "e00082f779fa385cee8c68a3ec8833a75778cc87272240b942f74e0b8243e520",
+  "pair_seed": 20260929,
+  "pair_selection": "Replicate 1 selected from each ordered digit-length cell of the established 30-per-cell frozen design; 169 total cases",
+  "pairs_csv_sha256": "d5c528ffd71cd4ad0be20dc54764e7ed9abdbb898dcf7873810e52a6a31dd59e",
+  "pairs_per_ordered_cell": 1,
+  "prepared_at": "2026-09-30T10:45:18.882325+00:00",
+  "primary_metric": "whole-response English-number parse equals a+b",
+  "prompt_template": "What is {a} + {b}? Please write your answer in words. Do not include any other text or information, just the answer in words.",
+  "request_order": "Easiest first: ascending maximum operand digits, minimum operand digits, carry count, longest carry chain, and result digits; the original seeded shuffled order is the final tie-breaker",
+  "request_order_seed": 20260930,
+  "server_build": "b1-c398c6e",
+  "source_pairs_per_ordered_cell": 30,
+  "system_fingerprint": null
+}

@@ -1,0 +1,34 @@
+{
+  "canonical_text_accuracy": 0.9822485207100592,
+  "canonical_text_correct": 166,
+  "completed_cases": 169,
+  "expected_cases": 169,
+  "finish_reason_counts": {
+    "stop": 169
+  },
+  "generated_at": "2026-09-30T13:27:12.711455+00:00",
+  "instruction_compliance_accuracy": 0.9940828402366864,
+  "instruction_compliant": 168,
+  "is_complete": true,
+  "mean_request_seconds": 56.59918319526627,
+  "median_request_seconds": 27.620763,
+  "model": "/home/spark/Qwen3.8-27B-Q4_K_M.gguf",
+  "numeric_accuracy": 0.9881656804733728,
+  "numeric_accuracy_wilson_95_high": 0.9967485805063717,
+  "numeric_accuracy_wilson_95_low": 0.9578834917163649,
+  "numeric_correct": 167,
+  "parse_error_counts": {
+    "number_above_supported_maximum": 1
+  },
+  "reasoning_characters_mean": 1271.3431952662722,
+  "reasoning_characters_total": 214857,
+  "reasoning_content_empty": 0,
+  "reasoning_content_nonempty": 169,
+  "system_fingerprints": [
+    "b1-c398c6e"
+  ],
+  "total_completion_tokens": 112887,
+  "total_request_seconds": 9565.26196,
+  "visible_response_empty": 0,
+  "visible_think_tag_count": 0
+}

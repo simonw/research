@@ -1,0 +1,44 @@
+{
+  "benchmark": "addition-in-words-by-operand-digit-length",
+  "benchmark_script_sha256": "907e2b312b283b88624938c94c1ba7066f67cf5fb11951ef0262ffed24199e7a",
+  "benchmark_version": 1,
+  "chat_template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+  "decoding": {
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    },
+    "max_tokens": 128,
+    "min_p": 0,
+    "note": "Thinking disabled both by the server and by per-request enable_thinking=false.",
+    "repeat_penalty": 1,
+    "stream": false,
+    "temperature": 0,
+    "top_k": 0,
+    "top_p": 1
+  },
+  "digit_range": [
+    1,
+    13
+  ],
+  "endpoint": "http://127.0.0.1:8082",
+  "expected_cases": 5070,
+  "grading": {
+    "canonical_text_correct": "Normalized visible response exactly matches the canonical US-English rendering.",
+    "instruction_compliant": "Complete visible response contains only valid English-number syntax.",
+    "numeric_correct": "Complete visible response parses as number words and equals the integer sum."
+  },
+  "model": "/home/spark/Qwen3.8-27B-Q4_K_M.gguf",
+  "model_format": "Q4_K - Medium",
+  "model_sha256": "e00082f779fa385cee8c68a3ec8833a75778cc87272240b942f74e0b8243e520",
+  "pair_seed": 20260929,
+  "pair_selection": "30 independent direct integer draws with replacement within each ordered digit-length cell; 0 excluded for one-digit operands",
+  "pairs_csv_sha256": "a1bbd56ef958aa30c2d76c52d57bac43b4e0e96d43e75ae18f1110c82b4053aa",
+  "pairs_per_ordered_cell": 30,
+  "prepared_at": "2026-09-30T00:35:45.742845+00:00",
+  "primary_metric": "whole-response English-number parse equals a+b",
+  "prompt_template": "What is {a} + {b}? Please write your answer in words. Do not include any other text or information, just the answer in words.",
+  "request_order": "all 5,070 frozen cases shuffled once before inference",
+  "request_order_seed": 20260930,
+  "server_build": "b1-c398c6e",
+  "system_fingerprint": null
+}

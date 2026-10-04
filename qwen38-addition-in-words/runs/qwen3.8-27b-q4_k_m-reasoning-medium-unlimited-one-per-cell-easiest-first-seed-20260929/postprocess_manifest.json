@@ -1,0 +1,13 @@
+{
+  "attempts_jsonl_sha256": "7138d73c9a809f6eacc5e430e022c54956c720763a76d52f12f11cd41e8267bf",
+  "changed_instruction_compliance_flags": 0,
+  "changed_parsed_answers": 0,
+  "changed_primary_numeric_correct_flags": 0,
+  "completed_cases": 169,
+  "grading_version": 2,
+  "grammar_change": "Connector 'and' is accepted only after 'hundred' or a large scale; malformed phrases such as 'one and forty-two billion' are rejected.",
+  "postprocess_script_sha256": "c80f6405460e9fe2ac5aa3a94c15c8ba96d5eeb62c00cb0073e05162116bd7cc",
+  "regraded_at": "2026-09-30T13:27:12.648868+00:00",
+  "results_csv_sha256": "fa2bcca26058d961358421564af4d8d611350afd7351431d5b24d20c66ccc79d",
+  "source": "append-only attempts.jsonl"
+}

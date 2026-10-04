@@ -1,0 +1,61 @@
+{
+  "captured_at": "2026-09-30T00:35:37.192629+00:00",
+  "chat_template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+  "machine": "aarch64",
+  "memory": {
+    "argv": [
+      "free",
+      "-b"
+    ],
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "               total        used        free      shared  buff/cache   available\nMem:     128501485568 101633699840  2184921088  1403162624 27244052480 26867785728\nSwap:              0           0           0\n"
+  },
+  "model": {
+    "path": "/home/spark/Qwen3.8-27B-Q4_K_M.gguf",
+    "server_reported_format": "Q4_K - Medium",
+    "sha256": "e00082f779fa385cee8c68a3ec8833a75778cc87272240b942f74e0b8243e520",
+    "size_bytes": 16810714336
+  },
+  "nvidia_smi": {
+    "argv": [
+      "nvidia-smi",
+      "--query-gpu=name,driver_version,utilization.gpu",
+      "--format=csv,noheader"
+    ],
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "NVIDIA GB10, 580.82.09, 1 %\n"
+  },
+  "os_release": {
+    "BUG_REPORT_URL": "https://bugs.launchpad.net/ubuntu/",
+    "HOME_URL": "https://www.ubuntu.com/",
+    "ID": "ubuntu",
+    "ID_LIKE": "debian",
+    "LOGO": "ubuntu-logo",
+    "NAME": "Ubuntu",
+    "PRETTY_NAME": "Ubuntu 24.04.3 LTS",
+    "PRIVACY_POLICY_URL": "https://www.ubuntu.com/legal/terms-and-policies/privacy-policy",
+    "SUPPORT_URL": "https://help.ubuntu.com/",
+    "UBUNTU_CODENAME": "noble",
+    "VERSION": "24.04.3 LTS (Noble Numbat)",
+    "VERSION_CODENAME": "noble",
+    "VERSION_ID": "24.04"
+  },
+  "platform": "Linux-6.11.0-1014-nvidia-aarch64-with-glibc2.39",
+  "python": "3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0]",
+  "serving_processes": [
+    {
+      "command": "/home/spark/Documents/Codex/2026-09-17/look-at-https-huggingface-co-prism/Bonsai-demo/llama.cpp/build-cuda/bin/llama-server -m /home/spark/Qwen3.8-27B-Q4_K_M.gguf --host 127.0.0.1 --port 8082 -ngl 99 -fa on -c 32768 --parallel 1 --jinja --reasoning off --reasoning-format deepseek --spec-type none --log-file /home/spark/Documents/Codex/2026-09-29/i-want-to-run-this-experiment/runs/qwen3.8-27b-q4_k_m-seed-20260929/server.log --log-timestamps --log-colors off",
+      "pid": 742215
+    }
+  ],
+  "uname": [
+    "Linux",
+    "spark-18b3",
+    "6.11.0-1014-nvidia",
+    "#14-Ubuntu SMP PREEMPT_DYNAMIC Thu Aug 14 18:27:36 UTC 2025",
+    "aarch64",
+    "aarch64"
+  ]
+}

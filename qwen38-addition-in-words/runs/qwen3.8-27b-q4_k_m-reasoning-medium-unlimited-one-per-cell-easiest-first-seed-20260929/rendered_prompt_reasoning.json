@@ -1,0 +1,3 @@
+{
+  "prompt": "<|im_start|>user\nWhat is 7 + 9? Please write your answer in words. Do not include any other text or information, just the answer in words.<|im_end|>\n<|im_start|>assistant\n<think>\n"
+}
