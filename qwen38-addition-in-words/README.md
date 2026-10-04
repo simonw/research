@@ -1,7 +1,9 @@
 # Qwen3.8 27B addition in words
 
-This project tests whether the local `Qwen3.8-27B-Q4_K_M.gguf` model can add
-two positive integers and return the result entirely in English words.
+This experiment was inspired by [Colin Fraser's original Bluesky
+post](https://bsky.app/profile/colin-fraser.net/post/3mwopbyznhs2k). It tests
+whether the local `Qwen3.8-27B-Q4_K_M.gguf` model can add two positive integers
+and return the result entirely in English words.
 
 Every prompt used this template:
 
