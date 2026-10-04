@@ -1,5 +1,10 @@
 # Qwen3.8 27B addition in words
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 This experiment was inspired by [Colin Fraser's original Bluesky
 post](https://bsky.app/profile/colin-fraser.net/post/3mwopbyznhs2k). It tests
 whether the local `Qwen3.8-27B-Q4_K_M.gguf` model can add two positive integers

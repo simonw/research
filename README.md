@@ -178,7 +178,13 @@ for dirname, _ in subdirs_with_dates:
             readme_path.write_text('\n'.join(new_lines))
 
 ]]]-->
-## 98 research projects
+## 99 research projects
+
+### [Qwen3.8 27B addition in words](https://github.com/simonw/research/tree/main/qwen38-addition-in-words#readme) (2026-10-04 23:34)
+
+A benchmark tested whether the local `Qwen3.8-27B-Q4_K_M.gguf` model could add positive integers and express exact results solely in English words, using 5,070 reasoning-disabled cases and a paired 169-case comparison with medium reasoning. Without reasoning, it achieved 23.57% numeric accuracy, with performance dropping from 97.04% for one- to three-digit operands to 6.44% for ten- to thirteen-digit operands, despite 96.17% format compliance. On the paired cases, medium reasoning improved accuracy from 26.63% to 98.82% and canonical wording from 25.44% to 98.22%, but increased median latency from 1.50 to 27.62 seconds and completion length from 14 to 313 tokens. Results are specific to the recorded quantized model, [llama-server](https://github.com/ggml-org/llama.cpp), prompt, decoding settings, and hardware; the comparison is not a clean causal test because reasoning and completion limits changed together.
+
+- Key reports: [paired comparison](QWEN38_27B_REASONING_ON_VS_OFF_SHORT_REPORT.md) and [full benchmark](QWEN38_27B_EXPERIMENT_REPORT.md).
 
 ### [Drilldown dashboard cubes over HTTP range requests](https://github.com/simonw/research/tree/main/http-range-drilldown-cubes#readme) (2026-08-24 17:05)
 
