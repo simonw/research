@@ -1,0 +1,13 @@
+# build outputs
+guests/micropython/micropython_embed/
+guests/micropython/build-embed/
+guests/micropython/*.wasm
+guests/quickjs/*.wasm
+*.o
+target/
+__pycache__/
+.pytest_cache/
+*.so
+wasmi_sandbox/dist/
+fuelcmp/target/
+fuelcmp/Cargo.lock
