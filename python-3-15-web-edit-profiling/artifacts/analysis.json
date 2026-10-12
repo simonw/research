@@ -1,0 +1,110 @@
+{
+  "binary_info": {
+    "version": 1,
+    "python_version": [
+      3,
+      15,
+      0
+    ],
+    "start_time_us": 3454877810115,
+    "sample_interval_us": 1000,
+    "sample_count": 15296,
+    "thread_count": 2,
+    "string_count": 217,
+    "frame_count": 488,
+    "compression_type": 1,
+    "duration_sec": 20.000261208042502,
+    "sample_rate": 999.9869397684467,
+    "error_rate": 13.4,
+    "missed_samples": 0.0,
+    "mode": 1,
+    "capture_config": {
+      "all_threads": true,
+      "native": false,
+      "gc": true,
+      "opcodes": false,
+      "blocking": false
+    }
+  },
+  "recorded_stack_samples": 15296,
+  "inclusive_functions": [
+    {
+      "function": "WorkerThread.run",
+      "samples": 14546,
+      "percent": 95.1
+    },
+    {
+      "function": "FileStore.save_text",
+      "samples": 11780,
+      "percent": 77.01
+    },
+    {
+      "function": "preserve_endings",
+      "samples": 9914,
+      "percent": 64.81
+    },
+    {
+      "function": "SequenceMatcher.find_longest_match",
+      "samples": 5854,
+      "percent": 38.27
+    },
+    {
+      "function": "FileStore.browse",
+      "samples": 1154,
+      "percent": 7.54
+    }
+  ],
+  "top_leaf_functions": [
+    {
+      "function": "SequenceMatcher.find_longest_match",
+      "samples": 5854,
+      "percent": 38.27
+    },
+    {
+      "function": "split",
+      "samples": 1964,
+      "percent": 12.84
+    },
+    {
+      "function": "search",
+      "samples": 1909,
+      "percent": 12.48
+    },
+    {
+      "function": "findall",
+      "samples": 994,
+      "percent": 6.5
+    },
+    {
+      "function": "file_digest",
+      "samples": 532,
+      "percent": 3.48
+    },
+    {
+      "function": "JSONEncoder.iterencode",
+      "samples": 530,
+      "percent": 3.46
+    },
+    {
+      "function": "PurePath.relative_to",
+      "samples": 464,
+      "percent": 3.03
+    },
+    {
+      "function": "preserve_endings",
+      "samples": 345,
+      "percent": 2.26
+    },
+    {
+      "function": "SequenceMatcher.__chain_b",
+      "samples": 344,
+      "percent": 2.25
+    },
+    {
+      "function": "FileStore.browse",
+      "samples": 199,
+      "percent": 1.3
+    }
+  ],
+  "interpretation": "Inclusive counts test whether a function occurs anywhere in each stack, at most once per stack. Inclusive rows overlap. Leaf counts combine source locations of the same function name; basename-only collapsed stacks can conflate names, so inspect the HTML source context."
+}
