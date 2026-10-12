@@ -2,7 +2,7 @@
 
 ## 2026-10-12 — Initial research and experiments
 
-These notes summarize the profiler experiments completed earlier in this session, then track packaging the results for simonw/research. The user clarified that the second requested visualization was a source-code heatmap, not a heap-memory profile.
+This investigation profiles web-edit with Python 3.15's built-in sampling profiler, using flame graphs and source-code heatmaps to examine where the app spends CPU time while browsing and editing files.
 
 - Queried PyPI's JSON API and inspected the installed `web-edit==0.1a0` wheel. Its CLI is `web_edit.cli:cli`; the server factory is `web_edit.app.create_app`. Its dependencies include Starlette, Uvicorn, Click, and python-multipart.
 - Confirmed the installed interpreter is CPython 3.15.0 on macOS 26.4 ARM64. Its `profiling` package contains `sampling` and `tracing`; `profiling.sampling` exposes binary recording, replay, flame graphs, source heatmaps, CPU mode, and all-thread sampling.
