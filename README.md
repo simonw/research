@@ -178,7 +178,11 @@ for dirname, _ in subdirs_with_dates:
             readme_path.write_text('\n'.join(new_lines))
 
 ]]]-->
-## 99 research projects
+## 100 research projects
+
+### [Profiling web-edit with Python 3.15: flame graphs and source heatmaps](https://github.com/simonw/research/tree/main/python-3-15-web-edit-profiling#readme) (2026-10-12 16:58)
+
+Profiling the unmodified [web-edit](https://github.com/simonw/web-edit) app with Python 3.15’s built-in [`profiling.sampling`](https://docs.python.org/3.15/library/profiling.sampling.html) revealed that mixed line-ending preservation dominated a busy editing workload: `preserve_endings` appeared in 64.8% of 15,296 recorded CPU stacks, with `SequenceMatcher.find_longest_match` contributing 38.3% of leaf samples. Sampling all threads was essential, since 95.1% of stacks came from AnyIO’s worker thread and would have been missed by a main-thread-only profile. The experiment also documented macOS code-signing requirements for process-memory access and a Python 3.15 replay limitation that leaves heatmap collection statistics blank, while the flame graph preserves them. Reproduction uses a pinned `uv` environment, a synthetic 12,000-line mixed-ending document, 800 auxiliary files, and generated flame-graph and source-heatmap reports; the results identify optimization candidates but do not establish a speedup or represent typical user behavior.
 
 ### [Qwen3.8 27B addition in words](https://github.com/simonw/research/tree/main/qwen38-addition-in-words#readme) (2026-10-04 23:34)
 

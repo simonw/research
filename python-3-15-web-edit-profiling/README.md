@@ -1,5 +1,10 @@
 # Profiling web-edit with Python 3.15: flame graphs and source heatmaps
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 Python 3.15's built-in sampling profiler produced useful, interactive profiles of the unmodified `web-edit` app from PyPI. In a deliberately busy editing workload, preserving a large document's line endings appeared in 64.8% of recorded CPU stacks. The most important configuration choice was sampling **all threads**: 95.1% of the recorded stacks came from the app's AnyIO worker thread. A main-thread-only recording would have missed most of the filesystem work.
 
 The experiment also exposed two practical issues: macOS required a locally signed interpreter for process-memory access, and replaying the binary recording to a heatmap lost the collection statistics in the heatmap header. This report explains the workload, results, interpretation, and reproduction steps. The second visualization is a source-code heatmap, not a heap-memory profile.
