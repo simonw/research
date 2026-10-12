@@ -1,0 +1,9 @@
+[project]
+name = "web-edit-profiling-demos"
+version = "0.1.0"
+description = "Python 3.15 flame graph and source heatmap demos of the PyPI web-edit app"
+requires-python = ">=3.15,<3.16"
+dependencies = ["web-edit==0.1a0"]
+
+[tool.uv]
+package = false

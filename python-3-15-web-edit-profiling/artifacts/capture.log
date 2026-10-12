@@ -1,0 +1,14 @@
+Captured 20000 samples in 20.00 seconds
+Sample rate: 999.99 samples/sec
+Error rate: 13.40
+  Binary Encoding:
+    Records:          14,509
+      RLE repeat:     2,566 (17.7%) [3,353 samples]
+      Full stack:     1,314 (9.1%)
+      Suffix match:   175 (1.2%)
+      Pop-push:       10,454 (72.1%)
+  Frame Efficiency:
+    Frames written:   34,847
+    Frames saved:     74,305 (68.1%)
+    Bytes (pre-zstd): 291.5 KB
+Binary profile written to /Users/simon/Documents/Codex/2026-10-12/i-need-a-python-3-15/artifacts/web-edit.bin (15296 samples)
