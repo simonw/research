@@ -12,7 +12,7 @@
 //! `EXPLAIN QUERY PLAN` on SQLite 3.45.1). Every constant (graph included) is a parameter, so
 //! the text depends only on the chain's shape and is shared by the statement pool. A slot
 //! becomes an output column at its first occurrence; every later occurrence (in the same alias
-//! or a later one) is an equality with it.
+//! or a later one) is an equality with it. A statement joins at most [`MAX_ALIASES`] tables.
 use std::fmt::Write;
 
 use sq_core::batch::Slot;
@@ -31,6 +31,11 @@ pub(crate) struct Rendered {
     pub out: Vec<Slot>,
 }
 
+/// SQLite joins at most 64 tables in one statement (`BMS`, the width of its table bitmasks;
+/// preparing more fails with "at most 64 tables in a join"), so an SQL chain closes before it
+/// would need a 65th alias.
+pub(crate) const MAX_ALIASES: usize = 64;
+
 const COL_NAMES: [&str; 4] = ["g", "s", "p", "o"];
 
 fn col_name(c: Col) -> &'static str {
@@ -47,8 +52,12 @@ fn from_item(order: IndexOrder, alias: usize) -> String {
 }
 
 /// Render a chain of quad patterns, each with the index order it is read through. None when a
-/// pattern does not read one fixed stored graph, or when the chain binds no slot.
+/// pattern does not read one fixed stored graph, when the chain binds no slot, or when it has
+/// more than [`MAX_ALIASES`] patterns.
 pub(crate) fn render(aliases: &[(QuadPat, IndexOrder)], dataset: &DatasetSpec) -> Option<Rendered> {
+    if aliases.len() > MAX_ALIASES {
+        return None;
+    }
     let mut select = String::new();
     let mut from = String::new();
     let mut terms: Vec<String> = Vec::new();
