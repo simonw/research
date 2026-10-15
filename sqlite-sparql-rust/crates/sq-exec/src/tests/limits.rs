@@ -12,7 +12,7 @@ fn big(fx: &Fx, n: i64) -> TermId {
 fn interrupt_is_polled_during_cpu_work() {
     let fx = Fx::new();
     let p = big(&fx, 20_000);
-    // The entry poll succeeds; a later poll (every 4096 rows) reports the interrupt.
+    // The first poll (after 4096 rows) succeeds; a later one reports the interrupt.
     let ts = Rc::new(TestStore::new(fx.store.clone()));
     ts.interrupt_after.set(Some(1));
     let mut e = Q::new(&fx.store, 2, scan(v(0), c(p), v(1))).exec(ts.clone());
@@ -25,11 +25,13 @@ fn interrupt_is_polled_during_cpu_work() {
     let j = hash_join(scan(v(0), c(p), v(1)), values(&[0], vec![]), &[0], &[], JoinKind::Inner, false);
     let mut e = Q::new(&fx.store, 2, j).exec(ts);
     assert!(matches!(e.count(), Err(Error::Interrupted)));
-    // Interrupted before anything runs.
+    // A count over a filter is CPU work: the first poll reports the interrupt.
     let ts = Rc::new(TestStore::new(fx.store.clone()));
     ts.interrupt_after.set(Some(0));
-    let mut e = Q::new(&fx.store, 2, scan(v(0), c(p), v(1))).exec(ts);
-    assert!(matches!(e.ask(), Err(Error::Interrupted)));
+    let f = filter(scan(v(0), c(p), v(1)), Expr::Less(Box::new(sv(1)), Box::new(cv(int(0)))));
+    let mut e = Q::new(&fx.store, 2, f).exec(ts.clone());
+    assert!(matches!(e.count(), Err(Error::Interrupted)));
+    assert_eq!(ts.polls.get(), 1);
 }
 
 #[test]

@@ -99,12 +99,14 @@ impl Shared {
     /// Checks the interrupt flag and the deadline.
     pub fn poll(&self) -> Result<()> {
         self.store.check_interrupt()?;
-        if let Some(d) = self.deadline
-            && Instant::now() >= d
-        {
-            return Err(Error::Timeout);
+        self.check_deadline()
+    }
+
+    pub fn check_deadline(&self) -> Result<()> {
+        match self.deadline {
+            Some(d) if Instant::now() >= d => Err(Error::Timeout),
+            _ => Ok(()),
         }
-        Ok(())
     }
 
     /// Records `n` rows of CPU work; polls every [`POLL_ROWS`] rows.

@@ -175,7 +175,7 @@ impl Execution {
             timeout_ms: opts.timeout_ms,
             max_memory_mb: opts.max_memory_mb,
             profile_nodes: nodes,
-            rng: StdRng::from_os_rng(),
+            rng: StdRng::from_rng(&mut rand::rng()),
         });
         let sh = Rc::new(sh);
         let values = sh.take_values();
@@ -211,9 +211,11 @@ impl Execution {
         self.cx.sh.mem_used()
     }
 
+    /// Runs one API call: checks the deadline (interrupts are polled by the CPU loops every
+    /// `POLL_ROWS` rows), accounts the time, and closes the operator tree on an error.
     fn timed<R>(&mut self, f: impl FnOnce(&mut Self) -> Result<R>) -> Result<R> {
         let t = Instant::now();
-        let r = self.cx.sh.poll().and_then(|_| f(self));
+        let r = self.cx.sh.check_deadline().and_then(|_| f(self));
         self.exec_ns += t.elapsed().as_nanos() as u64;
         if r.is_err() {
             self.root.finish(&mut self.cx);
