@@ -4,9 +4,9 @@
 (built by `sq-plan`) and runs it directly against any `sq_core::store::QuadStore`: the SQLite
 store in production, `MemStore` in tests. It is a pull-based Volcano executor over 1024-row
 batches of integer term ids. Joins, OPTIONAL, MINUS, property paths, correlated EXISTS,
-grouping, sorting, CONSTRUCT and DESCRIBE are all implemented here in Rust, with the store
-used only for index range scans, capped counts and dictionary lookups. The one exception is the
-hybrid `SqlJoin` leaf, which asks the store to run a planner-rendered SQL join. The crate also
+grouping, sorting, CONSTRUCT and DESCRIBE are all implemented here in Rust. The store supplies
+index range cursors, (capped) counts and dictionary lookups. The one exception is the hybrid
+`SqlJoin` leaf, which asks the store to run a planner-rendered SQL join. The crate also
 owns the per-query `TermResolver`, the memory budget, the deadline and interrupt polling. The
 crate is `#![forbid(unsafe_code)]`, and its whole public surface is `Execution` and
 `ExecCaches`.
@@ -63,20 +63,22 @@ Reduced, Sort, SortBySlot and Group. Slice, TopK, Count and GraphLoop pass only 
 substitution on. Project, Group and Count write substituted constants back onto their output
 rows. This is the planner's seed contract (see [../sq-plan/README.md](../sq-plan/README.md)).
 
-**4. Scans read index ranges, not SQL** (`ops/scan.rs`). At `open` the Scan works out which
-positions are bound (constants, seeds, the graph). If the planned `IndexOrder` still has those
-columns as its prefix, it keeps that order and `rebind`s the existing cursor, which allocates
-nothing. Otherwise it takes `IndexOrder::candidates(mask)[0]` and leases a new cursor. Repeated
-variables (`?x :p ?x`), the INT tag of an `IntRange` scan and FROM NAMED membership are checked
-after the read. A TEMP or otherwise non-storable bound value gives 0 rows without opening a
+**4. Scans are index range cursors** (`ops/scan.rs`). Each cursor is a `QuadCursor` leased from
+the store with `store.cursor(spec)`; in sq-sqlite that is a pooled range statement or the
+B-tree reader. At `open` the Scan works out which positions are bound (constants, seeds, the
+graph). If the planned `IndexOrder` still has those columns as its prefix, it keeps that order
+and `rebind`s the existing cursor, which allocates nothing. Otherwise it takes
+`IndexOrder::candidates(mask)[0]` and leases a new cursor. Repeated variables (`?x :p ?x`), the
+INT tag of an `IntRange` scan and FROM NAMED membership are checked after the read. A TEMP or otherwise non-storable bound value gives 0 rows without opening a
 cursor. Graph selection works as follows:
 
 - the store default graph, a single FROM graph, a constant graph, the GraphLoop register, or a
   seeded graph slot: one g-first cursor;
 - several FROM graphs: a k-way merge with an adjacent dedupe (the RDF merge is a set);
 - `UnionAll`: the g=0 cursor merged with the g-last partner index (SPOG, PSOG, POSG or OSPG);
-- a free graph slot: one cursor per graph when FROM NAMED lists at most 8 graphs, otherwise the
-  g-last cursor plus a membership check.
+- a free graph slot: with `NamedGraphs::All` the g-last cursor binds it; with a FROM NAMED list,
+  one g-first cursor per graph for up to 8 graphs, otherwise the g-last cursor plus a membership
+  check.
 
 **5. Joins** (`ops/bind_join.rs`, `hash_join.rs`, `merge_join.rs`, `minus.rs`).
 - **BindJoin** re-opens `right` once per distinct seed tuple of each left batch. When
@@ -156,7 +158,7 @@ let lowered = sq_plan::lower_query(&query, &*store, &opts)?;
 let plan = sq_plan::optimize(lowered, &*store, &opts)?;
 let mut exec = Execution::new(Rc::clone(&store), plan, &opts, ExecCaches::default())?;
 
-let width = exec.variables().len();        // projected variable names
+let width = exec.variables().len();        // number of projected variables
 let mut ids = Vec::new();
 while exec.next_rows(&mut ids, 1024)? > 0 {} // appends width ids per row, 0 = unbound
 let mut terms = Vec::new();
@@ -295,14 +297,14 @@ executor.
 
 ## Further reading
 
-- `docs/SPEC.md`:
+- [`docs/SPEC.md`](../../docs/SPEC.md):
   - §4.1-§4.3: rows, late materialization, decode paths;
   - §5.1, §5.3, §5.4: execution model, operators, algebra mapping;
   - §5.5 (paths), §5.6 (datasets), §5.7 (CONSTRUCT, DESCRIBE, update);
   - §6.7: aggregates;
   - §11: the stub API.
-- `docs/DECISIONS.md`: the decoupling of expressions and EXISTS from execution, Substitute mode,
-  `safe_inject`.
+- [`docs/DECISIONS.md`](../../docs/DECISIONS.md): the decoupling of expressions and EXISTS from
+  execution, Substitute mode, `safe_inject`.
 - [../sq-core/README.md](../sq-core/README.md): `TermId`, TEMP ids, `Batch`, `QuadStore`,
   `plan::Op`.
 - [../sq-expr/README.md](../sq-expr/README.md): expression evaluation, aggregates and SortKeys.
