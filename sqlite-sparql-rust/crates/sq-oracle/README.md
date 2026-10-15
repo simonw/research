@@ -26,7 +26,9 @@ shipped extension (`ext/`, `sq-api`) links it.
                                      sq-oracle
                                          |
    dev-dependency of:  sq-plan (tests/differential.rs, optimizer.rs, review_wp8*.rs)
-                       sq-engine (tests/differential.rs fuzzer, review_wp10_update_oracle.rs)
+                       sq-engine (tests/differential.rs fuzzer, review_wp10_diff.rs,
+                                  review_wp10_large.rs, review_wp10_shapes.rs,
+                                  review_wp10_update_oracle.rs)
    optional dependency of tools/sq-w3c (feature `oracle`, on by default): --backend oracle
    own dev-dependencies: sq-memstore (test store), sq-plan + oxttl (end-to-end tests only)
 ```
@@ -118,10 +120,15 @@ before sq-expr runs, and are handed to it through the `ExistsEval` callback.
 | `!(...)` (NPS) | set | one pair however many non-excluded predicates link x and y |
 | `P?`, `P*`, `P+` | set | `*` and `+` use ALP: a DFS with a visited set, so cycles terminate |
 
+An NPS with inverse members, such as `!(:a|^:b)`, reaches the oracle as `Alt(Nps, Inv(Nps))`,
+because spargebra splits it that way. Each `Nps` is a set, but the `Alt` is a bag union. A
+pair matched both forwards and backwards therefore appears twice, for example the self-loop
+`:x :q :x`.
+
 The zero-length rules are as follows:
 
-- A fixed endpoint matches itself even when it is not a node of the graph, so `:o :p* ?x`
-  binds `?x = :o` (W3C `zero_or_one_set_start`).
+- A fixed endpoint matches itself even when it is not a node of the graph. So `:o :p* ?x`
+  binds `?x = :o`, and `?s :p? :o` binds `?s = :o` (W3C `zero_or_one_set_start`).
 - With both ends free, every node of the graph matches itself. `nodes(G)` is the subjects
   and objects of the graph; a term used only as a predicate is not a node.
 - The middle of a sequence is a variable, so it only takes zero-length steps through graph
@@ -141,8 +148,9 @@ of pairs. sq-exec was changed to match both points (see `notes.md`).
 
 - Groups appear in order of first occurrence.
 - Without keys, the whole input is one group, even when the input is empty:
-  `SELECT (COUNT(*) AS ?c) {}` over no solutions gives one row with 0. With keys and no input,
-  there are no groups.
+  `SELECT (COUNT(*) AS ?c) { ?s :none ?o }` gives one row with `?c = 0`. With keys and no
+  input, there are no groups. Note that `{}` is not an empty input. It is one empty solution,
+  so `SELECT (COUNT(*) AS ?c) {}` gives `?c = 1`.
 - An aggregate whose value is an error leaves its slot unbound, but the group row is kept.
 - `COUNT(DISTINCT *)` compares the in-scope variables of the group input (`ir::in_scope`),
   except blank-node pattern variables.
@@ -155,30 +163,57 @@ group". The oracle does not do this, and neither does sq-exec's current `ops/gro
 puts error and unbound keys in one group.
 
 **7. Deterministic environment.** `NOW()` and the random source behind `RAND()`, `UUID()` and
-`STRUUID()` come from `OracleOptions`. Without options they come from the clock and the OS. The
-differential tests fix both so that the native engine can be compared with the oracle.
+`STRUUID()` come from `OracleOptions`. Without options (`evaluate`), they come from the clock
+and the OS. Some callers fix both, so that the native engine can be compared with the oracle:
+
+- sq-oracle's own tests;
+- every sq-engine test that uses the oracle, either through `fuzz::engines::oracle` or
+  through `review_wp10_update_oracle.rs`.
+
+sq-plan's differential and optimizer tests and sq-w3c call plain `evaluate`. A query that uses
+`NOW()`, `RAND()`, `UUID()` or `STRUUID()` is not deterministic there. sq-plan's random queries
+never use those functions.
 
 ## Public API tour
 
 The whole public API is in `src/lib.rs`:
 
 ```rust
+#[derive(Clone, Debug, PartialEq)]
 pub enum OracleOutput {
     Solutions { vars: Vec<String>, rows: Vec<Vec<Option<Arc<Term>>>> }, // SELECT, solution order
     Boolean(bool),                                                       // ASK
     Graph(Vec<[Arc<Term>; 3]>),           // CONSTRUCT / DESCRIBE: a set, first-seen order
 }
+#[derive(Clone, Debug, Default)]
 pub struct OracleOptions { pub now: Option<oxsdatatypes::DateTime>, pub rng_seed: Option<u64> }
-pub fn evaluate(q: &LoweredQuery, store: &dyn QuadStore) -> Result<OracleOutput>;
+// Result is sq_core::Result, whose error type is sq_core::Error.
+pub fn evaluate(q: &LoweredQuery, store: &dyn QuadStore) -> Result<OracleOutput>; // default options
 pub fn evaluate_with(q: &LoweredQuery, store: &dyn QuadStore, opts: &OracleOptions) -> Result<OracleOutput>;
 ```
+
+Because `OracleOutput` is `PartialEq`, tests can write
+`assert_eq!(out, OracleOutput::Boolean(true))`. Because `OracleOptions` is `Default`,
+`OracleOptions { rng_seed: Some(1), ..Default::default() }` works.
+
+An expression error never reaches the caller. It is handled by SPARQL's own rules: the slot is
+left unbound, the filter is false, or the aggregate is unbound. The errors a caller can see are:
+
+- `Error::Invalid` from `ir::validate` (see concept 1), or for an EXISTS id that is not in the
+  query;
+- `Error::Unsupported("SERVICE")` for a non-SILENT `SERVICE`;
+- `Error::Internal` for an id the resolver cannot decode (an invalid inline id or an unknown
+  TEMP id);
+- any error the store returns, for example `Error::Interrupted` from `check_interrupt()`.
 
 The oracle reads the store only through `cursor()`, `named_graphs()`, `dict()` (`lookup` and
 `decode_one`) and `check_interrupt()`. It runs unchanged on `MemStore` and `SqliteStore`. The
 sq-engine fuzzer runs it on three stores and first checks that the three answers agree.
 
-From SPARQL text, the pattern used by `tests/sparql.rs`, sq-engine's fuzzer and sq-w3c (this
-snippet was compiled and run against the current source):
+From SPARQL text, this is the pattern that `tests/sparql.rs` and sq-engine's fuzzer use.
+`tests/sparql.rs` also passes a base IRI to `parse_query` and to `QueryOptions`. sq-w3c does the
+same thing in its own way: it parses with `spargebra::SparqlParser` directly, sets a base IRI,
+and calls plain `evaluate`. This snippet was compiled and run against the current source:
 
 ```rust
 use std::str::FromStr;
@@ -207,8 +242,10 @@ assert_eq!(vars, ["y"]);
 assert_eq!(rows.len(), 3); // :b, :c and :a (around the cycle), each once: `+` is a set
 ```
 
-The unit tests skip the planner and build the IR by hand. Their `Fx` fixture in
-`src/tests/mod.rs` does this; written out in full, it looks like this:
+The unit tests skip the planner and build the IR by hand, using the `Fx` fixture in
+`src/tests/mod.rs`. Written out in full, a query equivalent to the ones `Fx` builds looks like
+the snippet below. `Fx` itself differs in two ways: it sets `base_iri: Some("http://ex/")`, and
+it calls `evaluate_with` with a fixed `now` and `rng_seed: Some(7)`.
 
 ```rust
 use sq_core::eval_api::TempDict;
@@ -234,9 +271,16 @@ let out = sq_oracle::evaluate(&q, &store)?;   // `a`, `knows`, `store`: previous
 ```
 
 Output terms are `Arc<sq_core::Term>`. Call `.to_oxrdf()` on them to convert, as
-`tools/sq-w3c/src/backend/oracle.rs` does. Unbound values are `None`. Store blank nodes decode
-to their `b<hex>` labels. CONSTRUCT template blank nodes are fresh TEMP blank nodes for each
-solution. The output forms (`forms.rs`) behave as follows:
+`tools/sq-w3c/src/backend/oracle.rs` does. Unbound values are `None`. Blank nodes decode to
+two label schemes:
+
+- Store blank nodes decode to their `b<hex>` labels.
+- Fresh blank nodes decode to `t<n>` labels. These are the `BNODE()` results and the CONSTRUCT
+  template blank nodes, which are new for each solution. Both come from the query's
+  `TempDict`.
+
+Compare outputs modulo a bijection of blank nodes. The output forms (`forms.rs`) behave as
+follows:
 
 - **CONSTRUCT** skips template triples that have an unbound position, a literal subject or a
   non-IRI predicate.
@@ -245,8 +289,9 @@ solution. The output forms (`forms.rs`) behave as follows:
 
 ## Testing
 
+From the repository root:
+
 ```bash
-cd /home/user/research/sqlite-sparql-rust
 cargo test -p sq-oracle                       # 74 tests run, 1 ignored; ~0.01 s per binary once built
 cargo test -p sq-oracle --test review -- --ignored   # the known spargebra deviation (fails by design)
 ```
@@ -267,18 +312,22 @@ The crate's tests read no environment variables. They are:
     EXISTS cycles); `review` (3): adversarial review cases.
   - 5 module tests in `bag.rs`, `dataset.rs` and `resolver.rs`.
 - **`tests/sparql.rs` (11):** end to end from SPARQL text through sq-plan, over inline TriG.
-  Each test is a named W3C regression shape from SPEC §12.2, for example `values_and_path`,
-  `exists03`, `graph-minus`, `distinct-num` and `agg-err-01`.
+  Most tests transcribe a named regression shape from SPEC §12.2 or a W3C test, for example
+  `values_and_path`, `exists03`, `graph-minus`, `distinct-num` and `agg-err-01`.
 - **`tests/review.rs` (2 + 1 ignored):** nested sequences agree with top-level ones. The
   ignored test, `review_optional_filter_005_not_simplified_end_to_end`, documents that
   spargebra 0.4.7 applies the §18.2.2.8 simplification while parsing. The unit test
   `review_optional_filter_005_preferred_reading` shows that, given the right algebra, the
   oracle produces the expected answer.
 
-The W3C suite (`$W3C` is the `sparql` directory of a w3c/rdf-tests checkout; `scripts/check.sh`
-does not run this backend):
+The W3C suite runs from a checkout of https://github.com/w3c/rdf-tests. Point `W3C` at its
+`sparql` directory. `scripts/check.sh` defaults `W3C` to `$SCRATCH/w3c/rdf-tests/sparql`, where
+`SCRATCH` is the dev VM's scratch directory unless you set it. It does not run the oracle
+backend.
 
 ```bash
+git clone --depth 1 https://github.com/w3c/rdf-tests ../rdf-tests   # outside the repository
+W3C=$PWD/../rdf-tests/sparql
 cargo run --release -p sq-w3c -- --suite "$W3C" --backend oracle --known-failures tools/sq-w3c/known_failures.txt
 ```
 
@@ -286,13 +335,27 @@ Tests elsewhere that use the oracle as ground truth:
 
 ```bash
 cargo test -p sq-plan --test differential          # plans on MemStore + SQLite vs the oracle
-cargo test -p sq-engine --test differential        # short fuzz runs (seed 1, 300 cases)
+cargo test -p sq-engine --test differential        # short fuzz runs (seed 1, 300 queries)
 cargo test -p sq-engine --test differential -- --ignored --nocapture   # long runs: 10,000 queries, 3,000 updates
 ```
 
+In sq-engine's `differential` test, only the query runs are checked against the oracle. The
+update runs, 150 requests in the short run and 3,000 in the long run, apply each request to
+MemStore and both SQLite stores and compare the three stores with each other.
+`review_wp10_update_oracle.rs` is the one update test that uses the oracle. The `--ignored`
+run also includes `replay_report`, which only prints a hint unless `SQ_REPRO` is set.
+
 The fuzzer reads `SQ_FUZZ_SEED`, `SQ_FUZZ_CASES`, `SQ_FUZZ_POLICIES`, `SQ_FUZZ_UPDATES`,
-`SQ_FUZZ_BNODE_ANYWHERE` and `SQ_FUZZ_VERBOSE`. It skips any case whose oracle answer has more
-than 4,000 rows.
+`SQ_FUZZ_BNODE_ANYWHERE` and `SQ_FUZZ_VERBOSE`. The update fuzzer also reads `SQ_FUZZ_TRACE=1`,
+which prints every case. The fuzzer skips any case whose oracle answer has more than 4,000
+rows. To replay a saved mismatch report against the oracle under every configuration, run:
+
+```bash
+SQ_REPRO=report.txt cargo test -p sq-engine --test differential -- --ignored --nocapture replay_report
+```
+
+`SQ_REPRO_UNION=1`, `SQ_REPRO_NO_PROBES=1`, `SQ_REPRO_ANALYZE=1` and `SQ_REPRO_PLANS=1` adjust
+the replay.
 
 ## Numbers
 

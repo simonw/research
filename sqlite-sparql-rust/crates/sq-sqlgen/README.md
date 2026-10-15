@@ -2,14 +2,15 @@
 
 `sq-sqlgen` is sparqlite's baseline SPARQL-to-SQL translator. It turns a lowered SELECT or ASK
 query (`sq_core::ir::LoweredQuery`) into one SQL statement over the same `main.rdf_quad` table
-the native engine reads, returning the same integer `TermId`s. Storage, dictionary, ids and the
-decode/output path are shared, so a benchmark between the two engines measures only the
-evaluation strategy: SQLite's planner and VDBE against sparqlite's own. The crate produces SQL
-text only. It opens no connection and computes no values. Joins, id comparisons, grouping and
-ordering run in SQL. Anything that needs RDF value semantics calls a helper SQL function
-(`sparql_num`, `sparql_eval`, …). This crate defines the helpers' contract, and `sq-api`
-implements them with `sq-expr`. Size: about 3,400 lines of non-test code, 1,200 lines of unit
-tests (`src/tests/`) and 2,800 lines of integration tests (`tests/`).
+the native engine reads (plus `main.rdf_graph` for GRAPH membership and the named-graph list),
+returning the same integer `TermId`s. Storage, dictionary, ids and the decode/output path are
+shared, so a benchmark between the two engines measures only the evaluation strategy: SQLite's
+planner and VDBE against sparqlite's own. The crate produces SQL text only. It opens no
+connection and computes no values. Joins, id comparisons, grouping and ordering run in SQL.
+Anything that needs RDF value semantics calls a helper SQL function (`sparql_num`,
+`sparql_eval`, …). This crate defines the helpers' contract, and `sq-api` implements them with
+`sq-expr`. Size: about 3,400 lines of non-test code, 1,200 lines of unit tests (`src/tests/`)
+and 2,800 lines of integration tests (`tests/`).
 
 ## Where it fits
 
@@ -24,9 +25,30 @@ tests (`src/tests/`) and 2,800 lines of integration tests (`tests/`).
 
 The only normal dependency is `sq-core`, and `sq-api` is the only dependent. `BaselineRun` in
 `crates/sq-api/src/query.rs` translates a lowered query, steps the SQL on the same connection
-and decodes the result ids. The dev-dependencies (`sq-plan`, `sq-memstore`, `sq-sqlite`,
-`sq-expr`, `rusqlite`, `spareval`, `spargebra`, `oxrdf*`, `sparesults`, `rand`) serve the test
-harness, which runs the SQL on a real SQLite store and compares the answers with spareval.
+and decodes the result ids. The dev-dependencies (`sq-core` with its `testing` feature,
+`sq-plan`, `sq-memstore`, `sq-sqlite`, `sq-expr`, `rusqlite`, `spareval`, `spargebra`, `oxrdf`,
+`oxrdfio`, `oxttl`, `oxsdatatypes`, `sparesults`, `rand`) serve the test harness, which runs the
+SQL on a real SQLite store and compares the answers with spareval.
+
+### Using the baseline from SQL
+
+After loading the extension in the `sqlite3` CLI (see [sq-api](../sq-api/README.md)), three
+functions always use the baseline. The per-connection `engine` setting, or an `engine` option
+on one call, routes `sparql_query`, `sparql_rows` and the other query functions through it too:
+
+```sql
+SELECT sparql_to_sql('SELECT ?s WHERE { ?s ?p ?o } LIMIT 3');
+-- SELECT t1.s AS v0 FROM main.rdf_quad AS t1 WHERE t1.g = 0 LIMIT ?1
+SELECT sparql_explain('SELECT ?s WHERE { ?s ?p ?o } LIMIT 3', 'sqlplan');
+-- SEARCH t1 USING COVERING INDEX rdf_gosp (g=?)
+SELECT sparql_query_sql('SELECT ?s WHERE { ?s ?p ?o } LIMIT 3');   -- SPARQL-JSON
+SELECT sparql_count_sql('SELECT ?s WHERE { ?s ?p ?o }');
+SELECT sparql_config('engine', 'sql');      -- sparql_query now runs on the baseline
+SELECT count(*) FROM sparql_rows('SELECT ?s WHERE { ?s ?p ?o }', '{"engine":"sql"}');  -- one call
+```
+
+A query outside the subset fails with, for example,
+`sparql: unsupported: baseline: CONSTRUCT queries`.
 
 ## Key concepts
 
@@ -40,19 +62,21 @@ CONSTRUCT and DESCRIBE are `Error::Unsupported`.
 **2. Every query constant is a parameter.** `?N` binds `params[N - 1]`. `Params` (`src/sql.rs`)
 deduplicates values, and `Params::finish` renumbers placeholders by first use and drops values
 of fragments the translator discarded. Every value is referenced, so
-`sqlite3_bind_parameter_count == params.len()`. LIMIT/OFFSET values and fast-path bounds are
-parameters too. The only string literals in the SQL are `sparql_eval` operator names and XSD
-datatype IRIs from static tables. `g = 0` and `g <> 0` are written literally, so the schema's
-`WHERE g<>0` partial indexes stay usable. There is no `INDEXED BY`: SQLite plans with whatever
-`ANALYZE` left in `sqlite_stat1`.
+`sqlite3_bind_parameter_count == params.len()`. LIMIT/OFFSET values and bounds derived from
+query constants are parameters too. Fixed encoding constants (tag numbers, `TRUE_ID` 23, the
+`.0` bit 256, mantissa and inline-integer ranges) are SQL integer literals. The only string
+literals in the SQL are `sparql_eval` operator names and XSD datatype IRIs from static tables.
+`g = 0` and `g <> 0` are written literally, so the schema's `WHERE g<>0` partial indexes stay
+usable. There is no `INDEXED BY`: SQLite plans with whatever `ANALYZE` left in `sqlite_stat1`.
 
 **3. Blocks and bindings.** A graph pattern becomes a `Block` (`src/sql.rs`): a flat `SELECT`
 under construction with FROM items (quad aliases `tN`, derived tables `dN`, `LEFT JOIN`s),
 WHERE conditions and one `Col` per bound slot. A BGP is a self-join of `main.rdf_quad`
 aliases. Joins concatenate FROM lists, so SQLite plans a whole group as one join. A slot bound
-on both sides must be compatible. If either side may be unbound, the condition is
-`(a IS NULL OR b IS NULL OR a = b)` and the merged value `COALESCE(a, b)` (`compat` in
-`translate.rs`).
+on both sides must be compatible (`compat` in `translate.rs`). If neither side may be unbound,
+the condition is `a = b`. If only `b` may be unbound, it is `(b IS NULL OR b = a)` and the
+certainly-bound `a` is kept. If both may be unbound, it is `(a IS NULL OR b IS NULL OR a = b)`
+and the merged value is `COALESCE(a, b)`. Identical SQL on both sides needs no condition.
 
 | SPARQL | SQL |
 |---|---|
@@ -61,7 +85,7 @@ on both sides must be compatible. If either side may be unbound, the condition i
 | MINUS | `NOT EXISTS (…)` with the shared-domain condition |
 | `[NOT] EXISTS` | correlated `[NOT] EXISTS (SELECT 1 …)` |
 | VALUES | parameters for one row, otherwise a `VALUES` derived table (UNDEF is NULL) |
-| GROUP BY | SQL `GROUP BY` in a derived table; COUNT is `(COUNT(…) << 4) \| 6` (an inline integer id); SUM, AVG, MIN, MAX, SAMPLE, GROUP_CONCAT call aggregate helpers; never-bound keys group by `NULL` |
+| GROUP BY | SQL `GROUP BY` in a derived table; COUNT is `(COUNT(…) << 4) \| 6` (an inline integer id); SUM, AVG, MIN, MAX, SAMPLE, GROUP_CONCAT call aggregate helpers; never-bound keys are omitted, and if no key is ever bound the query groups by `NULL` (so an empty input still has no group) |
 | ORDER BY | `sparql_sortkey(id)` per key |
 | DISTINCT + ORDER BY a non-projected key | `row_number() OVER (ORDER BY …)`, then `GROUP BY` the projection and `ORDER BY min(rn)` |
 | LIMIT / OFFSET | `LIMIT ?n [OFFSET ?m]`; OFFSET without LIMIT binds the LIMIT parameter to -1 |
@@ -70,20 +94,24 @@ on both sides must be compatible. If either side may be unbound, the condition i
 expression as a condition (1, 0, or NULL for a SPARQL error), so SQL's three-valued AND/OR/NOT
 match `&&`/`||`/`!`, or as a term (an SQL expression yielding a `TermId`). In a FILTER or
 OPTIONAL condition (`Ctx::Truth`) false and error may be conflated, so `?n = "Alice"` is plain
-id equality. Under NOT, inside IF/COALESCE and for values (`Ctx::Exact`) the error must survive
-and the translation falls back to `sparql_eval`. Most fast paths test the tag bits `id & 15`
-(see `sq_core::Tag`). They apply only when the tested operand is a column or parameter: any other
-operand appears once in the SQL, so an expression's SQL stays linear in its size.
+id equality. Under NOT, inside IF/COALESCE and for values (`Ctx::Exact`) the error must survive:
+simple-literal equality keeps the id test but sends TYPED/TEMP rows to `sparql_eval`, and only
+an operand that is not a column or parameter falls back to `sparql_eval` entirely. Most fast
+paths test the tag bits `id & 15` (see `sq_core::Tag`). They apply only when the tested operand
+is a column or parameter: any other operand appears once in the SQL, so an expression's SQL
+stays linear in its size.
 - IRI and language-tagged constants compare by id (ids are canonical). Two columns: same id is
   equal unless it may be a NaN (TYPED or TEMP); an IRI or blank node against another id is
   unequal; the rest goes to `sparql_eval`.
 - Ordering against an inline integer or decimal constant (`src/numeric.rs`) splits on the row's
   tag. INT (6): the payload `x >> 4` against an integer floor/ceiling of the constant. DECIMAL
   (8): `sparql_num(x)` against the constant, only where the double comparison is provably exact
-  (row mantissa up to 2^53 - 1 against an integer, 2^51 - 1 against a decimal). TYPED (5), TEMP
-  (14) and other decimals: `sparql_eval`. Any other tag is not numeric, so the result is NULL
-  (error). Equality and `IN` use the same split; inline decimals compare as `(x | 256)`, which
-  normalizes the `.0` marker bit.
+  (row mantissa up to 2^53 - 1 against an integer, 2^51 - 1 against a decimal, and for a
+  decimal constant its own mantissa up to 2^51 - 1). TYPED (5), TEMP (14) and other decimals:
+  `sparql_eval`. Any other tag is not numeric, so the result is NULL (error). Equality and
+  `IN` use the same split, except that a non-numeric row is 0 (false), not NULL, and inline
+  decimals need no helper: they compare by id key as `(x | 256)`, which normalizes the `.0`
+  marker bit.
 - Inline dateTime/date constants compare by payload when tag and timezone bits match.
 - `+ - *` of inline integers stay in SQL while the result fits an inline integer.
 - `isIRI`/`isBlank`/`isLiteral` test tag bits. `CONTAINS`/`STRSTARTS`/`STRENDS` with a
@@ -139,6 +167,8 @@ pub fn translate(q: &LoweredQuery) -> Result<SqlQuery>;
 pub use helpers::{HELPER_FUNCTIONS, HelperFunction, HelperKind, eval_template};
 
 // sq_sqlgen::helpers
+pub const HELPER_FUNCTIONS: &[HelperFunction];
+pub enum HelperKind { Scalar, Aggregate }
 pub struct HelperFunction { pub name: &'static str, pub min_args: usize, pub max_args: usize,
                             pub kind: HelperKind, pub semantics: &'static str }  // max_args usize::MAX = variadic
 pub fn helper(name: &str) -> Option<&'static HelperFunction>;
@@ -150,9 +180,11 @@ pub const INT_TAG: i64 = Tag::Int as i64;                  // 6
 
 Translate after lowering against the store the SQL will run on: a constant absent from its
 dictionary becomes a TEMP id, and a BGP with a TEMP constant translates to an empty block.
-From `src/tests/golden.rs` (`store` holds `:age`):
+Adapted from `src/tests/golden.rs` and `src/tests/mod.rs`, where `store` is any `QuadStore`
+(the tests use an `sq_memstore::MemStore` with `:age` interned):
 
 ```rust
+use sq_core::{TermId, plan::QueryOptions};
 let parsed = sq_plan::parse_query("PREFIX : <http://ex.org/> SELECT ?x ?w WHERE { ?x :age ?a BIND(?a + 1 AS ?w) }", None)?;
 let lowered = sq_plan::lower_query(&parsed, &store, &QueryOptions::default())?;
 let q = sq_sqlgen::translate(&lowered)?;
@@ -222,6 +254,11 @@ compiled.eval(args, cx, true).map(|r| r.map(TermId::raw))                     //
 
 ## Testing
 
+The tests link the system libsqlite3 (the workspace's `rusqlite` has no `bundled` feature), so
+they need its development library (for example `libsqlite3-dev`; 3.45.1 is the calibrated
+version) and the toolchain pinned in `rust-toolchain.toml`. Run them from anywhere in the
+workspace. The full suite takes about 10 seconds.
+
 ```bash
 cargo test -p sq-sqlgen                        # 42 unit + 17 integration tests; none is #[ignore]d
 cargo test -p sq-sqlgen -- --nocapture         # also print the W3C, benchmark, limits and fuzz reports
@@ -245,7 +282,7 @@ merge (a set) itself, because spareval keeps duplicate triples across FROM graph
 | `tests/fuzz.rs` | seeded random graphs and queries (600 per seed), avoiding known spareval divergences |
 | `tests/benchmark.rs` | the 17 queries of `py/queries` on small generated data: all supported and matching |
 | `tests/limits.rs` | 21 families that grow one construct until rejected; every accepted size must prepare and match |
-| `tests/review.rs`, `tests/review_round2.rs` | adversarial-review regressions: zero-length paths and GRAPH membership, float promotion, BIND growth, the parameter limit |
+| `tests/review.rs`, `tests/review_round2.rs` | adversarial-review regressions: zero-length paths and GRAPH membership, float promotion, SQLite compile-time limits (wide BGP / IN / UNION, deep EXISTS), BIND growth, the parameter limit |
 | `tests/w3c.rs` | W3C SPARQL 1.0/1.1 query-evaluation tests whose query is inside the subset |
 
 `tests/w3c.rs` reads `$SQ_W3C_DIR` (default: a path in the dev VM's scratchpad) and passes with
@@ -255,7 +292,8 @@ Tests that need an entailment regime other than simple entailment are reported, 
 ## Measured results
 
 The crate has no timing benchmarks; its speed against the native engine is measured by the
-Python harness (`py/README-bench.md`, via `sparql_count_sql` and `sparql_query_sql`).
+Python harness (`py/README-bench.md`, via `sparql_count_sql`,
+`sparql_rows(…, '{"engine":"sql"}')` and `sparql_query_sql`).
 Measured on the project's 4-vCPU dev VM with SQLite 3.45.1:
 - W3C: 613 tests. 70 require an entailment regime (28 of them still match). Of the 509
   simple-entailment tests in the subset, 508 match the expected results; the one known
@@ -281,19 +319,21 @@ These return `Error::Unsupported("baseline: …")`:
   property paths other than `p` / `^p` inside a pushed `GRAPH ?g`.
 - Zero-length paths whose endpoint EXISTS substitutes in only some rows; closures nested more
   than 6 deep (the parser-stack check stops them earlier, see above).
-- `GROUP_CONCAT(DISTINCT …; SEPARATOR …)`; separators over 7 bytes (passed as an inline
-  short-string id).
+- `GROUP_CONCAT(DISTINCT …; SEPARATOR s)` with a separator other than a single space;
+  separators over 7 bytes (passed as an inline short-string id).
 - `COUNT(DISTINCT *)` next to a duplicate-sensitive aggregate, an aggregate over EXISTS, or
   keys/arguments over hidden variables.
 - Anything past SQLite 3.45.1's limits (concept 8). The parser model is calibrated for 3.45.1,
   whose stack is fixed; on 3.46+ (growable stack) it may reject queries that would prepare.
 
 Also: custom functions other than XSD casts, and unknown aggregates, translate to NULL
-(evaluation error) rather than being rejected; REDUCED is ignored, which the spec permits. As
-defense in depth, the author notes ask the host to map SQLite prepare errors (`parser stack
-overflow`, `at most 64 tables in a join`, `too many terms in compound SELECT`, `Expression tree
-is too large`, `too many arguments on function`, `too many SQL variables`, `variable number
-must be between`) to `Unsupported`, since a host with lowered `sqlite3_limit`s could hit them.
+(evaluation error) rather than being rejected; REDUCED is ignored, which the spec permits.
+`sq-api` does not map SQLite prepare errors: `BaselineRun::new` (`crates/sq-api/src/query.rs`)
+passes them through, so on a host with lowered `sqlite3_limit`s a query this crate accepts can
+fail with a plain SQLite error (`parser stack overflow`, `at most 64 tables in a join`, `too many
+terms in compound SELECT`, `Expression tree is too large`, `too many arguments on function`,
+`too many SQL variables`, `variable number must be between`). Mapping those messages to
+`Unsupported` in `sq-api` is a recommended follow-up.
 
 SPEC §9 is behind the code: the inline-integer fast path is the tag-split `CASE` of concept 4,
 not `… OR (x & 15) <> 6 AND sparql_num(x) > k` (which ignored float/double promotion); VALUES

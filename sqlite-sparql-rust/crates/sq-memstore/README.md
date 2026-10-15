@@ -3,7 +3,8 @@
 `sq-memstore` is an in-memory implementation of the sq-core storage traits `Dictionary`,
 `QuadStore` and `QuadStoreWriter`. Its one public type, `MemStore`, keeps quads in nine
 sorted sets that copy the nine covering indexes of the SQLite schema, and its term
-dictionary allocates ids the same way `sq-sqlite` does. Scans, counts, partial indexes and the
+dictionary allocates ids the same way `sq-sqlite` does (for the same write sequence; see key
+concept 3 for where they differ). Scans, counts, partial indexes and the
 signed-`i64` key order therefore behave the same as on a real database. The crate exists so
 that the planner, executor, oracle and engine can be built and tested without SQLite. It is
 also the reference for two parts of `sq-sqlite`: its writer semantics and its statistics
@@ -82,18 +83,30 @@ of row `r` is `(r << 4) | tag`. `intern` treats terms as follows:
 - A `Typed` literal interns its datatype IRI first, as `sq-sqlite` does, so both stores
   allocate rows in the same order.
 
+The ids are only the same when both stores see the same writes and sq-sqlite has not
+vacuumed or rolled back. sq-sqlite picks the next row as `max(max(id) + 1, FIRST_USER_ROW)`
+(`writer.rs`), so it reuses top rows freed by `vacuum_terms` or by a rolled-back write scope.
+MemStore's `next_row` only grows and never frees a row.
+
 `lookup` never inserts. `decode` handles inline ids through the codec, returns blank nodes as
-`Term::BNode("b<hex>")`, returns dictionary ids as the shared `Arc` from `rows`, and gives
-`Error::Internal` for anything else.
+`Term::BNode("b<hex>")` and returns dictionary ids as the shared `Arc` from `rows`. UNBOUND,
+ERROR, reserved tags, unknown rows and non-blank-node TEMP ids give `Error::Internal`.
+
+*Deviation:* the `Dictionary::decode` contract says every TEMP id is `Error::Internal`. But
+`decode` tests `is_bnode()`, which is also true for a TEMP id whose would-be tag is BNode, so
+such an id decodes to a made-up label (`TermId::temp(3, Tag::BNode)` gives `b1a`).
+sq-sqlite's `dict.rs` checks `tag() == Tag::BNode && is_storable()` and returns the error.
 
 **4. A graph registry next to the quads.** A `registry: BTreeSet<TermId>` tracks named
 graphs:
 
 - `insert` registers every named graph it mentions.
 - `create_graph` returns `Ok(false)` if the graph is already listed, and `Error::Invalid` for
-  the default graph or an id that cannot be stored.
+  the default graph or an id that cannot be stored. It does not check that the id is an IRI,
+  so `create_graph(TermId::from_int(5).unwrap())` returns `Ok(true)`.
 - `clear` never touches the registry, so a cleared graph stays listed.
-- `drop_graph` only removes the registry entry.
+- `drop_graph` only removes the registry entry. The trait says the quads "must already be
+  cleared", and MemStore does not check this.
 - `named_graphs()` returns the registry plus every distinct non-default `g`, sorted. It finds
   the `g` values with a skip-scan over `Gspo`.
 
@@ -108,9 +121,9 @@ type is neither `Send` nor `Sync`. Executions take `Rc<dyn QuadStore>`, so pass
 
 `QuadStoreWriter` leaves atomicity to the caller, and `MemStore` provides none. If a request
 fails part-way, the writes it already made stay. `insert` sorts and deduplicates its argument
-in place, and checks every quad before it changes anything. A non-storable id (TEMP, ERROR, or
-UNBOUND in s, p or o) rejects the whole batch with `Error::Internal`. `remove` does not
-validate.
+in place, and checks every quad before it changes anything. A TEMP, ERROR or reserved-tag id
+anywhere, or UNBOUND in s, p or o, rejects the whole batch with `Error::Internal`. By then the
+argument has already been sorted and deduplicated. `remove` does not validate.
 
 **6. Statistics and costs are hints only.** `analyze()` runs `compute_stats` over `quads()`
 and caches the result. `stats()` is `None` until the first `analyze()`, and later writes do
@@ -136,7 +149,22 @@ and `check_interrupt` always returns `Ok`.
 The public items are `MemStore` (`new`, `Default`, `Clone`, `quads()` returning every
 `[g,s,p,o]` sorted, `analyze()`, `set_costs()` and the three trait impls), `compute_stats`, and
 `simple(lex)`, a `Term::Literal(Literal::simple(lex))` helper that nothing in the workspace
-uses. The fragments below form one program. It was compiled and run against the current source,
+uses.
+
+To use `MemStore` in another workspace crate's tests, add these dev-dependencies (the
+pattern of `crates/sq-exec/Cargo.toml`):
+
+```toml
+[dev-dependencies]
+sq-memstore = { workspace = true }
+sq-core = { workspace = true, features = ["testing"] }  # sq_core::testing: random_quads, cursor_conformance
+oxrdf = { workspace = true }                            # pinned to =0.3.4
+```
+
+Without the `testing` feature, `sq_core::testing` does not exist. Instead of the `oxrdf` line
+you can use the re-export `sq_core::oxrdf`.
+
+The fragments below form one program. It was compiled and run against the current source,
 inside a function that returns `sq_core::Result<()>`.
 
 ```rust
@@ -202,19 +230,26 @@ assert!(store.drop_graph(g1)?);
 ```
 
 To run SPARQL on a `MemStore`, go through the sq-engine facade. The `mem` backend of
-`tools/sq-w3c` and the sq-engine tests do the same:
+`tools/sq-w3c` and the sq-engine tests do the same. This fragment also needs `sq-engine`,
+`sq-results`, `oxrdfio` and `spargebra` as dependencies (all `{ workspace = true }`):
 
 ```rust
+let ttl: &[u8] = b"@prefix : <http://ex/> . :bob :knows :alice .";       // load takes bytes
 sq_engine::load(&store, ttl, oxrdfio::RdfFormat::Turtle, None, None)?;   // -> #new quads
+let opts = sq_core::plan::QueryOptions::default();
 let json = sq_engine::query_to_string(Rc::new(store.clone()), "SELECT * WHERE { ?s ?p ?o }",
-    sq_results::ResultFormat::Json, &sq_core::plan::QueryOptions::default())?;
+    sq_results::ResultFormat::Json, &opts)?;
+// update takes an already parsed spargebra::Update (sq_plan::parse_update does the same)
+let u = spargebra::SparqlParser::new().parse_update("DELETE WHERE { ?s <http://ex/age> ?o }")
+    .map_err(|e| sq_core::Error::Syntax(e.to_string()))?;
+let report = sq_engine::update(Rc::new(store.clone()), &u, &opts)?;      // report.deleted == 1
 ```
 
 ## Testing
 
 ```bash
 cd /home/user/research/sqlite-sparql-rust
-cargo test -p sq-memstore          # 6 unit tests, ~0.4 s once built (dev profile is opt-level 1)
+cargo test -p sq-memstore          # 6 unit tests, well under a second once built (dev profile is opt-level 1)
 ```
 
 The crate has no `#[ignore]`d tests, no doc tests, no `tests/` directory and reads no
@@ -229,8 +264,8 @@ environment variables. The tests are in `src/tests.rs`:
   of them, checks the returned counts, re-runs the suite and compares `quads()` with the
   expected set.
 - **`dictionary_roundtrip_and_well_known`:** checks the tags of IRI, language, typed and
-  long-string terms, that `intern` is idempotent, `lookup`, and `decode` (which lower-cases
-  language tags). It also covers the `rdf:type` WELL_KNOWN row, inline integers, the
+  long-string terms, that `intern` is idempotent, `lookup`, and that `decode` returns the
+  language tag in lower case (oxrdf lower-cases it when the literal is built). It also covers the `rdf:type` WELL_KNOWN row, inline integers, the
   blank-node label round trip, `intern` rejecting blank nodes, and an unknown term.
 - **`graphs_registry_and_clear`:** registry, `create_graph`, `clear` and `drop_graph`
   semantics, and `insert` rejecting a TEMP id.
@@ -251,7 +286,7 @@ backend; the 3 failures are spargebra parser issues. Every UpdateEvaluationTest 
 
 ## Performance
 
-The crate has no benchmarks and is not tuned for speed:
+The crate has no benchmarks of its own and is not tuned for speed:
 
 - Creating a cursor costs O(log n) plus a copy of every matching row, so a prefix-0 scan
   copies a whole index.
@@ -265,11 +300,16 @@ The crate has no benchmarks and is not tuned for speed:
 calibration planned in WP-14. They set `scan_row` 20 ns, `scan_col` 2 ns, `seek_random` 300 ns
 and `seek_sorted` 150 ns, and take everything else from `SQL_CURSOR_COSTS`.
 
-The only measured MemStore number is in sq-exec. There, a BindJoin probe on MemStore takes
-about 1.3 µs according to the author's notes, and 1.2-1.8 µs in later re-runs. Both are
-release builds on the project's 4-vCPU dev VM. Most of that time is the range copy in
-`rebind`, not executor work (see [../sq-exec/README.md](../sq-exec/README.md)). Do not use
-MemStore timings to judge the SQLite store.
+MemStore timings measured elsewhere (release builds on the project's 4-vCPU dev VM):
+
+- sq-exec: a BindJoin probe on MemStore takes about 1.3 µs according to the author's notes,
+  and 1.2-1.8 µs in later re-runs. Most of that time is the range copy in `rebind`, not
+  executor work (see [../sq-exec/README.md](../sq-exec/README.md)).
+- sq-plan's StarMerge calibration (module doc of `crates/sq-plan/src/physical/star.rs`): on
+  300 subjects × 20 values of three predicates under `COUNT(*)`, the MergeJoin chain takes
+  2.6 ms and the StarMerge 0.6 ms; without the count, 46 ms against 70 ms.
+
+Do not use MemStore timings to judge the SQLite store.
 
 ## Limitations and gotchas
 
@@ -281,6 +321,13 @@ MemStore timings to judge the SQLite store.
   call `analyze()` again.
 - **Dictionary rows are never freed.** A term can still be looked up after its last quad is
   removed.
+- **The first spelling of a language tag wins.** The dictionary key lower-cases the tag, but
+  the stored term keeps the case it was interned with. A literal built with
+  `new_language_tagged_literal_unchecked("chat", "FR")` decodes as `"chat"@FR`, and a later
+  `"chat"@fr` gets the same id.
+- **`drop_graph` does not clear.** On a graph that still has quads it returns `true`, but the
+  graph stays in `named_graphs()`. Callers must clear first, as sq-engine's `DROP` does.
+  `create_graph` accepts any storable id, not only IRIs.
 - **Blank nodes are not checked against the store.** `lookup` of any well-formed `_:b<hex>`
   label returns an id even if no such blank node exists (sq-sqlite's `dict.rs` does the same).
   `fresh_bnode` ignores the quads, so in a store filled with hand-made `TermId::bnode(n)` ids
@@ -299,4 +346,5 @@ MemStore timings to judge the SQLite store.
   imitates.
 - The main test users of `MemStore`: [../sq-exec/README.md](../sq-exec/README.md),
   [../sq-plan/README.md](../sq-plan/README.md), [../sq-oracle/README.md](../sq-oracle/README.md)
-  and [../sq-engine/README.md](../sq-engine/README.md).
+  and sq-engine ([../sq-engine/src/lib.rs](../sq-engine/src/lib.rs), the facade with `load`,
+  `query_to_string` and `update`).

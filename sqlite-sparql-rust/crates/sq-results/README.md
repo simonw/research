@@ -41,9 +41,9 @@ whole batch and serializes straight from the decoded `Arc<Term>`s. `write_triple
 with `next_triples` and `[TermId; 3]`. The `ids` and `terms` vectors are allocated once and
 reused. `write_solutions` and `write_triples` put a 64 KiB `BufWriter` (`OUTPUT_BUFFER_BYTES`)
 in front of the caller's writer, because sparesults and oxrdfio issue many small writes.
-`write_boolean` writes its short document unbuffered and then flushes the caller's writer. The tests check the
-call pattern: 2 × 1024 + 17 rows take 4 `next_rows` calls (the last one returns 0) and 3
-`decode` calls.
+`write_boolean` writes its short document unbuffered and then flushes the caller's writer. The
+tests check the call pattern: 2 × 1024 + 17 rows take 4 `next_rows` calls (the last one returns
+0) and 3 `decode` calls.
 
 **2. Borrowed oxrdf views (`convert.rs`).** Four crate-private helpers (not public API) borrow
 decoded terms as oxrdf views without copying: `term_ref(&Term) -> TermRef`,
@@ -263,13 +263,14 @@ The 31 unit tests are spread over the source files:
   - golden ASK output in all four formats;
   - golden N-Triples, N-Quads and Turtle output, and a Turtle round trip through `oxttl`;
   - a check that `solution_json` equals the JSON writer's bindings;
-  - batching call counts for solutions and for triples;
+  - `next_rows` and `decode` call counts for solutions, and the `decode` call count for
+    triples;
   - zero-width rows, and the ERROR sentinel written as unbound;
   - source errors passed on unchanged, and contract violations returned as `Internal`;
   - formats from the wrong family returned as `Invalid`;
   - invalid triples.
 - **`src/native.rs`** (5 tests): the §8.4 mapping table (28 cases), NaN, 20 ill-typed lexical
-  forms, the range bounds of the integer types, and `Arc<Term>` arguments.
+  forms, accepted min/max bounds for several derived integer types, and `Arc<Term>` arguments.
 - **`src/json.rs`** (4 tests): every term kind, empty rows and rows with every variable unbound,
   escaping (byte-exact, and round-tripped through `serde_json`), and appending to an existing
   buffer.
@@ -280,16 +281,25 @@ The 31 unit tests are spread over the source files:
 
 `tests/review.rs` contains one adversarial test from the review round. **It fails at the time
 of writing**, which also makes `cargo test --workspace` fail. See the first item under
-Limitations.
+Limitations. That command is the first step of `scripts/check.sh`, which runs under
+`set -euo pipefail`, so the script stops there and runs none of its later gates (extension
+build, SQLite API checks, pytest, W3C runs). Use `cargo test -p sq-results --lib` for a green
+run of this crate.
 
 ## Performance
 
 The project log records no measured numbers for this crate. The cost model is the one described
 under Key concepts: one `next_rows` and one `decode` call per 1024 rows, no per-row allocation
-in the writers' own code, and a 64 KiB output buffer. To separate engine cost from decode and
-serialization cost, compare `sparql_count(q)` with `sparql_query(q)` on the same query.
-`sparql_count` runs the query fully but does not decode or serialize (SPEC §8.2, implemented in
-`sq-api`).
+in the writers' own code, and a 64 KiB output buffer for solutions and triples.
+
+To separate engine cost from decode and serialization cost, be careful with `sparql_count(q)`
+as a baseline. It does not decode or serialize (SPEC §8.2, implemented in `sq-api`), but it
+may also skip work through the executor's COUNT fast paths (`fast_count` in `sq-exec`). Scans
+can count inside the store index, merge joins sum run products, sorts are never built, BIND
+expressions are not evaluated, and a `COUNT(*)` with no DISTINCT or GROUP BY reports its one row
+without counting. For such queries, `sparql_query(q) - sparql_count(q)` overstates serialization
+cost. A closer baseline is `SELECT count(*) FROM sparql_rows(q)`, which enumerates every row but
+decodes no columns (SPEC §8.3), or a query whose operators have no fast path.
 
 ## Limitations and known gaps
 
@@ -310,13 +320,17 @@ serialization cost, compare `sparql_count(q)` with `sparql_query(q)` on the same
   declarations are not reused, and no `@base` is written. There is no RDF/XML, JSON-LD or TriG
   output: `ResultFormat::parse` rejects those names even though `sparql_load` accepts them as
   input. N-Quads output always uses the default graph.
+- **`xml` and `json` mean different things in different functions.** In `sparql_load`
+  (`sq-api`'s `rdf_format`) they mean RDF/XML and JSON-LD. In `sparql_query` (`ResultFormat`)
+  they mean SPARQL Results XML and SPARQL Results JSON.
 - **The native mapping loses information**, as the spec intends:
   - Lexical TEXT drops language tags and datatypes. The full term is available as N-Triples in
     the `t*` and `__term` columns.
   - `xsd:decimal` goes through `f64`.
   - Integers outside `i64` become TEXT.
-  - A NaN is returned as `Real(NaN)`, which SQLite stores as NULL. In `v*` columns it therefore
-    looks the same as an unbound value.
+  - A NaN is returned as `Real(NaN)`. `sq-api` (`src/value.rs`) maps it to NULL, as SQLite
+    would, before SQLite sees it. In `v*` columns it therefore looks the same as an unbound
+    value.
 
 ## Where the code differs from docs/SPEC.md
 
@@ -348,6 +362,6 @@ serialization cost, compare `sparql_count(q)` with `sparql_query(q)` on the same
   `SolutionSource` and `TripleSource` traits.
 - [../sq-exec/README.md](../sq-exec/README.md): `Execution`, the main implementor of both
   traits.
-- [../sq-engine/README.md](../sq-engine/README.md) and [../sq-api/README.md](../sq-api/README.md):
-  the callers (`write_results` and `query_to_string`; `sparql_query`, `sparql_rows` and native
-  values).
+- [../sq-engine/src/query.rs](../sq-engine/src/query.rs) and
+  [../sq-api/README.md](../sq-api/README.md): the callers (`write_results` and
+  `query_to_string`; `sparql_query`, `sparql_rows` and native values).

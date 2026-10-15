@@ -43,7 +43,9 @@ closure and module holds a clone. It is single-threaded (`Rc`, `Cell`, `RefCell`
 debug builds assert at each entry that no second thread entered (rule R7). Borrows are O(1) and
 taken with `try_borrow*`; a violation is `Error::Reentrant`, never a deadlock (rule R1).
 
-**2. The entry protocol.** Every function body and every `xFilter` goes through one of:
+**2. The entry protocol.** Every function that reads or writes the store, and every `xFilter`,
+goes through one of (`sparql_version`, `sparql_config` and `sparql_term_kind` need no entry;
+helpers running inside a baseline statement reuse that statement's entry):
 - `read_call(f)`: `enter()` (re-arm the pool, record depth), `store.read_scope(depth)`, `validate()`
   (the §4.4 epoch check; an absent schema reads as an empty store, an incompatible one fails),
   `f`, then `scope.close()` with its error reported.
@@ -57,7 +59,9 @@ Inside a statement that writes (`INSERT INTO t SELECT sparql_update(...)`) SQLit
 `SAVEPOINT`. `write_call` then runs without a scope only if `host_statement_writes()` proves that
 the host is the only running statement and it writes (autocommit, `sqlite3_txn_state == WRITE`,
 walking `sqlite3_next_stmt`): the host's transaction makes the request atomic. Otherwise the
-call is refused with a message that names the restriction (`savepoint_refusal`).
+call is refused with an `Error::Invalid` that names the restriction (raised by
+`host_statement_writes` itself, or by `savepoint_refusal` rewording SQLite's misleading
+`SQLITE_BUSY` "statements in progress").
 
 **3. Close hook** (`src/vtab/status.rs`, §8.7). `register()` prepares
 `SELECT 1 FROM main.sparql_status` once. Connecting that eponymous table arms the `sq-sqlite`
