@@ -17,7 +17,11 @@
 //! clonable `QuadStore` / `QuadStoreWriter` / `Dictionary` handle over it. The connection is
 //! never owned or closed here: callers pass its `sqlite3*` through [`RawDb::from_ptr`], arm
 //! the statement pool while their close hook is connected ([`StorageShared::arm_pool`]) and
-//! call [`StorageShared::validate_epoch`] once per API entry inside a read scope.
+//! call [`StorageShared::validate_epoch`] once per API entry inside a read scope. A read scope
+//! whose savepoint started the transaction commits nested writes when it ends: callers that
+//! write inside one end it with [`ReadScope::close`] to learn whether that commit succeeded.
+//! Scopes never leave a transaction open behind them, not even after `sqlite3_interrupt`
+//! (see the `scope` module).
 
 mod analyze;
 mod cache;

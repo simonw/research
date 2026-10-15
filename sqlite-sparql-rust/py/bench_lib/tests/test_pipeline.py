@@ -62,6 +62,17 @@ class PipelineTest(unittest.TestCase):
             data = json.load(fh)
         self.assertEqual(data["environment"]["sparqlite"]["version"], "sparqlite fake (SQLite 3.45.1)")
         self.assertEqual(len(data["measurements"]), 17 * 4 * 3)
+        # What ran is pinned: every query's text and hash, and the harness files.
+        for recorded, query in zip(data["queries"], result.queries, strict=True):
+            self.assertEqual((recorded["text"], recorded["sha256"]), (query.text, query.sha256))
+        self.assertEqual(len(data["environment"]["harness_sha256"]), 64)
+        self.assertIn("git_harness_changes", data["environment"])
+
+    def test_defaults_measure_every_mode(self):
+        """The default run times all three modes, so the spec's sparql_query_sql
+        (json mode) is in it, and counts engine-side on the reference engines."""
+        args = build_parser().parse_args(["--social", self.social])
+        self.assertEqual((args.modes, args.reference_count), ("count,full,json", "aggregate"))
 
     def test_mismatch_fails_the_run(self):
         # A "native" engine that silently drops the OPTIONAL part must be caught.

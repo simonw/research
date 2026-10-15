@@ -106,7 +106,7 @@ The default of `--products 7800` gives 1,004,103 triples.
 | `gen_social.py --persons 200000` | 1,600,000 | 175.0 MB | `b0c8f3a5adeb` | 3.3–3.8 s |
 | `gen_social.py --persons 625000` | 5,000,000 | 549.8 MB | `f55718e7a0c0` | 13.0 s |
 | `gen_bsbm.py` (7800 products) | 1,004,103 | 146.9 MB | `6586dcc57a51` | 2.5–3.1 s |
-| `gen_social.py --persons 10000` | 80,000 | 8.6 MB | `a6bc6da36ce2` | 0.1–0.2 s |
+| `gen_social.py --persons 10000` | 80,000 | 8.6 MB | `a6bc6da36ce2` | 0.1–0.3 s |
 
 The SHA-256 prefixes are those of the default seed (42). The benchmark records the full
 content hash of every dataset, so a run elsewhere can be checked against these.
@@ -156,57 +156,87 @@ because pyoxigraph does not finish it.
 ### Reference timings (pyoxigraph and rdflib, validation runs of 2026-10-15)
 
 These were measured before the extension existed, with pyoxigraph 0.5.11 in its isolated
-worker. Each cell is the median ms of 5 runs after 1 warm-up, given as `count / full /
-json`. The data was social with 200K persons (1.6M triples) and bsbm-lite with 7800
-products (1.0M triples). The timeout was 300 s.
+worker and the default modes. Each cell is the median ms of 5 runs after 1 warm-up. The
+data was social with 200K persons (1.6M triples) and bsbm-lite with 7800 products (1.0M
+triples). The timeout was 300 s. Loading took 8.0 s (social) and 4.3 s (bsbm).
 
-The machine was shared with concurrent cargo builds (load average 4–5 on 4 vCPUs), so
-repeated runs differ by up to about ±30%. Two examples:
+The machine was shared with concurrent cargo builds and other benchmark runs on 4 vCPUs,
+so repeated runs differ by up to about ±30%. For example, Q1 full took 256 ms in one run
+and 223 ms in the next, and loading social took 14.7 s and then 8.0 s.
 
-- Q1 count: 131 ms in the first run, 173 ms in the second.
-- Loading social: 6.0 s and 14.7 s.
+The `count` column is the default engine-side count. `count, iterate` is
+`--reference-count iterate` (the spec's `len(list(q))`), from a separate run made right
+after it. The difference is the cost of building every solution and term in Python. It is
+up to about 2× on queries with many result rows (Q11 1.95×, Q2 1.7×, Q1 1.55×), and lost
+in the noise on the others.
 
-The table shows the second run, made with the current harness:
-
-| # | pyoxigraph | # | pyoxigraph |
-|---|---:|---|---:|
-| Q1 | 173 / 256 / 242 | Q10 | 2,796 / 2,768 / 2,666 |
-| Q2 | 20.0 / 25.8 / 30.6 | Q11 | 329 / 530 / 461 |
-| Q3 | 2,261 / 2,297 / 2,318 | Q12 | 164 / 182 / 182 |
-| Q4 | 0.15 / 0.17 / 0.15 | Q13 | 418 / 342 / 314 |
-| Q5 | timeout (> 300 s) | Q14 | 138 / 171 / 164 |
-| Q6 | 141 / 135 / 163 | Q15 | 0.13 / 0.09 / 0.11 |
-| Q7 | 151 / 166 / 172 | Q16 | 452 / 430 / 467 |
-| Q8 | 179 / 131 / 128 | Q17 | 76.9 / 107 / 76.4 |
-| Q9 | 1,938 / 1,870 / 2,016 | | |
+| # | count | count, iterate | full | json |
+|---|---:|---:|---:|---:|
+| Q1 | 101 | 157 | 223 | 188 |
+| Q2 | 16.3 | 27.8 | 27.9 | 38.7 |
+| Q3 | 2,351 | 2,358 | 2,322 | 2,572 |
+| Q4 | 0.21 | 0.19 | 0.19 | 0.17 |
+| Q5 | timeout (> 300 s) | | | |
+| Q6 | 148 | 116 | 140 | 113 |
+| Q7 | 121 | 171 | 159 | 156 |
+| Q8 | 173 | 146 | 176 | 128 |
+| Q9 | 1,951 | 1,907 | 2,113 | 2,113 |
+| Q10 | 3,085 | 3,082 | 3,035 | 3,111 |
+| Q11 | 195 | 380 | 613 | 458 |
+| Q12 | 201 | 186 | 250 | 218 |
+| Q13 | 421 | 469 | 499 | 482 |
+| Q14 | 150 | 199 | 159 | 153 |
+| Q15 | 0.10 | 0.08 | 0.09 | 0.09 |
+| Q16 | 486 | 507 | 544 | 469 |
+| Q17 | 78.0 | 78.4 | 75.3 | 102 |
 
 Q5 is super-linear in pyoxigraph. Its OPTIONAL takes 1.0 s at 10K persons and 6.5 s at
 20K, so pyoxigraph never finishes it at 200K.
 
 On social with 10K persons (80K triples), pyoxigraph and rdflib agree on every query in all
-three modes.
+three modes, with every execution checked.
 
-- rdflib's count-mode times there range from 4.4 ms (Q15) to 24.5 s (Q5).
-- Its Q12 MINUS takes 10.6 s.
-- pyoxigraph is 10–1,150× faster on that data.
+- rdflib loads the data in 3.0 s, pyoxigraph in 0.3 s.
+- rdflib's count-mode times range from 3.9 ms (Q15) to 26.3 s (Q5).
+- Its Q12 MINUS takes 10.3 s.
+- In count mode, pyoxigraph is 12–1,900× faster on that data.
 
 ## Engines and modes
 
 `--engines` takes any of `native`, `baseline`, `pyoxigraph`, `rdflib` (or `all`). The
-default is all four. `--modes` takes any of `count`, `full`, `json`; the default is
-`count,full`.
+default is all four. `--modes` takes any of `count`, `full`, `json`; the default is all
+three, so a default run times and cross-checks both of the spec's baseline calls
+(`sparql_count_sql` in count mode, `sparql_query_sql` in json mode). When a run leaves json
+out, its settings line says that `sparql_query` and `sparql_query_sql` were not measured.
 
 | Engine | `count` | `full` | `json` |
 |---|---|---|---|
 | sparqlite-native | `SELECT sparql_count(?)` | `SELECT t0..t{n-1} FROM sparql_rows(?)`, fetched completely | `SELECT sparql_query(?, 'json')` |
 | sparqlite-baseline | `SELECT sparql_count_sql(?)` | `SELECT t0..t{n-1} FROM sparql_rows(?, '{"engine":"sql"}')`, fetched completely | `SELECT sparql_query_sql(?, 'json')` |
-| pyoxigraph | count of `Store.query(q)` | `str()` of every projected term | `.serialize(QueryResultsFormat.JSON)` |
-| rdflib | count of `Graph.query(q)` | N-Triples text of every projected term | `.serialize(format='json')` |
+| pyoxigraph | `Store.query(SELECT (COUNT(*) AS ?n) { q })` | `str()` of every projected term | `.serialize(QueryResultsFormat.JSON)` |
+| rdflib | `Graph.query(SELECT (COUNT(*) AS ?n) { q })` | N-Triples text of every projected term | `.serialize(format='json')` |
 
 Each mode does the same work on every engine, so the speed-ups compare engines rather than
 fetch shapes:
 
-- **count** runs the query to completion and counts solutions without building any term.
+- **count** runs the query to completion and counts its solutions inside the engine,
+  without decoding any result term or building a Python object per solution.
+  - That is what `sparql_count` does (§8.2: "no decode and no serialization").
+  - pyoxigraph and rdflib therefore run the query wrapped as a subquery,
+    `<prologue> SELECT (COUNT(*) AS ?bench_count) WHERE { <the original SELECT> }`
+    (`bench_lib.queries.count_query`). The PREFIX/BASE prologue is kept. `COUNT(*)` counts
+    every solution, duplicates and all-unbound ones included, so the value equals the
+    number of rows. The count variable is renamed if the query already uses it. A unit
+    test checks the rewrite against the plain query on every benchmark query.
+  - Counting by iterating `Store.query(q)` instead makes pyoxigraph decode every term and
+    build a `QuerySolution` per row. In review that took up to about 2× as long on the
+    benchmark queries at 200K persons (Q11: 363 vs 174 ms), so the count table would
+    overstate sparqlite's lead by as much.
+  - `--reference-count iterate` measures the spec's literal `len(list(q))` instead. The
+    count table's title then says that pyoxigraph and rdflib build every solution and that
+    `×o` is not like-for-like.
+  - ASK is evaluated and counts as 1. CONSTRUCT/DESCRIBE (not in the benchmark) and a
+    SELECT with `FROM` (a subquery cannot carry a dataset clause) are counted by iterating.
 - **full** builds exactly one Python string per projected term.
   - `n` is the number of projected variables. It is parsed from the query
     (`BenchQuery.projection`), and a unit test checks it against pyoxigraph for every
@@ -263,7 +293,8 @@ pyoxigraph's whole Q11 full run is about 640 ms.
 - **Process isolation.** pyoxigraph and rdflib run in a child process
   (`bench_lib/engines/isolated.py`) that holds the store.
   - The child times each execution itself, the same way the runner does, so pickling and
-    IPC are not measured.
+    IPC are not measured. It frees each result right after sending it, so freeing never
+    lands in the next execution's timing.
   - At `--timeout` the parent kills the child; the next query starts a new one and reloads
     the dataset.
   - Without this, a pathological query cannot be stopped: pyoxigraph's OPTIONAL on Q5 is
@@ -341,10 +372,19 @@ Then, for every query of that dataset and every (engine, mode) cell:
    - The Python engines' worker process is killed.
    - The cell becomes `timeout`, and the same engine's remaining modes for that query are
      recorded as timeouts without running them.
-4. The raw result of the last repetition is decoded **outside the timing**. For the SQLite
-   engines, the timed part is the SQL call plus `fetchall()` (full mode) or `fetchone()`
-   (count and json). Decoding gives a row count, an order-insensitive checksum, and, for
-   `ordered` queries, a sequence checksum.
+4. **Every execution's result is checked, outside the timing**, warm-up included. For the
+   SQLite engines, the timed part is the SQL call plus `fetchall()` (full mode) or
+   `fetchone()` (count and json).
+   - The first execution (cold caches) and the last one are decoded into a row count, an
+     order-insensitive checksum and, for `ordered` queries, a sequence checksum.
+   - Every other execution's rows are counted (`Engine.row_count`: the count itself, the
+     number of fetched rows, or the bindings of the JSON document).
+   - If the executions disagree, the cell is an **error** ("results differ between
+     executions") and the run fails. A wrong answer on cold caches, the shape of a §4.4
+     decode/lookup-cache bug, cannot hide behind correct warm repetitions.
+   - Each result is freed before the next timed call, never inside it. This holds in the
+     isolated worker process too, which keeps no reference to a result once it has been
+     sent.
 
 The JSON file is rewritten after every query, so a crash still leaves the partial results.
 
@@ -386,10 +426,12 @@ is given. The "Result checks" table lists the status, rows and checksum of every
 The markdown has these sections:
 
 1. Environment line: CPU, memory, and versions of SQLite, Python, pyoxigraph, rdflib and
-   sparqlite, plus the git revision.
-2. **Settings line.** Everything that changes what a column measures: modes, repetitions,
-   timeout, cell budget, `--full-columns`, the native `sparql_config` (or "default"), the
-   SQLite load path, isolation and `--rdflib-max`. It is followed by the command line.
+   sparqlite. It also gives the git revision, how many harness files differ from it, and
+   the harness digest (below).
+2. **Settings line.** Everything that changes what a column measures: modes (and a note
+   when json mode is off), repetitions, timeout, cell budget, `--full-columns`,
+   `--reference-count`, the native `sparql_config` (or "default"), the SQLite load path,
+   isolation and `--rdflib-max`. It is followed by the command line.
 3. **Datasets and load times.** Each dataset row shows its content SHA-256 prefix. The
    sparqlite cell gives the total time and the database size; the phases are listed below
    the table.
@@ -404,14 +446,27 @@ The JSON has these keys:
 
 | Key | Contents |
 |---|---|
-| `environment` | timestamp, Python, platform, CPU model and count, memory, SQLite version, pyoxigraph/rdflib versions, and the extension's path, SHA-256 prefix, `sparql_version()` and probe results (per call, plus the `missing` ones); git revision |
-| `config` | modes, warmup, repeat, timeout, cell budget; `engine_settings` (`full_columns`, `native_config`, `sqlite_load`, `reuse_db`, `isolate`, `rdflib_max`, `timeout_s`, extension path, work dir); `argv` (the command line) |
+| `environment` | timestamp, Python, platform, CPU model and count, memory, SQLite version, pyoxigraph/rdflib versions, and the extension's path, SHA-256 prefix, `sparql_version()` and probe results (per call, plus the `missing` ones); `git_revision`; `git_harness_changes` (the `git status --porcelain` lines of harness files that differ from it); `harness_sha256` |
+| `config` | modes, warmup, repeat, timeout, cell budget; `engine_settings` (`full_columns`, `reference_count`, `native_config`, `sqlite_load`, `reuse_db`, `isolate`, `rdflib_max`, `timeout_s`, extension path, work dir); `argv` (the command line) |
 | `engines` | name, column heading, status, version, message |
 | `datasets` | path, triples, bytes, `sha256` of the contents (two machines can confirm they ran the same bytes) |
-| `queries` | id, title, dataset, ordered, path |
+| `queries` | id, title, dataset, ordered, path, `sha256` and the full `text` exactly as sent to the engines |
 | `loads` | per dataset and engine: seconds, triples, phases, database size |
 | `measurements` | per dataset, query, engine and mode: status, `median_ms`, `times_ms`, `warmup_ms`, rows, checksum, sequence, message |
 | `checks` | per query: status, rows, checksum, participating cells, details |
+
+Everything that defines a measurement is pinned in the JSON:
+
+- the data, by content SHA-256;
+- the extension, by file SHA-256;
+- each query, by its text and SHA-256;
+- the harness, by `harness_sha256`. That is a SHA-256 over the paths and contents of
+  `bench.py`, the generators, `bench_lib/` and `queries/`, so it works without git.
+
+A run from a working tree with local edits is not described by the git revision alone, so
+`git_harness_changes` lists the harness files that differ from it. It is gathered with
+`git --no-optional-locks status`, which never rewrites the index that other processes in
+the same tree may be using.
 
 ## Tests
 
@@ -420,23 +475,32 @@ $PY py/bench.py --self-test                                          # unit test
 cd py && $PY -m unittest discover -s bench_lib/tests -t . -v         # unit tests only
 ```
 
-The unit tests (108) cover:
+The unit tests (126) cover:
 
 - term parsing and canonicalisation, including the cross-engine surface forms seen in
   practice (end-of-day `24:00:00` included);
 - checksum properties;
 - query headers, plus a lint that every `ORDER BY … LIMIT` query is marked `ordered`, and
   that the parsed projection equals pyoxigraph's for every query;
+- the count rewrite: it keeps the prologue, avoids variable clashes, skips forms it cannot
+  wrap, and counts exactly the rows of every benchmark query;
 - generator determinism and distributions;
-- the runner's protocol and every status;
+- the runner's protocol and every status, including results that differ between the
+  executions of one cell and results freed outside the timing;
 - process isolation (identical results, kill-and-restart at the timeout, errors crossing the
   process boundary);
-- the markdown and JSON output, including the recorded settings;
+- the markdown and JSON output, including the recorded settings, the count-mode variant,
+  and the query and harness pins;
 - the watchdog (no thread per execution, one interrupt per overrun, never a late one);
-- the engine adapters;
-- the review regressions in `test_review.py`: the timing overhead of the timeout guard,
-  load and probe failures that must fail the run, native "unsupported" as an error, the
-  recorded settings, and end-of-day dateTimes.
+- the engine adapters, including `row_count` agreeing with `decode` in every mode, and
+  both count variants agreeing on every query;
+- the review regressions:
+  - `test_review.py`: the timing overhead of the timeout guard, load and probe failures
+    that must fail the run, native "unsupported" as an error, the recorded settings, and
+    end-of-day dateTimes;
+  - `test_review_r2.py`: count mode not materialising terms on pyoxigraph, the isolated
+    worker freeing results outside the timing, every repetition being checked, and the
+    JSON pinning the queries.
 
 The sparqlite adapters are tested against `bench_lib/tests/fake_sparqlite.py`. It is a
 pyoxigraph-backed stand-in for a `sqlite3` connection with the extension loaded, and it

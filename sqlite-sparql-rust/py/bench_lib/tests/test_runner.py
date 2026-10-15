@@ -1,4 +1,5 @@
 import gc
+import time
 import unittest
 
 from bench_lib.checksum import ResultSet
@@ -213,6 +214,81 @@ class RunnerTest(unittest.TestCase):
         bad = Measurement("social", "Q1", "b", "full", "error", message="x")
         check = cross_check("social", query(), [ok, bad])
         self.assertEqual((check.status, check.rows, check.checksum), ("single", 1, "c1"))
+
+    def test_every_execution_is_checked(self):
+        """The first and last executions are decoded, the others only counted; a cell
+        whose executions disagree in rows or content is an error that fails the run."""
+
+        class Counting(ScriptedEngine):
+            decodes = row_counts = 0
+
+            def decode(self, q, mode, raw):
+                self.decodes += 1
+                return super().decode(q, mode, raw)
+
+            def row_count(self, q, mode, raw):  # the cheap path adapters provide
+                self.row_counts += 1
+                return len(raw)
+
+        a = Counting("a", {"Q1": ["<x>", "<y>"]})
+        result = runner([a], modes=["full"], warmup=2, repeat=3).run([DS], [query()])
+        self.assertEqual(result.measurements[0].status, "ok")
+        self.assertEqual((a.decodes, a.row_counts), (2, 4))
+
+        class Flaky(ScriptedEngine):
+            """Same number of rows every time, different content on the last run."""
+
+            def execute(self, q, mode):
+                rows = super().execute(q, mode)
+                return ["<z>", "<y>"] if len(self.calls) == 1 + 3 else rows
+
+        flaky = Flaky("flaky", {"Q1": ["<x>", "<y>"]})
+        good = ScriptedEngine("good", {"Q1": ["<x>", "<y>"]})
+        result = runner([good, flaky], modes=["full"]).run([DS], [query()])
+        cell = result.measurement("Q1", "flaky", "full")
+        self.assertEqual(cell.status, "error")
+        self.assertIn("results differ between executions: the first returned 2:", cell.message)
+        self.assertEqual(len(cell.times_ms), 3)  # the timings are kept
+        self.assertEqual(result.errors(), [cell])
+
+        class Growing(ScriptedEngine):
+            def execute(self, q, mode):
+                return super().execute(q, mode) * len(self.calls)
+
+        g = Growing("g", {"Q1": ["<x>"]})
+        cell = runner([g], modes=["count"]).run([DS], [query()]).measurements[0]
+        self.assertEqual(cell.status, "error")
+        self.assertIn("rows per execution [1, 2, 3, 4] (warm-up first)", cell.message)
+
+    def test_row_count_disagreeing_with_decode_is_an_adapter_error(self):
+        class Miscounts(ScriptedEngine):
+            def row_count(self, q, mode, raw):
+                return len(raw) + 1
+
+        cell = runner([Miscounts("m", {"Q1": ["<x>"]})], modes=["full"]).run(
+            [DS], [query()]).measurements[0]
+        self.assertEqual(cell.status, "error")
+        self.assertEqual(cell.message,
+                         "ValueError: Miscounts.row_count found 2 rows where decode found 1")
+
+    def test_single_execution_is_decoded_once(self):
+        a = ScriptedEngine("a", {"Q1": ["<x>"]})
+        result = runner([a], warmup=0, repeat=1).run([DS], [query()])
+        self.assertEqual([(m.status, m.rows) for m in result.measurements], [("ok", 1)] * 2)
+
+    def test_results_are_freed_outside_the_timing(self):
+        class SlowToFree(list):
+            def __del__(self):
+                time.sleep(0.03)
+
+        class Engine_(ScriptedEngine):
+            def execute(self, q, mode):
+                return SlowToFree(super().execute(q, mode))
+
+        a = Engine_("a", {"Q1": ["<x>"]})
+        m = runner([a], modes=["full"], warmup=1, repeat=3).run([DS], [query()]).measurements[0]
+        self.assertEqual(m.status, "ok")
+        self.assertLess(max(m.warmup_ms + m.times_ms), 15.0, m.times_ms)
 
     def test_json_round_trip(self):
         a = ScriptedEngine("a", {"Q1": ["<x>"]})

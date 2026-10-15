@@ -158,3 +158,17 @@ fn explain_query_plan_renders_the_tree() {
     assert!(lines[1].starts_with("  SEARCH main.rdf_quad USING COVERING INDEX rdf_gpos (g=? AND p=?)"));
     assert!(db.store.explain_query_plan("SELECT * FROM nowhere").is_err());
 }
+
+/// `RawDb::exec` runs multi-statement text with comments, and rejects text SQLite cannot
+/// parse completely (an embedded NUL ends SQLite's parse) instead of looping on it.
+#[test]
+fn raw_exec_runs_scripts_and_rejects_nul_bytes() {
+    let db = Db::mem();
+    let raw = db.shared().db();
+    raw.exec("CREATE TABLE x(a); -- comment\nINSERT INTO x VALUES (1); /* trailing */ ;\n").unwrap();
+    assert_eq!(db.query_i64("SELECT count(*) FROM x"), 1);
+    for bad in ["SELECT 1;\0", "\0", "INSERT INTO x VALUES (2);\0INSERT INTO x VALUES (3)"] {
+        assert!(matches!(raw.exec(bad), Err(sq_core::Error::Invalid(_))), "{bad:?}");
+    }
+    assert_eq!(db.query_i64("SELECT count(*) FROM x"), 1, "nothing of a rejected script ran");
+}

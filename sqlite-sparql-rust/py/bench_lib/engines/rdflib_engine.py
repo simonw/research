@@ -5,6 +5,9 @@ rdflib evaluates ``p+``/``p*`` property paths by recursing once per hop, so Q13
 graph.  Opening a dataset raises the limit to :data:`RECURSION_LIMIT`; CPython >= 3.12
 keeps Python-to-Python calls off the C stack, and the adapter normally runs in its own
 worker process (:mod:`bench_lib.engines.isolated`) anyway.
+
+``count`` mode runs :attr:`BenchQuery.count_text` (rdflib counts the solutions itself)
+unless ``--reference-count iterate`` asks for §12.4's ``len(list(q))``.
 """
 
 from __future__ import annotations
@@ -19,7 +22,8 @@ from ..datasets import Dataset
 from ..queries import BenchQuery
 from ..terms import XSD_STRING, Term, to_nt
 from .base import (Engine, EngineUnavailable, LoadInfo, result_set_from_nt_rows,
-                   result_set_from_ntriples_doc, result_set_from_sparql_json)
+                   result_set_from_ntriples_doc, result_set_from_sparql_json,
+                   serialised_row_count)
 
 RECURSION_LIMIT = 100_000
 
@@ -53,8 +57,8 @@ class RdflibEngine(Engine):
 
     def __init__(self, settings) -> None:
         super().__init__(settings)
-        self._rdflib = None
-        self._graph = None
+        self._rdflib: Any = None
+        self._graph: Any = None
 
     def probe(self) -> str:
         self._rdflib = _import()
@@ -83,12 +87,10 @@ class RdflibEngine(Engine):
         gc.collect()
 
     def execute(self, query: BenchQuery, mode: str) -> Any:
+        if mode == "count":
+            return self._count(query)
         rdflib = self._rdflib
         result = self._graph.query(query.text)
-        if mode == "count":
-            if query.form == "ask":
-                return 1
-            return sum(1 for _ in result)
         if mode == "full":
             if query.form == "ask":
                 return bool(result.askAnswer)
@@ -101,6 +103,23 @@ class RdflibEngine(Engine):
                 return result.serialize(format="json")
             return result.serialize(format="nt")
         raise ValueError(f"unknown mode {mode!r}")
+
+    def _count(self, query: BenchQuery) -> int:
+        counted = query.count_text if self.settings.reference_count == "aggregate" else None
+        if counted is not None:
+            (row,) = self._graph.query(counted)
+            return int(row[0])
+        result = self._graph.query(query.text)
+        if query.form == "ask":
+            return 1
+        return sum(1 for _ in result)
+
+    def row_count(self, query: BenchQuery, mode: str, raw: Any) -> int:
+        if mode == "count":
+            return raw
+        if mode == "full":
+            return 1 if query.form == "ask" else len(raw[1])
+        return serialised_row_count(query.form, raw)
 
     def decode(self, query: BenchQuery, mode: str, raw: Any) -> int | ResultSet:
         if mode == "count":

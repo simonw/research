@@ -4,17 +4,25 @@ An adapter is opened once per dataset (:meth:`Engine.open` loads the data and re
 :class:`LoadInfo`), then executes queries in the measurement *modes*:
 
 ``count``
-    run the query fully and count solutions (or triples) without materialising terms;
+    run the query fully and count solutions (or triples) inside the engine, without
+    decoding a result term or building a Python object per solution: ``sparql_count``
+    for sparqlite, and for pyoxigraph and rdflib the query wrapped as
+    ``SELECT (COUNT(*) AS ?n) WHERE { <query> }`` (:func:`~bench_lib.queries.count_query`).
+    ``EngineSettings.reference_count = "iterate"`` instead measures §12.4's
+    ``len(list(q))`` on the reference engines, which builds every solution and term
+    (graph forms, and SELECTs with a dataset clause, are always counted that way);
 ``full``
     materialise every projected result term as one Python string (N-Triples text or
     the engine's equivalent ``str()``), so every engine does the same work per term;
 ``json``
     produce the serialised SPARQL-JSON results document (N-Triples for graph forms).
 
-:meth:`Engine.execute` is the timed part and returns an opaque raw result;
-:meth:`Engine.decode` turns the raw result of the last repetition into a row count
-(``count``) or a canonical :class:`~bench_lib.checksum.ResultSet`, outside the timing.
-Adapters signal outcomes with the exceptions below; anything else is an engine error.
+:meth:`Engine.execute` is the timed part and returns an opaque raw result.  Outside the
+timing, the runner checks every execution's result: :meth:`Engine.decode` turns a raw
+result into a row count (``count``) or a canonical
+:class:`~bench_lib.checksum.ResultSet`, and the cheaper :meth:`Engine.row_count` only
+counts its rows.  Adapters signal outcomes with the exceptions below; anything else is
+an engine error.
 """
 
 from __future__ import annotations
@@ -30,6 +38,9 @@ from ..queries import BenchQuery
 from ..terms import canonical, canonical_nt, from_sparql_json, parse_nt
 
 MODES = ("count", "full", "json")
+#: How pyoxigraph and rdflib run ``count`` mode: the engine-side ``COUNT(*)`` rewrite
+#: (like-for-like with ``sparql_count``), or §12.4's ``len(list(q))``.
+REFERENCE_COUNTS = ("aggregate", "iterate")
 
 
 class EngineUnavailable(Exception):
@@ -85,12 +96,14 @@ class EngineSettings:
     rdflib_max: int = 100_000
     timeout_s: float = 600.0
     isolate: bool = True
+    reference_count: str = "aggregate"
 
     def to_json(self) -> dict:
         return {"work_dir": self.work_dir, "ext_path": self.ext_path, "reuse_db": self.reuse_db,
                 "sqlite_load": self.sqlite_load, "full_columns": self.full_columns,
                 "native_config": dict(self.native_config), "rdflib_max": self.rdflib_max,
-                "timeout_s": self.timeout_s, "isolate": self.isolate}
+                "timeout_s": self.timeout_s, "isolate": self.isolate,
+                "reference_count": self.reference_count}
 
 
 class Engine(ABC):
@@ -136,6 +149,13 @@ class Engine(ABC):
     def decode(self, query: BenchQuery, mode: str, raw: Any) -> int | ResultSet:
         """Turns ``execute``'s raw result into a count or a canonical result set."""
 
+    def row_count(self, query: BenchQuery, mode: str, raw: Any) -> int:
+        """The number of rows (``count`` mode: the count) in ``execute``'s raw result,
+        equal to ``len(decode(...))``.  Adapters override it with something cheaper than
+        canonicalising every term."""
+        value = self.decode(query, mode, raw)
+        return value if isinstance(value, int) else len(value)
+
 
 # --------------------------------------------------------------------------- helpers
 
@@ -161,6 +181,17 @@ def result_set_from_sparql_json(form: str, text: str | bytes) -> ResultSet:
     if form not in ("select", "ask"):
         raise ValueError(f"SPARQL-JSON results for a {form} query")
     return ResultSet(form="select", vars=vars_, rows=rows)
+
+
+def serialised_row_count(form: str, text: str | bytes) -> int:
+    """Rows of a ``json``-mode document without canonicalising its terms: the bindings of
+    a SPARQL-JSON document (1 for ASK), the statements of an N-Triples document."""
+    if form in ("select", "ask"):
+        doc = json.loads(text)
+        return 1 if "boolean" in doc else len(doc.get("results", {}).get("bindings", []))
+    if isinstance(text, bytes):
+        text = text.decode("utf-8")
+    return sum(1 for line in text.splitlines() if (s := line.strip()) and not s.startswith("#"))
 
 
 def result_set_from_ntriples_doc(text: str | bytes) -> ResultSet:

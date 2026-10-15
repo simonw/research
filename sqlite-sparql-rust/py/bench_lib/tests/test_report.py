@@ -111,10 +111,15 @@ class MarkdownTest(unittest.TestCase):
 
     def test_settings_and_mode_descriptions(self):
         self.assertIn("Settings: modes count, full; median of 5 after 1 warm-up; timeout 600 s; "
-                      "cell budget 120 s; full columns `terms`; native config default; "
+                      "cell budget 120 s; json mode off (`sparql_query` and the baseline's "
+                      "`sparql_query_sql` not measured); full columns `terms`; "
+                      "reference count `aggregate`; native config default; "
                       "SQLite load `auto`; pyoxigraph/rdflib in worker processes; "
                       "rdflib up to 100,000 triples. "
                       "Command: `py/bench.py --social 'data/s 200k.nt'`.", self.md)
+        self.assertIn("### count mode (solutions counted inside each engine, no result term "
+                      "materialised)", self.md)
+        self.assertIn("pyoxigraph: `Store.query(SELECT (COUNT(*) AS ?n) { q })`", self.md)
         self.assertIn("### full mode (one Python string per projected result term, on every engine)",
                       self.md)
         self.assertIn("native: `SELECT t0..t{n-1} FROM sparql_rows(q)`", self.md)
@@ -126,6 +131,29 @@ class MarkdownTest(unittest.TestCase):
         self.assertIn("native: `SELECT * FROM sparql_rows(q)`", star)
         self.assertIn("native config `reorder=0`", star)
         self.assertIn("pyoxigraph/rdflib in process", star)
+
+    def test_iterate_count_variant_is_labelled(self):
+        md = render_markdown(make_result(reference_count="iterate"))
+        self.assertIn("### count mode, `len(list(q))` variant (pyoxigraph and rdflib build "
+                      "every solution", md)
+        self.assertIn("so `×o` is not like-for-like", md)
+        self.assertIn("pyoxigraph: `len(list(Store.query(q)))`", md)
+        self.assertIn("native: `sparql_count(q)`", md)
+        self.assertIn("reference count `iterate`", md)
+
+    def test_json_mode_on_drops_the_note(self):
+        r = make_result()
+        r.config.modes = ["count", "full", "json"]
+        self.assertNotIn("json mode off", render_markdown(r))
+
+    def test_harness_pins_in_header(self):
+        r = make_result()
+        r.environment.update(git_harness_changes=[" M py/queries/q01-star4.rq"],
+                             harness_sha256="0123456789abcdef" * 4)
+        md = render_markdown(r)
+        self.assertIn("git abcdef123456 with 1 harness file changed; harness `0123456789ab`.", md)
+        r.environment.update(git_revision=None, git_harness_changes=None)
+        self.assertIn("sparqlite 0.1.0; harness `0123456789ab`.", render_markdown(r))
 
     def test_failed_engine_and_load_notes(self):
         r = make_result()
@@ -159,6 +187,9 @@ class MarkdownTest(unittest.TestCase):
                 data = json.load(fh)
             self.assertEqual(os.listdir(os.path.dirname(path)), ["r.json"])
         self.assertEqual(len(data["measurements"]), 16)
+        self.assertEqual(data["queries"][0]["sha256"], self.result.queries[0].sha256)
+        self.assertEqual(data["queries"][0]["text"], self.result.queries[0].text)
+        self.assertEqual(data["config"]["engine_settings"]["reference_count"], "aggregate")
         self.assertEqual(data["checks"][1]["status"], "mismatch")
         self.assertEqual(data["environment"]["sqlite_version"], "3.45.1")
 

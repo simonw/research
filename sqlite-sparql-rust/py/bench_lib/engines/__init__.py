@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from .base import (MODES, Engine, EngineSettings, EngineUnavailable, LoadInfo, QueryTimeout,
-                   QueryUnsupported, Timed)
+from .base import (MODES, REFERENCE_COUNTS, Engine, EngineSettings, EngineUnavailable, LoadInfo,
+                   QueryTimeout, QueryUnsupported, Timed)
 from .isolated import IsolatedEngine
 from .oxigraph import PyoxigraphEngine
 from .rdflib_engine import RdflibEngine
@@ -15,9 +15,9 @@ ENGINE_ORDER = ("sparqlite-native", "sparqlite-baseline", "pyoxigraph", "rdflib"
 ALIASES = {"native": "sparqlite-native", "baseline": "sparqlite-baseline",
            "oxigraph": "pyoxigraph", "ox": "pyoxigraph"}
 
-__all__ = ["ALIASES", "ENGINE_ORDER", "MODES", "Engine", "EngineSettings", "EngineUnavailable",
-           "IsolatedEngine", "LoadInfo", "QueryTimeout", "QueryUnsupported", "Timed",
-           "create_engines", "describe_extension", "parse_engine_list"]
+__all__ = ["ALIASES", "ENGINE_ORDER", "MODES", "REFERENCE_COUNTS", "Engine", "EngineSettings",
+           "EngineUnavailable", "IsolatedEngine", "LoadInfo", "QueryTimeout", "QueryUnsupported",
+           "Timed", "create_engines", "describe_extension", "parse_engine_list"]
 
 
 def parse_engine_list(spec: str) -> list[str]:

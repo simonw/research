@@ -3,8 +3,8 @@ import re
 import tempfile
 import unittest
 
-from bench_lib.queries import (load_queries, parse_query_file, parse_selection, query_form,
-                               query_projection, select_queries)
+from bench_lib.queries import (COUNT_VARIABLE, count_query, load_queries, parse_query_file,
+                               parse_selection, query_form, query_projection, select_queries)
 
 QUERY_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                          "queries")
@@ -38,6 +38,30 @@ class ShippedQueriesTest(unittest.TestCase):
         for q in self.queries:
             expected = tuple(v.value for v in empty.query(q.text).variables)
             self.assertEqual(q.projection, expected, q.id)
+
+    def test_count_rewrite_counts_the_same_solutions(self):
+        """Count mode of the reference engines runs ``count_query``; it must count
+        exactly the rows the query returns, on every benchmark query."""
+        import pyoxigraph
+        store = pyoxigraph.Store()
+        data = "".join(
+            f"<http://example.org/social/p{i}> <http://example.org/social/{p}> {o} .\n"
+            for i in range(12) for p, o in (
+                ("knows", f"<http://example.org/social/p{(i * 7 + 1) % 12}>"),
+                ("knows", f"<http://example.org/social/p{(i + 5) % 12}>"),
+                ("name", f'"Person {i}"'),
+                ("age", f'"{90 + i % 5}"^^<http://www.w3.org/2001/XMLSchema#integer>'),
+                ("city", f"<http://example.org/social/city{i % 3}>")))
+        data += "".join(f"<http://example.org/social/p{i}> "
+                        f"<http://www.w3.org/1999/02/22-rdf-syntax-ns#type> "
+                        f"<http://example.org/social/C{i % 10}> .\n" for i in range(12))
+        store.load(data.encode(), format=pyoxigraph.RdfFormat.N_TRIPLES)
+        for q in self.queries:
+            counted = q.count_text
+            self.assertIsNotNone(counted, q.id)
+            self.assertTrue(counted.startswith(q.text[:q.text.index("SELECT")]), q.id)
+            (solution,) = store.query(counted)
+            self.assertEqual(int(solution[0].value), len(list(store.query(q.text))), q.id)
 
     def test_all_select_with_explicit_prefixes(self):
         for q in self.queries:
@@ -97,6 +121,25 @@ class ParsingTest(unittest.TestCase):
         }
         for text, expected in cases.items():
             self.assertEqual(query_projection(text), expected, text)
+
+    def test_count_query(self):
+        q = "PREFIX : <http://e/>\n# SELECT ?bench_count in a comment\nSELECT ?n WHERE { ?n :p ?o }"
+        self.assertEqual(count_query(q),
+                         "PREFIX : <http://e/>\n# SELECT ?bench_count in a comment\n"
+                         f"SELECT (COUNT(*) AS ?{COUNT_VARIABLE}1) WHERE {{\n"
+                         "SELECT ?n WHERE { ?n :p ?o }\n}\n")
+        # A trailing comment cannot swallow the closing brace.
+        self.assertTrue(count_query("SELECT * { ?s ?p ?o } # end").endswith("# end\n}\n"))
+        # Keywords inside IRIs, strings and comments are not the query form.
+        q = 'BASE <http://e/SELECT> PREFIX x: <http://e/a#SELECT> SELECT ?s { ?s ?p "ASK" }'
+        self.assertTrue(count_query(q).startswith(
+            "BASE <http://e/SELECT> PREFIX x: <http://e/a#SELECT> SELECT (COUNT(*)"))
+        self.assertIsNotNone(count_query("SELECT (EXISTS { ?a ?b ?c } AS ?e) WHERE {}"))
+        self.assertIsNotNone(count_query("SELECT ?x WHERE { ?x ?p ?o } VALUES ?x { <http://e/> }"))
+        for text in ["ASK { ?s ?p ?o }", "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }",
+                     "DESCRIBE <http://e/x>", "SELECT ?s FROM <http://g> WHERE { ?s ?p ?o }",
+                     "select (1 AS ?one) from named <http://g> { }", "# no query"]:
+            self.assertIsNone(count_query(text), text)
 
     def test_selection(self):
         self.assertEqual(parse_selection("Q1, q3-Q5,7"), {1, 3, 4, 5, 7})

@@ -69,13 +69,19 @@ class Fixture(unittest.TestCase):
                               connect or connect_factory())
 
     def run_all(self, engine, dataset, queries, modes=("count", "full", "json")):
+        """Decoded results per (id, text, mode); also checks that the adapter's cheap
+        ``row_count`` agrees with its ``decode``."""
         engine.probe()
         engine.open(dataset)
         out = {}
         try:
             for q in queries:
                 for mode in modes:
-                    out[(q.id, q.text, mode)] = engine.decode(q, mode, engine.execute(q, mode))
+                    raw = engine.execute(q, mode)
+                    value = out[(q.id, q.text, mode)] = engine.decode(q, mode, raw)
+                    expected = value if isinstance(value, int) else len(value)
+                    self.assertEqual(engine.row_count(q, mode, raw), expected,
+                                     (engine.name, q.id, mode))
         finally:
             engine.close()
         return out
@@ -99,6 +105,45 @@ class ReferenceEnginesTest(Fixture):
                     self.assertEqual(multiset_checksum(va), multiset_checksum(vb), key)
                     if key[0] in ("Q8", "Q9", "Q17"):
                         self.assertEqual(sequence_checksum(va), sequence_checksum(vb), key)
+
+    def test_count_variants_agree(self):
+        """``aggregate`` (the engine counts) and ``iterate`` (§12.4's len(list(q))) give
+        the same counts on every query and form."""
+        for names in ("pyoxigraph", "rdflib"):
+            (agg,) = self.engines(names)
+            (it,) = self.engines(names, reference_count="iterate")
+            for dataset in (self.social, self.bsbm):
+                qs = [q for q in self.queries if q.dataset == dataset.name]
+                if dataset is self.social:
+                    qs += EXTRA_QUERIES
+                a = self.run_all(agg, dataset, qs, modes=("count",))
+                b = self.run_all(it, dataset, qs, modes=("count",))
+                self.assertEqual(a, b, names)
+
+    def test_aggregate_count_builds_no_solutions(self):
+        """In ``aggregate`` mode pyoxigraph is asked for the count, never for the
+        solutions themselves (unless the rewrite does not apply)."""
+        (ox,) = self.engines("pyoxigraph")
+        ox.probe()
+        ox.open(self.social)
+        seen = []
+        real_query = ox._store.query
+
+        class Spy:
+            def query(self, text):
+                seen.append(text)
+                return real_query(text)
+
+        ox._store = Spy()
+        try:
+            q1 = next(q for q in self.queries if q.id == "Q1")
+            self.assertEqual(ox.execute(q1, "count"), 16)
+            self.assertEqual(seen, [q1.count_text])
+            ask = EXTRA_QUERIES[0]
+            self.assertEqual(ox.execute(ask, "count"), 1)
+            self.assertEqual(seen[-1], ask.text)
+        finally:
+            ox.close()
 
     def test_forms(self):
         (ox,) = self.engines("pyoxigraph")

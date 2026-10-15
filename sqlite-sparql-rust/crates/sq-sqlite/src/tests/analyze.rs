@@ -123,3 +123,25 @@ fn analyze_empty_store() {
     assert_stats_eq(&st, &sq_memstore::compute_stats(&[]));
     assert!(db.store.stats().is_some(), "analyzed (empty) is not 'never analyzed'");
 }
+
+/// §2.3 step 6 bookkeeping: loads add to `loaded_since_analyze`, every analyze resets it.
+#[test]
+fn analyze_resets_the_load_counter() {
+    use crate::{BulkMode, LoadOptions, LoadSource};
+    let db = Db::mem();
+    let counter = || db.query_i64("SELECT coalesce((SELECT value FROM rdf_meta WHERE key='loaded_since_analyze'), 0)");
+    let opts = LoadOptions { bulk: BulkMode::Never, ..LoadOptions::new(oxrdfio::RdfFormat::NTriples) };
+    let nt = |from: usize, to: usize| -> String { (from..to).map(|i| format!("<http://ex/s{i}> <http://ex/p> <http://ex/o{i}> .\n")).collect() };
+    db.store.bulk_load(LoadSource::Bytes(nt(0, 100).as_bytes()), &opts).unwrap();
+    assert_eq!((counter(), db.query_i64("SELECT value FROM rdf_meta WHERE key='analyzed_quads'")), (0, 100));
+    db.store.bulk_load(LoadSource::Bytes(nt(100, 110).as_bytes()), &opts).unwrap();
+    db.store.bulk_load(LoadSource::Bytes(nt(105, 120).as_bytes()), &opts).unwrap();
+    assert_eq!(counter(), 20, "new quads only");
+    db.store.analyze().unwrap();
+    assert_eq!(counter(), 0);
+    // > 25% of analyzed_quads (120) since the last analyze: 31 new quads re-analyze.
+    db.store.bulk_load(LoadSource::Bytes(nt(120, 140).as_bytes()), &opts).unwrap();
+    assert_eq!(counter(), 20);
+    db.store.bulk_load(LoadSource::Bytes(nt(140, 151).as_bytes()), &opts).unwrap();
+    assert_eq!((counter(), db.query_i64("SELECT value FROM rdf_meta WHERE key='analyzed_quads'")), (0, 151));
+}

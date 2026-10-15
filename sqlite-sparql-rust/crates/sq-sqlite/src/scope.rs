@@ -95,14 +95,14 @@ impl StorageShared {
     }
 
     /// Steps the abort statement while an interrupt is pending: SQLite then rolls back the
-    /// whole transaction. `Ok` when the connection is back in autocommit mode.
-    fn force_rollback(&self) -> Result<()> {
+    /// whole transaction. Returns whether the transaction is gone; `false` means the statement
+    /// ran normally, i.e. the interrupt is no longer pending.
+    fn force_rollback(&self) -> Result<bool> {
         let stepped = self.abort.step();
         if self.db().autocommit() {
-            return Ok(());
+            return Ok(true);
         }
-        stepped?;
-        Err(Error::internal("forced rollback did not end the transaction"))
+        stepped.map(|()| false)
     }
 }
 
@@ -147,7 +147,11 @@ impl Savepoint {
     /// rollback when an interrupt is pending. `Ok` means the savepoint is gone.
     fn discard(&self) -> Result<()> {
         match self.discard_once() {
-            Err(Error::Interrupted) => self.shared.force_rollback(),
+            Err(Error::Interrupted) => match self.shared.force_rollback()? {
+                true => Ok(()),
+                // The interrupt is gone: the ordinary path works now.
+                false => self.discard_once(),
+            },
             r => r,
         }
     }

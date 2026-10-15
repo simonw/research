@@ -14,3 +14,7 @@ rand = { workspace = true }
 [dev-dependencies]
 sq-core = { workspace = true, features = ["testing"] }
 sq-memstore = { workspace = true }
+# End-to-end tests only (SPARQL text -> sq-plan lowering -> oracle); the unit tests build the
+# Logical IR by hand and need no planner.
+sq-plan = { workspace = true }
+oxttl = { workspace = true }

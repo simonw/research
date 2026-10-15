@@ -13,10 +13,14 @@ The first line names the query (``Q<n>: <title>``); ``dataset`` is ``social`` or
 ``bsbm``; ``ordered: true`` marks a total ``ORDER BY`` whose row sequence must match
 across engines.  The header lines are ordinary SPARQL comments, so the whole file is
 sent to the engines unchanged.
+
+The only rewrite the harness makes is :func:`count_query`, the engine-side count the
+reference engines run in ``count`` mode.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from dataclasses import dataclass
@@ -29,6 +33,18 @@ _ID_RE = re.compile(r"[Qq]?(\d+)")
 _FORM_RE = re.compile(r"(?<![\w:?$])(SELECT|ASK|CONSTRUCT|DESCRIBE)(?![\w:])", re.IGNORECASE)
 # Tokens of a SELECT clause: variables, brackets, and any other run of characters.
 _SELECT_TOKEN_RE = re.compile(r"[?$][\w\u00B7]+|[(){}*]|[^\s(){}*]+")
+_VARIABLE_RE = re.compile(r"[?$]([\w\u00B7]+)")
+# IRIs, strings and comments, matched in one left-to-right pass so that each hides the
+# others' delimiters ("#" inside an IRI, a quote inside a comment, ...).
+_LEXICAL_RE = re.compile(
+    r'<[^<>"{}|^`\\\s]*>'
+    r'|"""(?:[^"\\]|\\.|"(?!""))*"""'
+    r"|'''(?:[^'\\]|\\.|'(?!''))*'''"
+    r'|"(?:[^"\\\n]|\\.)*"'
+    r"|'(?:[^'\\\n]|\\.)*'"
+    r"|#[^\n]*")
+#: Name of the variable :func:`count_query` binds the count to (made unique per query).
+COUNT_VARIABLE = "bench_count"
 
 
 @dataclass(frozen=True)
@@ -54,13 +70,32 @@ class BenchQuery:
         """The projected variables of a SELECT query (see :func:`query_projection`)."""
         return query_projection(self.text) if self.form == "select" else None
 
+    @property
+    def count_text(self) -> str | None:
+        """The engine-side count of this query (see :func:`count_query`)."""
+        return count_query(self.text)
+
+    @property
+    def sha256(self) -> str:
+        """SHA-256 (hex) of the query text exactly as it is sent to the engines."""
+        return hashlib.sha256(self.text.encode("utf-8")).hexdigest()
+
+
+def _placeholder(m: re.Match) -> str:
+    first = m.group()[0]
+    return "<>" if first == "<" else "" if first == "#" else '""'
+
 
 def _strip_lexical(text: str) -> str:
     """``text`` with IRIs, strings and comments blanked out, so keywords and variables
     inside them are not mistaken for syntax."""
-    stripped = re.sub(r"<[^<>\s]*>", "<>", text)
-    stripped = re.sub(r'"(?:[^"\\\n]|\\.)*"' + r"|'(?:[^'\\\n]|\\.)*'", '""', stripped)
-    return re.sub(r"#[^\n]*", "", stripped)
+    return _LEXICAL_RE.sub(_placeholder, text)
+
+
+def _blank_lexical(text: str) -> str:
+    """Like :func:`_strip_lexical`, but overwrites with spaces, so that offsets into the
+    result are offsets into ``text``."""
+    return _LEXICAL_RE.sub(lambda m: " " * len(m.group()), text)
 
 
 def query_form(text: str) -> str:
@@ -123,6 +158,56 @@ def query_projection(text: str) -> tuple[str, ...] | None:
     else:
         return None
     return tuple(out) if out and len(set(out)) == len(out) else None
+
+
+@lru_cache(maxsize=256)
+def count_query(text: str) -> str | None:
+    """``text`` rewritten so that the engine counts its solutions itself::
+
+        <prologue: BASE, PREFIX and comments>
+        SELECT (COUNT(*) AS ?bench_count) WHERE {
+        <the original SELECT ... WHERE { ... } modifiers VALUES>
+        }
+
+    This is what the reference engines run in ``count`` mode.  Like ``sparql_count``
+    (docs/SPEC.md §8.2) it evaluates the query completely, but neither decodes a result
+    term nor builds a Python object per solution.  ``COUNT(*)`` counts every solution of
+    the subquery, including duplicates and solutions with every variable unbound, so
+    the value equals the number of rows the query returns.  The count variable is
+    renamed when the query already uses ``?bench_count``.
+
+    Returns None when the rewrite does not apply: for ASK, CONSTRUCT and DESCRIBE, and
+    for a SELECT with a dataset clause (``FROM``), which a subquery cannot carry.
+    """
+    blanked = _blank_lexical(text)
+    m = _FORM_RE.search(blanked)
+    if not m or m.group(1).upper() != "SELECT" or _has_dataset_clause(blanked, m.end()):
+        return None
+    used = set(_VARIABLE_RE.findall(text))
+    var, n = COUNT_VARIABLE, 1
+    while var in used:
+        var, n = f"{COUNT_VARIABLE}{n}", n + 1
+    prologue, body = text[:m.start()], text[m.start():]
+    return f"{prologue}SELECT (COUNT(*) AS ?{var}) WHERE {{\n{body}\n}}\n"
+
+
+def _has_dataset_clause(blanked: str, pos: int) -> bool:
+    """Does the SELECT clause that ends at or after ``pos`` (in lexically blanked text)
+    precede a ``FROM`` before its WHERE clause?"""
+    depth = 0
+    for m in _SELECT_TOKEN_RE.finditer(blanked, pos):
+        tok = m.group()
+        if tok == "(":
+            depth += 1
+        elif tok == ")":
+            depth -= 1
+        elif depth == 0:
+            upper = tok.upper()
+            if upper == "FROM":
+                return True
+            if upper == "WHERE" or tok == "{":
+                return False
+    return False
 
 
 def parse_query_file(path: str) -> BenchQuery:

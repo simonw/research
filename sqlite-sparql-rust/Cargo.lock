@@ -628,11 +628,13 @@ version = "0.1.0"
 dependencies = [
  "oxrdf",
  "oxsdatatypes",
+ "oxttl",
  "rand",
  "rustc-hash",
  "sq-core",
  "sq-expr",
  "sq-memstore",
+ "sq-plan",
 ]
 
 [[package]]

@@ -224,18 +224,168 @@ fn read_scope_release_with_a_live_cursor() {
     assert_eq!(db.shared().db().txn_state(), ffi::SQLITE_TXN_NONE);
 }
 
+/// A statement that keeps running while our code executes, standing in for the host
+/// statement of `SELECT sparql_update(…)`: it reads no database, so it neither changes
+/// `txn_state(main)` nor autocommit, and while it runs a pending interrupt stays pending.
+const HOST: &str = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 10) SELECT x FROM c";
+
+/// The forced-rollback statement is a possible writer for SQLite (so an interrupted step
+/// rolls the transaction back) yet changes nothing and starts no write transaction when it
+/// runs normally.
 #[test]
-fn zz_debug_forced_rollback() {
-    use crate::raw::RawStmt;
-    for sql in ["PRAGMA main.journal_mode", "UPDATE main.rdf_meta SET value=value WHERE key='write_gen'", "UPDATE main.rdf_meta SET value=value WHERE 0", "DELETE FROM main.rdf_graph WHERE 0"] {
-        let db = Db::mem();
-        let mut host = db.conn.prepare("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 10) SELECT x FROM c").unwrap();
+fn abort_statement_is_a_harmless_possible_writer() {
+    use crate::template::Fixed;
+    let db = Db::mem();
+    assert!(!db.conn.prepare(Fixed::Abort.sql()).unwrap().readonly());
+    let tables = db.query_i64("SELECT count(*) FROM sqlite_schema");
+    let r = db.store.read_scope(0).unwrap();
+    db.shared().refresh_abort().unwrap();
+    assert_eq!(db.shared().db().txn_state(), ffi::SQLITE_TXN_READ);
+    drop(r);
+    assert_eq!(db.query_i64("SELECT count(*) FROM sqlite_schema"), tables);
+}
+
+/// `CREATE INDEX` (here: user DDL between calls, and our own DDL inside the scope) expires
+/// every prepared statement, and an expired statement cannot be re-prepared while an
+/// interrupt is pending. The abort statement is refreshed when the scope opens and after DDL,
+/// so the forced rollback still works.
+#[test]
+fn interrupted_write_scope_rolls_back_after_statement_expiring_ddl() {
+    let db = Db::mem();
+    // Pool every scope statement, then expire them all.
+    db.insert(&random_quads(20, 5, false));
+    db.conn.execute_batch("CREATE TABLE unrelated(x); CREATE INDEX unrelated_x ON unrelated(x);").unwrap();
+    let before = db.query_i64("SELECT count(*) FROM rdf_quad");
+    let mut host = db.conn.prepare(HOST).unwrap();
+    {
         let mut rows = host.query([]).unwrap();
         assert!(rows.next().unwrap().is_some());
-        let mut abort = RawStmt::prepare(db.shared().db(), sql, true).unwrap();
-        db.conn.execute_batch("SAVEPOINT x; INSERT INTO rdf_graph VALUES (5)").unwrap();
+        let ws = db.store.write_scope(0).unwrap();
+        db.store.insert(&mut random_quads(21, 40, false)).unwrap();
+        // DDL inside the scope, as the loader runs it (exec, then refresh).
+        db.shared().db().exec("CREATE INDEX IF NOT EXISTS main.unrelated_x2 ON unrelated(x)").unwrap();
+        db.shared().refresh_abort().unwrap();
         db.shared().db().interrupt();
-        let r = abort.run();
-        eprintln!("{sql}: {r:?}, autocommit after {}", db.shared().db().autocommit());
+        assert!(matches!(db.store.check_interrupt(), Err(Error::Interrupted)));
+        assert!(matches!(ws.rollback(), Ok(())), "the forced rollback ends the transaction");
     }
+    drop(host);
+    assert!(db.shared().db().autocommit());
+    assert_eq!(db.query_i64("SELECT count(*) FROM rdf_quad"), before);
+    assert_eq!(db.query_i64("SELECT count(*) FROM sqlite_schema WHERE name='unrelated_x2'"), 0);
+    // The store is usable afterwards.
+    db.insert(&random_quads(22, 3, false));
+}
+
+/// Inside a user transaction, an update that cannot be undone on its own because of an
+/// interrupt rolls back the whole user transaction (SQLite's rule for interrupted writes)
+/// rather than leaving half of it to a later COMMIT.
+#[test]
+fn interrupted_write_scope_inside_a_user_transaction_rolls_it_back() {
+    let db = Db::mem();
+    db.conn.execute_batch("BEGIN; INSERT INTO rdf_graph(g) VALUES (4242);").unwrap();
+    let mut host = db.conn.prepare(HOST).unwrap();
+    {
+        let mut rows = host.query([]).unwrap();
+        assert!(rows.next().unwrap().is_some());
+        let ws = db.store.write_scope(0).unwrap();
+        db.store.insert(&mut random_quads(23, 30, false)).unwrap();
+        db.shared().db().interrupt();
+        assert!(matches!(db.store.check_interrupt(), Err(Error::Interrupted)));
+        ws.rollback().unwrap();
+    }
+    drop(host);
+    assert!(db.shared().db().autocommit(), "no half-applied transaction is left open");
+    assert_eq!(db.query_i64("SELECT count(*) FROM rdf_quad"), 0);
+    assert_eq!(db.query_i64("SELECT count(*) FROM rdf_graph"), 0);
+}
+
+/// A read-only savepoint inside the user's (deferred) transaction is left to that
+/// transaction when its RELEASE is interrupted: the user's work survives and COMMIT ends both.
+#[test]
+fn interrupted_read_scope_inside_a_user_transaction_keeps_it() {
+    let db = Db::mem();
+    db.conn.execute_batch("BEGIN").unwrap();
+    let mut host = db.conn.prepare(HOST).unwrap();
+    {
+        let mut rows = host.query([]).unwrap();
+        assert!(rows.next().unwrap().is_some());
+        let scope = db.store.read_scope(0).unwrap();
+        assert!(scope.is_active());
+        db.shared().validate_epoch().unwrap();
+        db.shared().db().interrupt();
+        assert!(matches!(scope.close(), Err(Error::Interrupted)));
+    }
+    drop(host);
+    assert!(!db.shared().db().autocommit(), "the user's transaction is still open");
+    db.conn.execute_batch("INSERT INTO rdf_graph(g) VALUES (77); COMMIT;").unwrap();
+    assert!(db.shared().db().autocommit());
+    assert_eq!(db.query_i64("SELECT count(*) FROM rdf_graph"), 1);
+}
+
+/// A read scope that owns the transaction commits nested writes when it closes; a refused
+/// COMMIT (SQLITE_BUSY: another connection reads a rollback-journal file) is reported by
+/// `close`, and the transaction is rolled back rather than left open.
+#[test]
+fn read_scope_close_reports_a_refused_commit_and_rolls_back() {
+    let db = Db::file();
+    db.insert(&random_quads(24, 10, false));
+    db.conn.busy_timeout(std::time::Duration::ZERO).unwrap();
+    let reader = db.reopen();
+    reader.conn.execute_batch("BEGIN; SELECT count(*) FROM rdf_quad;").unwrap();
+    let scope = db.store.read_scope(0).unwrap();
+    assert!(scope.is_active());
+    db.shared().validate_epoch().unwrap();
+    // The write lock (RESERVED) is compatible with the reader's SHARED lock …
+    let ws = db.store.write_scope(1).unwrap();
+    db.store.insert(&mut random_quads(25, 20, false)).unwrap();
+    ws.commit().unwrap();
+    // … the COMMIT (EXCLUSIVE) is not.
+    let closed = scope.close();
+    assert!(matches!(&closed, Err(Error::Sqlite { code, .. }) if code & 0xff == ffi::SQLITE_BUSY), "{closed:?}");
+    assert!(db.shared().db().autocommit());
+    reader.conn.execute_batch("COMMIT").unwrap();
+    assert_eq!(db.query_i64("SELECT count(*) FROM rdf_quad"), 10);
+}
+
+#[test]
+fn write_scope_rollback_undoes_and_reports() {
+    let db = Db::mem();
+    let ws = db.store.write_scope(0).unwrap();
+    db.store.insert(&mut random_quads(26, 15, true)).unwrap();
+    ws.rollback().unwrap();
+    assert!(db.shared().db().autocommit());
+    assert_eq!(db.query_i64("SELECT count(*) FROM rdf_quad"), 0);
+    assert_eq!(db.query_i64("SELECT count(*) FROM rdf_graph"), 0);
+    // Nested: only the inner scope is undone.
+    let outer = db.store.write_scope(0).unwrap();
+    db.store.insert(&mut random_quads(27, 5, false)).unwrap();
+    let inner = db.store.write_scope(0).unwrap();
+    db.store.insert(&mut random_quads(28, 5, false)).unwrap();
+    inner.rollback().unwrap();
+    outer.commit().unwrap();
+    assert_eq!(db.query_i64("SELECT count(*) FROM rdf_quad"), 5);
+}
+
+/// A failed positioning is reported again by `fill` (never a silent end of the scan) until
+/// the cursor is positioned anew.
+#[test]
+fn cursor_fill_after_a_failed_rebind_reports_until_repositioned() {
+    let db = Db::mem();
+    let quads = random_quads(29, 200, false);
+    db.insert(&quads);
+    let spec = ScanSpec::new(IndexOrder::Gpso, &[TermId::DEFAULT_GRAPH]);
+    let mut cur = db.store.cursor(&spec).unwrap();
+    let mut running = db.store.cursor(&ScanSpec::new(IndexOrder::Gspo, &[])).unwrap();
+    assert_eq!(running.fill(&mut Vec::new(), 1).unwrap(), 1);
+    db.shared().db().interrupt();
+    let (lo, hi) = (std::ops::Bound::Excluded(i64::MIN), std::ops::Bound::Included(i64::MAX));
+    assert!(matches!(cur.rebind(&[TermId::DEFAULT_GRAPH], lo, hi), Err(Error::Interrupted)));
+    assert!(matches!(cur.fill(&mut Vec::new(), 10), Err(Error::Interrupted)));
+    assert!(matches!(cur.fill(&mut Vec::new(), 10), Err(Error::Interrupted)), "still failed");
+    drop(running);
+    cur.rebind(&[TermId::DEFAULT_GRAPH], lo, hi).unwrap();
+    let mut out = Vec::new();
+    while cur.fill(&mut out, 64).unwrap() > 0 {}
+    assert_eq!(out.len() / 3, quads.len());
 }

@@ -7,9 +7,15 @@ separately), then for every query of that dataset and every (engine, mode) cell:
 2. ``repeat`` timed executions (default 5), reduced so that one cell stays within
    ``cell_budget_s`` when the warm-up shows the query is slow (at least one run); a
    warm-up that alone exceeds the budget is taken as the single sample;
-3. the median wall-clock time is reported; the raw result of the last run is decoded
-   (outside the timing) into a row count, an order-insensitive multiset checksum and,
-   for totally ordered queries, a sequence checksum.
+3. the median wall-clock time is reported.
+
+Every execution's result, warm-up included, is checked outside the timing.  The first
+(cold-cache) and the last execution are decoded into a row count, an order-insensitive
+multiset checksum and, for totally ordered queries, a sequence checksum; every other
+execution's rows are counted (:meth:`Engine.row_count`).  If the executions of one cell
+disagree, the engine answered the same query differently on cold and warm caches (or
+from run to run), and the cell is an *error* (:class:`InconsistentResults`).  The
+previous execution's result is freed before the next timed call, never inside it.
 
 The Python garbage collector is paused during each timed execution (as ``timeit``
 does), so collection pauses from earlier work do not land in a measurement.  An
@@ -37,7 +43,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .checksum import multiset_checksum, sequence_checksum
+from .checksum import ResultSet, multiset_checksum, sequence_checksum
 from .datasets import Dataset
 from .engines import Engine, EngineUnavailable, LoadInfo, QueryTimeout, QueryUnsupported, Timed
 from .queries import BenchQuery
@@ -51,6 +57,10 @@ TIMEOUT = "timeout"
 
 #: Message prefix of the error cells of an engine that failed its probe or its load.
 NOT_RUN = "not run: "
+
+
+class InconsistentResults(Exception):
+    """The executions of one cell did not all return the same result."""
 
 
 @dataclass
@@ -186,7 +196,8 @@ class RunResult:
             "engines": [e.to_json() for e in self.engines],
             "datasets": [d.to_json() for d in self.datasets],
             "queries": [{"id": q.id, "title": q.title, "dataset": q.dataset,
-                         "ordered": q.ordered, "path": q.path} for q in self.queries],
+                         "ordered": q.ordered, "path": q.path, "sha256": q.sha256,
+                         "text": q.text} for q in self.queries],
             "loads": [ld.to_json() for ld in self.loads],
             "measurements": [m.to_json() for m in self.measurements],
             "checks": [c.to_json() for c in self.checks],
@@ -195,6 +206,63 @@ class RunResult:
 
 def _log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
+
+
+@dataclass(frozen=True)
+class _Outcome:
+    """What one decoded execution is compared on."""
+
+    rows: int
+    checksum: str | None = None
+    sequence: str | None = None
+
+
+def _outcome(query: BenchQuery, value: int | ResultSet) -> _Outcome:
+    if isinstance(value, int):
+        return _Outcome(value)
+    return _Outcome(len(value), multiset_checksum(value),
+                    sequence_checksum(value) if query.ordered else None)
+
+
+class _Executions:
+    """The results of one cell's executions, checked outside the timing as they come
+    in: the first one is decoded completely, the others are counted, and the last one
+    is decoded completely by :meth:`finish`.  No raw or decoded result is kept."""
+
+    def __init__(self, engine: Engine, query: BenchQuery, mode: str) -> None:
+        self.engine, self.query, self.mode = engine, query, mode
+        self.rows: list[int] = []
+        self.first: _Outcome | None = None
+
+    def add(self, raw: Any) -> None:
+        if self.first is None:
+            self.first = _outcome(self.query, self.engine.decode(self.query, self.mode, raw))
+            self.rows.append(self.first.rows)
+        else:
+            self.rows.append(self.engine.row_count(self.query, self.mode, raw))
+
+    def finish(self, last_raw: Any) -> _Outcome:
+        """The checked outcome of the cell, given the last execution's raw result.
+
+        Raises :class:`InconsistentResults` when the executions disagree."""
+        if self.first is None:
+            raise ValueError("no execution was recorded")
+        if len(self.rows) == 1:
+            return self.first
+        last = _outcome(self.query, self.engine.decode(self.query, self.mode, last_raw))
+        if last.rows != self.rows[-1]:  # a bug in the adapter, not in the engine
+            raise ValueError(f"{type(self.engine).__name__}.row_count found {self.rows[-1]} "
+                             f"rows where decode found {last.rows}")
+        if len(set(self.rows)) > 1:
+            raise InconsistentResults(
+                f"results differ between executions: rows per execution {self.rows} "
+                "(warm-up first)")
+        if last != self.first:
+            raise InconsistentResults(
+                f"results differ between executions: the first returned "
+                f"{self.first.checksum} (sequence {self.first.sequence}), the last "
+                f"{last.checksum} (sequence {last.sequence})")
+        return last
 
 
 class Runner:
@@ -351,11 +419,13 @@ class Runner:
             m.status, m.message = UNAVAILABLE, why
             return m
         raw: Any = None
+        executions = _Executions(engine, query, mode)
         try:
             for _ in range(self.config.warmup):
-                raw = None
+                raw = None  # free the previous result before, not inside, the timing
                 elapsed, raw = self._timed(engine, query, mode)
                 m.warmup_ms.append(elapsed)
+                executions.add(raw)
             reps = self._repetitions(m.warmup_ms[-1]) if m.warmup_ms else self.config.repeat
             if m.warmup_ms and self._over_budget(m.warmup_ms[-1]):
                 # Repeating a query slower than the whole cell budget tells nothing new.
@@ -366,26 +436,23 @@ class Runner:
                 raw = None
                 elapsed, raw = self._timed(engine, query, mode)
                 m.times_ms.append(elapsed)
+                executions.add(raw)
                 if i == 0 and not m.warmup_ms:
                     reps = self._repetitions(elapsed)
                 i += 1
-            value = engine.decode(query, mode, raw)
+            outcome = executions.finish(raw)
         except QueryUnsupported as e:
             m.status, m.message = UNSUPPORTED, str(e)
         except EngineUnavailable as e:
             m.status, m.message = UNAVAILABLE, str(e)
         except QueryTimeout as e:
             m.status, m.message = TIMEOUT, str(e) or f"interrupted after {self.config.timeout_s:g} s"
+        except InconsistentResults as e:
+            m.status, m.message = ERROR, str(e)
         except Exception as e:  # noqa: BLE001 - engine failures are results, not crashes
             m.status, m.message = ERROR, f"{type(e).__name__}: {e}"
         else:
-            if isinstance(value, int):
-                m.rows = value
-            else:
-                m.rows = len(value)
-                m.checksum = multiset_checksum(value)
-                if query.ordered:
-                    m.sequence = sequence_checksum(value)
+            m.rows, m.checksum, m.sequence = outcome.rows, outcome.checksum, outcome.sequence
         self.progress(_describe(dataset.name, query, m))
         return m
 

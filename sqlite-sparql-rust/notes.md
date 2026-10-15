@@ -69,3 +69,11 @@ translating SPARQL to SQL text or running as an external client.
   excluding documented pyoxigraph divergences (NaN comparisons error, ROUND half-away-from-zero,
   oxsdatatypes decimal x*0 / 0/2.5 failing, STR canonicalising numerics...). Release micro-benchmarks:
   `?x > 500` on inline ints 10 ns/row, IdEq 8.7 ns, REGEX with literal prefix 87 ns, SUM(int) 12 ns.
+- Benchmark harness (py/bench.py + generators + Q1..Q17; 2 review rounds focused on fairness: e.g. a
+  timer thread inside the SQLite timed region, count mode not like-for-like (pyoxigraph built terms) —
+  fixed by timing engine-side COUNT(*) for the reference engines, every execution's result verified).
+  Data: social 200K persons = 1,600,000 triples (3.8 s to generate); bsbm-lite = 1,004,103 triples.
+  pyoxigraph 0.5.11 reference timings (count mode, median of 5, ms): Q1 101, Q2 16, Q3 2351,
+  Q4 0.2, Q5 >300 s timeout (super-linear OPTIONAL), Q6 148, Q7 121, Q8 173, Q9 1951, Q10 3085,
+  Q11 195, Q12 201, Q13 421, Q14 150, Q15 0.1, Q16 486, Q17 78. Load: 8.0 s social, 4.3 s bsbm.
+  rdflib on 80K triples: 3.9 ms .. 26 s; pyoxigraph 12-1900x faster than rdflib.

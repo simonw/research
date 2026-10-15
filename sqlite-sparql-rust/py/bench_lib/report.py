@@ -16,22 +16,27 @@ OXIGRAPH = "pyoxigraph"
 NATIVE = "sparqlite-native"
 
 MODE_TITLES = {
-    "count": "count mode (solutions counted, no result term materialised)",
+    "count": "count mode (solutions counted inside each engine, no result term materialised)",
     "full": "full mode (one Python string per projected result term, on every engine)",
     "json": "json mode (one serialised results document: SPARQL-JSON, N-Triples for graph forms)",
 }
 STAR_FULL_TITLE = ("full mode, `SELECT *` variant (the SQLite engines decode all 51 "
                    "`sparql_rows` columns per row, pyoxigraph and rdflib one string per "
                    "projected term, so `×o` is not like-for-like)")
+ITERATE_COUNT_TITLE = ("count mode, `len(list(q))` variant (pyoxigraph and rdflib build "
+                       "every solution and decode every term, the SQLite engines decode "
+                       "nothing, so `×o` is not like-for-like)")
 MODE_HOW = {
     "sparqlite-native": {"count": "`sparql_count(q)`", "json": "`sparql_query(q, 'json')`"},
     "sparqlite-baseline": {"count": "`sparql_count_sql(q)`",
                            "json": "`sparql_query_sql(q, 'json')`"},
-    "pyoxigraph": {"count": "count of `Store.query(q)`", "full": "`str()` of every term",
-                   "json": "`.serialize(JSON)`"},
-    "rdflib": {"count": "count of `Graph.query(q)`", "full": "N-Triples text of every term",
-               "json": "`.serialize('json')`"},
+    "pyoxigraph": {"count": "`Store.query(SELECT (COUNT(*) AS ?n) { q })`",
+                   "full": "`str()` of every term", "json": "`.serialize(JSON)`"},
+    "rdflib": {"count": "`Graph.query(SELECT (COUNT(*) AS ?n) { q })`",
+               "full": "N-Triples text of every term", "json": "`.serialize('json')`"},
 }
+ITERATE_COUNT_HOW = {"pyoxigraph": "`len(list(Store.query(q)))`",
+                     "rdflib": "`len(list(Graph.query(q)))`"}
 _STATUS_CELL = {UNSUPPORTED: "unsupported", UNAVAILABLE: "n/a", SKIPPED: "skipped",
                 ERROR: "**error**", TIMEOUT: "timeout"}
 
@@ -67,18 +72,27 @@ def _full_columns(result: RunResult) -> str:
     return result.config.engine_settings.get("full_columns", "terms")
 
 
+def _reference_count(result: RunResult) -> str:
+    return result.config.engine_settings.get("reference_count", "aggregate")
+
+
 def mode_title(result: RunResult, mode: str) -> str:
     if mode == "full" and _full_columns(result) == "star":
         return STAR_FULL_TITLE
+    if mode == "count" and _reference_count(result) == "iterate":
+        return ITERATE_COUNT_TITLE
     return MODE_TITLES.get(mode, mode)
 
 
 def mode_how(result: RunResult, engine: str, mode: str) -> str:
-    """How ``engine`` runs ``mode`` in this run (full mode depends on the settings)."""
+    """How ``engine`` runs ``mode`` in this run (full and count mode depend on the
+    settings)."""
     if mode == "full" and engine in (NATIVE, BASELINE):
         cols = "*" if _full_columns(result) == "star" else "t0..t{n-1}"
         options = ", '{\"engine\":\"sql\"}'" if engine == BASELINE else ""
         return f"`SELECT {cols} FROM sparql_rows(q{options})`"
+    if mode == "count" and _reference_count(result) == "iterate" and engine in ITERATE_COUNT_HOW:
+        return ITERATE_COUNT_HOW[engine]
     return MODE_HOW.get(engine, {}).get(mode, "?")
 
 
@@ -89,6 +103,8 @@ def _cell(m: Measurement | None, base: float | None, oxi: float | None, flagged:
     if m.status != OK:
         return _STATUS_CELL.get(m.status, m.status)
     med = m.median_ms
+    if med is None:  # an ok cell always has samples
+        return "?"
     text = fmt_ms(med)
     if len(m.times_ms) < requested:
         text += "†"
@@ -184,7 +200,7 @@ def _load_table(result: RunResult) -> list[str]:
             rec = next((r for r in result.loads if r.dataset == ds.name and r.engine == name), None)
             if rec is None:  # the engine did not get past its probe
                 row.append(_STATUS_CELL.get(engine_status.get(name, UNAVAILABLE), "n/a"))
-            elif rec.status != OK:
+            elif rec.status != OK or rec.info is None:
                 row.append(_STATUS_CELL.get(rec.status, rec.status))
             elif rec.info.shared_with:
                 short = dict(columns).get(rec.info.shared_with, rec.info.shared_with)
@@ -267,10 +283,14 @@ def settings_line(result: RunResult) -> str:
     parts = [f"modes {', '.join(cfg.modes)}",
              f"median of {cfg.repeat} after {cfg.warmup} warm-up",
              f"timeout {cfg.timeout_s:g} s", f"cell budget {cfg.cell_budget_s:g} s"]
+    if "json" not in cfg.modes:
+        parts.append("json mode off (`sparql_query` and the baseline's `sparql_query_sql` "
+                     "not measured)")
     s = cfg.engine_settings
     if s:
         native = s.get("native_config") or {}
         parts.append(f"full columns `{s.get('full_columns')}`")
+        parts.append(f"reference count `{s.get('reference_count', 'aggregate')}`")
         parts.append("native config " + (", ".join(f"`{k}={v}`" for k, v in native.items())
                                          if native else "default"))
         parts.append(f"SQLite load `{s.get('sqlite_load')}`"
@@ -282,6 +302,20 @@ def settings_line(result: RunResult) -> str:
     if cfg.argv:
         line += f" Command: `{shlex.join(cfg.argv)}`."
     return line
+
+
+def _source_note(env: dict) -> str:
+    """Which harness and queries ran: the git revision, how many harness files differ
+    from it, and the digest of the harness files."""
+    note = ""
+    if env.get("git_revision"):
+        note += f"; git {env['git_revision'][:12]}"
+        changes = env.get("git_harness_changes")
+        if changes:
+            note += f" with {len(changes)} harness file{'s' if len(changes) > 1 else ''} changed"
+    if env.get("harness_sha256"):
+        note += f"; harness `{env['harness_sha256'][:12]}`"
+    return note
 
 
 def render_markdown(result: RunResult) -> str:
@@ -297,7 +331,7 @@ def render_markdown(result: RunResult) -> str:
     lines.append(f"Run {env.get('timestamp_utc', '?')} on {env.get('cpu_model', '?')} "
                  f"({env.get('cpu_count', '?')} CPUs, "
                  f"{(env.get('memory_bytes') or 0) / 2**30:.0f} GiB); " + ", ".join(versions)
-                 + (f"; git {env['git_revision'][:12]}" if env.get("git_revision") else "") + ".")
+                 + _source_note(env) + ".")
     lines.append("")
     lines.append(settings_line(result))
     lines.append("")

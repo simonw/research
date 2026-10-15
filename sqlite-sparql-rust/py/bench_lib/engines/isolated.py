@@ -33,6 +33,18 @@ def _inner(engine_name: str, settings: EngineSettings) -> Engine:
     return classes[engine_name](settings)
 
 
+def _timed_execute(engine: Engine, query: BenchQuery, mode: str) -> Timed:
+    """One execution, timed the way ``Runner._timed`` times it in process."""
+    gc.disable()
+    try:
+        start = time.perf_counter_ns()
+        raw = engine.execute(query, mode)
+        elapsed_ms = (time.perf_counter_ns() - start) / 1e6
+    finally:
+        gc.enable()
+    return Timed(elapsed_ms, raw)
+
+
 def _serve(engine_name: str, settings: EngineSettings, conn) -> None:
     """The child's request loop: ``open``, ``execute`` and ``close`` messages."""
     engine = _inner(engine_name, settings)
@@ -50,14 +62,10 @@ def _serve(engine_name: str, settings: EngineSettings, conn) -> None:
                 conn.send(("ok", engine.open(request[1])))
             elif kind == "execute":
                 _, query, mode = request
-                gc.disable()
-                try:
-                    start = time.perf_counter_ns()
-                    raw = engine.execute(query, mode)
-                    elapsed_ms = (time.perf_counter_ns() - start) / 1e6
-                finally:
-                    gc.enable()
-                conn.send(("ok", Timed(elapsed_ms, raw)))
+                # No name holds the result: it is freed as soon as it has been sent, so
+                # the next execution's timing never includes freeing this one (the
+                # runner drops its reference before every timed call for the same reason).
+                conn.send(("ok", _timed_execute(engine, query, mode)))
             elif kind == "close":
                 engine.close()
                 conn.send(("ok", None))
@@ -77,8 +85,8 @@ class IsolatedEngine(Engine):
         self.name = self._local.name
         self.short = self._local.short
         self._ctx = multiprocessing.get_context("spawn")
-        self._proc = None
-        self._conn = None
+        self._proc: Any = None
+        self._conn: Any = None
         self._dataset: Dataset | None = None
         self.restarts = 0
 
@@ -159,3 +167,6 @@ class IsolatedEngine(Engine):
 
     def decode(self, query: BenchQuery, mode: str, raw: Any) -> int | ResultSet:
         return self._local.decode(query, mode, raw)
+
+    def row_count(self, query: BenchQuery, mode: str, raw: Any) -> int:
+        return self._local.row_count(query, mode, raw)

@@ -9,8 +9,8 @@ import tempfile
 
 from . import envinfo, report
 from .datasets import open_dataset
-from .engines import (MODES, EngineSettings, create_engines, describe_extension,
-                      parse_engine_list)
+from .engines import (MODES, REFERENCE_COUNTS, EngineSettings, create_engines,
+                      describe_extension, parse_engine_list)
 from .engines.sparqlite import FULL_COLUMNS, extension_candidates
 from .queries import load_queries, select_queries
 from .runner import RunConfig, Runner, RunResult
@@ -55,8 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
     eng = ap.add_argument_group("engines")
     eng.add_argument("--engines", default="native,baseline,pyoxigraph,rdflib",
                      help="comma-separated: native, baseline, pyoxigraph, rdflib (or 'all')")
-    eng.add_argument("--modes", default="count,full",
-                     help=f"comma-separated measurement modes from {', '.join(MODES)}")
+    eng.add_argument("--modes", default=",".join(MODES),
+                     help=f"comma-separated measurement modes from {', '.join(MODES)} (json "
+                     "times sparql_query and the baseline's sparql_query_sql)")
     eng.add_argument("--ext", help="sparqlite extension path (default: $SPARQLITE_EXT, "
                      "then ext/target/release/libsparqlite)")
     eng.add_argument("--work-dir", default=DEFAULT_WORK_DIR,
@@ -73,6 +74,11 @@ def build_parser() -> argparse.ArgumentParser:
     eng.add_argument("--native-config", metavar="KEY=VALUE", type=_key_value, action="append",
                      default=[], help="sparql_config(KEY, VALUE) on the native connection "
                      "(repeatable), e.g. join_policy=hash")
+    eng.add_argument("--reference-count", choices=REFERENCE_COUNTS, default="aggregate",
+                     help="count mode of pyoxigraph/rdflib: 'aggregate' runs SELECT (COUNT(*) "
+                     "AS ?n) { q } so the engine counts without building terms, like "
+                     "sparql_count; 'iterate' is the spec's len(list(q)), which builds every "
+                     "solution")
     eng.add_argument("--rdflib-max", type=int, default=100_000,
                      help="run rdflib only on datasets with at most this many triples")
     eng.add_argument("--no-isolate", action="store_true",
@@ -109,6 +115,7 @@ def settings_from_args(args: argparse.Namespace) -> EngineSettings:
         rdflib_max=args.rdflib_max,
         timeout_s=args.timeout,
         isolate=not args.no_isolate,
+        reference_count=args.reference_count,
     )
 
 

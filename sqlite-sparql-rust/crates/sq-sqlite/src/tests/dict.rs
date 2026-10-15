@@ -74,6 +74,14 @@ fn inline_wellknown_and_bnodes_need_no_rows() {
     assert_eq!(db.store.lookup(ty.as_ref().into()).unwrap(), Some(codec::RDF_TYPE));
     assert_eq!(db.store.intern(ty.as_ref().into()).unwrap(), codec::RDF_TYPE);
     assert_eq!(db.query_i64("SELECT count(*) FROM rdf_term"), rows, "no rows for inline / well-known terms");
+    // Well-known rows decode without I/O or cache entries.
+    let before = (db.shared().dict_counters().decode_db_rows, db.shared().decode_cache.borrow().len());
+    let wk: Vec<TermId> = codec::WELL_KNOWN.iter().map(|(row, _)| TermId::from_dict(*row, Tag::Iri)).collect();
+    let decoded = decode_all(&db, &wk);
+    for ((_, want), got) in codec::WELL_KNOWN.iter().zip(&decoded) {
+        assert_eq!(**got, Term::Iri((*want).into()));
+    }
+    assert_eq!((db.shared().dict_counters().decode_db_rows, db.shared().decode_cache.borrow().len()), before);
     // Blank nodes: counter ids, labels b<hex>, never interned.
     let b1 = db.store.fresh_bnode().unwrap();
     let b2 = db.store.fresh_bnode().unwrap();
@@ -344,10 +352,15 @@ fn ensure_schema_creates_the_exact_layout() {
     for (k, v) in [("schema_version", 1), ("encoding_version", 1), ("next_bnode", 1), ("dict_gen", 0), ("stats_gen", 0)] {
         assert_eq!(db.query_i64(&format!("SELECT value FROM rdf_meta WHERE key='{k}'")), v, "{k}");
     }
-    // Re-running the DDL after an index was dropped restores it.
-    db.conn.execute_batch("DROP INDEX rdf_gpox").unwrap();
+    // Re-running the DDL after an index or an auxiliary table was dropped restores it.
+    db.conn.execute_batch("DROP INDEX rdf_gpox; DROP TABLE rdf_graph; DROP TABLE rdf_stat_pred;").unwrap();
     db.store.ensure_schema().unwrap();
-    assert_eq!(db.query_i64("SELECT count(*) FROM sqlite_schema WHERE name='rdf_gpox'"), 1);
+    for name in ["rdf_gpox", "rdf_graph", "rdf_stat_pred"] {
+        assert_eq!(db.query_i64(&format!("SELECT count(*) FROM sqlite_schema WHERE name='{name}'")), 1, "{name}");
+    }
+    // A missing data table cannot be repaired: the store is incompatible.
+    db.conn.execute_batch("DROP TABLE rdf_term").unwrap();
+    assert!(matches!(db.store.ensure_schema(), Err(Error::Schema(m)) if m.contains("rdf_term")));
 }
 
 #[test]

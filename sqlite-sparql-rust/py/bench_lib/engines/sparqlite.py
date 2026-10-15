@@ -52,7 +52,8 @@ from ..datasets import Dataset
 from ..queries import BenchQuery
 from ..terms import UNBOUND, canonical, canonical_nt, from_sparql_json
 from .base import (MODES, Engine, EngineSettings, EngineUnavailable, LoadInfo, QueryTimeout,
-                   QueryUnsupported, result_set_from_ntriples_doc, result_set_from_sparql_json)
+                   QueryUnsupported, result_set_from_ntriples_doc, result_set_from_sparql_json,
+                   serialised_row_count)
 from .watchdog import Watchdog
 
 PAGE_SIZE = 8192
@@ -505,6 +506,13 @@ class _SparqliteEngine(Engine):
     def _decode_rows(self, query: BenchQuery, raw: Any) -> ResultSet:
         names, rows = raw
         return decode_sparql_rows(query.form, names, rows, query.projection)
+
+    def row_count(self, query: BenchQuery, mode: str, raw: Any) -> int:
+        if mode == "count":
+            return int(raw)
+        if mode == "full":
+            return len(raw[1])  # ASK: its one sparql_rows row
+        return serialised_row_count(query.form, raw)
 
 
 class SparqliteNative(_SparqliteEngine):
