@@ -5,10 +5,18 @@
 //! When every key is a bare variable and every value is an inline INT, rows are compared on
 //! the raw ids (INT ids are monotonic in value, and the order agrees with the SortKey order),
 //! so no SortKey is ever built.
+//!
+//! Otherwise SortKeys are built lazily ("late key materialization"): a key is only built for
+//! rows whose order is still undecided by the earlier keys. Sort refines runs of rows that tie
+//! on the earlier keys; TopK compares bare-variable keys on the raw ids where that decides the
+//! order (`cheap_cmp`) and builds a key, at most once per row, only for comparisons it cannot
+//! decide that way, typically ties on the earlier keys at the heap boundary. `ORDER BY
+//! DESC(?age) ?x LIMIT 10` thus decodes the IRIs of the few rows that tie with the 10th best
+//! age instead of every `?x`. The order is exactly the SortKey order either way.
 use std::cmp::Ordering;
 
 use sq_core::ir::OrderKey;
-use sq_core::{Batch, Result, Slot, Tag, TermId};
+use sq_core::{Batch, Kind, Result, Slot, Tag, TermId};
 use sq_expr::{CompiledExpr, SortKey};
 
 use super::{BoxOp, Operator};
@@ -38,27 +46,35 @@ fn slot_keys(keys: &[SortSpec]) -> Option<Vec<(Slot, bool)>> {
     keys.iter().map(|k| k.expr.as_slot().map(|s| (s, k.desc))).collect()
 }
 
-/// Compares two rows on raw INT ids of the key slots.
+/// The SortKey class of a present id (blank node < IRI < literal), known without a lookup.
 #[inline]
-fn cmp_ints(a: &[TermId], b: &[TermId], slots: &[(Slot, bool)]) -> Ordering {
-    for &(s, desc) in slots {
-        let o = directed(a[s as usize].0.cmp(&b[s as usize].0), desc);
-        if o != Ordering::Equal {
-            return o;
-        }
+fn class_of(id: TermId) -> u8 {
+    match id.kind() {
+        Kind::Unbound => 0,
+        Kind::BNode => 1,
+        Kind::Iri => 2,
+        Kind::Literal => 3,
     }
-    Ordering::Equal
 }
 
+/// The ascending SortKey order of two values of a bare-variable key, when it is decided
+/// without building the keys: the same id (the same term), UNBOUND or ERROR (the lowest key),
+/// two inline INTs (raw ids are monotonic in value), or two different term classes. None:
+/// only the SortKeys can tell (two IRIs, two literals that are not both INTs, ...).
 #[inline]
-fn cmp_keys(a: &[SortKey], b: &[SortKey], keys: &[SortSpec]) -> Ordering {
-    for ((x, y), k) in a.iter().zip(b).zip(keys) {
-        let o = directed(x.cmp(y), k.desc);
-        if o != Ordering::Equal {
-            return o;
-        }
+fn cheap_cmp(a: TermId, b: TermId) -> Option<Ordering> {
+    if a == b {
+        return Some(Ordering::Equal);
     }
-    Ordering::Equal
+    let (pa, pb) = (sq_expr::is_present(a), sq_expr::is_present(b));
+    if !pa || !pb {
+        return Some(pa.cmp(&pb));
+    }
+    if a.tag() == Tag::Int && b.tag() == Tag::Int {
+        return Some(a.0.cmp(&b.0));
+    }
+    let (ca, cb) = (class_of(a), class_of(b));
+    if ca != cb { Some(ca.cmp(&cb)) } else { None }
 }
 
 /// A raw INT id as an i64 whose ascending order is the requested direction.
@@ -77,16 +93,6 @@ fn sorted_perm<K: Ord>(keys: impl Iterator<Item = K>) -> Vec<u32> {
 
 fn all_int(row: &[TermId], slots: &[(Slot, bool)]) -> bool {
     slots.iter().all(|(s, _)| row[*s as usize].tag() == Tag::Int)
-}
-
-/// Computes the sort keys of `row` into `out`.
-fn keys_of(keys: &[SortSpec], row: &[TermId], cx: &mut ExecCtx, out: &mut Vec<SortKey>) -> Result<()> {
-    cx.with_eval(|ecx| {
-        for k in keys {
-            out.push(k.expr.sort_key(row, ecx)?);
-        }
-        Ok(())
-    })
 }
 
 /// Materializes the input, then emits it in order.
@@ -152,32 +158,78 @@ impl Sort {
                 perm
             }
             _ => {
-                let k = self.keys.len();
-                let mut sk: Vec<SortKey> = Vec::with_capacity(n * k);
-                for i in 0..n {
-                    keys_of(&self.keys, self.rows.row(i), cx, &mut sk)?;
-                    if i % 1024 == 1023 {
-                        cx.tick(1024)?;
-                    }
-                }
-                let bytes: usize = sk.iter().map(|s| s.as_bytes().len() + 24).sum();
-                cx.charge(&mut self.charge, bytes)?;
-                let keys = &self.keys;
-                if let [key] = keys.as_slice() {
-                    let mut v: Vec<(SortKey, u32)> = sk.into_iter().zip(0u32..).collect();
-                    v.sort_unstable_by(|a, b| directed(a.0.cmp(&b.0), key.desc).then(a.1.cmp(&b.1)));
-                    v.into_iter().map(|(_, i)| i).collect()
-                } else {
-                    let mut perm: Vec<u32> = (0..n as u32).collect();
-                    perm.sort_unstable_by(|a, b| {
-                        let (x, y) = (*a as usize * k, *b as usize * k);
-                        cmp_keys(&sk[x..x + k], &sk[y..y + k], keys).then(a.cmp(b))
-                    });
-                    perm
-                }
+                let mut perm: Vec<u32> = (0..n as u32).collect();
+                let mut built = 0usize;
+                self.sort_run(cx, &mut perm, 0, &mut built)?;
+                perm
             }
         };
         self.built = true;
+        Ok(())
+    }
+
+    /// Sorts `run` (row indexes in ascending order, all tied on the keys before `level`) by
+    /// the keys from `level` on, ties in row order. Each level builds keys only for the rows
+    /// of runs that are still tied: a later key is never built for a row that an earlier key
+    /// already placed. `built` counts the SortKeys built so far (interrupt polling).
+    fn sort_run(&mut self, cx: &mut ExecCtx, run: &mut [u32], level: usize, built: &mut usize) -> Result<()> {
+        if run.len() < 2 || level == self.keys.len() {
+            return Ok(());
+        }
+        let desc = self.keys[level].desc;
+        let rows = &self.rows;
+        // Tied groups of `run` after sorting it by this level's key.
+        let mut groups: Vec<(usize, usize)> = Vec::new();
+        let mut push_groups = |eq: &dyn Fn(usize, usize) -> bool, len: usize| {
+            let mut start = 0;
+            for i in 1..=len {
+                if i == len || !eq(i - 1, i) {
+                    if i - start > 1 {
+                        groups.push((start, i));
+                    }
+                    start = i;
+                }
+            }
+        };
+        match self.keys[level].expr.as_slot() {
+            Some(s) if run.iter().all(|&i| rows.row(i as usize)[s as usize].tag() == Tag::Int) => {
+                let mut v: Vec<(i64, u32)> =
+                    run.iter().map(|&i| (directed_int(rows.row(i as usize)[s as usize], desc), i)).collect();
+                v.sort_unstable();
+                for (dst, (_, i)) in run.iter_mut().zip(&v) {
+                    *dst = *i;
+                }
+                if level + 1 < self.keys.len() {
+                    push_groups(&|a, b| v[a].0 == v[b].0, v.len());
+                }
+            }
+            _ => {
+                let mut v: Vec<(SortKey, u32)> = Vec::with_capacity(run.len());
+                let mut bytes = 0usize;
+                for &i in run.iter() {
+                    let row = self.rows.row(i as usize);
+                    let expr = &self.keys[level].expr;
+                    let key = cx.with_eval(|ecx| expr.sort_key(row, ecx))?;
+                    bytes += key.as_bytes().len() + 24;
+                    v.push((key, i));
+                    *built += 1;
+                    if *built % 1024 == 0 {
+                        cx.tick(1024)?;
+                    }
+                }
+                cx.charge(&mut self.charge, bytes)?;
+                v.sort_unstable_by(|a, b| directed(a.0.cmp(&b.0), desc).then(a.1.cmp(&b.1)));
+                for (dst, (_, i)) in run.iter_mut().zip(&v) {
+                    *dst = *i;
+                }
+                if level + 1 < self.keys.len() {
+                    push_groups(&|a, b| v[a].0 == v[b].0, v.len());
+                }
+            }
+        }
+        for (a, b) in groups {
+            self.sort_run(cx, &mut run[a..b], level + 1, built)?;
+        }
         Ok(())
     }
 }
@@ -342,23 +394,32 @@ impl Operator for SortBySlot {
     }
 }
 
-/// Heap entry of TopK: the arena row, its keys (empty in INT mode, where the keys are read
-/// from the row) and its input position (ties keep input order).
+/// Heap entry of TopK: the arena row, its input position (ties keep input order) and its
+/// SortKeys, built lazily (`keys[i]` is None, or `keys` shorter than the key list, until
+/// key `i` is needed by a comparison).
 struct Entry {
     row: u32,
     seq: u64,
-    keys: Vec<SortKey>,
+    keys: Vec<Option<SortKey>>,
+}
+
+/// One side of a TopK comparison: the candidate row `r` of the input batch (input position
+/// `seq`), or a heap entry.
+#[derive(Copy, Clone)]
+enum Side {
+    Cand(usize, u64),
+    Heap(usize),
 }
 
 /// ORDER BY + LIMIT: a bounded max-heap of the k best rows (by key, then input order). An
-/// evicted row's arena slot is overwritten by the row that evicts it.
+/// evicted row's arena slot is overwritten by the row that evicts it. Keys are compared
+/// cheaply on raw ids where possible and built lazily otherwise (module doc).
 pub(crate) struct TopK {
     input: BoxOp,
     keys: Vec<SortSpec>,
     k: u64,
-    slots: Option<Vec<(Slot, bool)>>,
-    /// INT mode: every key a bare variable and every value seen so far an inline INT.
-    int_mode: bool,
+    /// Per key: its slot when the key is a bare variable (`cheap_cmp` applies).
+    key_slots: Vec<Option<Slot>>,
     seed: SeedBuf,
     rows: Rows,
     heap: Vec<Entry>,
@@ -366,19 +427,19 @@ pub(crate) struct TopK {
     pos: usize,
     built: bool,
     inb: Batch,
-    tmp: Vec<SortKey>,
+    /// The lazily built keys of the current candidate row.
+    cand: Vec<Option<SortKey>>,
     charge: Charge,
 }
 
 impl TopK {
     pub fn new(input: BoxOp, keys: Vec<SortSpec>, k: u64, width: usize) -> Self {
-        let slots = slot_keys(&keys);
+        let key_slots = keys.iter().map(|k| k.expr.as_slot()).collect();
         TopK {
             input,
             keys,
             k,
-            int_mode: slots.is_some(),
-            slots,
+            key_slots,
             seed: SeedBuf::new(width),
             rows: Rows::new(width),
             heap: Vec::new(),
@@ -386,99 +447,131 @@ impl TopK {
             pos: 0,
             built: false,
             inb: Batch::new(width),
-            tmp: Vec::new(),
+            cand: Vec::new(),
             charge: Charge::default(),
         }
     }
 
-    /// Entry order: keys, then input position (a total order).
-    fn cmp(&self, a: &Entry, b: &Entry) -> Ordering {
-        let o = match (&self.slots, self.int_mode) {
-            (Some(slots), true) => cmp_ints(self.rows.row(a.row as usize), self.rows.row(b.row as usize), slots),
-            _ => cmp_keys(&a.keys, &b.keys, &self.keys),
-        };
-        o.then(a.seq.cmp(&b.seq))
+    #[inline]
+    fn row_of(&self, s: Side) -> &[TermId] {
+        match s {
+            Side::Cand(r, _) => self.inb.row(r),
+            Side::Heap(e) => self.rows.row(self.heap[e].row as usize),
+        }
     }
 
-    fn sift_up(&mut self, mut i: usize) {
+    #[inline]
+    fn seq_of(&self, s: Side) -> u64 {
+        match s {
+            Side::Cand(_, seq) => seq,
+            Side::Heap(e) => self.heap[e].seq,
+        }
+    }
+
+    #[inline]
+    fn key_of(&self, s: Side, i: usize) -> Option<&SortKey> {
+        let keys = match s {
+            Side::Cand(..) => &self.cand,
+            Side::Heap(e) => &self.heap[e].keys,
+        };
+        keys.get(i).and_then(Option::as_ref)
+    }
+
+    /// Builds key `i` of `s` unless it is built already (each row's key is built at most once,
+    /// so a non-deterministic key expression still gives every row one value).
+    fn ensure_key(&mut self, cx: &mut ExecCtx, s: Side, i: usize) -> Result<()> {
+        if self.key_of(s, i).is_some() {
+            return Ok(());
+        }
+        let row = self.row_of(s);
+        let expr = &self.keys[i].expr;
+        let key = cx.with_eval(|ecx| expr.sort_key(row, ecx))?;
+        let n = self.keys.len();
+        let keys = match s {
+            Side::Cand(..) => &mut self.cand,
+            Side::Heap(e) => &mut self.heap[e].keys,
+        };
+        if keys.len() < n {
+            keys.resize(n, None);
+        }
+        keys[i] = Some(key);
+        Ok(())
+    }
+
+    /// Entry order: keys, then input position (a total order).
+    fn cmp(&mut self, cx: &mut ExecCtx, a: Side, b: Side) -> Result<Ordering> {
+        for i in 0..self.keys.len() {
+            let cheap = match self.key_slots[i] {
+                Some(s) => cheap_cmp(self.row_of(a)[s as usize], self.row_of(b)[s as usize]),
+                None => None,
+            };
+            let o = match cheap {
+                Some(o) => o,
+                None => {
+                    self.ensure_key(cx, a, i)?;
+                    self.ensure_key(cx, b, i)?;
+                    self.key_of(a, i).cmp(&self.key_of(b, i))
+                }
+            };
+            let o = directed(o, self.keys[i].desc);
+            if o != Ordering::Equal {
+                return Ok(o);
+            }
+        }
+        Ok(self.seq_of(a).cmp(&self.seq_of(b)))
+    }
+
+    fn sift_up(&mut self, cx: &mut ExecCtx, mut i: usize) -> Result<()> {
         while i > 0 {
             let p = (i - 1) / 2;
-            if self.cmp(&self.heap[i], &self.heap[p]) != Ordering::Greater {
+            if self.cmp(cx, Side::Heap(i), Side::Heap(p))? != Ordering::Greater {
                 break;
             }
             self.heap.swap(i, p);
             i = p;
         }
+        Ok(())
     }
 
-    fn sift_down(&mut self, mut i: usize) {
+    fn sift_down(&mut self, cx: &mut ExecCtx, mut i: usize) -> Result<()> {
         let n = self.heap.len();
         loop {
             let (l, r) = (2 * i + 1, 2 * i + 2);
             let mut m = i;
-            if l < n && self.cmp(&self.heap[l], &self.heap[m]) == Ordering::Greater {
+            if l < n && self.cmp(cx, Side::Heap(l), Side::Heap(m))? == Ordering::Greater {
                 m = l;
             }
-            if r < n && self.cmp(&self.heap[r], &self.heap[m]) == Ordering::Greater {
+            if r < n && self.cmp(cx, Side::Heap(r), Side::Heap(m))? == Ordering::Greater {
                 m = r;
             }
             if m == i {
-                break;
+                return Ok(());
             }
             self.heap.swap(i, m);
             i = m;
         }
     }
 
-    /// Leaves INT mode: computes the SortKeys of every retained row and re-heapifies.
-    fn leave_int_mode(&mut self, cx: &mut ExecCtx) -> Result<()> {
-        self.int_mode = false;
-        for e in 0..self.heap.len() {
-            let mut ks = Vec::with_capacity(self.keys.len());
-            keys_of(&self.keys, self.rows.row(self.heap[e].row as usize), cx, &mut ks)?;
-            self.heap[e].keys = ks;
-        }
-        for i in (0..self.heap.len() / 2).rev() {
-            self.sift_down(i);
-        }
-        Ok(())
-    }
-
     /// Offers row `r` of the input batch (input position `seq`).
     fn offer(&mut self, cx: &mut ExecCtx, r: usize, seq: u64) -> Result<()> {
-        if let (Some(slots), true) = (&self.slots, self.int_mode)
-            && !all_int(self.inb.row(r), slots)
-        {
-            self.leave_int_mode(cx)?;
-        }
-        if !self.int_mode {
-            self.tmp.clear();
-            keys_of(&self.keys, self.inb.row(r), cx, &mut self.tmp)?;
-        }
+        self.cand.clear();
         if (self.heap.len() as u64) < self.k {
             cx.charge(&mut self.charge, self.rows.row_bytes() + 48)?;
             self.rows.push(self.inb.row(r));
             let row = (self.rows.len() - 1) as u32;
-            self.heap.push(Entry { row, seq, keys: std::mem::take(&mut self.tmp) });
+            self.heap.push(Entry { row, seq, keys: Vec::new() });
             let last = self.heap.len() - 1;
-            self.sift_up(last);
-            return Ok(());
+            return self.sift_up(cx, last);
         }
         // Full: replace the worst retained row if the new one sorts before it.
-        let top = &self.heap[0];
-        let o = match (&self.slots, self.int_mode) {
-            (Some(slots), true) => cmp_ints(self.inb.row(r), self.rows.row(top.row as usize), slots),
-            _ => cmp_keys(&self.tmp, &top.keys, &self.keys),
-        };
-        if o.then(seq.cmp(&top.seq)) != Ordering::Less {
+        if self.cmp(cx, Side::Cand(r, seq), Side::Heap(0))? != Ordering::Less {
             return Ok(());
         }
-        let arena = top.row as usize;
+        let arena = self.heap[0].row as usize;
         self.rows.row_mut(arena).copy_from_slice(self.inb.row(r));
         self.heap[0].seq = seq;
-        std::mem::swap(&mut self.heap[0].keys, &mut self.tmp);
-        self.sift_down(0);
-        Ok(())
+        std::mem::swap(&mut self.heap[0].keys, &mut self.cand);
+        self.sift_down(cx, 0)
     }
 
     fn build(&mut self, cx: &mut ExecCtx) -> Result<()> {
@@ -495,9 +588,17 @@ impl TopK {
             }
         }
         self.input.reset(cx);
-        let mut order: Vec<usize> = (0..self.heap.len()).collect();
-        order.sort_by(|a, b| self.cmp(&self.heap[*a], &self.heap[*b]));
-        self.out_order = order.into_iter().map(|i| self.heap[i].row).collect();
+        // Heap sort with the same lazy comparisons: pop the worst row until the heap is empty.
+        let mut order = Vec::with_capacity(self.heap.len());
+        while let Some(last) = self.heap.len().checked_sub(1) {
+            self.heap.swap(0, last);
+            order.push(self.heap.pop().expect("non-empty").row);
+            if !self.heap.is_empty() {
+                self.sift_down(cx, 0)?;
+            }
+        }
+        order.reverse();
+        self.out_order = order;
         self.built = true;
         Ok(())
     }
@@ -521,7 +622,7 @@ impl Operator for TopK {
         self.out_order.clear();
         self.pos = 0;
         self.built = self.k == 0;
-        self.int_mode = self.slots.is_some();
+        self.cand.clear();
         cx.release(&mut self.charge);
         if self.k == 0 {
             return Ok(());

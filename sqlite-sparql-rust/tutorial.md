@@ -12,8 +12,9 @@ This tutorial is for people who know a little SQL and nothing about RDF or SPARQ
 from building the extension, through a short introduction to RDF, to a lesson-by-lesson SPARQL
 course on a real dataset, and then shows how to mix SPARQL results with ordinary SQL tables.
 
-**How to read the examples.** Run every command from the project folder, `sqlite-sparql-rust/`.
-A block marked `sql` is typed into the `sqlite3` shell; the block after it shows what the shell
+**How to read the examples.** Run every command from the project folder, `sqlite-sparql-rust/`
+(section 1.2 shows how to get it). A block marked `sql` is typed into the `sqlite3` shell; the
+block after it shows what the shell
 printed. All outputs were copied from real runs (SQLite 3.45.1 on Linux) and are re-checked by
 [`tutorial/verify_tutorial.py`](tutorial/verify_tutorial.py), which replays the whole tutorial in a
 scratch folder: `python3 tutorial/verify_tutorial.py --ext ext/target/release/libsparqlite.so`
@@ -59,7 +60,18 @@ SQLite 3.45.1.
 
 Check your shell's version with `sqlite3 --version`.
 
-### 1.2 Build the extension
+### 1.2 Get the code and build the extension
+
+sparqlite is the `sqlite-sparql-rust` folder of the GitHub repository
+[simonw/research](https://github.com/simonw/research). Clone the repository (`--depth 1` skips
+its history) and change into that folder, the *project folder* where every later command runs:
+
+```sh
+git clone --depth 1 https://github.com/simonw/research
+cd research/sqlite-sparql-rust
+```
+
+Then build the extension:
 
 ```sh
 cargo build --release --manifest-path ext/Cargo.toml
@@ -74,6 +86,11 @@ is a single file:
 | Linux   | `ext/target/release/libsparqlite.so`    |
 | macOS   | `ext/target/release/libsparqlite.dylib` |
 | Windows | `ext\target\release\sparqlite.dll`      |
+
+The rest of the tutorial uses these paths. If you have set `CARGO_TARGET_DIR` (or
+`build.target-dir` in Cargo's configuration), Cargo writes the file to `release/` under that
+directory instead; either use that path wherever the tutorial writes `ext/target/release/`, or
+build with the setting switched off (`env -u CARGO_TARGET_DIR cargo build ...`).
 
 (`ext/` is a separate Cargo workspace on purpose: it builds the code as a loadable extension,
 which needs different settings from the test builds in the main workspace.)
@@ -104,11 +121,19 @@ extension's entry point from the file name (`libsparqlite` → `sqlite3_sparqlit
 copy the file under another name, give the entry point yourself:
 `.load /some/where/my-copy.so sqlite3_sparqlite_init`.
 
+**On Windows** the file has no `lib` prefix (`sparqlite.dll`). Wherever this tutorial writes
+`ext/target/release/libsparqlite`, in `.load`, in Python and in the `--ext` options of section
+4, write `ext/target/release/sparqlite` instead; the shell adds `.dll` and derives the same entry
+point, `sqlite3_sparqlite_init`. Write `py` where the tutorial writes `python3`. The tutorial was
+run on Linux only; section 4.1 gives a PowerShell version of the one command that uses Unix shell
+syntax.
+
 If `.load` fails, see [Troubleshooting](#83-troubleshooting).
 
 **From Python**, enable extension loading on the connection, load, and switch it off again:
 
 <!-- verify: python -->
+<!-- verify: mask \(SQLite [0-9.]+\) -->
 ```python
 import sqlite3
 
@@ -264,7 +289,7 @@ WHERE n = 1;
 | `n` | the solution's number, starting at 1 |
 | `v0` … `v15` | the value of the 1st … 16th variable as a plain SQL value: text for names and IRIs, INTEGER for whole numbers, REAL for decimals (see [6.2](#62-sparql_rows-and-the-sql-type-of-each-value)) |
 | `t0` … `t15` | the same value as an RDF term in N-Triples syntax, which keeps the details SQL types lose (`"Alice"` is a string, `34` is typed `xsd:integer`) |
-| `id0` … `id15` | the term's internal id in the store (more in 2.4) |
+| `id0` … `id15` | the term's internal id in the store (see 2.4) |
 | `vars` | the variable names, as a JSON array |
 | `json` | the whole solution in SPARQL JSON form |
 
@@ -343,11 +368,11 @@ SELECT * FROM rdf_quad;
 └───┴───────┴───────┴─────────────────────┘
 ```
 
-Each integer is a *term id*. IRIs, language-tagged strings and strings longer than 7 bytes are
-stored once, in the dictionary table `rdf_term`, and their id points to that row. Every other
-term gets an id that encodes the value itself: integers, decimals, booleans, dates, short strings
-such as `"Alice"`, and blank nodes. So `34`, `29`, `"Alice"` and `"Bob"` above never appear in
-`rdf_term`. `sparql_term(id)` turns any id back into the term, in N-Triples syntax:
+Each integer is a *term id*, a number that stands for one name or value. Names (the IRIs in
+angle brackets that section 3 explains) and longer texts are stored once, in the dictionary table
+`rdf_term`, and their id refers to that row; small values such as `34` and `"Alice"` are packed
+into the id itself. `sparql_term(id)` turns any id back into the term, written the same way as in
+the `t` columns (this notation is called N-Triples):
 
 ```sql
 SELECT sparql_term(s) AS s, sparql_term(p) AS p, sparql_term(o) AS o FROM rdf_quad;
@@ -365,48 +390,10 @@ SELECT sparql_term(s) AS s, sparql_term(p) AS p, sparql_term(o) AS o FROM rdf_qu
 └────────────────────────────┴────────────────────────────┴──────────────────────────────────────────────────┘
 ```
 
-The dictionary holds the five IRIs of the example (both people and the three predicates) under row
-numbers from 1024 on; the rows below 1024 are reserved for built-in IRIs such as `rdf:type` and
-the XML Schema datatypes. A term id is the row number times 16 plus a *tag* in the low 4 bits that
-says what kind of term it is (1 = IRI), so row 1024 is id 16385:
-
-```sql
-SELECT id AS row, tag, lex, id * 16 + tag AS term_id FROM rdf_term WHERE id >= 1024;
-```
-
-```output
-┌──────┬─────┬──────────────────────────┬─────────┐
-│ row  │ tag │           lex            │ term_id │
-├──────┼─────┼──────────────────────────┼─────────┤
-│ 1024 │ 1   │ http://example.org/alice │ 16385   │
-│ 1025 │ 1   │ http://example.org/name  │ 16401   │
-│ 1026 │ 1   │ http://example.org/age   │ 16417   │
-│ 1027 │ 1   │ http://example.org/knows │ 16433   │
-│ 1028 │ 1   │ http://example.org/bob   │ 16449   │
-└──────┴─────┴──────────────────────────┴─────────┘
-```
-
-The opposite direction, from a term to its id, is `sparql_term_id()`; there are also helpers that
-take an id apart:
-
-```sql
-SELECT sparql_term_id('<http://example.org/alice>') AS id,
-       sparql_term_kind(sparql_term_id('"Alice"')) AS kind,
-       sparql_term_value(sparql_term_id('34')) AS value,
-       sparql_term_datatype(sparql_term_id('34')) AS datatype;
-```
-
-```output
-┌───────┬─────────┬───────┬──────────────────────────────────────────┐
-│  id   │  kind   │ value │                 datatype                 │
-├───────┼─────────┼───────┼──────────────────────────────────────────┤
-│ 16385 │ literal │ 34    │ http://www.w3.org/2001/XMLSchema#integer │
-└───────┴─────────┴───────┴──────────────────────────────────────────┘
-```
-
 You can read these tables with plain SQL, as above. Do not write to them with plain SQL: change
 data with `sparql_load` and `sparql_update` (lesson 5.15), which keep the dictionary, indexes
-and statistics consistent.
+and statistics consistent. You do not need to know more about term ids for the SPARQL course;
+section 6.5 explains how they are built and the functions that work with them.
 
 ---
 
@@ -456,12 +443,14 @@ Objects can also be **literals**, plain values:
 | `"Bob"@en`, `"Roberto"@es` | strings in a given language (a *language tag*) |
 | `34` | an integer, short for `"34"^^xsd:integer` |
 | `1.82` | a decimal, short for `"1.82"^^xsd:decimal` |
+| `4.2e1` | a double (floating-point number), short for `"4.2e1"^^xsd:double` |
 | `true` | a boolean, short for `"true"^^xsd:boolean` |
 | `"1997-04-02"^^xsd:date` | a date: the text plus a **datatype** IRI after `^^` |
 
 `xsd:` is the XML Schema datatype vocabulary, `<http://www.w3.org/2001/XMLSchema#>`. A literal is
-always text plus either a datatype or a language tag; that is what lets SPARQL compare `34` and
-`29` as numbers and dates as dates.
+text plus a datatype, either written after `^^` or implied: a plain `"..."` is an `xsd:string`,
+and `"..."@xx` is an `rdf:langString` with the language tag `xx`. The datatype is what lets SPARQL
+compare `34` and `29` as numbers and dates as dates.
 
 ### 3.3 Blank nodes
 
@@ -474,7 +463,9 @@ ex:bob ex:member [ ex:club "Chess club" ; ex:since 2019 ] .
 ```
 
 This is three triples: `ex:bob ex:member _:b1`, `_:b1 ex:club "Chess club"` and
-`_:b1 ex:since 2019`.
+`_:b1 ex:since 2019`. The label is not a real name, so you cannot use it to point at the node
+later: in a query, `_:b1` acts like a variable (section 6.2 shows this). You reach a blank node
+through the named things it hangs off, here `ex:bob ex:member ?m`.
 
 ### 3.4 Turtle in one example
 
@@ -609,12 +600,14 @@ wrote tutorial/tutorial.db
 **Route 2: the sqlite3 shell does the loading.** The script writes `load.sql`, a script for the
 shell. `load.sql` uses `readfile()` with names relative to the shell's current directory, so run
 it from inside `tutorial/data` (the parentheses run the `cd` in a sub-shell, so your own shell
-stays in the project folder):
+stays in the project folder). The `rm -f` first removes a database left from an earlier run;
+the paragraph after the output explains why:
 
 <!-- verify: setup fresh -->
 <!-- verify: ignore-timing -->
 ```sh
 python3 tutorial/make_tutorial_data.py --emit-sql
+rm -f tutorial/tutorial.db
 (cd tutorial/data && sqlite3 ../tutorial.db -cmd '.load ../../ext/target/release/libsparqlite' '.read load.sql')
 ```
 
@@ -630,9 +623,25 @@ sparql_analyze: {"analyzed_quads":2413,"default_graph":{"characteristic_sets":87
 quads: 2413, dictionary terms: 928, named graphs: 3, job postings: 300
 ```
 
-Both routes create the same `tutorial/tutorial.db`. Running either one again rebuilds it from
-scratch (route 2 says `removed previous copy: ... quads` when the database already held the
-data). Run `python3 tutorial/make_tutorial_data.py --help` for all options.
+Both routes create the same `tutorial/tutorial.db`. Route 1 always writes a new file. `load.sql`
+can also be run on a database that already holds the data: it then removes the old copy
+(`removed previous copy: ... quads`) and loads it again. That works, but the reloaded terms get
+new internal ids and the blank nodes new labels, so a few ids and labels in section 6 would
+differ from this tutorial; hence the `rm -f`.
+
+In Windows PowerShell, route 2 is (not tested; see the Windows note in 1.3):
+
+```powershell
+py tutorial/make_tutorial_data.py --emit-sql
+Remove-Item tutorial/tutorial.db -ErrorAction SilentlyContinue
+Push-Location tutorial/data
+sqlite3 ../tutorial.db -cmd ".load ../../ext/target/release/sparqlite" ".read load.sql"
+Pop-Location
+```
+
+The 928 "dictionary terms" of the summaries are the dictionary rows that the data added (section
+6.5 explains the dictionary); `sparql_check()` in section 6.11 reports 963, because it also
+counts 35 built-in rows. Run `python3 tutorial/make_tutorial_data.py --help` for all options.
 
 ### 4.2 What is in it
 
@@ -701,8 +710,10 @@ sqlite3 tutorial/tutorial.db
 ```
 
 `--wordwrap on` makes box mode break values longer than 60 characters between words rather than
-in the middle of one. If you leave the shell and come back, repeat these two lines. Some examples
-change settings; the text says when, and how to change them back.
+in the middle of one. If you leave the shell and come back, repeat these two lines (and, from
+section 6.8 on, the `CREATE VIRTUAL TABLE temp.languages` statement of 6.7, because temporary
+tables end with the session). Some examples change settings; the text says when, and how to
+change them back.
 
 ### 4.4 Explore its shape
 
@@ -902,7 +913,8 @@ Things to notice:
   `<http://example.org/pl/Python>`. Each query declares the prefixes it uses.
 - `SELECT ?designer ?name` lists the variables you want back, like a SQL column list. `SELECT *`
   returns every variable of the pattern.
-- Keywords are case-insensitive (`select`, `where`); variable names and IRIs are not.
+- Keywords are case-insensitive (`select`, `where`); variable names and IRIs are not. The one
+  exception among keywords is `a` (lesson 5.2), which must be lower case.
 
 **Exercise 5.1.** In which year did Haskell first appear? The predicate is `ex:firstAppeared`.
 
@@ -1061,9 +1073,10 @@ SELECT v0 AS language FROM sparql_rows('
 ### 5.3 FILTER
 
 `FILTER (condition)` keeps only the solutions for which the condition is true, like SQL's
-`WHERE`. Comparisons (`=`, `!=`, `<`, `<=`, `>`, `>=`) compare numbers as numbers, strings as
-strings and dates as dates; `&&` is "and", `||` is "or", `!` is "not". Languages that appeared
-in the 1950s or that are called "Go":
+`WHERE`. A `FILTER` applies to the whole `{ }` group it is written in, wherever it stands in the
+group (lesson 5.4 shows why that matters). Comparisons (`=`, `!=`, `<`, `<=`, `>`, `>=`) compare
+numbers as numbers, strings as strings and dates as dates; `&&` is "and", `||` is "or", `!` is
+"not". Languages that appeared in the 1950s or that are called "Go":
 
 ```sql
 SELECT v0 AS language, v1 AS year FROM sparql_rows('
@@ -1335,6 +1348,112 @@ SELECT v0 AS language, v1 AS year FROM sparql_rows('
 
 (Lesson 5.6 shows two more direct ways to say "has no ...".)
 
+**Unbound variables in a FILTER.** A test on a variable that has no value is not false but an
+*error*, and `FILTER` drops every solution whose condition is an error. It works like `NULL` in
+SQL, where `NULL <> 'x'` is not true either. Here are two attempts at "every language with a
+year, except the one whose homepage is python.org", counted with `sparql_count()`, a SQL
+function that returns the number of solutions of a query (93 languages have a year):
+
+```sql
+SELECT
+  sparql_count('
+    PREFIX ex:     <http://example.org/pl/>
+    PREFIX schema: <https://schema.org/>
+    SELECT ?lang WHERE {
+      ?lang ex:firstAppeared ?year .
+      OPTIONAL { ?lang schema:url ?homepage }
+      FILTER (?homepage != <https://www.python.org/>)
+    }') AS plain_test,
+  sparql_count('
+    PREFIX ex:     <http://example.org/pl/>
+    PREFIX schema: <https://schema.org/>
+    SELECT ?lang WHERE {
+      ?lang ex:firstAppeared ?year .
+      OPTIONAL { ?lang schema:url ?homepage }
+      FILTER (!BOUND(?homepage) || ?homepage != <https://www.python.org/>)
+    }') AS with_bound;
+```
+
+```output
+┌────────────┬────────────┐
+│ plain_test │ with_bound │
+├────────────┼────────────┤
+│ 38         │ 92         │
+└────────────┴────────────┘
+```
+
+The plain test also throws away every language without a homepage. In the second version,
+`!BOUND(?homepage)` is true for those, and `||` is true as soon as one side is true, even if the
+other side is an error.
+
+**Where the FILTER goes.** A `FILTER` written directly in a group applies to the whole group. A
+`FILTER` inside the braces of an `OPTIONAL` only decides whether the optional part matches. The
+languages of 1990-1994 again, this time showing only homepages that end in `.org/`. With the
+filter inside the `OPTIONAL`, all seven languages stay, and the other homepage (J's) is left out:
+
+```sql
+SELECT v0 AS language, v1 AS year, v2 AS org_homepage FROM sparql_rows('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX rdfs:   <http://www.w3.org/2000/01/rdf-schema#>
+  PREFIX schema: <https://schema.org/>
+  SELECT ?language ?year ?homepage
+  WHERE {
+    ?lang ex:firstAppeared ?year ;
+          rdfs:label ?language .
+    OPTIONAL { ?lang schema:url ?homepage
+               FILTER (STRENDS(STR(?homepage), ".org/")) }
+    FILTER (?year >= 1990 && ?year < 1995)
+  }
+  ORDER BY ?year ?language
+');
+```
+
+```output
+┌──────────┬──────┬────────────────────────────┐
+│ language │ year │        org_homepage        │
+├──────────┼──────┼────────────────────────────┤
+│ Haskell  │ 1990 │ https://www.haskell.org/   │
+│ J        │ 1990 │                            │
+│ Python   │ 1991 │ https://www.python.org/    │
+│ Dylan    │ 1992 │                            │
+│ K        │ 1993 │                            │
+│ Lua      │ 1993 │ https://www.lua.org/       │
+│ R        │ 1993 │ https://www.r-project.org/ │
+└──────────┴──────┴────────────────────────────┘
+```
+
+With the same test outside the `OPTIONAL`, it filters the languages themselves: J goes because
+its homepage does not end in `.org/`, and Dylan and K go because they have no homepage, which
+makes the test an error:
+
+```sql
+SELECT v0 AS language, v1 AS year, v2 AS org_homepage FROM sparql_rows('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX rdfs:   <http://www.w3.org/2000/01/rdf-schema#>
+  PREFIX schema: <https://schema.org/>
+  SELECT ?language ?year ?homepage
+  WHERE {
+    ?lang ex:firstAppeared ?year ;
+          rdfs:label ?language .
+    OPTIONAL { ?lang schema:url ?homepage }
+    FILTER (?year >= 1990 && ?year < 1995)
+    FILTER (STRENDS(STR(?homepage), ".org/"))
+  }
+  ORDER BY ?year ?language
+');
+```
+
+```output
+┌──────────┬──────┬────────────────────────────┐
+│ language │ year │        org_homepage        │
+├──────────┼──────┼────────────────────────────┤
+│ Haskell  │ 1990 │ https://www.haskell.org/   │
+│ Python   │ 1991 │ https://www.python.org/    │
+│ Lua      │ 1993 │ https://www.lua.org/       │
+│ R        │ 1993 │ https://www.r-project.org/ │
+└──────────┴──────┴────────────────────────────┘
+```
+
 **Exercise 5.4.** List the people born in 1938, 1939 or 1940 (`schema:birthDate`, an
 `xsd:date`) with their date of death (`schema:deathDate`) where one is recorded. Compare dates
 with typed literals such as `"1938-01-01"^^xsd:date` (declare
@@ -1407,7 +1526,8 @@ SELECT v0 AS name, v1 AS who FROM sparql_rows('
 ```
 
 The two branches may bind different variables; a variable that only one branch binds is unbound
-in the other branch's solutions. The patterns after the `UNION` apply to both branches.
+in the other branch's solutions. The other patterns of the group, before or after the `UNION`,
+are joined with the solutions of both branches.
 
 **Exercise 5.5.** Find the languages that use gradual typing (`ex:typing ex:GradualTyping`) or
 logic programming (`ex:paradigm ex:Logic`), with a `UNION`.
@@ -1510,11 +1630,11 @@ SELECT v0 AS language FROM sparql_rows('
 ```
 
 They agree here because the inner pattern shares the variable `?lang` with the outer one. They
-differ when nothing is shared. `MINUS` only removes solutions that share at least one variable
-with the removed pattern, so a pattern without shared variables removes nothing. `NOT EXISTS`
-simply asks "does this pattern match?", which for a pattern without shared variables is the same
-question for every solution. Here are both versions, counted with `sparql_count()`, a SQL function
-that returns the number of solutions of a query:
+differ in two situations. The first is when nothing is shared. `MINUS` only removes solutions
+that share at least one variable with the removed pattern, so a pattern without shared variables
+removes nothing. `NOT EXISTS` simply asks "does this pattern match?", which for a pattern without
+shared variables is the same question for every solution. Here are both versions, counted with
+`sparql_count()` (lesson 5.4):
 
 ```sql
 SELECT
@@ -1535,9 +1655,57 @@ SELECT
 ```
 
 Python has a designer, so `NOT EXISTS` is false for every language and removes all 91; `MINUS`
-finds no shared variable and removes none. Rule of thumb: use `FILTER NOT EXISTS` when you mean
-"there is no ...", and `MINUS` when you mean "take away these solutions". (`FILTER EXISTS` is the
-positive form.)
+finds no shared variable and removes none.
+
+The second situation is a `FILTER` inside the inner pattern that uses an outer variable.
+`NOT EXISTS` checks its pattern with the solution's values filled in, so the filter can see
+them. `MINUS` evaluates its pattern on its own, where the outer variables have no value. The
+oldest language is the one for which no other language has an earlier year:
+
+```sql
+SELECT v0 AS language, v1 AS year FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language ?year
+  WHERE {
+    ?lang ex:firstAppeared ?year ; rdfs:label ?language .
+    FILTER NOT EXISTS { ?other ex:firstAppeared ?earlier . FILTER (?earlier < ?year) }
+  }
+');
+```
+
+```output
+┌────────────┬──────┐
+│  language  │ year │
+├────────────┼──────┤
+│ FLOW-MATIC │ 1955 │
+└────────────┴──────┘
+```
+
+Written with `MINUS`, the same query keeps all 93 languages that have a year: inside `MINUS`,
+`?year` is unbound, so `?earlier < ?year` is an error, the inner pattern has no solutions, and
+nothing is removed:
+
+```sql
+SELECT sparql_count('
+  PREFIX ex: <http://example.org/pl/>
+  SELECT ?lang
+  WHERE {
+    ?lang ex:firstAppeared ?year .
+    MINUS { ?other ex:firstAppeared ?earlier . FILTER (?earlier < ?year) }
+  }') AS with_minus;
+```
+
+```output
+┌────────────┐
+│ with_minus │
+├────────────┤
+│ 93         │
+└────────────┘
+```
+
+Rule of thumb: use `FILTER NOT EXISTS` when you mean "there is no ...", and `MINUS` when you mean
+"take away these solutions". (`FILTER EXISTS` is the positive form.)
 
 **Exercise 5.6.** Which languages influenced at least one other language in the dataset but were
 not themselves influenced by any language in it? (Use `DISTINCT` after `SELECT` to list each
@@ -1584,9 +1752,11 @@ SELECT v0 AS language FROM sparql_rows('
 
 These work as in SQL. `ORDER BY ?x` sorts ascending, `ORDER BY DESC(?x)` descending; several keys
 are separated by spaces. Unbound values sort first, and strings sort by Unicode code point, so
-upper-case letters come before lower-case ones ("PHP" before "Perl" in lesson 5.2). `LIMIT n`
-keeps the first n solutions and `OFFSET n` skips n, which together page through a result. The
-five most recent languages:
+upper-case letters come before lower-case ones ("PHP" before "Perl" in lesson 5.2). Without
+`ORDER BY`, the order of the solutions is not defined: it can change when the data or the engine
+changes, so sort whenever order matters, and add a second key to break ties. `LIMIT n` keeps the
+first n solutions and `OFFSET n` skips n, which together page through a result. The five most
+recent languages:
 
 ```sql
 SELECT v0 AS language, v1 AS year FROM sparql_rows('
@@ -1673,7 +1843,8 @@ SELECT v0 AS language, v1 AS year FROM sparql_rows('
 ### 5.8 Aggregates: COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT, SAMPLE
 
 `GROUP BY` splits the solutions into groups, and aggregate functions summarise each group, as in
-SQL. In SPARQL an aggregate must be given a name with `(... AS ?name)`. Per paradigm: how many
+SQL. In the `SELECT` list, an aggregate (like any expression) must be given a name with
+`(... AS ?name)`; in `HAVING` and `ORDER BY` it can be used directly. Per paradigm: how many
 languages, the earliest and latest year, and the average year:
 
 ```sql
@@ -1690,7 +1861,7 @@ FROM sparql_rows('
     FILTER (LANG(?paradigm) = "en")
   }
   GROUP BY ?paradigm
-  ORDER BY DESC(?n)
+  ORDER BY DESC(?n) ?paradigm
 ');
 ```
 
@@ -1713,9 +1884,33 @@ FROM sparql_rows('
 └─────────────────────────────────────────┴───────────┴───────┴──────┴──────────────────┘
 ```
 
+Unlike SQLite, SPARQL allows no other variables in the `SELECT` list of a grouped query: each one
+must be a `GROUP BY` key or appear inside an aggregate. Use `SAMPLE(?x)` (below) when any one
+value will do. Breaking the rule gives a syntax error whose real reason, "The SELECT contains a
+variable that is unbound", is buried in a long list of what the parser expected:
+
+```sql
+SELECT v0 FROM sparql_rows('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX schema: <https://schema.org/>
+  SELECT ?designer ?lang (COUNT(?lang) AS ?n)
+  WHERE { ?lang ex:designer ?person . ?person schema:name ?designer }
+  GROUP BY ?designer
+');
+```
+
+```output
+Runtime error: sparql: syntax error: error at 7:1: expected one of "$", "(", ":", "<", "?", STRLANGDIR, The SELECT contains a variable that is unbound, ['A' ..= 'Z' | 'a' ..= 'z' | '\u{00C0}'..='\u{00D6}' | '\u{00D8}'..='\u{00F6}'
+| '\u{00F8}'..='\u{02FF}' | '\u{0370}'..='\u{037D}' | '\u{037F}'..='\u{1FFF}'
+| '\u{200C}'..='\u{200D}' | '\u{2070}'..='\u{218F}' | '\u{2C00}'..='\u{2FEF}'
+| '\u{3001}'..='\u{D7FF}' | '\u{F900}'..='\u{FDCF}' | '\u{FDF0}'..='\u{FFFD}'], [_], hasLangDir
+```
+
+Here `?lang` is neither a key nor aggregated. (Section 6.14 has more on reading such messages.)
+
 `HAVING` filters groups after aggregation. `SAMPLE(?x)` picks any one value from the group, and
-`GROUP_CONCAT(?x; separator=" ")` joins all of them into one string. The people who designed at
-least three languages:
+`GROUP_CONCAT(?x; separator=" ")` joins all of them into one string, in no defined order. The
+people who designed at least three languages:
 
 ```sql
 SELECT v0 AS designer, v1 AS languages, v2 AS names, v3 AS one_of_them FROM sparql_rows('
@@ -1773,9 +1968,12 @@ FROM sparql_rows('
 
 `COUNT(*)` counts all solutions, and `COUNT(?older)` skips the ones where `?older` is unbound.
 But `SUM`, `AVG`, `MIN`, `MAX` and `GROUP_CONCAT` have **no value at all** for a group in which
-their expression fails for some solution, because the variable is unbound there or a value is
-not a number. Count, filter, or give missing values a default with `COALESCE` (lesson 5.9):
-`SUM(COALESCE(?respondents, 0))` is 100090.
+the variable is unbound in some solution. `SUM` and `AVG` also give no value if one of the values
+is not a number; `MIN` and `MAX` compare strings, dates and numbers alike (in the order `ORDER BY`
+uses), and `GROUP_CONCAT` uses the text of each value. This is a strict reading of the SPARQL
+rules; some other SPARQL engines skip the missing values instead. Filter the solutions, or give
+missing values a default with `COALESCE` (lesson 5.9): `SUM(COALESCE(?respondents, 0))` is
+100090.
 
 **Exercise 5.8.** How many languages first appeared in each decade? Hint: you can group by an
 expression, `GROUP BY (FLOOR(?year / 10) * 10 AS ?decade)`, and select `?decade`.
@@ -1847,7 +2045,12 @@ SELECT v0 AS name, v1 AS born, v2 AS died, v3 AS years FROM sparql_rows('
 └─────────────────┴────────────┴────────────┴───────┘
 ```
 
-(That is the difference between the years, not the exact age.) `IF(condition, then, else)` picks
+(That is the difference between the years, not the exact age.) Unlike `FILTER`, the position of
+`BIND` matters: it sees only the patterns written before it in its group, so write it after
+them (placed first, `?years` would stay unbound in every row). And it must introduce a new
+variable; binding a variable the patterns before it already bind is a syntax error.
+
+`IF(condition, then, else)` picks
 one of two values, and `COALESCE(a, b, ...)` returns the first argument that has a value, which
 is how you give an `OPTIONAL` variable a default. `STR()` turns an IRI or literal into a plain
 string, and `STRAFTER(text, prefix)` returns the part after `prefix`:
@@ -1899,6 +2102,10 @@ FROM sparql_rows('
 │ Python │ GO    │ Script │ Java    │ 3.0   │ 3   │ 3.5      │
 └────────┴───────┴────────┴─────────┴───────┴─────┴──────────┘
 ```
+
+Arithmetic follows the types of its operands: an integer combined with a decimal gives a
+decimal, anything combined with a double gives a double, and `/` on two integers gives a decimal,
+hence `3.5` (`ROUND` keeps the decimal type, hence `3.0`).
 
 Every literal has a **datatype**, and functions and comparisons respect it. `DATATYPE(?x)` returns
 it; a cast such as `xsd:integer(?x)` converts a value and fails (leaves the variable unbound) when
@@ -2150,6 +2357,7 @@ the graph in one pattern:
 | `p*` | follow `p` zero or more times |
 | `p+` | follow `p` one or more times |
 | `p?` | follow `p` zero times or once |
+| `!p`, `!(p1\|p2)` | follow any one predicate except `p` (or except `p1` and `p2`) |
 
 `/` saves intermediate variables. The names of everyone behind Java, as designer or developer,
 in one pattern:
@@ -2329,9 +2537,44 @@ SELECT v0 AS directly_declarative, v1 AS declarative_or_below FROM sparql_rows('
 └──────────────────────┴──────────────────────┘
 ```
 
+Why `COUNT(DISTINCT ...)`? The operators `+` and `*` never return the same end point twice for
+one starting point, but `/` and `|` can. Mercury (functional and logic) and XQuery (declarative
+and functional) each reach `ex:Declarative` along two routes, so without `DISTINCT` that pattern
+has 50 solutions for 48 languages.
+
 The same idea, `a/rdfs:subClassOf*`, finds instances of a class and of all its subclasses: `?x
 a/rdfs:subClassOf* ex:ComputerLanguage` matches all 94 languages, programming and query languages
 alike.
+
+**Careful with `*` and `?`.** "Zero steps" means "the node itself", which has two surprising
+effects. With variables at both ends, every node of the graph matches itself, literals included;
+and a fixed starting point matches itself even when it does not occur in the data, so a typo
+still returns a row. The function `sparql_value()` used below returns the first value of the
+first solution of a query (section 6.4):
+
+```sql
+SELECT
+  sparql_count('PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    SELECT * WHERE { ?a rdfs:subClassOf ?b }') AS one_step,
+  sparql_count('PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    SELECT * WHERE { ?a rdfs:subClassOf* ?b }') AS zero_or_more_steps,
+  sparql_value('PREFIX ex:   <http://example.org/pl/>
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    SELECT ?c WHERE { ex:NoSuchThing rdfs:subClassOf* ?c }') AS typo;
+```
+
+```output
+┌──────────┬────────────────────┬───────────────────────────────────┐
+│ one_step │ zero_or_more_steps │               typo                │
+├──────────┼────────────────────┼───────────────────────────────────┤
+│ 16       │ 1236               │ http://example.org/pl/NoSuchThing │
+└──────────┴────────────────────┴───────────────────────────────────┘
+```
+
+The 16 `rdfs:subClassOf` triples give 26 pairs at one or more steps, plus 1,210 pairs of a node
+with itself, one for every subject and object in the default graph. So give a `*` or `?` path a
+constant, or a variable that other patterns already bind, at one end, and check the spelling of
+constants.
 
 **Exercise 5.12.** How many languages in the dataset were influenced, directly or indirectly, by
 Lisp? And which of them appeared before 1970?
@@ -2519,6 +2762,27 @@ SELECT v0 AS graph, v1 AS quads FROM sparql_rows('
 └──────────────────────────────────────┴───────┘
 ```
 
+A classic trap: as soon as a query has a `FROM` or a `FROM NAMED`, its dataset contains only what
+they list. With `FROM NAMED` but no `FROM`, the default graph is empty, so patterns outside
+`GRAPH` find nothing; with `FROM` but no `FROM NAMED`, there are no named graphs for `GRAPH` to
+find. Use both when you need both:
+
+```sql
+SELECT
+  sparql_count('SELECT * FROM NAMED <http://example.org/graph/survey-2025>
+                WHERE { ?s ?p ?o }') AS outside_graph_with_from_named,
+  sparql_count('SELECT * FROM <http://example.org/graph/survey-2025>
+                WHERE { GRAPH ?g { ?s ?p ?o } }') AS inside_graph_with_from;
+```
+
+```output
+┌───────────────────────────────┬────────────────────────┐
+│ outside_graph_with_from_named │ inside_graph_with_from │
+├───────────────────────────────┼────────────────────────┤
+│ 0                             │ 0                      │
+└───────────────────────────────┴────────────────────────┘
+```
+
 **The union default graph.** Some applications want every pattern to see all data, whatever
 graph it is in. The setting `union_default_graph` makes the default graph of every query the
 union of the store's default graph and all named graphs. Set it for one call in the options of
@@ -2568,7 +2832,8 @@ SELECT sparql_config('union_default_graph', 0);
 └─────────────────────────────────────────┘
 ```
 
-Remember to switch it back, as the last line does: the setting stays for the rest of the session.
+(`sparql_value`, from lesson 5.12, returns the first value of the first solution.) Remember to
+switch the setting back, as the last line does: it stays for the rest of the session.
 
 **Exercise 5.13.** Which languages have a lower usage share in the 2026 survey than in 2025?
 Show both shares.
@@ -2684,8 +2949,9 @@ SELECT sparql_query('
 full.) CONSTRUCT is how you reshape or export data: the output of one store can be loaded into
 another with `sparql_load()`.
 
-**DESCRIBE** returns "what the store knows about" a resource; in sparqlite, that is all triples
-with the resource as subject:
+**DESCRIBE** returns "what the store knows about" a resource. In sparqlite that is every triple
+of the default graph with the resource as subject, plus, recursively, the triples of any blank
+nodes those triples point to (a *concise bounded description*):
 
 ```sql
 SELECT sparql_query('DESCRIBE <http://example.org/pl/person/andrew-kelley>', 'turtle');
@@ -2699,6 +2965,31 @@ SELECT sparql_query('DESCRIBE <http://example.org/pl/person/andrew-kelley>', 'tu
 <http://example.org/pl/person/andrew-kelley> a <http://example.org/pl/Person> ;
 	<https://schema.org/name> "Andrew Kelley" .
 ```
+
+Only the query's default graph is described. To describe things that live in a named graph, such
+as the editorial reviews, make that graph the default graph with `FROM` (lesson 5.13):
+
+```sql
+SELECT
+  sparql_count('PREFIX ex: <http://example.org/pl/>
+    DESCRIBE ?review
+    WHERE { GRAPH <http://example.org/graph/editorial> { ?review ex:about ex:Rust } }')
+    AS with_graph,
+  sparql_count('PREFIX ex: <http://example.org/pl/>
+    DESCRIBE ?review
+    FROM <http://example.org/graph/editorial>
+    WHERE { ?review ex:about ex:Rust }') AS with_from;
+```
+
+```output
+┌────────────┬───────────┐
+│ with_graph │ with_from │
+├────────────┼───────────┤
+│ 0          │ 12        │
+└────────────┴───────────┘
+```
+
+The two reviews of Rust have six triples each, all in the editorial graph.
 
 Through `sparql_rows`, CONSTRUCT and DESCRIBE give one row per triple, with the subject,
 predicate and object in `v0`, `v1` and `v2`; an ASK query gives one row whose `v0` is 1 or 0:
@@ -2768,7 +3059,8 @@ SELECT count(*) AS triples FROM sparql_rows('
 ### 5.15 SPARQL Update
 
 SPARQL Update changes the data. From SQL, run it with `sparql_update()`, which returns the number
-of triples inserted plus the number deleted. Because this lesson changes the tutorial database,
+of triples actually added plus the number actually removed (inserting a triple that is already
+there counts 0). Because this lesson changes the tutorial database,
 it starts a SQLite transaction first and undoes everything at the end with `ROLLBACK` (more about
 that in 5.16). Start it now:
 
@@ -2875,9 +3167,15 @@ SELECT v0 AS pioneers_and_toys FROM sparql_rows('
 ```
 
 `DELETE WHERE { pattern }` is the short form when the triples to delete are exactly those that
-match. Named graphs are managed as a whole with `CREATE GRAPH`, `CLEAR GRAPH` (remove its triples,
-keep the graph), `DROP GRAPH` (remove the graph) and `CLEAR ALL` / `DROP ALL`. The table
-`rdf_graph` lists the named graphs:
+match. Whole graphs are managed with:
+
+- `CREATE GRAPH <g>`: create an empty named graph;
+- `CLEAR GRAPH <g>`: remove its triples, keep the graph; `DROP GRAPH <g>`: remove the graph;
+- `CLEAR NAMED` / `DROP NAMED`: the same for all named graphs, leaving the default graph alone;
+- `CLEAR DEFAULT`: empty the default graph;
+- `CLEAR ALL` / `DROP ALL`: **everything**, the default graph included.
+
+The table `rdf_graph` lists the named graphs:
 
 ```sql
 SELECT sparql_update('CREATE GRAPH <http://example.org/graph/scratch>') AS created;
@@ -2942,7 +3240,8 @@ SELECT count(*) AS named_graphs FROM rdf_graph;
 └──────────────┘
 ```
 
-Operating on a graph that does not exist is an error, unless you add `SILENT`:
+Inserting into a graph that does not exist yet simply creates it. But `CLEAR` or `DROP` of a
+graph that does not exist, and `CREATE` of one that does, are errors unless you add `SILENT`:
 
 ```sql
 SELECT sparql_update('DROP GRAPH <http://example.org/graph/nothing-here>');
@@ -3026,9 +3325,11 @@ sparqlite's data lives in ordinary SQLite tables, so SQLite's transactions cover
   usual SQLite rule). Set `PRAGMA busy_timeout = 5000;` on connections that should wait for a lock
   instead of failing at once.
 
-One restriction is specific to sparqlite: a statement cannot change the RDF data while it is
-still reading from `sparql_rows` (see [Troubleshooting](#83-troubleshooting)). Collect the
-results first, then write.
+One restriction is specific to sparqlite: nothing can change the RDF data on a connection while a
+`sparql_rows` or `sparql_view` scan on that connection is still open, whether in the same
+statement or in another one that has not been read to the end, such as a Python cursor you are
+looping over (see [Troubleshooting](#83-troubleshooting)). Read all the results first, then
+write.
 
 ---
 
@@ -3123,8 +3424,28 @@ SELECT t0 AS term, v0 AS value, typeof(v0) AS sql_type FROM sparql_rows('
 | unbound | NULL |
 
 Use `t*` when the difference between `"Go"` and `"Go"@en`, or between `42` and `"42"`, matters.
-The `id*` columns hold the term ids of 2.4; they are cheap to read (no decoding) and are a good
-key for joins between two `sparql_rows` calls on the same database.
+The `id*` columns hold the term ids of 2.4 (explained in 6.5); they are cheap to read (no
+decoding) and are a good key for joins between two `sparql_rows` calls on the same database.
+
+A blank-node label such as `_:b5` cannot be used to find that node again. In a query, `_:b5`
+acts like a variable that is not returned, so this pattern matches every triple of the default
+graph:
+
+```sql
+SELECT sparql_count('SELECT * WHERE { _:b5 ?p ?o }') AS matches;
+```
+
+```output
+┌─────────┐
+│ matches │
+├─────────┤
+│ 2146    │
+└─────────┘
+```
+
+To get back to a blank node, start from a named resource it hangs off, as the review queries of
+lesson 5.13 do, or keep its `id*` value and use it on the SQL side, for example with the `__id`
+columns of 6.7.
 
 The optional second argument is a JSON object with settings for this one call: `engine`,
 `timeout_ms`, `max_memory_mb`, `union_default_graph`, `join_policy`, `reorder`, `probe_counts`
@@ -3194,8 +3515,9 @@ you build one: pass the query through and send the text back.
 
 ### 6.4 Single values: sparql_value, sparql_ask and sparql_count
 
-- `sparql_value(query)` returns the first variable of the first solution, converted like the `v`
-  columns, or NULL if there is none. For an ASK query it returns 1 or 0.
+- `sparql_value(query)` returns the first variable of the first solution (use `ORDER BY` to say
+  which solution is first), converted like the `v` columns, or NULL if there is none. For an ASK
+  query it returns 1 or 0.
 - `sparql_ask(query)` returns 1 if the query has any solution, else 0.
 - `sparql_count(query)` returns the number of solutions (triples for CONSTRUCT). It runs the
   query completely but converts nothing, so it is the fastest way to count.
@@ -3227,7 +3549,38 @@ case, see 6.9).
 
 ### 6.5 Terms and ids
 
-Section 2.4 introduced term ids. The helpers, all taking an id:
+Section 2.4 showed that `rdf_quad` stores every term as an integer *term id*. This is how the ids
+are made.
+
+The dictionary table `rdf_term` has one row per stored term. The rows below 1024 are reserved for
+built-in IRIs such as `rdf:type` and the XML Schema datatypes (35 of them are in use); the data's
+own terms get row numbers from 1024 on. The id of a dictionary term is its row number times 16
+plus a *tag* in the low 4 bits that says what kind of term it is (1 = IRI):
+
+```sql
+SELECT id AS row, tag, lex, id * 16 + tag AS term_id
+FROM rdf_term
+WHERE lex IN ('http://example.org/pl/Go', 'http://example.org/pl/Rust')
+ORDER BY id;
+```
+
+```output
+┌──────┬─────┬────────────────────────────┬─────────┐
+│ row  │ tag │            lex             │ term_id │
+├──────┼─────┼────────────────────────────┼─────────┤
+│ 1831 │ 1   │ http://example.org/pl/Go   │ 29297   │
+│ 1840 │ 1   │ http://example.org/pl/Rust │ 29441   │
+└──────┴─────┴────────────────────────────┴─────────┘
+```
+
+Many values need no dictionary row, because their id encodes the value itself: integers and
+decimals of ordinary size (up to about 17 digits) written in their usual form, booleans, dates
+and dateTimes (to the millisecond), strings of up to 7 bytes without a language tag, and blank
+nodes. Everything else is stored in `rdf_term`: IRIs, language-tagged strings, longer strings,
+doubles and floats, very large numbers, numbers written in an unusual form such as
+`"01"^^xsd:integer`, and literals of all other datatypes.
+
+The helper functions, all taking an id:
 
 | Function | Returns |
 |---|---|
@@ -3237,7 +3590,7 @@ Section 2.4 introduced term ids. The helpers, all taking an id:
 | `sparql_term_lex(id)` | the IRI, the blank node label, or a literal's text |
 | `sparql_term_lang(id)` | a literal's language tag, else NULL |
 | `sparql_term_datatype(id)` | a literal's datatype IRI, else NULL |
-| `sparql_term_id(text)` | the reverse: the id of a term written in N-Triples syntax, or NULL if the store does not contain it |
+| `sparql_term_id(text)` | the reverse: the id of a term written in N-Triples syntax (bare numbers and `true`/`false` are accepted, as in Turtle; prefixed names such as `ex:Go` are not), or NULL if the store does not contain it |
 
 ```sql
 SELECT id0 AS id,
@@ -3263,21 +3616,24 @@ FROM sparql_rows('SELECT ?label WHERE { <http://example.org/pl/Lua> ?p ?label .
 └───────┴──────────────────────────────────────────────────────────────┴─────────┴─────────────────────────────────────────────────────────────┴──────┘
 ```
 
-`sparql_term_id()` only looks terms up and never adds them; it returns NULL for an IRI that is not
-in the store. Values with inline ids (numbers, dates, short strings) always have an id:
+`sparql_term_id()` only looks terms up and never adds them; it returns NULL for a term that is not
+in the store. Values with inline ids (integers, decimals, booleans, dates, short strings) always
+have one, whether the data uses them or not. A double such as `4.2e1` needs a dictionary row, and
+this store has none:
 
 ```sql
 SELECT sparql_term_id('<http://example.org/pl/Rust>') AS rust,
        sparql_term_id('<http://example.org/pl/NoSuchLanguage>') AS missing,
-       sparql_term_id('2012') AS the_number_2012;
+       sparql_term_id('2012') AS the_number_2012,
+       sparql_term_id('4.2e1') AS a_double;
 ```
 
 ```output
-┌───────┬─────────┬─────────────────┐
-│ rust  │ missing │ the_number_2012 │
-├───────┼─────────┼─────────────────┤
-│ 29441 │         │ 32198           │
-└───────┴─────────┴─────────────────┘
+┌───────┬─────────┬─────────────────┬──────────┐
+│ rust  │ missing │ the_number_2012 │ a_double │
+├───────┼─────────┼─────────────────┼──────────┤
+│ 29441 │         │ 32198           │          │
+└───────┴─────────┴─────────────────┴──────────┘
 ```
 
 ### 6.6 Loading data: sparql_load and sparql_load_file
@@ -3343,8 +3699,8 @@ SELECT sparql_config('allow_files', 0) AS allow_files;
 ```
 
 Relative paths are relative to the current directory of the process, here the shell's.
-`sparql_config('allow_files', ...)` can only be called from top-level SQL, not from a view or a
-trigger, and it cannot be set per call.
+`sparql_config('allow_files', ...)` cannot be called from views or triggers stored in the
+database (TEMP ones are fine, see 6.9), and it cannot be set per call.
 
 ### 6.7 sparql_view: a SPARQL query as a table
 
@@ -3459,9 +3815,11 @@ The query must be a SELECT, and two variables must not differ only in case.
 
 ### 6.8 Joining SPARQL results with SQL tables
 
-Since `sparql_rows` and `sparql_view` are tables, they join with ordinary tables. `job_postings`
-(fictional, see 4.2) stores the language as an IRI in `language_iri`, which is exactly the value
-of the view's `lang` column:
+Since `sparql_rows` and `sparql_view` are tables, they join with ordinary tables. The first two
+examples use the `languages` table from 6.7; if you have restarted the shell since then, run its
+`CREATE VIRTUAL TABLE temp.languages ...` statement again first. `job_postings` (fictional, see
+4.2) stores the language as an IRI in `language_iri`, which is exactly the value of the view's
+`lang` column:
 
 ```sql
 SELECT j.language, count(*) AS postings, l.year AS first_appeared
@@ -3683,9 +4041,11 @@ SELECT key, value FROM sparql_status WHERE key LIKE 'config.%';
 | `reader` | `auto` | how query scans read the indexes: `auto`, `btree` or `sql` (section 7.4) |
 | `page_cache_mb` | `128` | page cache of the direct B-tree reader |
 
-The keys of the first seven rows can also be set for one call: in the `sparql_rows` options
-and as `sparql_view` arguments. The other rows of `sparql_status` count work done by this connection
-(`rows_emitted`, `terms_decoded`, cache hits, ...) and describe the last change:
+The keys `engine`, `timeout_ms`, `max_memory_mb`, `union_default_graph`, `join_policy`,
+`reorder`, `probe_counts` and `probe_cap` can also be set for one call: in the `sparql_rows`
+options and as `sparql_view` arguments. The others (`decode_cache_mb`, `allow_files`, `reader`,
+`page_cache_mb`) are per connection only. The other rows of `sparql_status` count work done by
+this connection (`rows_emitted`, `terms_decoded`, cache hits, ...) and describe the last change:
 
 ```sql
 SELECT key, value FROM sparql_status
@@ -3729,6 +4089,9 @@ SELECT sparql_check();
 {"analyzed_quads":2413,"default_graph":{"characteristic_sets":87,"heavy_hitters":1,"objects":1173,"predicates":31,"subjects":299,"triples":2146},"ms":25,"named_graphs":{"characteristic_sets":5,"heavy_hitters":0,"objects":206,"predicates":10,"subjects":46,"triples":267}}
 ok: 963 terms, 2413 quads, 3 named graphs
 ```
+
+(`sparql_check` counts all rows of `rdf_term`: the 928 dictionary terms of the data that the load
+summary in 4.1 reported, plus the 35 built-in rows of 6.5.)
 
 To see `sparql_vacuum_terms` at work, delete the 67 `rdfs:comment` notes (long, unique strings,
 so each has a dictionary entry) inside a transaction, vacuum, check, and roll back:
@@ -3865,6 +4228,12 @@ SELECT sparql_query('SELECT ?x WHERE { ?x ?p }');
 Runtime error: sparql: syntax error: error at 1:26: expected one of LATERAL, SERVICE, [_]
 ```
 
+The position (line 1, column 26) is where the parser gave up, which is usually just after the
+real mistake: here the end of the text, after the triple pattern `?x ?p` that has no object. The
+list after "expected" is the parser's guess at what could come next. It can be long and odd
+(`LATERAL` is a proposed extension to SPARQL, not part of SPARQL 1.1), and sometimes a
+plain-English hint is buried in it, as in the `GROUP BY` example of lesson 5.8.
+
 A mistake in RDF data gives the line and column:
 
 ```sql
@@ -3929,6 +4298,10 @@ add `--emit-sql` if you want a version that does.) The load of `people.nt` ran i
 when one load adds at least 100,000 triples and grows the store by more than 30%, sparqlite drops
 its indexes, inserts in sorted order and rebuilds them, which is much faster than updating eight
 indexes row by row. Load large data in one call, or in a few large ones.
+
+`people.nt` is only needed for the load. You can delete it afterwards
+(`rm tutorial/data/people.nt`); in a git checkout it would otherwise show up as a new, 88 MB
+file.
 
 Open it in a new shell, with the timer on:
 
@@ -4131,8 +4504,8 @@ How to read it:
 
 This plan has a problem. The top join `MergeJoin key=?city ... check=[?c]` joins on the city
 alone and checks `?c` afterwards. About 900,000 rows come from below, and each city has thousands
-of inhabitants, so the merge compares each row with thousands of others. The estimate (`cost=104.7ms`)
-misses that, and the query takes about a minute. Turn the timer back on and try it, if you have
+of inhabitants, so the merge compares each row with thousands of others. The estimate
+(`cost=104.7ms`) misses that, and the query takes about a minute. Turn the timer back on and try it, if you have
 the patience:
 
 ```sql
@@ -4369,7 +4742,7 @@ SELECT sparql_analyze();
 - **Page caches.** `PRAGMA cache_size` sets SQLite's own page cache (by default about 2 MB); it
   matters for the `sql` reader, the SQL translator and writes. The direct B-tree reader has its
   own cache, `sparql_config('page_cache_mb', ...)` (128 MB by default). In the runs for this
-  tutorial, raising `cache_size` to 256 MB made no measurable difference, because the 60 MB
+  tutorial, raising `cache_size` to 256 MB made no measurable difference, because the 61 MB
   database was already in the operating system's file cache.
 - **Journal mode.** See 7.4.
 - **Transactions.** Many small `sparql_update` or `sparql_load` calls are much faster inside one
@@ -4393,7 +4766,7 @@ views and triggers), never from views or triggers stored in the database.
 | `sparql_init()` | INTEGER: the storage schema version; creates the `rdf_*` tables if needed. Writer. |
 | `sparql_load(data [, format [, base [, graph]]])` | INTEGER: new triples/quads. `data` is TEXT or BLOB; `format` is `turtle` (default) / `ttl`, `ntriples` / `nt`, `nquads` / `nq`, `trig`, `rdfxml` / `xml`, `n3` or `jsonld`; `graph` is a target graph IRI. Writer. |
 | `sparql_load_file(path [, format [, base [, graph]]])` | INTEGER: new triples/quads; format from the file extension, base = the file's `file://` URL. Needs `sparql_config('allow_files', 1)`. Writer. |
-| `sparql_update(update)` | INTEGER: triples inserted + triples deleted. `LOAD <file:...>` needs `allow_files`. Writer. |
+| `sparql_update(update)` | INTEGER: triples actually added + triples actually removed. `LOAD <file:...>` needs `allow_files`. Writer. |
 | `sparql_query(query [, format])` | TEXT: SELECT/ASK as `json` (default), `xml`, `csv` or `tsv`; CONSTRUCT/DESCRIBE as `ntriples` (default), `nquads` or `turtle` |
 | `sparql_ask(query)` | INTEGER 1/0 |
 | `sparql_count(query)` | INTEGER: number of solutions (or triples), without converting any value |
@@ -4407,7 +4780,7 @@ views and triggers), never from views or triggers stored in the database.
 | `sparql_query_sql(query [, format])`, `sparql_count_sql(query)`, `sparql_to_sql(query)` | as `sparql_query` / `sparql_count` but with the SQL translator; the translated SQL |
 | `sparql_term(id)` | TEXT: the term in N-Triples syntax, or NULL |
 | `sparql_term_value(id)` | the term as a SQL value |
-| `sparql_term_id(ntriples)` | INTEGER id of an existing term, or NULL |
+| `sparql_term_id(ntriples)` | INTEGER id of an existing term, or NULL. The term is in N-Triples syntax; bare numbers and `true`/`false` are accepted, prefixed names are not. |
 | `sparql_term_kind(id)` | TEXT: `iri`, `literal` or `bnode` |
 | `sparql_term_lex(id)`, `sparql_term_lang(id)`, `sparql_term_datatype(id)` | TEXT: lexical form / IRI / label; language tag; datatype IRI |
 
@@ -4448,6 +4821,8 @@ error rather than risking the host program's stack.
   the extension is not built yet (section 1.2).
 - `undefined symbol: sqlite3_mycopy_init` (or similar): the file was renamed, so the shell
   derived the wrong entry point name; add it: `.load ./mycopy.so sqlite3_sparqlite_init`.
+- On Windows, an error saying that the module could not be found usually means the path still
+  has the `lib` prefix: the file is `sparqlite.dll` (see 1.3).
 - `SQLite version mismatch: 3031001 < 3034001`: the SQLite library is older than 3.34.1.
 - On macOS, Apple's `/usr/bin/sqlite3` has no `.load` command at all; use Homebrew's sqlite3
   (section 1.1).
@@ -4518,10 +4893,17 @@ ok: 35 terms, 0 quads, 0 named graphs
    pattern that matches and add one triple pattern at a time.
 4. A number compared with a string: `FILTER (?year = "1991")` compares an integer with a string
    and is never true; write `?year = 1991`.
+5. A `FILTER` that tests a variable from an `OPTIONAL` part: where the variable is unbound, the
+   test is an error and the solution is dropped (lesson 5.4). Use `!BOUND(?x) || ...`, or put
+   the filter inside the `OPTIONAL`.
+6. `FROM NAMED` without `FROM` (the default graph is then empty), or `FROM` without `FROM NAMED`
+   (then `GRAPH` finds nothing); see lesson 5.13.
 
-**`cannot modify the RDF store while a sparql_rows cursor is open`**: one SQL statement both reads
-from `sparql_rows` and changes the RDF data with a writer function. Run the query first (store its
-results in a temporary table if needed), then the update:
+**`cannot modify the RDF store while a sparql_rows cursor is open`**: a writer function ran while
+a `sparql_rows` or `sparql_view` scan on the same connection was still open, either in the same
+statement or in another statement that has not been read to the end. Read all the rows first (or
+copy them into a temporary table), or close the cursor, then write. In the shell, this happens
+when one statement does both:
 
 ```sql
 SELECT sparql_load('<http://example.org/a> <http://example.org/p> "1" .', 'nt') AS loaded;
@@ -4532,6 +4914,44 @@ FROM sparql_rows('SELECT ?s WHERE { ?s ?p ?o }');
 ```output
 1
 Runtime error: sparql: cannot modify the RDF store while a sparql_rows cursor is open
+```
+
+In a program it typically happens in a loop over the rows of a query that writes for each row.
+The cursor is still open while the loop runs, so the first write fails; `fetchall()` reads all
+rows first and closes the scan:
+
+<!-- verify: python -->
+```python
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.enable_load_extension(True)
+con.load_extension("ext/target/release/libsparqlite")
+con.enable_load_extension(False)
+con.execute("""SELECT sparql_load('
+  <http://example.org/a> <http://example.org/p> "1" .
+  <http://example.org/b> <http://example.org/p> "2" .', 'nt')""")
+
+query = "SELECT v0 FROM sparql_rows('SELECT ?s WHERE { ?s ?p ?o } ORDER BY ?s')"
+mark = "SELECT sparql_update('INSERT DATA { <%s> <http://example.org/seen> true }')"
+
+cur = con.execute(query)
+try:
+    for (s,) in cur:              # the scan is still open inside the loop
+        con.execute(mark % s)
+except sqlite3.OperationalError as e:
+    print("error:", e)
+cur.close()
+
+for (s,) in con.execute(query).fetchall():   # all rows read first
+    con.execute(mark % s)
+print(con.execute("SELECT sparql_count('SELECT * WHERE { ?s <http://example.org/seen> ?o }')")
+      .fetchone()[0], "marked")
+```
+
+```output
+error: sparql: cannot modify the RDF store while a sparql_rows cursor is open
+2 marked
 ```
 
 **`this writer cannot run inside a statement that writes`**: a writer function was called from an

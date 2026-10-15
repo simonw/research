@@ -436,10 +436,19 @@ impl Operator for Count {
         Ok(false)
     }
 
-    fn fast_count(&mut self, _cx: &mut ExecCtx, _cap: Option<u64>) -> Option<Result<u64>> {
-        let n = u64::from(!self.done);
-        self.done = true;
-        Some(Ok(n))
+    /// One row, but only after the count has really been computed: `Execution::count` (and
+    /// with it `sparql_count`) must evaluate the query, not report the implicit group's one
+    /// row for free. The input's own fast paths (store counts, factorized merges) still apply.
+    fn fast_count(&mut self, cx: &mut ExecCtx, _cap: Option<u64>) -> Option<Result<u64>> {
+        if self.done {
+            return Some(Ok(0));
+        }
+        Some(self.count(cx).and_then(|n| {
+            self.done = true;
+            // The same overflow check as `next`, so counting and iterating agree on errors.
+            i64::try_from(n).ok().and_then(TermId::from_int).ok_or_else(|| Error::internal("count overflow"))?;
+            Ok(1)
+        }))
     }
 
     fn reset(&mut self, cx: &mut ExecCtx) {

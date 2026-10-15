@@ -95,6 +95,10 @@ pub struct BtreeCounters {
     pub fallbacks: u64,
     /// Fallen-back cursors that a later `rebind` returned to the reader.
     pub resumes: u64,
+    /// `QuadStore::count` calls answered by the reader (summed cell counts). A count the
+    /// reader abandons midway (an unsupported or corrupt page) runs in the VDBE and counts
+    /// as a fallback instead.
+    pub counts: u64,
 }
 
 /// A validated read snapshot: the main database file (by identity) at one data version,
@@ -403,6 +407,7 @@ impl BtreeReader {
             ("btree_root_loads".into(), c.root_loads.to_string()),
             ("btree_fallbacks".into(), c.fallbacks.to_string()),
             ("btree_resumes".into(), c.resumes.to_string()),
+            ("btree_counts".into(), c.counts.to_string()),
             ("btree_last_fallback".into(), last),
         ]
     }

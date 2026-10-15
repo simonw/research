@@ -8,3 +8,5 @@ __pycache__/
 .pytest_cache/
 /data/
 w3c-report.json
+tutorial/data/people.nt
+tutorial/tutorial.db

@@ -115,7 +115,7 @@ impl Dictionary for SqliteStore {
 
 impl QuadStore for SqliteStore {
     /// The direct B-tree reader when it is enabled and its §13 preconditions hold, otherwise a
-    /// `SqlCursor` (count() always runs in the VDBE).
+    /// `SqlCursor`.
     fn cursor(&self, spec: &ScanSpec) -> Result<Box<dyn QuadCursor>> {
         if spec.prefix_len > 4 {
             return Err(Error::Invalid(format!("prefix_len {} > 4", spec.prefix_len)));
@@ -129,12 +129,17 @@ impl QuadStore for SqliteStore {
         Ok(Box::new(SqlCursor::open(self.0.pool.clone(), spec)?))
     }
 
+    /// Summed cell counts of the order's b-tree when the direct reader can serve the order
+    /// (`btree::count`), otherwise `count(*)` in the VDBE.
     fn count(&self, spec: &ScanSpec, cap: Option<u64>) -> Result<u64> {
         if spec.prefix_len > 4 {
             return Err(Error::Invalid(format!("prefix_len {} > 4", spec.prefix_len)));
         }
         if !self.0.tables_present()? {
             return Ok(0);
+        }
+        if let Some(n) = crate::btree::count(&self.0.btree, spec, cap, &mut || self.0.check_interrupt())? {
+            return Ok(n);
         }
         let key = StmtKey::for_spec(spec, if cap.is_some() { StmtKind::CountCapped } else { StmtKind::Count });
         let mut st = self.0.pool.lease(PoolKey::Scan(key))?;

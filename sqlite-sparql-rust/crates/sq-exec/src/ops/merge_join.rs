@@ -14,7 +14,8 @@ use crate::ctx::{Charge, ExecCtx};
 use crate::rows::{Rows, compatible, merge_into, push_merged};
 use crate::seed::{Seed, SeedBuf};
 
-/// Rows read per refill right after a gallop seek; doubled per refill up to a full batch.
+/// Rows read per refill right after a gallop seek, and by the first refill of a galloping
+/// input; doubled per refill up to a full batch.
 const MIN_CHUNK: usize = 16;
 
 /// A sorted input read row by row.
@@ -24,20 +25,26 @@ pub(crate) struct Sorted {
     pos: usize,
     more: bool,
     chunk: usize,
+    /// Rows asked for by the first refill after `open`.
+    first_chunk: usize,
     /// Last key seen (sortedness check).
     last: TermId,
 }
 
 impl Sorted {
-    fn new(op: BoxOp, width: usize) -> Self {
-        Sorted { op, b: Batch::new(width), pos: 0, more: false, chunk: BATCH_ROWS, last: TermId(i64::MIN) }
+    /// `galloping`: the input may be skipped forward by seeks, so its first refill reads only
+    /// `MIN_CHUNK` rows. A selective merge (9 left keys against a 600K-row index range) would
+    /// otherwise read a whole batch from the start of the range before its first seek.
+    fn new(op: BoxOp, width: usize, galloping: bool) -> Self {
+        let first_chunk = if galloping { MIN_CHUNK } else { BATCH_ROWS };
+        Sorted { op, b: Batch::new(width), pos: 0, more: false, chunk: first_chunk, first_chunk, last: TermId(i64::MIN) }
     }
 
     fn open(&mut self, cx: &mut ExecCtx, seed: Option<Seed<'_>>) -> Result<()> {
         self.b.clear();
         self.pos = 0;
         self.more = true;
-        self.chunk = BATCH_ROWS;
+        self.chunk = self.first_chunk;
         self.last = TermId(i64::MIN);
         self.op.open(cx, seed)
     }
@@ -130,8 +137,8 @@ pub(crate) struct MergeJoin {
 impl MergeJoin {
     pub fn new(left: BoxOp, right: BoxOp, key: Slot, check: Vec<Slot>, gallop: u32, width: usize) -> Self {
         MergeJoin {
-            left: Sorted::new(left, width),
-            right: Sorted::new(right, width),
+            left: Sorted::new(left, width, gallop > 0),
+            right: Sorted::new(right, width, gallop > 0),
             key,
             check,
             gallop,
@@ -309,7 +316,7 @@ impl StarMerge {
     pub fn new(inputs: Vec<BoxOp>, key: Slot, check: Vec<Slot>, width: usize) -> Self {
         let k = inputs.len();
         StarMerge {
-            inputs: inputs.into_iter().map(|op| Sorted::new(op, width)).collect(),
+            inputs: inputs.into_iter().map(|op| Sorted::new(op, width, true)).collect(),
             key,
             check,
             seed: SeedBuf::new(width),

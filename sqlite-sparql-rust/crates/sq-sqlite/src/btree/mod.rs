@@ -18,13 +18,17 @@
 //!   shared-cache mode), the validated snapshot, the CLOCK page cache (`page_cache_mb`) and
 //!   the reader mode (`auto` | `sql` | `btree`);
 //! * `cursor`: [`BtreeCursor`], with leaf pinning, finger seeks, and the transparent fallback
-//!   to a `SqlCursor` at the row-value resume key.
+//!   to a `SqlCursor` at the row-value resume key;
+//! * `count`: range counts (`QuadStore::count`) that sum the cell counts of the pages inside
+//!   the range and search only the pages on its two boundary paths.
+mod count;
 mod cursor;
 mod file;
 mod format;
 mod reader;
 mod roots;
 
+pub(crate) use count::count;
 pub use cursor::BtreeCursor;
 pub use reader::{BtreeCounters, DEFAULT_PAGE_CACHE_MB, ReaderMode};
 pub(crate) use reader::BtreeReader;

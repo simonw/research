@@ -67,16 +67,103 @@ fn all_quads(store: &SqliteStore) -> Vec<[TermId; 4]> {
 }
 
 /// The conformance suite inside a read scope, asserting that every cursor was a B-tree
-/// cursor and that none fell back.
+/// cursor, that the B-tree reader answered every count, and that none fell back; then
+/// [`count_conformance`] on the same store.
 fn conformance_btree(db: &Db, quads: &[[TermId; 4]], seed: u64, iterations: usize) {
+    {
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        assert!(db.shared().btree_active(), "reader inactive: {}", last_fallback(db));
+        let before = db.shared().btree_counters();
+        cursor_conformance(&db.store, quads, seed, iterations);
+        let after = db.shared().btree_counters();
+        // One cursor and two counts (exact, capped) per order x prefix length x iteration.
+        assert_eq!(after.cursors - before.cursors, 45 * iterations as u64, "every cursor is a B-tree cursor");
+        assert_eq!(after.counts - before.counts, 90 * iterations as u64, "every count is a B-tree count");
+        assert_eq!(after.fallbacks, before.fallbacks, "unexpected fallback: {}", last_fallback(db));
+    }
+    count_conformance(db, quads, seed, iterations.max(2));
+}
+
+/// Number of rows of `spec`, by brute force (quads are distinct, so rows are too).
+fn brute_count(quads: &[[TermId; 4]], spec: &ScanSpec) -> u64 {
+    quads.iter().filter(|q| spec.matches(q)).count() as u64
+}
+
+/// Every bound shape on the first free column of a scan whose rows are `rows`: none, one
+/// side, both sides (inclusive and exclusive), values taken from the data and their
+/// neighbours, random values, the extremes, and contradicting bounds.
+fn bound_shapes(r: &mut Rng, rows: &[Vec<TermId>]) -> Vec<(Bound<i64>, Bound<i64>)> {
+    use Bound::{Excluded as Ex, Included as In, Unbounded as Un};
+    let pick = |r: &mut Rng| {
+        if rows.is_empty() || r.below(5) == 0 {
+            random_id(r, 60).0
+        } else {
+            rows[r.below(rows.len() as u64) as usize][0].0 + [0i64, 0, 0, 1, -1][r.below(5) as usize]
+        }
+    };
+    let (a, b) = (pick(r), pick(r));
+    let (lo, hi) = (a.min(b), a.max(b));
+    vec![
+        (Un, Un),
+        (In(lo), Un),
+        (Ex(lo), Un),
+        (Un, In(hi)),
+        (Un, Ex(hi)),
+        (In(lo), In(hi)),
+        (Ex(lo), Ex(hi)),
+        (In(lo), Ex(hi)),
+        (Ex(lo), In(hi)),
+        (In(hi), In(lo)),
+        (In(i64::MIN), In(i64::MAX)),
+        (Ex(i64::MIN), Ex(i64::MAX)),
+        (Ex(i64::MAX), Un),
+        (Un, Ex(i64::MIN)),
+    ]
+}
+
+/// `store.count(spec, cap)` on the B-tree reader against brute force: every order (the
+/// partial indexes included) and prefix length, prefixes from the data and absent ones, every
+/// bound shape of [`bound_shapes`], and caps below, at and above the count (`min(count,
+/// cap + 1)`). Every count must be answered by the reader, without a fallback.
+fn count_conformance(db: &Db, quads: &[[TermId; 4]], seed: u64, iterations: usize) {
     let _read = db.store.read_scope(0).unwrap();
     db.shared().validate_epoch().unwrap();
     assert!(db.shared().btree_active(), "reader inactive: {}", last_fallback(db));
     let before = db.shared().btree_counters();
-    cursor_conformance(&db.store, quads, seed, iterations);
+    let mut r = Rng(seed.wrapping_mul(31) | 1);
+    let mut calls = 0u64;
+    for order in IndexOrder::ALL {
+        for prefix_len in 0..=4usize {
+            for _ in 0..iterations {
+                let mut prefix: Vec<TermId> = match quads.get(r.below(quads.len() as u64) as usize) {
+                    Some(q) => order.cols()[..prefix_len].iter().map(|c| q[*c as usize]).collect(),
+                    None => (0..prefix_len).map(|_| random_id(&mut r, 60)).collect(),
+                };
+                if prefix_len > 0 && r.below(6) == 0 {
+                    prefix[prefix_len - 1] = TermId(prefix[prefix_len - 1].0 + 16);
+                }
+                let base = ScanSpec::new(order, &prefix);
+                let shapes = if prefix_len < 4 {
+                    bound_shapes(&mut r, &expected_rows(quads, &base))
+                } else {
+                    vec![(Bound::Unbounded, Bound::Unbounded)]
+                };
+                for (lo, hi) in shapes {
+                    let spec = base.with_range(lo, hi);
+                    let n = brute_count(quads, &spec);
+                    let caps = [None, Some(0), Some(1), Some(n.saturating_sub(1)), Some(n), Some(n + 1), Some(r.below(2 * n + 2))];
+                    for cap in caps {
+                        let want = cap.map_or(n, |c| n.min(c + 1));
+                        assert_eq!(db.store.count(&spec, cap).unwrap(), want, "count({spec:?}, {cap:?})");
+                        calls += 1;
+                    }
+                }
+            }
+        }
+    }
     let after = db.shared().btree_counters();
-    // One cursor per order x prefix length x iteration.
-    assert_eq!(after.cursors - before.cursors, 45 * iterations as u64, "every cursor is a B-tree cursor");
+    assert_eq!(after.counts - before.counts, calls, "every count is a B-tree count: {}", last_fallback(db));
     assert_eq!(after.fallbacks, before.fallbacks, "unexpected fallback: {}", last_fallback(db));
 }
 
@@ -174,6 +261,201 @@ fn the_whole_table_through_every_order() {
         }
     }
     assert_eq!(db.shared().btree_counters().fallbacks, 0, "{}", last_fallback(&db));
+}
+
+/// Page reads of the reader (page-cache hits and misses) so far.
+fn page_accesses(db: &Db) -> u64 {
+    let c = db.shared().btree_counters();
+    c.cache_hits + c.pages_read
+}
+
+/// Exact counts of whole b-trees, and capped counts that stop after the few pages they need:
+/// the leftmost leaf for a count from the start, one boundary path otherwise.
+#[test]
+fn whole_tree_counts_and_capped_counts_read_only_the_pages_they_need() {
+    let q = random_quads(10, 20_000, true);
+    let db = file_db(512, 0, &q);
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    for order in IndexOrder::ALL {
+        let spec = ScanSpec::new(order, &[]);
+        let n = brute_count(&q, &spec);
+        assert_eq!(db.store.count(&spec, None).unwrap(), n, "{order:?}");
+        let depth = depth(&db, order) as u64;
+        assert!(depth >= 2, "{order:?}: depth {depth}");
+        for cap in [0u64, 1, 5] {
+            let before = page_accesses(&db);
+            assert_eq!(db.store.count(&spec, Some(cap)).unwrap(), n.min(cap + 1));
+            // The leftmost path; one more leaf if the leftmost leaf holds fewer than cap + 1 rows.
+            let pages = page_accesses(&db) - before;
+            assert!(pages <= depth + 1, "{order:?} cap {cap}: {pages} pages, depth {depth}");
+        }
+        // A range in the middle of the b-tree: at most the two boundary paths for a small cap.
+        let rows = expected_rows(&q, &spec);
+        let mid = &rows[rows.len() / 3];
+        let spec = ScanSpec::new(order, &mid[..1]);
+        let before = page_accesses(&db);
+        assert_eq!(db.store.count(&spec, Some(0)).unwrap(), brute_count(&q, &spec).min(1));
+        let pages = page_accesses(&db) - before;
+        assert!(pages <= 2 * depth, "{order:?} mid-range cap 0: {pages} pages, depth {depth}");
+    }
+    assert_eq!(db.shared().btree_counters().fallbacks, 0, "{}", last_fallback(&db));
+}
+
+/// Ranges that start or end exactly at an entry, for every entry of every b-tree (interior
+/// cells included): the exact key, and inclusive / exclusive bounds at its last column and at
+/// its third column. The expected counts come from binary searches over the sorted keys.
+#[test]
+fn counts_of_ranges_starting_or_ending_at_every_entry() {
+    use Bound::{Excluded as Ex, Included as In, Unbounded as Un};
+    for (page_size, n) in [(512u32, 5000usize), (1024, 9000)] {
+        let q = random_quads(60 + u64::from(page_size), n, true);
+        let db = file_db(page_size, 0, &q);
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        let before = db.shared().btree_counters();
+        let mut calls = 0;
+        for order in IndexOrder::ALL {
+            let all = ScanSpec::new(order, &[]);
+            let mut keys: Vec<[i64; 4]> =
+                q.iter().filter(|x| all.matches(x)).map(|x| order.cols().map(|c| x[c as usize].0)).collect();
+            keys.sort_unstable();
+            // Rows with prefix `p` (length j) whose column j lies within (lo, hi).
+            let brute = |p: &[i64], lo: Bound<i64>, hi: Bound<i64>| -> u64 {
+                let j = p.len();
+                let below = |v: i64| match lo {
+                    In(l) => v < l,
+                    Ex(l) => v <= l,
+                    Un => false,
+                };
+                let not_above = |v: i64| match hi {
+                    In(h) => v <= h,
+                    Ex(h) => v < h,
+                    Un => true,
+                };
+                let a = keys.partition_point(|x| x[..j] < *p || (x[..j] == *p && below(x[j])));
+                let b = keys.partition_point(|x| x[..j] < *p || (x[..j] == *p && not_above(x[j])));
+                b.saturating_sub(a) as u64
+            };
+            for k in &keys {
+                let ids = k.map(TermId);
+                assert_eq!(db.store.count(&ScanSpec::new(order, &ids), None).unwrap(), 1, "{order:?} {k:?}");
+                calls += 1;
+                for j in [2usize, 3] {
+                    let v = k[j];
+                    for (lo, hi) in [(In(v), Un), (Ex(v), Un), (Un, In(v)), (Un, Ex(v)), (In(v), In(v))] {
+                        let spec = ScanSpec::new(order, &ids[..j]).with_range(lo, hi);
+                        let want = brute(&k[..j], lo, hi);
+                        assert_eq!(db.store.count(&spec, None).unwrap(), want, "{spec:?}");
+                        assert_eq!(db.store.count(&spec, Some(0)).unwrap(), want.min(1), "{spec:?}");
+                        calls += 2;
+                    }
+                }
+            }
+        }
+        let after = db.shared().btree_counters();
+        assert_eq!(after.counts - before.counts, calls, "{}", last_fallback(&db));
+        assert_eq!(after.fallbacks, before.fallbacks, "{}", last_fallback(&db));
+    }
+}
+
+/// Counts fall back to the VDBE exactly where cursors do: WAL and memory databases, no read
+/// transaction, the connection's own write transaction, the kill switch, and indexes whose
+/// layout the reader does not trust. The results never change.
+#[test]
+fn counts_fall_back_to_the_vdbe_where_cursors_do() {
+    let q = random_quads(35, 3000, true);
+    let check = |db: &Db, quads: &[[TermId; 4]], served: bool, what: &str| {
+        let before = db.shared().btree_counters().counts;
+        let mut calls = 0;
+        for order in IndexOrder::ALL {
+            for spec in [ScanSpec::new(order, &[]), ScanSpec::new(order, &[quads[7][order.cols()[0] as usize]])] {
+                let n = brute_count(quads, &spec);
+                assert_eq!(db.store.count(&spec, None).unwrap(), n, "{what} {spec:?}");
+                assert_eq!(db.store.count(&spec, Some(3)).unwrap(), n.min(4), "{what} {spec:?}");
+                calls += 2;
+            }
+        }
+        let served_now = db.shared().btree_counters().counts - before;
+        assert_eq!(served_now, if served { calls } else { 0 }, "{what}: {}", last_fallback(db));
+    };
+    // WAL.
+    let path = TempPath::new("wal-count");
+    let conn = Connection::open(&path.0).unwrap();
+    conn.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(())).unwrap();
+    let wal = Db::with(conn, Some(path));
+    wal.insert(&q);
+    {
+        let _read = wal.store.read_scope(0).unwrap();
+        wal.shared().validate_epoch().unwrap();
+        check(&wal, &q, false, "WAL");
+    }
+    // Memory.
+    let mem = Db::mem();
+    mem.insert(&q);
+    {
+        let _read = mem.store.read_scope(0).unwrap();
+        mem.shared().validate_epoch().unwrap();
+        check(&mem, &q, false, "memory");
+    }
+    let db = file_db(1024, 0, &q);
+    // No read transaction (autocommit, no statement running).
+    assert_eq!(db.shared().db().txn_state(), ffi::SQLITE_TXN_NONE);
+    check(&db, &q, false, "no read transaction");
+    {
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        check(&db, &q, true, "read scope");
+        db.shared().set_reader(ReaderMode::Sql);
+        check(&db, &q, false, "kill switch");
+        db.shared().set_reader(ReaderMode::Auto);
+        check(&db, &q, true, "switched on again");
+    }
+    // The connection's own write transaction sees its uncommitted writes.
+    db.conn.execute_batch("BEGIN").unwrap();
+    let extra = random_quads(36, 400, true);
+    {
+        let ws = db.store.write_scope(0).unwrap();
+        db.store.insert(&mut extra.clone()).unwrap();
+        ws.commit().unwrap();
+    }
+    let mut all: Vec<_> = q.iter().chain(&extra).copied().collect();
+    all.sort();
+    all.dedup();
+    assert_eq!(db.shared().db().txn_state(), ffi::SQLITE_TXN_WRITE);
+    check(&db, &all, false, "own write transaction");
+    db.conn.execute_batch("ROLLBACK").unwrap();
+    // An index layout the reader does not read: that order counts in the VDBE, others do not.
+    db.conn.execute_batch("DROP INDEX rdf_gpso; CREATE INDEX rdf_gpso ON rdf_quad(g, p, s DESC, o);").unwrap();
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    let before = db.shared().btree_counters().counts;
+    let spec = ScanSpec::new(IndexOrder::Gpso, &[]);
+    assert_eq!(db.store.count(&spec, None).unwrap(), brute_count(&q, &spec));
+    assert_eq!(db.shared().btree_counters().counts, before);
+    let spec = ScanSpec::new(IndexOrder::Gpos, &[]);
+    assert_eq!(db.store.count(&spec, Some(10)).unwrap(), 11);
+    assert_eq!(db.shared().btree_counters().counts, before + 1);
+}
+
+/// A long count polls for interrupts (every 1024 pages): with `sqlite3_interrupt` pending
+/// while a statement runs, it fails with `Error::Interrupted`, like the VDBE count.
+#[test]
+fn long_counts_notice_interrupts() {
+    let q = random_quads(37, 40_000, true);
+    let db = file_db(512, 0, &q);
+    let mut held = db.conn.prepare("SELECT g FROM rdf_quad").unwrap();
+    let mut rows = held.query([]).unwrap();
+    assert!(rows.next().unwrap().is_some());
+    let spec = ScanSpec::new(IndexOrder::Gspo, &[]);
+    let counts = db.shared().btree_counters().counts;
+    assert_eq!(db.store.count(&spec, None).unwrap(), q.len() as u64);
+    assert_eq!(db.shared().btree_counters().counts, counts + 1, "{}", last_fallback(&db));
+    db.shared().db().interrupt();
+    assert!(matches!(db.store.count(&spec, None), Err(Error::Interrupted)));
+    drop(rows);
+    drop(held);
+    assert_eq!(db.store.count(&spec, Some(5)).unwrap(), 6);
 }
 
 fn random_bound(r: &mut Rng, rows: &[Vec<TermId>]) -> Bound<i64> {
@@ -706,6 +988,14 @@ fn non_integer_values_fall_back_to_sql() {
         let spec = ScanSpec::new(order, &[]);
         let mut sql = crate::cursor::SqlCursor::open(shared.pool.clone(), &spec).unwrap();
         let want = drain(&mut sql, 1024);
+        // Counts agree with the VDBE count whether the walk meets the odd records or not.
+        for spec in [spec, ScanSpec::new(order, &[TermId::DEFAULT_GRAPH]).with_range(Bound::Included(s - 1), Bound::Included(s + 1))] {
+            shared.set_reader(ReaderMode::Sql);
+            let (exact, capped) = (db.store.count(&spec, None).unwrap(), db.store.count(&spec, Some(100)).unwrap());
+            shared.set_reader(ReaderMode::Auto);
+            assert_eq!(db.store.count(&spec, None).unwrap(), exact, "{spec:?}");
+            assert_eq!(db.store.count(&spec, Some(100)).unwrap(), capped, "{spec:?}");
+        }
         // The fallback may already happen while positioning at the start.
         let mut cur = db.store.cursor(&spec).unwrap();
         assert_eq!(drain(cur.as_mut(), 97), want, "{order:?}");
@@ -790,6 +1080,10 @@ fn corrupt_pages_never_panic() {
             continue;
         }
         for order in IndexOrder::ALL {
+            // Counts walk the damaged b-trees too (or fall back to the VDBE count).
+            let _ = store.count(&ScanSpec::new(order, &[]), None);
+            let _ = store.count(&ScanSpec::new(order, &[]), Some(r.below(3000)));
+            let _ = store.count(&ScanSpec::new(order, &[q[r.below(q.len() as u64) as usize][order.cols()[0] as usize]]), None);
             let Ok(mut cur) = store.cursor(&ScanSpec::new(order, &[])) else { continue };
             let mut buf = Vec::new();
             for _ in 0..100_000 {
@@ -914,8 +1208,8 @@ fn costs_and_caps_follow_the_active_reader() {
     assert_eq!(mem.store.caps().reader, ReaderKind::SqlCursor);
 }
 
-/// Counts are not affected by the reader (they always run in the VDBE), and an absent
-/// schema still yields empty cursors.
+/// Counts on every order of a small store (B-tree counts inside a read scope), and an absent
+/// schema still yields empty cursors and zero counts.
 #[test]
 fn counts_and_absent_schema() {
     let path = TempPath::new("absent");
@@ -926,6 +1220,7 @@ fn counts_and_absent_schema() {
     store.shared().validate_epoch().unwrap();
     let mut cur = store.cursor(&ScanSpec::new(IndexOrder::Gspo, &[])).unwrap();
     assert_eq!(drain(cur.as_mut(), 10), Vec::<Vec<TermId>>::new());
+    assert_eq!(store.count(&ScanSpec::new(IndexOrder::Gspo, &[]), None).unwrap(), 0);
     assert!(!store.shared().btree_active());
     drop(read);
     drop(cur);
@@ -938,4 +1233,5 @@ fn counts_and_absent_schema() {
         let spec = ScanSpec::new(order, &[]);
         assert_eq!(db.store.count(&spec, None).unwrap() as usize, expected_rows(&q, &spec).len());
     }
+    assert_eq!(db.shared().btree_counters().counts, 9);
 }

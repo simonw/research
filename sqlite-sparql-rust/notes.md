@@ -184,7 +184,7 @@ translating SPARQL to SQL text or running as an external client.
   pushdown. Final: 105 sq-api Rust tests + pytest suite against the real .so; W3C through plain SQL
   (`--backend sqlite`): 636/639 (3 = spargebra parser).
 - Tutorial dataset (tutorial/make_tutorial_data.py, stdlib only, deterministic via its own SplitMix64):
-  languages.ttl = 2,108 triples: 94 languages, 117 people, 40 organisations, 276 influencedBy edges, a
+  languages.ttl = 2,108 triples: 94 languages, 117 people, 40 organisations, 275 influencedBy edges, a
   13-class paradigm hierarchy, labels/descriptions in en/fr/de/es/ja; survey.trig = FICTIONAL survey
   named graphs; job_postings (FICTIONAL, 300 rows) for SQL joins; optional --people N synthetic network
   (100K people = 836K triples). Fact-checker found backward influence edges (Java<-C#, Rust<-Swift,
@@ -217,3 +217,11 @@ translating SPARQL to SQL text or running as an external client.
   evaluating it (verified: 0.006 s vs 0.13 s via sparql_value). Must be removed/handled before reporting.
   Measured directly: Q16 count over 1.6M quads: B-tree reader 129 ms vs reader=sql (VDBE count) 68 ms ->
   the reader should count by summing leaf cell counts instead of decoding rows.
+- tutorial.md (write -> new-user walkthrough + SPARQL-expert review -> fix): ~5,000 lines: install (incl.
+  macOS/Windows notes, minimum SQLite 3.34.1 = the loadable-extension bindings' version), first steps in the
+  sqlite3 CLI, RDF in 5 minutes, the dataset, 16 SPARQL lessons each with a verified exercise, the SQL interface,
+  performance on 100K synthetic people, reference + troubleshooting. tutorial/verify_tutorial.py runs every
+  sql/output block pair through the sqlite3 CLI (157 verified, 3 skipped). The walkthrough reviewer
+  reproduced every output and all 15 exercise solutions; the expert review fixed several subtle explanations.
+  It also surfaced engine issues now queued: a merge join on a ~20-value key with a residual check taking 55 s
+  (0.43 s as a hash join), read-only functions not SQLITE_INNOCUOUS (stored views fail with trusted_schema off).

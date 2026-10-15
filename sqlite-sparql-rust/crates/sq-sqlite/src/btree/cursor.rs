@@ -257,24 +257,14 @@ impl BtreeCursor {
         self.prefix[..k].copy_from_slice(&prefix[..k]);
         self.lower = lower;
         self.upper = upper;
-        let mut start = [i64::MIN; KEY_COLS];
-        let mut end = [i64::MAX; KEY_COLS];
-        for i in 0..k {
-            start[i] = prefix[i].0;
-            end[i] = prefix[i].0;
-        }
-        self.empty = false;
-        if k < KEY_COLS {
-            match (lower_incl(lower), upper_incl(upper)) {
-                (Some(l), Some(u)) if l <= u => {
-                    start[k] = l;
-                    end[k] = u;
-                }
-                _ => self.empty = true,
+        match key_range(&prefix[..k], lower, upper) {
+            Some((start, end)) => {
+                self.start = start;
+                self.end = end;
+                self.empty = false;
             }
+            None => self.empty = true,
         }
-        self.start = start;
-        self.end = end;
     }
 
     // ------------------------------------------------------------------ positioning
@@ -599,6 +589,28 @@ impl BtreeCursor {
         self.counters.reader = ReaderKind::Btree;
         self.reader.count(|c| c.resumes += 1);
     }
+}
+
+/// The smallest and largest key of a scan range: the prefix, then the bounds on the first free
+/// column, then MIN / MAX. `None` when the bounds contradict each other (an empty range).
+pub(super) fn key_range(prefix: &[TermId], lower: Bound<i64>, upper: Bound<i64>) -> Option<(Key, Key)> {
+    let k = prefix.len().min(KEY_COLS);
+    let mut start = [i64::MIN; KEY_COLS];
+    let mut end = [i64::MAX; KEY_COLS];
+    for (i, p) in prefix[..k].iter().enumerate() {
+        start[i] = p.0;
+        end[i] = p.0;
+    }
+    if k < KEY_COLS {
+        match (lower_incl(lower), upper_incl(upper)) {
+            (Some(l), Some(u)) if l <= u => {
+                start[k] = l;
+                end[k] = u;
+            }
+            _ => return None,
+        }
+    }
+    Some((start, end))
 }
 
 /// Smallest key greater than every row starting with `key`'s columns. Returns the length of

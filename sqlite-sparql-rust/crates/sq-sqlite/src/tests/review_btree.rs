@@ -562,6 +562,8 @@ fn review_targeted_page_corruption_never_panics() {
                 for prefix_len in [0usize, 1, 2] {
                     let q = quads[r.below(quads.len() as u64) as usize];
                     let prefix: Vec<TermId> = order.cols()[..prefix_len].iter().map(|c| q[*c as usize]).collect();
+                    let _ = store.count(&ScanSpec::new(order, &prefix), None);
+                    let _ = store.count(&ScanSpec::new(order, &prefix), Some(r.below(500)));
                     let Ok(mut cur) = store.cursor(&ScanSpec::new(order, &prefix)) else { continue };
                     let mut buf = Vec::new();
                     for step in 0..400 {
