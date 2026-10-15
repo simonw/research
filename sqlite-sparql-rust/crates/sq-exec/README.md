@@ -52,25 +52,40 @@ interrupt-polling counter. The methods are:
 | `reset(cx)` | release memory, keep cursors leased so the next `open` can `rebind` them |
 | `close(cx)` | release cursors and memory |
 
+*Early stopping.* `next` takes no row limit, so an input stops early only when the batch it
+fills has no free space left. Consumers use that. Slice pads its private batch so that only
+min(offset + limit left, 1024) rows are free. EXISTS evaluates on a batch that already holds
+1023 placeholder rows. The row-dropping operators (Filter, Distinct, Reduced, Minus,
+GraphLoop) pull through `rows::Pull`, which asks for the output's free space with
+`next_limited` and doubles the request on each refill.
+
 **3. Seeds: Join mode and Substitute mode** (`seed.rs`). A `Seed { row, subst: SlotSet }` is a
 full-width row in which exactly the seeded slots are bound. A Join-mode seed comes from a
 BindJoin probe (sideways information passing). A Substitute-mode seed comes from EXISTS: the
 slot acts as a constant everywhere, including OPTIONAL and MINUS right sides, sub-selects and
 inputs under a LIMIT. Both modes can be live at once. Leaves merge the whole seed into their
-rows. Join-mode seeds reach every input of an inner join, the left input of Left, Semi and Anti
-joins and of Minus, every Union branch, and the input of Filter, Extend, Project, Distinct,
-Reduced, Sort, SortBySlot and Group. Slice, TopK, Count and GraphLoop pass only the
-substitution on. Project, Group and Count write substituted constants back onto their output
-rows. This is the planner's seed contract (see [../sq-plan/README.md](../sq-plan/README.md)).
+rows. Join-mode seeds reach every input of an inner join, except a BindJoin's right input. That
+input is re-opened with exactly its own seed slots (taken from each left row) plus the
+substitution. Join-mode seeds also reach the left input of Left, Semi and Anti joins and of
+Minus, every Union branch, and the input of Filter, Extend, Project, Distinct, Reduced, Sort,
+SortBySlot and Group. Slice, TopK, Count and GraphLoop pass only the substitution on. Project,
+Group and Count write substituted constants back onto their output rows. This is the
+planner's seed contract (see [../sq-plan/README.md](../sq-plan/README.md)).
 
 **4. Scans are index range cursors** (`ops/scan.rs`). Each cursor is a `QuadCursor` leased from
 the store with `store.cursor(spec)`; in sq-sqlite that is a pooled range statement or the
 B-tree reader. At `open` the Scan works out which positions are bound (constants, seeds, the
-graph). If the planned `IndexOrder` still has those columns as its prefix, it keeps that order
-and `rebind`s the existing cursor, which allocates nothing. Otherwise it takes
-`IndexOrder::candidates(mask)[0]` and leases a new cursor. Repeated variables (`?x :p ?x`), the
-INT tag of an `IntRange` scan and FROM NAMED membership are checked after the read. A TEMP or otherwise non-storable bound value gives 0 rows without opening a
-cursor. Graph selection works as follows:
+graph). It keeps the planned `IndexOrder` if that order's prefix is exactly the bound columns
+and the order passes the same filters as `candidates`: it is not the numeric-exceptions index,
+and it is a g-last index only when the graph is free. Otherwise it takes
+`IndexOrder::candidates(mask)[0].0`. If the Scan already holds a cursor of the chosen order and
+prefix length, it `rebind`s that cursor, which allocates nothing. Otherwise it leases a new one.
+Repeated variables (`?x :p ?x`), the INT tag of an `IntRange` scan and FROM NAMED membership
+are checked after the read. An `IntRange` scan reads in two phases: first the INT range on
+GPOS, then the numeric exceptions of `(g,p)` on GPOX (dictionary-typed literals and inline
+decimals). Its output is therefore unsorted, and the FILTER kept above it decides on the
+exceptions. A TEMP or otherwise non-storable bound value gives 0 rows without opening a cursor.
+Graph selection works as follows:
 
 - the store default graph, a single FROM graph, a constant graph, the GraphLoop register, or a
   seeded graph slot: one g-first cursor;
@@ -81,11 +96,13 @@ cursor. Graph selection works as follows:
   check.
 
 **5. Joins** (`ops/bind_join.rs`, `hash_join.rs`, `merge_join.rs`, `minus.rs`).
-- **BindJoin** re-opens `right` once per distinct seed tuple of each left batch. When
-  `sort_left` is set it sorts the batch first, and runs of equal tuples reuse the buffered
-  result of the previous probe. It switches to hashing against one unseeded evaluation of
-  `right` in two cases. If `adaptive` is set (and `right` does not rely on sort orders that its
-  seeds provide), it switches once the left side passes both 50,000 rows and 8x its estimate.
+- **BindJoin** re-opens `right` once per run of equal adjacent seed tuples in each left batch.
+  The later rows of a run reuse the buffered result of the run's probe. With `sort_left` the
+  batch is sorted by seed tuple first, so each distinct tuple is probed once per batch. Without
+  it, a tuple that comes back non-adjacently is probed again. The join switches to hashing
+  against one unseeded evaluation of `right` in two cases. If `adaptive` is set (and `right`
+  does not rely on sort orders that its seeds provide), it switches once the left side passes
+  both 50,000 rows and 8x its estimate.
   If the join is Inner or Left and `right` mints values (BNODE, RAND, UUID, STRUUID), it hashes
   immediately, because one solution must not get several values.
 - **HashJoin** keeps its build side in a flat row arena with `FxHashMap` chain heads. A build
@@ -109,7 +126,9 @@ middle variable (bag), `Alt` is a bag union, and `Nps` gives a set of pairs per 
 Zero-length matches have extra rules:
 
 - a constant or substituted endpoint matches itself even when it is absent from the graph;
-- a Join-seeded endpoint, and a sequence middle, must be a node of the graph (`has_node`);
+- any other value bound by a zero-length step (a Join-seeded endpoint, a sequence middle) must
+  be a node of the graph (`has_node`), unless it equals a constant at the other end. So
+  `:zz :p?/:q? :zz` holds even when `:zz` is not a node;
 - with both endpoints free, every node of the graph matches. The nodes are found with loose
   index scans of GSPO and GOSP, and starts are evaluated in chunks of 256.
 
@@ -119,12 +138,29 @@ Paths never cross graphs; for a graph variable the operator loops over the named
 miss it is opened in Substitute mode with every bound slot of the outer row that it mentions,
 nested patterns included, and `reset` afterwards so its scans can be rebound. It runs on a
 private batch that already holds 1023 placeholder rows, so streaming operators stop after one
-row. A row only counts if it
-agrees with the outer row on the substituted slots. Answers are memoized per (id, active graph,
-correlated values). The memo holds at most 65,536 entries, is charged against the budget, and
-is cleared rather than failing the query when memory is short.
+row. A row only counts if it agrees with the outer row on the substituted slots. Answers are
+memoized per (id, active graph, correlated values). The memo holds at most 65,536 entries, is
+charged against the budget, and is cleared rather than failing the query when memory is short.
 
-**8. Terms, memory and interrupts** (`resolver.rs`, `ctx.rs`).
+**8. Other operators.**
+- **Sort, TopK, SortBySlot** (`ops/sort.rs`). Sort is stable and computes the `SortKey`s once per
+  row. TopK keeps a bounded heap of offset + limit rows. SortBySlot is the merge-join enforcer
+  and sorts by the raw signed id of one slot. When every key is a bare variable and every value
+  is an inline INT, Sort and TopK compare raw ids and build no `SortKey` (the "INT fast path").
+- **Group, Count** (`ops/group.rs`). Group uses hash aggregation, with groups in first-seen
+  order, or streams when the input is sorted by its single key. DISTINCT aggregates are
+  deduplicated in a per-group set charged against the budget. Count is COUNT(*) without
+  DISTINCT or GROUP BY: it uses its input's `fast_count` (a store count or a factorized merge
+  join) and iterates otherwise.
+- **Distinct** keeps the first row of each key in a hash set. **Reduced** drops only adjacent
+  duplicates.
+- **Union** (`ops/union.rs`) runs its branches one after another (bag semantics) and opens each
+  one lazily with the seed.
+- **GraphLoop** (`ops/graph.rs`) pushes each named graph onto the graph register around every
+  `open` and `next` of its input, because inputs open subtrees lazily (Union branches, BindJoin
+  probes, EXISTS evaluations).
+
+**9. Terms, memory and interrupts** (`resolver.rs`, `ctx.rs`).
 
 *Decoding.* The resolver decodes inline and blank-node ids with no I/O and TEMP ids from the
 execution's `TempDict`. Dictionary ids go to `store.dict()`, which is where sq-sqlite applies
@@ -143,8 +179,14 @@ Each API call also checks the deadline.
 
 ## Public API tour
 
-`Execution::new` validates the layout, builds the operator trees and fixes `NOW()`. Execution
-starts on the first call. This is how sq-engine prepares a query (`sq-engine/src/query.rs`):
+`Execution::new` validates the layout, builds the operator trees, fixes `NOW()` and starts the
+timeout clock. The deadline is `Instant::now() + timeout_ms`, taken in `new`, so time spent
+between `new` and the first call counts against it. Rows are produced from the first call on.
+
+Most callers should not chain the planner steps by hand. `sq_engine::prepare(store, &query,
+&opts, caches)` returns a ready `Execution`, and `sq_plan::plan_query` is `lower_query` +
+`optimize` in one call. Spelled out, this is what sq-engine's `prepare` does
+(`sq-engine/src/query.rs`):
 
 ```rust
 use std::rc::Rc;
@@ -173,10 +215,13 @@ Things to know when you call it:
 - The form decides which calls work. SELECT uses `next_rows`. ASK uses `ask()`, or `next_rows`,
   which gives one zero-width row iff the answer is true. CONSTRUCT and DESCRIBE use
   `TripleSource::next_triples(&mut out, max)`, which returns a deduplicated set in first-seen
-  order. Using the wrong source returns `Error::Invalid`.
-- `count()` counts solutions (or triples, or 0/1 for ASK) without decoding anything. Before
-  any row has been read, it uses the root's `fast_count`. For example, a plain triple pattern
-  turns into one `store.count`.
+  order. Using the wrong source returns `Error::Invalid`. `form()` returns the plan's
+  `QueryForm`; sq-engine uses it to choose the serializer.
+- `count()` and `ask()` consume the execution. `count()` returns the number of solutions not
+  yet read (triples for CONSTRUCT and DESCRIBE, 0 or 1 for ASK) without decoding anything, then
+  closes the tree. If nothing has been read yet, it uses the root's `fast_count`. For example,
+  a plain triple pattern turns into one `store.count`. `ask()` closes the tree after the first
+  solution.
 - `set_now(oxsdatatypes::DateTime)` pins `NOW()`; sq-engine uses it so that a whole update
   request sees one value. `memory_used()` reports the bytes currently charged.
   `enable_timing()` adds per-node wall time to `profile()`, which returns an
@@ -184,31 +229,66 @@ Things to know when you call it:
   hits and misses, and `exec_ns`. `plan_ns` is left at 0 for the caller to fill in.
 - The options that sq-exec reads are `timeout_ms`, `max_memory_mb` and `base_iri`, the last
   only when the plan has none. `ExecCaches` is an empty placeholder.
+- The errors a caller sees are `Error::Timeout` (the deadline), `Error::Interrupted` (from
+  `store.check_interrupt()`), `Error::MemoryBudget(mb)`, `Error::Unsupported` (from `new`, for a
+  layout wider than 256 slots), `Error::Invalid` (the wrong source for the form),
+  `Error::Internal` for a broken plan invariant such as an unsorted MergeJoin input, and
+  whatever the store returns.
 - When an API call fails, the operator tree is closed. Dropping an `Execution` returns every
   cursor to the store.
 
 The unit tests build plans by hand with no planner involved, using the helpers in
 `src/tests/mod.rs` (`Fx`, `Q`, `scan`, `values`, `filter`, ...). This is
-`exists_is_memoized_per_correlated_tuple`:
+`exists_is_memoized_per_correlated_tuple` from `src/tests/exists.rs`. `data()` and
+`exists(id)` (which is `Expr::Exists(ExistsId(id))`) are helpers in that file:
 
 ```rust
-let rows: Vec<Vec<TermId>> = [a, b, a, cc, a, b].iter().map(|x| vec![*x, int(0)]).collect();
-let p0 = filter(values(&[0, 2], rows), Expr::Exists(ExistsId(0)));
-let mut e = Q::new(&fx.store, 3, p0).exists(vec![scan(v(0), c(p), v(1))]).exec(fx.rc());
-assert_eq!(collect(&mut e).unwrap().len(), 5);
-assert_eq!(e.profile().nodes[2].opens, 3, "one evaluation per distinct ?0");
+#[test]
+fn exists_is_memoized_per_correlated_tuple() {
+    let (fx, [a, b, cc, _, p, ..]) = data();
+    let rows: Vec<Vec<TermId>> = [a, b, a, cc, a, b].iter().map(|x| vec![*x, int(0)]).collect();
+    let p0 = filter(values(&[0, 2], rows), exists(0));
+    // The pattern mentions ?0 and ?1 only: ?2 (different per row or not) is not part of the key.
+    let mut e = Q::new(&fx.store, 3, p0).exists(vec![scan(v(0), c(p), v(1))]).exec(fx.rc());
+    assert_eq!(collect(&mut e).unwrap().len(), 5);
+    // Node ids: 0 Filter, 1 Values, 2 the EXISTS scan.
+    assert_eq!(e.profile().nodes[2].opens, 3, "one evaluation per distinct ?0");
+}
 ```
+
+## Adding a plan operator
+
+A new `sq_core::plan::Op` variant needs these changes in this crate:
+
+1. An `Operator` in `ops/<file>.rs`. `open` follows the seed contract above, `next` stops when
+   the batch is full, `reset` keeps cursors leased (the default just closes), and every
+   materializing structure holds a `Charge`. `fast_count`, `next_limited` and `seek` are
+   optional.
+2. In `build.rs`: an arm in `build_in` (the `Instrumented` wrapper is added there for every
+   node), an arm in `mints_values` (an exhaustive match: does the node evaluate BNODE, RAND,
+   UUID or STRUUID?), and a case in `needs_sorted_input` if the node relies on sorted input.
+3. An arm in `exists::collect` (an exhaustive match) that lists every slot the node mentions
+   and its EXISTS ids. It is used both for the layout check and for EXISTS memo keys.
+
+Outside this crate, the variant and `Plan::children` live in sq-core. sq-plan has per-op
+matches in `validate.rs`, `props.rs`, `explain.rs` and `physical/` (`estimate.rs`, `finish.rs`,
+`mod.rs`). The compiler flags the exhaustive matches. It does not flag `needs_sorted_input` or
+a match with a wildcard arm, such as the one in `physical/estimate.rs`.
 
 ## Testing
 
 ```sh
 cargo test -p sq-exec                                            # 113 passed, 2 ignored
-cargo test --release -p sq-exec bench -- --ignored --nocapture   # the two micro-benchmarks
+cargo test --release -p sq-exec bench_operators -- --ignored --nocapture --test-threads=1
 ```
+
+The second command runs the operator micro-benchmark. The filter `bench` alone would also match
+`bench_hash_join_only` and run both benchmarks at once, which skews the numbers.
 
 The tests read no environment variables. All tests are unit tests under `src/tests/`, plus a few
 in `seed.rs` and `rows.rs`. They run hand-built plans over `MemStore` or the `TestStore`
-wrapper, which counts cursors, counts and interrupt polls and can inject interrupts.
+wrapper. TestStore counts cursors, store counts (uncapped counts separately) and interrupt
+polls. It can also inject interrupts and supply canned `SqlJoin` rows.
 
 | Module | Tests | Covers |
 |---|---|---|
@@ -223,10 +303,22 @@ wrapper, which counts cursors, counts and interrupt polls and can inject interru
 | `limits.rs` | 8 | interrupts, deadlines, the memory budget, polling of probes that find no match |
 | `review.rs`, `review_exec.rs` | 8, 13 | reviewer-pinned semantics; inputs that cross batch boundaries; resource handling |
 
-End-to-end coverage lives in other crates. `sq-plan/tests/differential.rs` runs planner + sq-exec
-against `sq-oracle` on MemStore and SQLite, and `sq-engine` and `sq-api` test full queries.
-According to the author's notes, a scratch W3C sweep (sq-plan + sq-exec on MemStore, not
-committed) gave 528 passes and 8 lenient results under every join policy.
+End-to-end coverage lives in other crates. These are the main checks of sq-exec:
+
+- **The differential fuzzer**, `crates/sq-engine/tests/differential.rs` (with `tests/fuzz/`). It
+  runs random queries through sq-plan + sq-exec under 5 join policies, with reorder on and off,
+  on 3 stores: MemStore, in-memory SQLite, and a SQLite file with 512-byte pages that
+  exercises the B-tree reader. It compares every result against sq-oracle. The project log
+  records about 7.7 million comparisons in the long runs. They found an sq-exec bug, and
+  `BNODE()` being re-evaluated per seed on a BindJoin probe side.
+- **The W3C runner**, `tools/sq-w3c`, with its `known_failures.txt`. The project log records
+  636 of 639 tests passing on the `mem` backend (MemStore + sq-engine). The 3 failures are
+  spargebra parser divergences.
+
+`sq-plan/tests/differential.rs` also runs planner + sq-exec against sq-oracle on MemStore and
+SQLite, and `sq-engine` and `sq-api` have their own query tests. An earlier scratch W3C sweep
+(sq-plan + sq-exec on MemStore, not committed) gave 528 passes and 8 lenient results under the
+Auto, PreferBind and PreferHash join policies and with reorder off.
 
 ## Performance
 
@@ -234,19 +326,22 @@ committed) gave 528 passes and 8 lenient results under every join policy.
 ranges. It therefore measures executor overhead per input row, with no SQLite I/O; for store
 costs see [../sq-sqlite/README.md](../sq-sqlite/README.md). The table gives ns per input row,
 release build, on the project's 4-vCPU dev VM. The first column is from the author's notes. The
-second is two re-runs on 2026-10-15, while other agents' builds kept the load average near 3.8.
+second is from 2026-10-15, with `bench_operators` run alone (`--test-threads=1`, as above). The
+low end of each range is the best of four runs at a load average near 2. The other end is one
+run on the idle VM (load 0.03). Each figure comes from a single timed pass after one warm-up
+pass, so expect 10-20% variation between runs, and more under load.
 
-| Shape | Author | Re-run |
+| Shape | Author | 2026-10-15 |
 |---|---|---|
-| scan | 22 | 21 |
-| FILTER `?o > k` / BIND `?o + 1` | 60 / 82 | 59-62 / 81-82 |
-| merge join / factorized merge COUNT | 66 / 28 | 56-57 / 23-40 |
-| hash join (both inputs counted) | 335-480 | 327-335 |
-| sort, INT raw-id fast path / by `-?o` (SortKeys) | 180 / – | 253-274 / 1,900-2,080 |
-| TopK 10 / group by (1000 groups) / distinct | 51 / 81 / 93 | 45-105 / 86-200 / 106-279 |
+| scan | 22 | 20-21 |
+| FILTER `?o > k` / BIND `?o + 1` | 60 / 82 | 59 / 79-80 |
+| merge join / factorized merge COUNT | 66 / 28 | 55-56 / 22 |
+| hash join (both inputs counted) | 335-480 | 298-308 |
+| sort, INT raw-id fast path / by `-?o` (SortKeys) | 180 / – | 116-122 / 1,200-1,370 |
+| TopK 10 / group by (1000 groups) / distinct | 51 / 81 / 93 | 45-47 / 89-96 / 106-109 |
 
-Probe-heavy shapes on MemStore (BindJoin: about 1.3 µs per probe in the author's notes, 1.2-1.8
-µs in the re-runs) mostly measure the range copy MemStore makes on every `rebind`, not the
+Probe-heavy shapes on MemStore (BindJoin: about 1.3 µs per probe in the author's notes, 1.1-1.4
+µs on 2026-10-15) mostly measure the range copy MemStore makes on every `rebind`, not the
 executor.
 
 ## Where the code differs from docs/SPEC.md
@@ -258,16 +353,21 @@ executor.
   are applied behind `store.dict()`.
 - **HashJoin (§5.3).** There is no bitmask-grouped `CompatTable`. Wildcard lists and per-candidate
   `check` comparisons keep the join exact.
-- **Group (§5.3).** An erroring GROUP BY key and an unbound key form *one* group (SPARQL §18.5.1;
-  the oracle work corrected the spec). The doc comment on `Builder::group_input` and the test name
-  `erroring_group_keys_form_their_own_group` still use the old wording.
+- **Group (§5.3).** A GROUP BY expression that errors and one that evaluates to unbound form
+  *one* group: both write `TermId::ERROR`, which is output as unbound (SPARQL §18.5.1; the
+  oracle work corrected the spec). A plain-variable key that is unbound stays UNBOUND, a group
+  separate from ERROR. `review_exec::review_error_and_unbound_group_keys_form_one_group` pins the
+  rule. The old "own group" wording survives in the doc comments on `Builder::group_input` and
+  `Extend` (`ops/filter.rs`), in sq-core's `Op::Group` doc, and in the name of the test
+  `erroring_group_keys_form_their_own_group`, whose assertions follow the new rule.
 - **Paths (§5.5).**
   - A sequence middle is a join variable.
   - `Alt` is a bag union at every level.
   - Visited entries are `(start, node)` pairs in one set.
   - The probe-or-scan choice uses a capped count cached per execution, not a per-level comparison
     of exact sizes.
-  - A default graph merged from several FROM graphs always probes.
+  - A merged default graph (several FROM graphs, or the union default graph) always probes,
+    because a merged scan has no `fast_count`.
 - **MergeJoin (§5.3).** Either input may seek, not only a right-hand Scan.
 - **SqlJoin (§5.3).** Seed values (in practice the EXISTS substitution) are applied to its rows as
   a compatibility filter.
@@ -291,9 +391,10 @@ executor.
 - **Interrupt latency.** Interrupts are seen at most every 4,096 rows of work, not on every row.
 - **Gaps in `fast_count`.** IntRange scans, merged-graph scans and scans with post-checks
   iterate instead of counting in the store.
-- **Known W3C cases outside sq-exec.** In the author's scratch sweep,
-  `dawg-optional-filter-005-not-simplified` fails because spargebra 0.4.7 folds the query.
-  `reduced-2` needs a lax-cardinality comparison in the runner.
+- **Known W3C failures are parser divergences.** `tools/sq-w3c/known_failures.txt` lists three
+  tests that spargebra 0.4.7 parses differently. It folds `OPTIONAL {{ P FILTER(F) }}` into the
+  LeftJoin condition (`dawg-optional-filter-005-not-simplified`), rejects VALUES after
+  CONSTRUCT .. GROUP BY, and rejects `TRUE` / `False`. None of them is an sq-exec issue.
 
 ## Further reading
 
@@ -312,5 +413,9 @@ executor.
   produced.
 - [../sq-sqlite/README.md](../sq-sqlite/README.md) and
   [../sq-memstore/README.md](../sq-memstore/README.md): the stores behind the cursors.
-- [../sq-engine/README.md](../sq-engine/README.md), [../sq-api/README.md](../sq-api/README.md)
-  and [../sq-oracle/README.md](../sq-oracle/README.md): callers and the reference evaluator.
+- [`crates/sq-engine/src/lib.rs`](../sq-engine/src/lib.rs) (`prepare`, `query_to_string`,
+  `explain`, `update`) and [`crates/sq-api/src`](../sq-api/src): the callers. Neither crate has a
+  README yet.
+- [../sq-oracle/README.md](../sq-oracle/README.md): the reference evaluator.
+- [`tools/sq-w3c`](../../tools/sq-w3c) and its
+  [`known_failures.txt`](../../tools/sq-w3c/known_failures.txt): the W3C test runner.

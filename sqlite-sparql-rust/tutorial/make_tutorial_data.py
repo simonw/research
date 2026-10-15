@@ -1999,7 +1999,8 @@ def db_target_problem(db_path: str, force: bool) -> str | None:
         if os.path.exists(db_path + "-wal") or os.path.exists(db_path + "-journal"):
             return ("%s looks open or unfinished (a -wal or -journal file exists); "
                     "close other connections first" % db_path)
-        if not force and not is_tutorial_db(db_path):
+        empty = os.path.getsize(db_path) == 0  # e.g. left behind by a failed sqlite3 run
+        if not force and not empty and not is_tutorial_db(db_path):
             return ("%s exists and was not created by this script; choose another path "
                     "or pass --force to replace it" % db_path)
     return None

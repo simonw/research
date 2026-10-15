@@ -183,3 +183,12 @@ translating SPARQL to SQL text or running as an external client.
   baseline-engine timeout watchdog thread (sqlite3_interrupt, no progress handler), COLLATE-aware view
   pushdown. Final: 105 sq-api Rust tests + pytest suite against the real .so; W3C through plain SQL
   (`--backend sqlite`): 636/639 (3 = spargebra parser).
+- Tutorial dataset (tutorial/make_tutorial_data.py, stdlib only, deterministic via its own SplitMix64):
+  languages.ttl = 2,108 triples: 94 languages, 117 people, 40 organisations, 276 influencedBy edges, a
+  13-class paradigm hierarchy, labels/descriptions in en/fr/de/es/ja; survey.trig = FICTIONAL survey
+  named graphs; job_postings (FICTIONAL, 300 rows) for SQL joins; optional --people N synthetic network
+  (100K people = 836K triples). Fact-checker found backward influence edges (Java<-C#, Rust<-Swift,
+  Rust<-Elm), non-source file extensions, a missing death date; the fixer then checked every language and
+  person against live Wikipedia infoboxes (fixing e.g. COBOL 1960, SQL 1973, Rust 2012 per infobox) and
+  added validation that an influencer is never younger than what it influenced and that influencedBy is
+  acyclic. I spot-checked the three 2026 death dates it added against Wikipedia myself.

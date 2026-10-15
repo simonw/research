@@ -839,8 +839,7 @@ person:anders-hejlsberg
 
 person:bertrand-meyer
     a ex:Person ;
-    schema:name "Bertrand Meyer" ;
-    schema:birthDate "1950-11-21"^^xsd:date .
+    schema:name "Bertrand Meyer" .
 
 person:joe-armstrong
     a ex:Person ;
@@ -2491,4 +2490,4 @@ ex:Mojo
     ex:fileExtension ".mojo" , ".🔥" ;
     ex:influencedBy ex:Python , ex:Swift , ex:Rust .
 
-# 2127 triples.
+# 2126 triples.

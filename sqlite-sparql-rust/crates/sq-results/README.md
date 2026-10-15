@@ -25,7 +25,10 @@ about 600 lines of non-test code. The rest of the roughly 1,300 lines in `src/` 
 
 The sources that the writers consume are implemented elsewhere. `sq_exec::Execution`
 implements both `SolutionSource` and `TripleSource`. In `sq-api`, `BaselineRun` (the `sq-sqlgen`
-path) implements `SolutionSource`. The default format for each query form is chosen by
+path) implements `SolutionSource` only. The baseline path has no `TripleSource`:
+`sq_sqlgen::translate` rejects CONSTRUCT and DESCRIBE, and `sq-api`'s `Run::triples` has the same
+guard. So `sparql_query_sql` on a CONSTRUCT or DESCRIBE query returns `Error::Unsupported`
+before any `sq-results` writer runs. The default format for each query form is chosen by
 `sq-api`, not by this crate: `Form::default_format` gives JSON for SELECT and ASK, and
 N-Triples for CONSTRUCT and DESCRIBE. `sq-engine` always requires an explicit format.
 
@@ -36,13 +39,17 @@ BATCH_ROWS)`, where `BATCH_ROWS` is 1024. Each row is `variables().len()` `TermI
 unbound value is `TermId::UNBOUND`, which is 0. The writer then makes one `decode` call for the
 whole batch and serializes straight from the decoded `Arc<Term>`s. `write_triples` does the same
 with `next_triples` and `[TermId; 3]`. The `ids` and `terms` vectors are allocated once and
-reused. Output goes through a 64 KiB `BufWriter` (`OUTPUT_BUFFER_BYTES`) placed in front of the
-caller's writer, because sparesults and oxrdfio issue many small writes. The tests check the
+reused. `write_solutions` and `write_triples` put a 64 KiB `BufWriter` (`OUTPUT_BUFFER_BYTES`)
+in front of the caller's writer, because sparesults and oxrdfio issue many small writes.
+`write_boolean` writes its short document unbuffered and then flushes the caller's writer. The tests check the
 call pattern: 2 × 1024 + 17 rows take 4 `next_rows` calls (the last one returns 0) and 3
 `decode` calls.
 
-**2. Borrowed oxrdf views (`convert.rs`).** `term_ref`, `literal_ref`, `subject_ref` and
-`predicate_ref` turn a `&Term` into an `oxrdf::TermRef` without copying. They use oxrdf's
+**2. Borrowed oxrdf views (`convert.rs`).** Four crate-private helpers (not public API) borrow
+decoded terms as oxrdf views without copying: `term_ref(&Term) -> TermRef`,
+`literal_ref(&Literal) -> LiteralRef`, and the fallible `subject_ref(&Term) ->
+Result<NamedOrBlankNodeRef>` and `predicate_ref(&Term) -> Result<NamedNodeRef>`, which return
+`Error::Internal` for a literal subject or a non-IRI predicate. They use oxrdf's
 `*_unchecked` constructors, so IRIs, blank node labels and language tags are trusted rather than
 validated. These terms come from the store dictionary, the codec or the execution's `TempDict`.
 A literal with a language tag becomes a language-tagged literal. A literal whose datatype is
