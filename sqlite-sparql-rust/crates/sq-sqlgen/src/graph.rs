@@ -167,7 +167,8 @@ pub(crate) fn reads_active(node: &Logical, exists: &[Logical]) -> bool {
     }
 }
 
-fn expr_mentions(e: &Expr, s: Slot, exists: &[Logical]) -> bool {
+/// Does the expression read the slot, directly or in one of its EXISTS patterns?
+pub(crate) fn expr_mentions(e: &Expr, s: Slot, exists: &[Logical]) -> bool {
     let mut slots = Vec::new();
     e.slots(&mut slots);
     if slots.contains(&s) {

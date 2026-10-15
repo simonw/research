@@ -53,20 +53,36 @@ impl Params {
 }
 
 /// Where a slot's value lives: an SQL expression of type INTEGER `TermId`.
+///
+/// A *plain* binding (a column, a parameter, `NULL`, or the `COALESCE` of plain bindings that
+/// joins produce) is cheap and may be repeated in the SQL text. A *computed* one (a BIND
+/// expression) is evaluated wherever its text appears, and pasting it into the expressions
+/// that read it would multiply the statement by the number of references at every level of
+/// BIND. So it is never pasted: before anything reads it, its block becomes an opaque derived
+/// table (`Translator::settle`), which computes it once per row and exposes it as a column.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Col {
     pub sql: String,
     /// May be NULL (unbound) in some rows.
     pub nullable: bool,
+    /// Evaluated per occurrence of `sql` (see above).
+    pub computed: bool,
 }
 
 impl Col {
+    /// A plain binding that is never NULL.
     pub fn new(sql: impl Into<String>) -> Col {
-        Col { sql: sql.into(), nullable: false }
+        Col { sql: sql.into(), nullable: false, computed: false }
     }
 
+    /// A plain binding that may be NULL.
     pub fn nullable(sql: impl Into<String>) -> Col {
-        Col { sql: sql.into(), nullable: true }
+        Col { sql: sql.into(), nullable: true, computed: false }
+    }
+
+    /// `COALESCE(a, b)`: computed when either is.
+    pub fn coalesce(a: &Col, b: &Col, nullable: bool) -> Col {
+        Col { sql: format!("COALESCE({}, {})", a.sql, b.sql), nullable, computed: a.computed || b.computed }
     }
 }
 
@@ -78,25 +94,39 @@ pub(crate) fn col_name(s: Slot) -> String {
 /// Result column of a SELECT that binds no slot (SQL needs at least one column).
 pub(crate) const PLACEHOLDER: &str = "NULL AS u";
 
+/// SQLite joins at most 64 tables per SELECT, counted after it flattens derived tables into
+/// their parent; every block stays within this many (`Translator::cap_tables`).
+pub(crate) const MAX_TABLES: usize = 64;
+
 /// One FROM-clause entry.
 #[derive(Clone, Debug)]
 pub(crate) enum Item {
     /// `main.rdf_quad AS alias`.
     Quad(String),
-    /// `(sql) AS alias`.
-    Derived { sql: String, alias: String },
+    /// `(sql) AS alias`; `tables` bounds the tables SQLite may flatten it into (1 for a
+    /// derived table it never flattens).
+    Derived { sql: String, alias: String, tables: usize },
     /// `LEFT JOIN <item> ON <on>` (never the first item).
     Left { item: Box<Item>, on: String },
 }
 
 impl Item {
+    /// Upper bound of the tables this entry adds to its SELECT's join.
+    pub fn tables(&self) -> usize {
+        match self {
+            Item::Quad(_) => 1,
+            Item::Derived { tables, .. } => (*tables).max(1),
+            Item::Left { item, .. } => item.tables(),
+        }
+    }
+
     fn render(&self, out: &mut String, first: bool) {
         match self {
             Item::Quad(alias) => {
                 out.push_str(if first { "" } else { ", " });
                 let _ = write!(out, "main.rdf_quad AS {alias}");
             }
-            Item::Derived { sql, alias } => {
+            Item::Derived { sql, alias, .. } => {
                 out.push_str(if first { "" } else { ", " });
                 let _ = write!(out, "({sql}) AS {alias}");
             }
@@ -146,6 +176,11 @@ impl Block {
         })
     }
 
+    /// Upper bound of the tables of this block's join, flattened derived tables included.
+    pub fn tables(&self) -> usize {
+        self.items.iter().map(Item::tables).sum()
+    }
+
     /// ` FROM …` (empty when there are no items).
     pub fn from_sql(&self) -> String {
         let mut out = String::new();
@@ -193,6 +228,28 @@ impl Block {
     pub fn slots(&self) -> Vec<Slot> {
         self.cols.keys().copied().collect()
     }
+
+    /// Does any of `out` have a computed binding? A derived table over such a select list
+    /// must be opaque (`LIMIT -1`): SQLite neither flattens it into its parent nor pushes the
+    /// parent's conditions into it, either of which would substitute the expression for
+    /// every reference to its column.
+    pub fn computes(&self, out: &[Slot]) -> bool {
+        out.iter().any(|s| self.cols.get(s).is_some_and(|c| c.computed))
+    }
+
+    /// Bytes of SQL text the block holds (an estimate of its rendered size).
+    pub fn text_len(&self) -> usize {
+        fn item_len(item: &Item) -> usize {
+            match item {
+                Item::Quad(alias) => alias.len() + 20,
+                Item::Derived { sql, alias, .. } => sql.len() + alias.len() + 8,
+                Item::Left { item, on } => item_len(item) + on.len() + 15,
+            }
+        }
+        self.items.iter().map(item_len).sum::<usize>()
+            + self.conds.iter().map(|c| c.len() + 5).sum::<usize>()
+            + self.cols.values().map(|c| c.sql.len() + 8).sum::<usize>()
+    }
 }
 
 /// Operands per flat run of `AND` / `OR`. SQLite parses `a AND b AND …` into a left-deep tree,
@@ -207,6 +264,19 @@ fn balanced(conds: &[String], op: &str) -> String {
     }
     let runs: Vec<String> = conds.chunks(FLAT_RUN).map(|run| format!("({})", run.join(op))).collect();
     balanced(&runs, op)
+}
+
+/// SQLite's limit on the terms of one compound SELECT.
+const MAX_COMPOUND_TERMS: usize = 500;
+
+/// `t1 UNION ALL t2 UNION ALL …` of SELECTs with the same columns. Past
+/// [`MAX_COMPOUND_TERMS`] terms, runs of terms become `SELECT * FROM (…)` terms.
+pub(crate) fn union_all(terms: Vec<String>) -> String {
+    if terms.len() <= MAX_COMPOUND_TERMS {
+        return terms.join(" UNION ALL ");
+    }
+    let runs = terms.chunks(MAX_COMPOUND_TERMS).map(|run| format!("SELECT * FROM ({})", run.join(" UNION ALL ")));
+    union_all(runs.collect())
 }
 
 /// Conjunction of SQL conditions (`1` when empty).

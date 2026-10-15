@@ -23,6 +23,7 @@
 //!   * `Indep`: does not read the active graph and never binds ?g;
 //!   * `GForm`: equivalent to ⋃_G eval_G(X) ⋈ {?g ↦ G} once pushed;
 //!   * `Bad`: anything else,
+//!
 //! and P is pushed iff it is `GForm` (which implies ?g ∈ certain(P′)).
 use sq_core::batch::Slot;
 use sq_core::ir::{ExistsId, Expr, GraphSel, Logical, PatTerm};
@@ -67,7 +68,7 @@ pub(crate) fn push_graph_vars(l: Logical, exists: &mut Vec<Logical>, lp: &Logica
 
 /// Replace `GraphSel::Active` by `to` in the immediate scope of `l` (not inside nested GRAPH
 /// nodes), including the EXISTS patterns referenced from that scope.
-pub(crate) fn subst_active(l: &mut Logical, to: GraphSel, exists: &mut Vec<Logical>) {
+pub(crate) fn subst_active(l: &mut Logical, to: GraphSel, exists: &mut [Logical]) {
     let mut pending: Vec<ExistsId> = Vec::new();
     subst_node(l, to, &mut pending);
     while let Some(id) = pending.pop() {

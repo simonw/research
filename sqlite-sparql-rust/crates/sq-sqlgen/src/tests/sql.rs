@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::expr::is_simple_sql;
-use crate::sql::{Block, Col, Item, Params, and_all, or_all};
+use crate::sql::{Block, Col, Item, Params, and_all, or_all, union_all};
 use crate::translate::{Env, GraphCtx, bind, compat, join};
 
 #[test]
@@ -72,7 +72,7 @@ fn rendering_corner_cases() {
     assert_eq!(Block::unit().render(&[], false), "SELECT NULL AS u");
     assert_eq!(Block::empty().render(&[4], true), "SELECT DISTINCT NULL AS v4 WHERE 0");
     let mut d = Block::unit();
-    d.items.push(Item::Derived { sql: "VALUES (?1)".into(), alias: "d1".into() });
+    d.items.push(Item::Derived { sql: "VALUES (?1)".into(), alias: "d1".into(), tables: 1 });
     assert!(d.is_single_item());
     assert_eq!(d.from_sql(), " FROM (VALUES (?1)) AS d1");
     assert_eq!(and_all(&[]), "1");
@@ -90,4 +90,39 @@ fn simple_sql_is_a_column_or_a_parameter() {
     for s in ["?", "?a", "COALESCE(t1.s, t2.s)", "sparql_eval('+', t1.o, ?1)", "NULL", "t1.s + 1", ".s", "t1."] {
         assert!(!is_simple_sql(s), "{s}");
     }
+}
+
+#[test]
+fn long_condition_lists_are_balanced_runs() {
+    let conds: Vec<String> = (0..200).map(|i| format!("c{i}")).collect();
+    let and = and_all(&conds);
+    // Four parenthesized runs of at most 64, joined flat.
+    assert!(and.starts_with("(c0 AND c1 AND "), "{and}");
+    assert_eq!(and.matches(") AND (").count(), 3);
+    assert_eq!(and.matches(" AND ").count(), 199);
+    let or = or_all(&conds[..3]);
+    assert_eq!(or, "(c0 OR c1 OR c2)");
+    assert_eq!(or_all(&conds).matches(" OR ").count(), 199);
+}
+
+#[test]
+fn compound_selects_stay_under_500_terms() {
+    let terms = |n: usize| (0..n).map(|i| format!("SELECT {i}")).collect::<Vec<_>>();
+    assert_eq!(union_all(terms(3)), "SELECT 0 UNION ALL SELECT 1 UNION ALL SELECT 2");
+    assert!(!union_all(terms(500)).contains("SELECT *"));
+    let grouped = union_all(terms(1200));
+    assert_eq!(grouped.matches("SELECT * FROM (").count(), 3);
+    assert_eq!(grouped.matches(" UNION ALL ").count(), 1199);
+}
+
+#[test]
+fn table_counts_include_flattenable_derived_tables() {
+    let mut b = Block::unit();
+    b.items.push(Item::Quad("t1".into()));
+    b.items.push(Item::Derived { sql: "SELECT 1".into(), alias: "d2".into(), tables: 5 });
+    b.items.push(Item::Left {
+        item: Box::new(Item::Derived { sql: "SELECT 1".into(), alias: "d3".into(), tables: 0 }),
+        on: "1".into(),
+    });
+    assert_eq!(b.tables(), 1 + 5 + 1);
 }

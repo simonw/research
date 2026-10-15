@@ -141,10 +141,11 @@ fn fmt_ns(ns: f64) -> String {
 
 fn iri(s: &str) -> String {
     for (p, ns) in PREFIXES {
-        if let Some(local) = s.strip_prefix(ns) {
-            if !local.is_empty() && local.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
-                return format!("{p}{local}");
-            }
+        if let Some(local) = s.strip_prefix(ns)
+            && !local.is_empty()
+            && local.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
+            return format!("{p}{local}");
         }
     }
     format!("<{s}>")
@@ -218,10 +219,10 @@ impl Render<'_> {
         if let Some(t) = self.dict.and_then(|d| d.decode_one(id).ok()) {
             return term_text(&t);
         }
-        if id.tag() == Tag::Iri {
-            if let Some((_, s)) = WELL_KNOWN.iter().find(|(row, _)| *row == id.dict_row()) {
-                return iri(s);
-            }
+        if id.tag() == Tag::Iri
+            && let Some((_, s)) = WELL_KNOWN.iter().find(|(row, _)| *row == id.dict_row())
+        {
+            return iri(s);
         }
         format!("<#{}>", id.raw())
     }

@@ -8,15 +8,21 @@
 //! Translation scheme:
 //! * BGP → self-joins of `main.rdf_quad` aliases (`g = 0`, a FROM graph or the GRAPH constant;
 //!   constants as parameters; repeated variables as equalities; no `INDEXED BY`);
-//! * FILTER → conditions with id fast paths (inline-int comparisons, IRI / simple-literal
-//!   equality) and helper functions for everything that needs values;
+//! * FILTER → conditions with id fast paths (exact inline-integer / inline-decimal
+//!   comparisons, IRI / simple-literal equality) and helper functions for everything that needs
+//!   values;
 //! * OPTIONAL → `LEFT JOIN … ON <compat> AND <filter>`; UNION → `UNION ALL` with NULL padding;
 //!   MINUS → `NOT EXISTS` with the shared-domain condition; `[NOT] EXISTS` → correlated
 //!   `[NOT] EXISTS`; VALUES → constants or a `VALUES` derived table; BIND → helper calls;
 //! * GROUP BY → SQL `GROUP BY` with COUNT in SQL and the other aggregates as helper
 //!   aggregates; DISTINCT, ORDER BY `sparql_sortkey(id)`, LIMIT / OFFSET;
 //! * property paths → derived tables, closures as `WITH RECURSIVE … UNION`;
-//! * GRAPH / FROM / FROM NAMED → conditions on `g`.
+//! * GRAPH / FROM / FROM NAMED → conditions on `g` (an RDF merge of several graphs reads each
+//!   triple's copy in its smallest graph).
+//!
+//! Every accepted statement prepares on the host's SQLite 3.45: joins stay within 64 tables,
+//! compound SELECTs within 500 terms, AND / OR lists are balanced, and a final check of the
+//! parser-stack depth and the other compile-time limits (`limits`) rejects what remains.
 //!
 //! Anything outside that subset is `Error::Unsupported("baseline: …")`. The helper functions
 //! the SQL calls, and their exact semantics, are listed in [`helpers`].

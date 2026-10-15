@@ -5,17 +5,20 @@
 //!
 //! The data mix IRIs, inline integers, decimals, doubles, non-canonical integers and strings
 //! as objects over a default graph and two named graphs; queries add GRAPH ?g patterns, FROM
-//! clauses and the union default graph (merged multi-graph scans), so integer range pushdown (IntRange scans over rdf_gpos + rdf_gpox), merge joins
-//! with enforcers, SQL chains (SqlJoin, Auto on SQLite only), star merges, factorized counts and
-//! sorted probes all run against the reference semantics. Every SqlJoin statement is also
-//! checked with `EXPLAIN QUERY PLAN`: one `SEARCH` per alias, in alias order, through the
-//! alias's index and exactly its bound prefix.
+//! clauses and the union default graph (merged multi-graph scans), so integer range pushdown
+//! (IntRange scans over rdf_gpos + rdf_gpox), merge joins with enforcers, SQL chains (SqlJoin,
+//! Auto on SQLite only), factorized counts and sorted probes all run against the reference
+//! semantics. The graphs are too small for the cost model to take a StarMerge, so every plan
+//! with a chain of three or more MergeJoins on one key also runs as its StarMerge rewrite
+//! ([`with_star_merges`]). Every SqlJoin statement is also checked with `EXPLAIN QUERY PLAN`:
+//! one `SEARCH` per alias, in alias order, through the alias's index and exactly its bound
+//! prefix.
 mod common;
 
 use std::rc::Rc;
 
 use common::*;
-use sq_core::plan::{JoinPolicy, Op, QueryOptions, QueryPlan};
+use sq_core::plan::{JoinPolicy, Op, Plan, QueryOptions, QueryPlan};
 use sq_core::store::{Col, IndexOrder, QuadStore};
 use sq_core::testing::Rng;
 
@@ -255,6 +258,88 @@ fn sql_aliases(sql: &str) -> Vec<(IndexOrder, usize)> {
         .collect()
 }
 
+/// The children of a plan node, mutably.
+fn children_mut(p: &mut Plan) -> Vec<&mut Plan> {
+    match &mut p.op {
+        Op::BindJoin { left, right, .. }
+        | Op::MergeJoin { left, right, .. }
+        | Op::NestedLoop { left, right, .. }
+        | Op::Minus { left, right, .. } => vec![&mut **left, &mut **right],
+        Op::HashJoin { build, probe, .. } => vec![&mut **build, &mut **probe],
+        Op::StarMerge { inputs, .. } | Op::Union(inputs) => inputs.iter_mut().collect(),
+        Op::Filter { input, .. }
+        | Op::Extend { input, .. }
+        | Op::GraphLoop { input, .. }
+        | Op::Group { input, .. }
+        | Op::Count { input, .. }
+        | Op::Sort { input, .. }
+        | Op::SortBySlot { input, .. }
+        | Op::TopK { input, .. }
+        | Op::Distinct { input, .. }
+        | Op::Reduced { input, .. }
+        | Op::Slice { input, .. }
+        | Op::Project { input, .. } => vec![&mut **input],
+        _ => vec![],
+    }
+}
+
+/// `q` with every chain of at least three MergeJoins on one key along a left spine replaced by
+/// the StarMerge the planner would build for it (the chain's inputs left to right, the union of
+/// its checks), ids renumbered; None when `q` has no such chain.
+fn with_star_merges(q: &QueryPlan) -> Option<QueryPlan> {
+    fn chain_len(p: &Plan, key: u16) -> usize {
+        match &p.op {
+            Op::MergeJoin { left, key: k, .. } if *k == key => 1 + chain_len(left, key),
+            _ => 1,
+        }
+    }
+    fn flatten(p: Plan, key: u16, inputs: &mut Vec<Plan>, check: &mut Vec<u16>) {
+        match p.op {
+            Op::MergeJoin { left, right, key: k, check: c, .. } if k == key => {
+                flatten(*left, key, inputs, check);
+                check.extend(c);
+                inputs.push(*right);
+            }
+            op => inputs.push(Plan { op, ..p }),
+        }
+    }
+    fn rewrite(p: &mut Plan) -> usize {
+        let mut n = 0;
+        if let Op::MergeJoin { key, .. } = p.op
+            && chain_len(p, key) >= 3
+        {
+            let empty = Plan { id: 0, est_rows: 0.0, est_cost_ns: 0.0, sorted_by: None, op: Op::Empty };
+            let old = std::mem::replace(p, empty);
+            let (est_rows, est_cost_ns) = (old.est_rows, old.est_cost_ns);
+            let (mut inputs, mut check) = (Vec::new(), Vec::new());
+            flatten(old, key, &mut inputs, &mut check);
+            check.sort_unstable();
+            check.dedup();
+            *p = Plan { id: 0, est_rows, est_cost_ns, sorted_by: Some(key), op: Op::StarMerge { key, inputs, check } };
+            n += 1;
+        }
+        children_mut(p).into_iter().map(rewrite).sum::<usize>() + n
+    }
+    fn number(p: &mut Plan, next: &mut u32) {
+        p.id = *next;
+        *next += 1;
+        for c in children_mut(p) {
+            number(c, next);
+        }
+    }
+    let mut star = q.clone();
+    let rewritten = rewrite(&mut star.root) + star.exists.iter_mut().map(rewrite).sum::<usize>();
+    if rewritten == 0 {
+        return None;
+    }
+    let mut next = 0;
+    number(&mut star.root, &mut next);
+    for e in &mut star.exists {
+        number(e, &mut next);
+    }
+    Some(star)
+}
+
 #[derive(Default, Debug)]
 struct Tally {
     cases: usize,
@@ -262,6 +347,8 @@ struct Tally {
     sql_joins: usize,
     merge_joins: usize,
     star_merges: usize,
+    /// Plans also run as their StarMerge rewrite.
+    star_rewrites: usize,
     enforcers: usize,
     int_ranges: usize,
     fast_counts: usize,
@@ -354,7 +441,7 @@ fn int_range_scans_keep_exactly_the_filtered_rows() {
 
 #[test]
 fn plans_match_the_oracle_on_memory_and_sqlite_stores() {
-    let mut r = Rng(0x5EED_0F_0B71);
+    let mut r = Rng(0x005E_ED0F_0B71);
     let mut failures: Vec<String> = Vec::new();
     let mut t = Tally::default();
     for case in 0..250 {
@@ -405,18 +492,28 @@ fn plans_match_the_oracle_on_memory_and_sqlite_stores() {
                             Err(e) => failures.push(format!("[{name}/{store_name}] {q}\n{e}")),
                         }
                     }
-                    let text = sq_plan::explain(&plan, None);
-                    match execute(Rc::clone(st), plan, &opts) {
-                        Ok(got) if got == expected => {}
-                        Ok(got) => failures.push(format!(
-                            "[{name}/{store_name} stats={stats}] {q}\n{text}\
-                             expected {} rows {:?}\n     got {} rows {:?}",
-                            expected.len(),
-                            &expected[..expected.len().min(6)],
-                            got.len(),
-                            &got[..got.len().min(6)]
-                        )),
-                        Err(e) => failures.push(format!("[{name}/{store_name} stats={stats}] {q}\n{text}error: {e}")),
+                    let mut variants = vec![("", plan)];
+                    if let Some(star) = with_star_merges(&variants[0].1) {
+                        if let Err(e) = sq_plan::validate(&star) {
+                            failures.push(format!("[{name}/{store_name}] {q}: the StarMerge rewrite is invalid: {e}"));
+                        }
+                        t.star_rewrites += 1;
+                        variants.push((" star-rewrite", star));
+                    }
+                    for (variant, plan) in variants {
+                        let text = sq_plan::explain(&plan, None);
+                        let tag = format!("[{name}{variant}/{store_name} stats={stats}]");
+                        match execute(Rc::clone(st), plan, &opts) {
+                            Ok(got) if got == expected => {}
+                            Ok(got) => failures.push(format!(
+                                "{tag} {q}\n{text}expected {} rows {:?}\n     got {} rows {:?}",
+                                expected.len(),
+                                &expected[..expected.len().min(6)],
+                                got.len(),
+                                &got[..got.len().min(6)]
+                            )),
+                            Err(e) => failures.push(format!("{tag} {q}\n{text}error: {e}")),
+                        }
                     }
                 }
             }
@@ -426,5 +523,6 @@ fn plans_match_the_oracle_on_memory_and_sqlite_stores() {
     let first = failures[..failures.len().min(5)].join("\n\n");
     assert!(failures.is_empty(), "{} failures, first ones:\n{first}", failures.len());
     // The random workload must actually exercise the optimizer's operators.
-    assert!(t.sql_joins > 0 && t.merge_joins > 0 && t.enforcers > 0 && t.int_ranges > 0 && t.fast_counts > 0, "{t:?}");
+    let exercised = [t.sql_joins, t.merge_joins, t.star_rewrites, t.enforcers, t.int_ranges, t.fast_counts];
+    assert!(exercised.iter().all(|n| *n > 0), "{t:?}");
 }

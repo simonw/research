@@ -111,7 +111,7 @@ fn bounds(op: Cmp, c: Num) -> Option<IntRange> {
     };
     let lo = lo.max(i128::from(TermId::INT_MIN));
     let hi = hi.min(i128::from(TermId::INT_MAX));
-    (lo <= hi).then(|| IntRange { lo: lo as i64, hi: hi as i64 })
+    (lo <= hi).then_some(IntRange { lo: lo as i64, hi: hi as i64 })
 }
 
 /// floor / ceil of a float or double constant; None for NaN and the infinities, and for

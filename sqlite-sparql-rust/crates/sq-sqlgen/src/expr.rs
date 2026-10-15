@@ -10,10 +10,14 @@
 //! for values ([`Ctx::Exact`]) the error must survive, and the translation falls back to
 //! `sparql_eval`. Comparisons with an inline numeric constant split on the row's tag (see
 //! `numeric`) and are exact in both contexts.
+//!
+//! Only *simple* operands (columns, parameters) are repeated in the SQL text of a fast path;
+//! any other operand appears once, so an expression's SQL is linear in its size.
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::rc::Rc;
 
+use sq_core::codec::encode_short_str;
 use sq_core::ir::{Expr, ExistsId};
 use sq_core::spargebra::algebra::Function;
 use sq_core::{Result, Slot, Tag, TermId};
@@ -77,13 +81,19 @@ impl<'a> View<'a> {
     pub fn lookup(&self, s: Slot) -> Option<Col> {
         match (self.cols.get(&s), self.env.outer.get(&s)) {
             // Unbound here but substituted by an enclosing EXISTS row.
-            (Some(c), Some(o)) if c.nullable => {
-                Some(Col { sql: format!("COALESCE({}, {})", c.sql, o.sql), nullable: o.nullable })
-            }
+            (Some(c), Some(o)) if c.nullable => Some(Col::coalesce(c, o, o.nullable)),
             (Some(c), _) => Some(c.clone()),
             (None, Some(o)) => Some(o.clone()),
             (None, None) => None,
         }
+    }
+
+    /// [`View::lookup`] for a slot whose SQL is about to be pasted into an expression: the
+    /// caller has settled the block (`Translator::settle`), so the binding is plain.
+    pub fn read(&self, s: Slot) -> Option<Col> {
+        let c = self.lookup(s);
+        debug_assert!(c.as_ref().is_none_or(|c| !c.computed), "computed binding of slot {s} read unsettled");
+        c
     }
 }
 
@@ -148,6 +158,26 @@ fn ebv(t: &TermSql) -> String {
     }
 }
 
+/// Splits the items of `x IN (…)` into constants compared by id (see `equal`), inline numeric
+/// constants (compared on the row's tag, for a simple x) and the rest.
+fn partition_in(list: &[Expr], simple: bool, ctx: Ctx) -> (Vec<TermId>, Vec<(TermId, NumConst)>, Vec<&Expr>) {
+    let (mut by_id, mut numeric, mut rest) = (Vec::new(), Vec::new(), Vec::new());
+    for item in list {
+        if let Expr::Const(id) = item {
+            if id_equality(*id, ctx) {
+                by_id.push(*id);
+                continue;
+            }
+            if simple && let Some(n) = NumConst::of(*id) {
+                numeric.push((*id, n));
+                continue;
+            }
+        }
+        rest.push(item);
+    }
+    (by_id, numeric, rest)
+}
+
 /// `sparql_eval('<op>', args…)`. `op` always comes from the static vocabulary of `helpers`.
 fn eval_sql(op: &str, args: &[&str]) -> String {
     debug_assert!(!op.contains('\''), "operator names never need quoting");
@@ -168,7 +198,7 @@ impl Translator<'_> {
                 Some(b) => (if b { "1" } else { "0" }).to_owned(),
                 None => format!("sparql_ebv({})", self.param(*id)),
             },
-            Expr::Slot(s) => match v.lookup(*s) {
+            Expr::Slot(s) => match v.read(*s) {
                 None => "NULL".to_owned(),
                 Some(c) => format!("sparql_ebv({})", c.sql),
             },
@@ -186,7 +216,7 @@ impl Translator<'_> {
             Expr::Greater(a, b) => self.compare(Cmp::Gt, a, b, v)?,
             Expr::GreaterOrEqual(a, b) => self.compare(Cmp::Ge, a, b, v)?,
             Expr::In(a, list) => self.in_list(a, list, v, ctx)?,
-            Expr::Bound(s) => match v.lookup(*s) {
+            Expr::Bound(s) => match v.read(*s) {
                 None => "0".to_owned(),
                 Some(c) if !c.nullable => "1".to_owned(),
                 Some(c) => format!("({} IS NOT NULL)", c.sql),
@@ -216,7 +246,7 @@ impl Translator<'_> {
                 simple: true,
                 boolean: id.tag() == Tag::Bool,
             },
-            Expr::Slot(s) => match v.lookup(*s) {
+            Expr::Slot(s) => match v.read(*s) {
                 None => TermSql::null(),
                 Some(c) => TermSql { simple: is_simple_sql(&c.sql), nullable: c.nullable, sql: c.sql, boolean: false },
             },
@@ -305,6 +335,11 @@ impl Translator<'_> {
     fn equal(&mut self, a: &Expr, b: &Expr, v: &View<'_>, ctx: Ctx) -> Result<String> {
         let (x, c) = if matches!(a, Expr::Const(_)) && !matches!(b, Expr::Const(_)) { (b, a) } else { (a, b) };
         let xt = self.term_expr(x, v)?;
+        self.equal_to(&xt, c, v, ctx)
+    }
+
+    /// `x = c` for a translated left operand (a constant c gets the fast paths).
+    fn equal_to(&mut self, xt: &TermSql, c: &Expr, v: &View<'_>, ctx: Ctx) -> Result<String> {
         let xs = &xt.sql;
         if let Expr::Const(cid) = c {
             let pc = self.param(*cid);
@@ -437,22 +472,26 @@ impl Translator<'_> {
 
     /// `a IN (…)`: the OR of `=` (an error only if nothing matched and some `=` erred), with
     /// the id-comparable constants as one SQL `IN` list and the inline numerics as one CASE.
+    /// When `a` is computed and more than one term compares it, a one-row derived table
+    /// computes it once (`(SELECT <terms over l.v> FROM (SELECT a AS v LIMIT -1) AS l)`).
     fn in_list(&mut self, a: &Expr, list: &[Expr], v: &View<'_>, ctx: Ctx) -> Result<String> {
         if list.is_empty() {
             return Ok("0".to_owned());
         }
         let x = self.term_expr(a, v)?;
-        let (mut by_id, mut numeric, mut rest) = (Vec::new(), Vec::new(), Vec::new());
-        for item in list {
-            match item {
-                // Constants whose `=` is plain id equality in this context (see `equal`).
-                Expr::Const(id) if id_equality(*id, ctx) => by_id.push(*id),
-                Expr::Const(id) if x.simple && NumConst::of(*id).is_some() => {
-                    numeric.push((*id, NumConst::of(*id).expect("checked")));
-                }
-                _ => rest.push(item),
-            }
+        let (by_id, _, rest) = partition_in(list, x.simple, ctx);
+        if x.simple || usize::from(!by_id.is_empty()) + rest.len() <= 1 {
+            return self.in_terms(a, &x, list, v, ctx);
         }
+        let l = self.alias("l");
+        let named = TermSql { sql: format!("{l}.v"), simple: true, ..x.clone() };
+        let cond = self.in_terms(a, &named, list, v, ctx)?;
+        Ok(format!("(SELECT {cond} FROM (SELECT {} AS v LIMIT -1) AS {l})", x.sql))
+    }
+
+    /// The terms of `a IN (…)` with `a` translated as `x`.
+    fn in_terms(&mut self, a: &Expr, x: &TermSql, list: &[Expr], v: &View<'_>, ctx: Ctx) -> Result<String> {
+        let (by_id, numeric, rest) = partition_in(list, x.simple, ctx);
         let mut terms = Vec::with_capacity(rest.len() + 2);
         if !by_id.is_empty() {
             let ids: Vec<String> = by_id.into_iter().map(|id| self.param(id)).collect();
@@ -462,7 +501,8 @@ impl Translator<'_> {
             terms.push(self.numeric_in(&x.sql, &numeric));
         }
         for item in rest {
-            terms.push(self.equal(a, item, v, ctx)?);
+            // A constant `a` keeps the constant on the right, where the fast paths are.
+            terms.push(if matches!(a, Expr::Const(_)) { self.equal(a, item, v, ctx)? } else { self.equal_to(x, item, v, ctx)? });
         }
         Ok(or_all(&terms))
     }
@@ -487,6 +527,8 @@ impl Translator<'_> {
         };
         let r = format!("({va} {op} {vb})");
         let mut conds: Vec<String> = ca.into_iter().chain(cb).collect();
+        // `?a * ?a` tests the tag once.
+        conds.dedup();
         conds.push(format!("{r} BETWEEN {} AND {}", TermId::INT_MIN, TermId::INT_MAX));
         Ok(TermSql::computed(
             format!("CASE WHEN {} THEN ({r} << 4) | {INT_TAG} ELSE {generic} END", conds.join(" AND ")),
@@ -557,7 +599,9 @@ impl Translator<'_> {
                 Some(match f {
                     Function::Contains => format!("(instr({s}, {p}) > 0)"),
                     Function::StrStarts => format!("(instr({s}, {p}) = 1)"),
-                    _ => format!("(substr({s}, length({s}) - length({p}) + 1) = {p})"),
+                    // Every string ends with "" (`substr(s, -0)` would be all of s).
+                    _ if Some(*c) == encode_short_str("") => format!("({s} IS NOT NULL)"),
+                    _ => format!("(substr({s}, -length({p})) = {p})"),
                 })
             }
             _ => None,

@@ -5,18 +5,24 @@ use super::sql;
 /// (what it pins, query, SQL).
 const GOLDEN: &[(&str, &str, &str)] = &[
     (
-        "star BGP with an inline-int range filter (§9 fast path)",
+        "star BGP with an integer range filter: the §9 inline-int fast path, exact for every numeric tag",
         "SELECT ?x ?n WHERE { ?x a :Person ; :name ?n ; :age ?a FILTER(?a >= 18) }",
         "SELECT t1.s AS v0, t2.o AS v1 FROM main.rdf_quad AS t1, main.rdf_quad AS t2, main.rdf_quad AS t3 WHERE \
          t1.g = 0 AND t1.p = ?1 AND t1.o = ?2 AND t2.g = 0 AND t1.s = t2.s AND t2.p = ?3 AND t3.g = 0 AND t1.s = \
-         t3.s AND t3.p = ?4 AND ((t3.o & 15) = 6 AND (t3.o >> 4) >= ?5 OR (t3.o & 15) <> 6 AND sparql_num(t3.o) \
-         >= ?5)",
+         t3.s AND t3.p = ?4 AND CASE WHEN (t3.o & 15) = 6 THEN (t3.o >> 4) >= ?5 WHEN (t3.o & 15) = 8 AND (t3.o >> \
+         9) BETWEEN -9007199254740991 AND 9007199254740991 THEN sparql_num(t3.o) >= ?5 WHEN (t3.o & 15) IN (5, 8, \
+         14) THEN sparql_eval('>=', t3.o, ?6) = 23 END",
     ),
     (
-        "decimal comparison: sparql_num when only truth matters, sparql_eval under NOT",
+        "decimal constants: floor / ceil bounds for inline ints, an exact REAL comparison for inline decimals, \
+         sparql_eval for the rest; the same form under NOT",
         "SELECT ?x WHERE { ?x :score ?s FILTER(?s > 1.5 && !(?s < 0.5)) }",
-        "SELECT t1.s AS v0 FROM main.rdf_quad AS t1 WHERE t1.g = 0 AND t1.p = ?1 AND ((sparql_num(t1.o) > \
-         sparql_num(?2)) AND (NOT (sparql_eval('<', t1.o, ?3) = 23)))",
+        "SELECT t1.s AS v0 FROM main.rdf_quad AS t1 WHERE t1.g = 0 AND t1.p = ?1 AND (CASE WHEN (t1.o & 15) = 6 \
+         THEN (t1.o >> 4) > ?2 WHEN (t1.o & 15) = 8 AND (t1.o >> 9) BETWEEN -2251799813685247 AND 2251799813685247 \
+         THEN sparql_num(t1.o) > (CAST(?3 AS REAL) / ?4) WHEN (t1.o & 15) IN (5, 8, 14) THEN sparql_eval('>', t1.o, \
+         ?5) = 23 END AND (NOT CASE WHEN (t1.o & 15) = 6 THEN (t1.o >> 4) < ?2 WHEN (t1.o & 15) = 8 AND (t1.o >> 9) \
+         BETWEEN -2251799813685247 AND 2251799813685247 THEN sparql_num(t1.o) < (CAST(?6 AS REAL) / ?4) WHEN (t1.o \
+         & 15) IN (5, 8, 14) THEN sparql_eval('<', t1.o, ?7) = 23 END))",
     ),
     (
         "simple-literal equality by id; exact form under NOT",
@@ -33,11 +39,12 @@ const GOLDEN: &[(&str, &str, &str)] = &[
          & 15) IN (1, 2) OR (t1.o & 15) IN (1, 2) THEN 0 ELSE sparql_eval('=', t1.s, t1.o) = 23 END)",
     ),
     (
-        "IN over integers and IRIs",
+        "IN over integers (one CASE on the tag) and IRIs (one SQL IN list)",
         "SELECT ?x WHERE { ?x :age ?a FILTER(?a IN (1, 2) && ?x IN (:a, :b)) }",
-        "SELECT t1.s AS v0 FROM main.rdf_quad AS t1 WHERE t1.g = 0 AND t1.p = ?1 AND ((((t1.o & 15) = 6 AND t1.o \
-         = ?2 OR (t1.o & 15) <> 6 AND sparql_num(t1.o) = ?3) OR ((t1.o & 15) = 6 AND t1.o = ?4 OR (t1.o & 15) <> \
-         6 AND sparql_num(t1.o) = ?5)) AND (t1.s IN (?6, ?7)))",
+        "SELECT t1.s AS v0 FROM main.rdf_quad AS t1 WHERE t1.g = 0 AND t1.p = ?1 AND (CASE WHEN (t1.o & 15) = 6 \
+         THEN t1.o IN (?2, ?3) WHEN (t1.o & 15) = 8 THEN (t1.o | 256) IN (?4, ?5) WHEN (t1.o & 15) IN (5, 14) THEN \
+         (sparql_eval('=', t1.o, ?2) = 23 OR sparql_eval('=', t1.o, ?3) = 23) WHEN t1.o IS NOT NULL THEN 0 END AND \
+         (t1.s IN (?6, ?7)))",
     ),
     (
         "BOUND on a certain variable, EBV of a variable",
@@ -47,9 +54,9 @@ const GOLDEN: &[(&str, &str, &str)] = &[
     (
         "regex, contains via sparql_str, isIRI on the tag",
         "SELECT ?x WHERE { ?x :name ?n FILTER(REGEX(?n, \"^A\", \"i\") && CONTAINS(?n, \"li\") && isIRI(?x)) }",
-        "SELECT t1.s AS v0 FROM main.rdf_quad AS t1 WHERE t1.g = 0 AND t1.p = ?1 AND ((sparql_regex(t1.o, ?2, ?3) \
-         AND (instr(sparql_str(t1.o), sparql_str(?4)) > 0)) AND ((t1.s & 15) = 1 OR (t1.s & 15) = 14 AND ((t1.s \
-         >> 4) & 7) = 1))",
+        "SELECT t1.s AS v0 FROM main.rdf_quad AS t1 WHERE t1.g = 0 AND t1.p = ?1 AND (sparql_regex(t1.o, ?2, ?3) \
+         AND (instr(sparql_str(t1.o), sparql_str(?4)) > 0) AND ((t1.s & 15) = 1 OR (t1.s & 15) = 14 AND ((t1.s >> \
+         4) & 7) = 1))",
     ),
     (
         "OPTIONAL: one pattern inline, a group as a derived table, filter on nullable bindings",
@@ -104,14 +111,52 @@ const GOLDEN: &[(&str, &str, &str)] = &[
          main.rdf_quad AS t1 WHERE t1.g = 0 AND t1.p = ?3",
     ),
     (
+        "a BIND value read by a FILTER and the ORDER BY: computed once, in an opaque derived table",
+        "SELECT ?x ?w WHERE { ?x :age ?a BIND(?a * ?a AS ?w) FILTER(?w > 100) } ORDER BY ?w",
+        "SELECT d2.v0 AS v0, d2.v2 AS v2 FROM (SELECT t1.s AS v0, t1.o AS v1, CASE WHEN (t1.o & 15) = 6 AND \
+         ((t1.o >> 4) * (t1.o >> 4)) BETWEEN -576460752303423488 AND 576460752303423487 THEN (((t1.o >> 4) \
+         * (t1.o >> 4)) << 4) | 6 ELSE sparql_eval('*', t1.o, t1.o) END AS v2 FROM main.rdf_quad AS t1 \
+         WHERE t1.g = 0 AND t1.p = ?1 LIMIT -1) AS d2 WHERE CASE WHEN (d2.v2 & 15) = 6 THEN (d2.v2 >> 4) > \
+         ?2 WHEN (d2.v2 & 15) = 8 AND (d2.v2 >> 9) BETWEEN -9007199254740991 AND 9007199254740991 THEN \
+         sparql_num(d2.v2) > ?2 WHEN (d2.v2 & 15) IN (5, 8, 14) THEN sparql_eval('>', d2.v2, ?3) = 23 END \
+         ORDER BY sparql_sortkey(d2.v2)",
+    ),
+    (
+        "a chain of BINDs: each value is read by column",
+        "SELECT ?x ?c WHERE { ?x :age ?a BIND(?a + 1 AS ?b) BIND(?b * ?b AS ?c) }",
+        "SELECT d2.v0 AS v0, CASE WHEN (d2.v2 & 15) = 6 AND ((d2.v2 >> 4) * (d2.v2 >> 4)) BETWEEN \
+         -576460752303423488 AND 576460752303423487 THEN (((d2.v2 >> 4) * (d2.v2 >> 4)) << 4) | 6 ELSE \
+         sparql_eval('*', d2.v2, d2.v2) END AS v3 FROM (SELECT t1.s AS v0, t1.o AS v1, CASE WHEN (t1.o & \
+         15) = 6 AND ((t1.o >> 4) + ?1) BETWEEN -576460752303423488 AND 576460752303423487 THEN (((t1.o >> \
+         4) + ?1) << 4) | 6 ELSE sparql_eval('+', t1.o, ?2) END AS v2 FROM main.rdf_quad AS t1 WHERE t1.g = \
+         0 AND t1.p = ?3 LIMIT -1) AS d2",
+    ),
+    (
+        "IN over a computed value compared by several terms: named once by a one-row derived table",
+        "SELECT ?x WHERE { ?x :name ?n FILTER(!(LCASE(?n) IN (\"alice\", \"Bob the Builder\"))) }",
+        "SELECT t1.s AS v0 FROM main.rdf_quad AS t1 WHERE t1.g = 0 AND t1.p = ?1 AND (NOT (SELECT (CASE \
+         WHEN l2.v = ?2 THEN 1 WHEN (l2.v & 15) IN (5, 14) THEN sparql_eval('=', l2.v, ?2) = 23 WHEN l2.v \
+         IS NOT NULL THEN 0 END OR CASE WHEN l2.v = ?3 THEN 1 WHEN (l2.v & 15) IN (5, 14) THEN \
+         sparql_eval('=', l2.v, ?3) = 23 WHEN l2.v IS NOT NULL THEN 0 END) FROM (SELECT \
+         sparql_eval('LCASE', t1.o) AS v LIMIT -1) AS l2))",
+    ),
+    (
+        "STRENDS: the suffix by length from the end; every string ends with \"\"",
+        "SELECT ?x WHERE { ?x :name ?n FILTER(STRENDS(?n, \"ce\") && STRENDS(?n, \"\")) }",
+        "SELECT t1.s AS v0 FROM main.rdf_quad AS t1 WHERE t1.g = 0 AND t1.p = ?1 AND \
+         ((substr(sparql_str(t1.o), -length(sparql_str(?2))) = sparql_str(?2)) AND (sparql_str(t1.o) IS NOT \
+         NULL))",
+    ),
+    (
         "GROUP BY, COUNT in SQL, SUM as a helper aggregate, HAVING, ORDER BY sort keys, LIMIT/OFFSET",
         "SELECT ?n (COUNT(DISTINCT ?x) AS ?c) (SUM(?a) AS ?t) WHERE { ?x :name ?n ; :age ?a } GROUP BY ?n HAVING \
          (COUNT(*) > 1) ORDER BY DESC(?c) LIMIT 5 OFFSET 2",
         "SELECT d3.v1 AS v1, d3.v3 AS v6, d3.v4 AS v7 FROM (SELECT t1.o AS v1, (COUNT(DISTINCT t1.s) << 4) | 6 AS \
-         v3, sparql_sum(t2.o) AS v4, (COUNT(*) << 4) | 6 AS v5 FROM main.rdf_quad AS t1, main.rdf_quad AS t2 \
-         WHERE t1.g = 0 AND t1.p = ?1 AND t2.g = 0 AND t1.s = t2.s AND t2.p = ?2 GROUP BY t1.o) AS d3 WHERE \
-         ((d3.v5 & 15) = 6 AND (d3.v5 >> 4) > ?3 OR (d3.v5 & 15) <> 6 AND sparql_num(d3.v5) > ?3) ORDER BY \
-         sparql_sortkey(d3.v3) DESC LIMIT ?4 OFFSET ?5",
+         v3, sparql_sum(t2.o) AS v4, (COUNT(*) << 4) | 6 AS v5 FROM main.rdf_quad AS t1, main.rdf_quad AS t2 WHERE \
+         t1.g = 0 AND t1.p = ?1 AND t2.g = 0 AND t1.s = t2.s AND t2.p = ?2 GROUP BY t1.o) AS d3 WHERE CASE WHEN \
+         (d3.v5 & 15) = 6 THEN (d3.v5 >> 4) > ?3 WHEN (d3.v5 & 15) = 8 AND (d3.v5 >> 9) BETWEEN -9007199254740991 \
+         AND 9007199254740991 THEN sparql_num(d3.v5) > ?3 WHEN (d3.v5 & 15) IN (5, 8, 14) THEN sparql_eval('>', \
+         d3.v5, ?4) = 23 END ORDER BY sparql_sortkey(d3.v3) DESC LIMIT ?5 OFFSET ?6",
     ),
     (
         "COUNT(*) without GROUP BY",
@@ -139,9 +184,9 @@ const GOLDEN: &[(&str, &str, &str)] = &[
     (
         "p+ with both ends free: full closure",
         "SELECT ?x ?y WHERE { ?x :sub+ ?y }",
-        "SELECT d3.s AS v0, d3.o AS v1 FROM (WITH RECURSIVE r2(s, o) AS (SELECT s, o FROM (SELECT s, o FROM \
-         main.rdf_quad WHERE g = 0 AND p = ?1) UNION SELECT r2.s, k1.o FROM r2, main.rdf_quad AS k1 WHERE k1.s = \
-         r2.o AND k1.g = 0 AND k1.p = ?1) SELECT s, o FROM r2) AS d3",
+        "SELECT d4.s AS v0, d4.o AS v1 FROM (WITH RECURSIVE r2(s, o) AS (SELECT s, o FROM (SELECT e3.s AS s, e3.o \
+         AS o FROM main.rdf_quad AS e3 WHERE e3.g = 0 AND e3.p = ?1) UNION SELECT r2.s, k1.o FROM r2, main.rdf_quad \
+         AS k1 WHERE k1.s = r2.o AND k1.g = 0 AND k1.p = ?1) SELECT s, o FROM r2) AS d4",
     ),
     (
         "GRAPH ?g pushed into the pattern",
@@ -155,10 +200,23 @@ const GOLDEN: &[(&str, &str, &str)] = &[
          main.rdf_quad WHERE g = ?1))",
     ),
     (
+        "GRAPH <c> over a zero-length path: the pairs of a constant read no quad, so membership is checked",
+        "SELECT ?y WHERE { GRAPH :g1 { :a :sub* ?y } }",
+        "SELECT d3.o AS v0 FROM (WITH RECURSIVE r2(n) AS (SELECT ?1 UNION SELECT k1.o FROM r2, main.rdf_quad AS k1 \
+         WHERE k1.s = r2.n AND k1.g = ?2 AND k1.p = ?3) SELECT ?1 AS s, n AS o FROM r2) AS d3 WHERE (EXISTS (SELECT \
+         1 FROM main.rdf_graph WHERE g = ?2) OR EXISTS (SELECT 1 FROM main.rdf_quad WHERE g = ?2))",
+    ),
+    (
+        "GRAPH ?g with FROM but no FROM NAMED: no named graph, no solution",
+        "SELECT ?g ?y FROM :g1 WHERE { GRAPH ?g { :a :sub* ?y } }",
+        "SELECT NULL AS v0, NULL AS v1 WHERE 0",
+    ),
+    (
         "FROM with two graphs: RDF merge",
         "SELECT ?x FROM :g1 FROM :g2 WHERE { ?x :likes ?y }",
-        "SELECT t1.s AS v0 FROM (SELECT DISTINCT s, p, o FROM main.rdf_quad WHERE g IN (?1, ?2)) AS t1 WHERE t1.p \
-         = ?3",
+        "SELECT t1.s AS v0 FROM main.rdf_quad AS t1 WHERE t1.g IN (?1, ?2) AND NOT EXISTS (SELECT 1 FROM \
+         main.rdf_quad AS u2 WHERE u2.g IN (?1, ?2) AND u2.g < t1.g AND u2.s = t1.s AND u2.p = t1.p AND u2.o = \
+         t1.o) AND t1.p = ?3",
     ),
     (
         "ASK",

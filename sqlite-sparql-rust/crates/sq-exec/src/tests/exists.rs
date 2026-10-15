@@ -131,6 +131,30 @@ fn exists_rows_must_agree_with_rebound_substituted_slots() {
     assert_eq!(rows, vec![vec![b]]);
 }
 
+#[test]
+fn rebinding_a_substituted_slot_is_a_join_even_under_a_later_join() {
+    let (fx, [a, b, _, _, p, ..]) = data();
+    // EXISTS { BIND(:a AS ?0) ?2 :p ?1 }: the scan carries the substituted ?0 back into the
+    // merged row, which must not hide that the BIND disagrees with it (fuzzer repro).
+    let ex = nested(extend(plan(Op::Unit), 0, cv(a)), scan(v(2), c(p), v(1)), &[], JoinKind::Inner);
+    let rows = Q::new(&fx.store, 3, filter(values(&[0], vec![vec![a], vec![b]]), exists(0)))
+        .exists(vec![ex.clone()])
+        .rows(fx.rc());
+    assert_eq!(rows, vec![vec![a, u(), u()]]);
+    // The same through an aggregate: EXISTS { { SELECT (COUNT(*) AS ?0) {} } ?2 :p ?1 }.
+    let count = project(extend(plan(Op::Count { input: Box::new(plan(Op::Unit)), out: 1 }), 0, sv(1)), &[0]);
+    let ex = nested(count, scan(v(2), c(p), v(1)), &[], JoinKind::Inner);
+    let rows = Q::new(&fx.store, 3, filter(values(&[0], vec![vec![a], vec![int(1)]]), exists(0)))
+        .exists(vec![ex])
+        .rows(fx.rc());
+    assert_eq!(rows, vec![vec![int(1), u(), u()]]);
+    // An error keeps the substituted value: EXISTS { BIND(1/0 AS ?0) }.
+    let div = Expr::Divide(Box::new(cv(int(1))), Box::new(cv(int(0))));
+    let ex = extend(plan(Op::Unit), 0, div);
+    let rows = Q::new(&fx.store, 1, filter(values(&[0], vec![vec![a]]), exists(0))).exists(vec![ex]).rows(fx.rc());
+    assert_eq!(rows, vec![vec![a]]);
+}
+
 /// Reads a SELECT in small chunks, returning the rows and the largest `memory_used` seen
 /// between two chunks.
 fn rows_and_peak_memory(e: &mut Execution) -> (Vec<Vec<TermId>>, u64) {

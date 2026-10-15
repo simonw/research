@@ -57,11 +57,13 @@ pub(crate) struct Extend {
     canonical: bool,
     error_id: TermId,
     seed: SeedBuf,
+    /// Scratch: which rows of the current batch survive (seeded target slot only).
+    keep: Vec<bool>,
 }
 
 impl Extend {
     pub fn new(input: BoxOp, slot: Slot, expr: CompiledExpr, canonical: bool, error_id: TermId, width: usize) -> Self {
-        Extend { input, slot, expr, canonical, error_id, seed: SeedBuf::new(width) }
+        Extend { input, slot, expr, canonical, error_id, seed: SeedBuf::new(width), keep: Vec::new() }
     }
 }
 
@@ -75,18 +77,59 @@ impl Operator for Extend {
         let start = out.len();
         let more = self.input.next(cx, out)?;
         let (expr, slot, canonical, error_id) = (&self.expr, self.slot as usize, self.canonical, self.error_id);
+        if self.seed.value(self.slot).is_none() {
+            cx.with_eval(|ecx| -> Result<()> {
+                for i in start..out.len() {
+                    let v = expr.eval(out.row(i), ecx, canonical)?;
+                    out.row_mut(i)[slot] = v.unwrap_or(error_id);
+                }
+                Ok(())
+            })?;
+            return Ok(more);
+        }
+        // The target slot is seeded (an EXISTS substitution of the BIND variable, spec 18.6):
+        // it acts as a constant, so the BIND behaves as a join with it. A row survives iff the
+        // value is that same term or an error (the seed value is kept). Writing the computed
+        // value instead would let a later join merge put the seed back and hide the conflict.
+        let keep = &mut self.keep;
+        keep.clear();
         cx.with_eval(|ecx| -> Result<()> {
             for i in start..out.len() {
                 let v = expr.eval(out.row(i), ecx, canonical)?;
-                out.row_mut(i)[slot] = v.unwrap_or(error_id);
+                let current = out.row(i)[slot];
+                keep.push(match v {
+                    None => {
+                        if !current.is_bound() {
+                            out.row_mut(i)[slot] = error_id;
+                        }
+                        true
+                    }
+                    Some(v) if !current.is_bound() => {
+                        out.row_mut(i)[slot] = v;
+                        true
+                    }
+                    Some(v) => sq_expr::same_term_ids(v, current, ecx)?,
+                });
             }
             Ok(())
         })?;
+        if keep.contains(&false) {
+            let mut i = 0;
+            out.retain(|_| {
+                let k = i < start || keep[i - start];
+                i += 1;
+                k
+            });
+        }
         Ok(more)
     }
 
     fn fast_count(&mut self, cx: &mut ExecCtx, cap: Option<u64>) -> Option<Result<u64>> {
-        // One output row per input row, whatever the expression evaluates to.
+        // One output row per input row, whatever the expression evaluates to, unless the
+        // target slot is seeded (then rows may be dropped).
+        if self.seed.value(self.slot).is_some() {
+            return None;
+        }
         self.input.fast_count(cx, cap)
     }
 

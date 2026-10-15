@@ -73,10 +73,10 @@ fn orders_are_claimed_only_where_the_executor_keeps_them() {
     for policy in [JoinPolicy::Auto, JoinPolicy::PreferBind, JoinPolicy::PreferHash, JoinPolicy::PreferMerge] {
         let p = plan_with("SELECT * { ?x a :C3 ; :age ?a ; :knows ?y . ?y :city ?c }", &st, &with(policy));
         for n in nodes(&p) {
-            if let Op::BindJoin { left, sort_left: true, seed, .. } = &n.op {
-                if n.sorted_by.is_some() {
-                    assert_eq!(seed.first().copied(), left.sorted_by, "{}", sq_plan::explain(&p, None));
-                }
+            if let Op::BindJoin { left, sort_left: true, seed, .. } = &n.op
+                && n.sorted_by.is_some()
+            {
+                assert_eq!(seed.first().copied(), left.sorted_by, "{}", sq_plan::explain(&p, None));
             }
         }
     }
@@ -113,6 +113,112 @@ fn counts_use_the_fast_paths() {
         let factorized = |o: &Op| matches!(o, Op::MergeJoin { check, .. } if check.is_empty());
         let count_of_merge = count(&p, |o| matches!(o, Op::Count { input, .. } if factorized(&input.op)));
         assert_eq!(count_of_merge, 1, "{policy:?}\n{}", sq_plan::explain(&p, None));
+    }
+}
+
+/// Turtle of a subject star with fan-out: `subjects` subjects, each with `fan` values of :p1,
+/// :p2 and :p3.
+fn fanout_ttl(subjects: usize, fan: usize) -> String {
+    let mut ttl = String::from("@prefix : <http://ex/> .\n");
+    for x in 0..subjects {
+        for p in 1..=3 {
+            for v in 0..fan {
+                ttl.push_str(&format!(":x{x} :p{p} :v{} .\n", (x * 7 + v * 13 + p) % 997));
+            }
+        }
+    }
+    ttl
+}
+
+/// StarMerge (spec §7.5) is taken where it is cheaper than the merge chain: under COUNT(*) of a
+/// star with fan-out, its leapfrog multiplies the runs per key while the chain produces every
+/// intermediate row (measured 0.6 ms against 2.6 ms in release). Producing every row, with one
+/// value per subject, or under PreferMerge (binary merge joins), the chain stays.
+#[test]
+fn star_merges_are_taken_where_cheaper_than_the_chain() {
+    let counted = "SELECT (COUNT(*) AS ?n) { ?x :p1 ?a ; :p2 ?b ; :p3 ?c }";
+    let all_rows = "SELECT * { ?x :p1 ?a ; :p2 ?b ; :p3 ?c }";
+    let stars = |p: &QueryPlan| count(p, |o| matches!(o, Op::StarMerge { .. }));
+    let ttl = fanout_ttl(300, 20);
+    let mem = sq_memstore::MemStore::new();
+    load_ttl(&mem, &ttl, None);
+    mem.analyze();
+    let db = Sqlite::new();
+    db.load(&ttl, None);
+    db.store.analyze().unwrap();
+    let expected = oracle(&lower(counted, &mem), &mem).unwrap();
+    let stores: [(&str, Rc<dyn QuadStore>); 2] = [("mem", Rc::new(mem.clone())), ("sqlite", Rc::new(db.store.clone()))];
+    for (name, st) in stores {
+        let p = plan_on(counted, &*st, &QueryOptions::default());
+        let text = sq_plan::explain(&p, None);
+        assert_eq!(stars(&p), 1, "[{name}]\n{text}");
+        assert!(text.contains("fast=star-factorized"), "[{name}]\n{text}");
+        assert_eq!(execute(Rc::clone(&st), p, &QueryOptions::default()).unwrap(), expected, "[{name}]");
+        let p = plan_on(all_rows, &*st, &QueryOptions::default());
+        assert_eq!(stars(&p), 0, "[{name}] 2.4M output rows\n{}", sq_plan::explain(&p, None));
+        let p = plan_on(counted, &*st, &with(JoinPolicy::PreferMerge));
+        assert_eq!(stars(&p), 0, "[{name}] PreferMerge\n{}", sq_plan::explain(&p, None));
+        assert_eq!(count(&p, |o| matches!(o, Op::MergeJoin { .. })), 2, "[{name}]");
+    }
+    // One value per subject: a leapfrog step per key costs more than the few intermediate rows.
+    let flat = store(fanout_ttl(3000, 1).strip_prefix("@prefix : <http://ex/> .\n").unwrap());
+    flat.analyze();
+    let p = plan(counted, &flat);
+    assert_eq!(stars(&p), 0, "{}", sq_plan::explain(&p, None));
+}
+
+/// Galloping (spec §7.5 MergeJoin): only a right input read through one cursor can seek to the
+/// next left key. A default graph merged from several graphs (FROM :g1 FROM :g2, the union
+/// default graph) is read through several cursors and cannot seek, so its merge join pays for
+/// the whole right input.
+#[test]
+fn merge_joins_gallop_only_through_one_cursor() {
+    let ttl = social_ttl(2_000);
+    let lines: Vec<&str> = ttl.lines().collect();
+    let split = sq_memstore::MemStore::new();
+    for (i, half) in lines.chunks(lines.len() / 2 + 1).enumerate() {
+        load_ttl(&split, &format!("@prefix : <http://ex/> .\n{}", half.join("\n")), Some(&format!("http://ex/g{}", i + 1)));
+    }
+    split.analyze();
+    let default = social(2_000);
+    let fixed = QueryOptions { join_policy: JoinPolicy::PreferMerge, reorder: false, ..Default::default() };
+    let union = QueryOptions { union_default_graph: true, ..fixed.clone() };
+    for (from, st, opts, gallops) in [
+        ("FROM :g1", &split, &fixed, true),
+        ("FROM :g1 FROM :g2", &split, &fixed, false),
+        ("", &default, &fixed, true),
+        ("", &default, &union, false),
+    ] {
+        // The selective left side leaves most of the right one to skip.
+        let q = format!("SELECT * {from} {{ ?x :city :city3 . ?x :knows ?y }}");
+        let p = plan_with(&q, st, opts);
+        let text = sq_plan::explain(&p, None);
+        let merge = nodes(&p).into_iter().find(|n| matches!(n.op, Op::MergeJoin { .. })).expect("merge join");
+        let Op::MergeJoin { left, right, .. } = &merge.op else { unreachable!() };
+        assert!(matches!(&right.op, Op::Scan(_)), "{q}\n{text}");
+        let skips = merge.est_cost_ns < left.est_cost_ns + right.est_cost_ns;
+        assert_eq!(skips, gallops, "{q} (union flag {})\n{text}", opts.union_default_graph);
+    }
+}
+
+/// Groups too large for the DP are ordered greedily from the unit with the fewest rows once its
+/// filters apply, read through its cheapest access path: here the IntRange scan of `?x :age ?a
+/// FILTER(?a > 98)`, as the DP picks for a smaller group.
+#[test]
+fn greedy_orders_start_from_the_cheapest_access_path() {
+    let st = social(2_000);
+    for n in [8, 12] {
+        let knows: String = (0..n).map(|i| format!(" . ?x :knows ?k{i}")).collect();
+        let q = format!("SELECT * {{ ?x :age ?a FILTER(?a > 98){knows} }}");
+        let p = plan(&q, &st);
+        let text = sq_plan::explain(&p, None);
+        let ranges = count(&p, |o| matches!(o, Op::Scan(s) if s.range.is_some()));
+        assert_eq!(ranges, 1, "{n} :knows patterns\n{text}");
+        let mut first = &p.root;
+        while let Some(c) = first.children().first() {
+            first = c;
+        }
+        assert!(matches!(&first.op, Op::Scan(s) if s.range.is_some()), "{n} :knows patterns\n{text}");
     }
 }
 
@@ -235,6 +341,65 @@ fn sql_chains_close_before_filters() {
     let _read = db.store.read_scope(0).unwrap();
     let store: Rc<dyn QuadStore> = Rc::new(db.store.clone());
     assert_eq!(execute(store, p, &QueryOptions::default()).unwrap(), expected, "{text}");
+}
+
+/// SQLite prepares at most 64 tables per statement: a wider sqlable star (greedy-ordered, 71
+/// units) fills one SqlJoin with exactly 64 aliases, joins the rest outside it, and answers
+/// like the oracle; `validate()` rejects a 65-table statement.
+#[test]
+fn sql_chains_stop_at_sqlites_join_limit() {
+    let mut ttl = String::from("@prefix : <http://ex/> .\n");
+    for s in 0..40 {
+        if s % 20 == 0 {
+            ttl.push_str(&format!(":s{s} a :C .\n"));
+        }
+        for p in 0..70 {
+            ttl.push_str(&format!(":s{s} :p{p} {} .\n", s * 100 + p));
+        }
+    }
+    let db = Sqlite::new();
+    db.load(&ttl, None);
+    db.store.analyze().unwrap();
+    let mut q = String::from("SELECT * { ?x a :C ");
+    for p in 0..70 {
+        q.push_str(&format!("; :p{p} ?o{p} "));
+    }
+    q.push('}');
+    let expected = oracle(&lower_on(&q, &db.store, &QueryOptions::default()), &db.store).unwrap();
+    assert_eq!(expected.len(), 2);
+    let _read = db.store.read_scope(0).unwrap();
+    let p = plan_on(&q, &db.store, &QueryOptions::default());
+    let text = sq_plan::explain(&p, None);
+    let aliases: Vec<usize> = nodes(&p)
+        .iter()
+        .filter_map(|n| match &n.op {
+            Op::SqlJoin { sql, .. } => Some(sql.matches(" CROSS JOIN ").count() + 1),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(aliases, vec![64], "{text}");
+    // SQLite keeps our order and an index search for each of the 64 aliases.
+    let sql = nodes(&p).iter().find_map(|n| match &n.op {
+        Op::SqlJoin { sql, .. } => Some(sql.clone()),
+        _ => None,
+    });
+    let eqp = db.store.explain_query_plan(&sql.unwrap()).unwrap();
+    let lines: Vec<&str> = eqp.lines().map(str::trim).collect();
+    assert_eq!(lines.len(), 64, "{eqp}");
+    for (i, line) in lines.iter().enumerate() {
+        assert!(line.starts_with(&format!("SEARCH t{i} USING ")), "{eqp}");
+    }
+    let store: Rc<dyn QuadStore> = Rc::new(db.store.clone());
+    assert_eq!(execute(store, p.clone(), &QueryOptions::default()).unwrap(), expected, "{text}");
+
+    rejects(p, "SqlJoin of 65 tables", |n| match &mut n.op {
+        Op::SqlJoin { sql, .. } => {
+            let extra = " CROSS JOIN main.rdf_quad AS t64 INDEXED BY rdf_gpso WHERE ";
+            *sql = sql.replacen(" WHERE ", extra, 1);
+            true
+        }
+        _ => false,
+    });
 }
 
 /// A StarMerge built from a PreferMerge chain (the planner takes it only when its cost model

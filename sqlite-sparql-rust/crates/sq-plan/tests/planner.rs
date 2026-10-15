@@ -172,7 +172,7 @@ fn empty_graph_var_lists_graph_names() {
 }
 
 /// The Filter node whose expression mentions `needle`.
-fn filter_node<'a>(p: &'a sq_core::plan::QueryPlan, pred: impl Fn(&sq_core::ir::Expr) -> bool) -> &'a Plan {
+fn filter_node(p: &sq_core::plan::QueryPlan, pred: impl Fn(&sq_core::ir::Expr) -> bool) -> &Plan {
     nodes(p)
         .into_iter()
         .find(|n| matches!(&n.op, Op::Filter { expr, .. } if pred(expr)))

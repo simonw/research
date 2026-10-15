@@ -3,11 +3,15 @@
 //! group's filter conjuncts as soon as the joined prefix binds their evars.
 //!
 //! Ordering: left-deep dynamic programming over connected subsets for groups of up to
-//! [`MAX_DP_UNITS`] units whose search takes at most [`MAX_DP_STEPS`] join steps, greedy
-//! (cheapest connected next unit, cross products last) otherwise, and a DP over the prefixes of
-//! the syntactic order when `reorder` is off. The DPs keep the cheapest prefix per *interesting
-//! property* ([`Key`]): unordered, sorted by a slot that a remaining unit binds (a later merge
-//! join key), or an open SQL chain that a remaining unit may extend. Every decision depends only
+//! [`MAX_DP_UNITS`] units whose search does at most [`MAX_DP_WORK`] units of work (see
+//! [`dp_work`]), greedy (cheapest connected next unit, cross products last) otherwise, and a DP
+//! over the prefixes of the syntactic order when `reorder` is off. The DPs keep the cheapest
+//! prefix per *interesting property* ([`Key`]): unordered, sorted by a slot that a remaining
+//! unit binds (a later merge join key), or an open SQL chain that a remaining unit may extend.
+//! Only the cheapest prefix of a subset is extended with every operator; one kept for its
+//! property alone only with the operators that keep it (`choice::Wanted`). When keeping every
+//! property would exceed the budget, the DP keeps fewer of them ([`Keep::TIERS`]), down to the
+//! cheapest prefix per subset, before it falls back to greedy. Every decision depends only
 //! on the estimated [`Shape`] of the joined prefix, so the search runs on shapes alone
 //! ([`Mode::Probe`]: opaque units are estimated, not planned, see `estimate`; quad patterns are
 //! costed from a per-group cache). The winning [`Path`] (first unit and access path, then the
@@ -28,6 +32,7 @@ use sq_core::store::Col;
 use sq_core::{Error, Result};
 
 use super::bits::{mask_iter, Bits};
+use super::choice::Wanted;
 use super::range;
 use super::scan::{bound_columns, choose_order, range_access, scan_sorted_by, sorted_accesses, sqlable, Access};
 use super::sqljoin;
@@ -38,12 +43,18 @@ use crate::props::{self, slot_list, Props};
 
 /// Groups of up to this many units may be ordered by dynamic programming (spec §7.5) ...
 const MAX_DP_UNITS: usize = 12;
-/// ... when the search takes at most this many join steps (pairs of a reachable subset and a
-/// candidate next unit, see [`dp_steps`]), which bounds planning time by work rather than by
-/// unit count. A dense group (every unit shares a slot with every other, e.g. a subject star)
-/// of n units takes n·2^(n-1) - n steps: 2 295 for 9 units, 5 110 for 10, 24 564 for 12, while
-/// a chain of n takes n(n-1). Larger searches use the greedy order.
-const MAX_DP_STEPS: usize = 6_000;
+/// ... when the search extends at most this many DP states by a next unit ([`dp_work`], with
+/// the states a subset keeps bounded by [`Group::extra_states`]), which bounds planning time by
+/// work rather than by unit count. With one state per subset the work is the number of join
+/// steps: a dense group (every unit shares a slot with every other, e.g. a subject star) of n
+/// units takes n·2^(n-1) - n steps, 2 295 for 9 units, 5 110 for 10, 24 564 for 12, while a
+/// chain of n takes n(n-1). Interesting orders multiply it by up to 1 + the number of join slots
+/// (+1 for an open SQL chain): 6 for a 5-clique, whose search then keeps fewer properties
+/// ([`Keep::TIERS`]). Larger searches use the greedy order. One extension costs about 2.0K-2.5K
+/// instructions with a forced operator and 3.9K-4.6K when bind, hash and merge joins are
+/// compared (`Auto`, `NoSql`), so a search takes at most about 15M (forced) or 28M
+/// instructions.
+const MAX_DP_WORK: usize = 6_000;
 /// `sort_left` threshold (spec §7.5).
 pub(super) const SORT_LEFT_ROWS: f64 = 64.0;
 
@@ -62,6 +73,9 @@ pub(super) struct Unit<'l> {
     /// The integer range that the group's conjuncts put on this quad pattern's object slot.
     pub(super) range: Option<IntRange>,
 }
+
+/// The plain access paths of a quad pattern with the slot each is sorted by (`sorted_accesses`).
+type SortedAccesses = SmallVec<[(Access, Option<Slot>); 4]>;
 
 /// A filter conjunct of a group with its evars (relative to the group's rows).
 struct Conj {
@@ -92,6 +106,9 @@ pub(super) struct Group<'l> {
     pub(super) merge: bool,
     /// SQL chains (SqlJoin) are allowed.
     pub(super) sql: bool,
+    /// The interesting properties ([`Key`]) the ordering search keeps prefixes for, besides
+    /// each subset's cheapest one: fewer when keeping all would exceed the planning budget.
+    keep: Keep,
     /// Per unit that can extend a subject star (`Card::star_extends`): the other quad pattern
     /// units of that star (`same_star`); empty for every other unit.
     star_mates: Vec<Bits>,
@@ -104,9 +121,11 @@ pub(super) struct Group<'l> {
     range_est: Vec<Option<(f64, f64)>>,
     /// Per quad pattern unit: its plain access paths in the group's context, one per output
     /// order (`sorted_accesses`).
-    accesses: Vec<Option<SmallVec<[(Access, Option<Slot>); 4]>>>,
+    accesses: Vec<Option<SortedAccesses>>,
     /// Distinct values per slot (min over the patterns binding it; infinite when unknown).
     pub(super) dv: FxHashMap<Slot, f64>,
+    /// Join candidates of the step being decided: one buffer for the whole ordering search.
+    choices: Vec<Choice>,
 }
 
 impl<'l> Group<'l> {
@@ -118,10 +137,11 @@ impl<'l> Group<'l> {
                 UnitRef::Pat(next) if card.star_extends(&next) => {
                     let mut mates = Bits::default();
                     for (j, v) in units.iter().enumerate() {
-                        if let UnitRef::Pat(p) = v.r {
-                            if j != i && same_star(&p, &next) {
-                                mates.insert(j);
-                            }
+                        if let UnitRef::Pat(p) = v.r
+                            && j != i
+                            && same_star(&p, &next)
+                        {
+                            mates.insert(j);
                         }
                     }
                     mates
@@ -137,12 +157,14 @@ impl<'l> Group<'l> {
             goal,
             merge: false,
             sql: false,
+            keep: Keep::TIERS[0],
             star_mates,
             star_memo: StarMemo::default(),
             scan_est: vec![[None; 16]; n],
             range_est: vec![None; n],
             accesses: vec![None; n],
             dv: FxHashMap::default(),
+            choices: Vec::new(),
         }
     }
 
@@ -167,6 +189,54 @@ impl<'l> Group<'l> {
             let u = &self.units[j];
             (slots.union(u.props.certain), sql || u.sqlable)
         })
+    }
+
+    /// Upper bounds on the states the ordering search may keep for the subset `mask` of a
+    /// group of at most [`MAX_DP_UNITS`] units besides the unordered one (one per [`Key`]):
+    /// sorted ones, by a slot that both a unit of the subset and one outside it bind certainly
+    /// (merge joins on: a prefix is sorted by a slot its units bind, and kept for it while a
+    /// remaining unit binds it too); and an open SQL chain (SQL chains on, at least two units,
+    /// all sqlable, and an sqlable unit outside).
+    fn extra_states(&self, mask: usize) -> (usize, usize) {
+        let rest = ((1usize << self.units.len()) - 1) & !mask;
+        let mut sorted = 0;
+        if self.merge {
+            let certain = |m: usize| mask_iter(m).fold(SlotSet::EMPTY, |acc, j| acc.union(self.units[j].props.certain));
+            let join_slots = certain(mask).intersect(certain(rest));
+            sorted = join_slots.0.iter().map(|w| w.count_ones() as usize).sum();
+        }
+        let sqlable = |j: usize| self.units[j].sqlable;
+        let chain = self.sql && mask.count_ones() >= 2 && mask_iter(mask).all(sqlable) && mask_iter(rest).any(sqlable);
+        (sorted, usize::from(chain))
+    }
+}
+
+/// Which interesting properties ([`Key`]) the ordering search keeps a prefix for, besides the
+/// cheapest prefix of each subset.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) struct Keep {
+    /// Sorted by a slot a remaining unit binds (a later merge join key).
+    sorted: bool,
+    /// An open SQL chain a remaining unit may extend.
+    sql: bool,
+}
+
+impl Keep {
+    /// The searches from the richest to the plainest; a group takes the first that fits the
+    /// budget. Sorted prefixes are kept before open SQL chains: they feed merge joins and
+    /// in-order BindJoin probes, while a chain that is the cheapest prefix is still extended
+    /// (a 9-pattern star on SQLite: the full search's plan when keeping sorted prefixes, 1.4x
+    /// its estimated cost when keeping chains).
+    pub(super) const TIERS: [Keep; 4] = [
+        Keep { sorted: true, sql: true },
+        Keep { sorted: true, sql: false },
+        Keep { sorted: false, sql: true },
+        Keep { sorted: false, sql: false },
+    ];
+
+    /// The states a subset keeps at most, given its [`Group::extra_states`].
+    fn states(self, (sorted, sql): (usize, usize)) -> usize {
+        1 + usize::from(self.sorted) * sorted + usize::from(self.sql) * sql
     }
 }
 
@@ -203,29 +273,34 @@ fn dp_candidates(adj: &[usize], seeded: usize, mask: usize) -> usize {
     if near == 0 { outside } else { near }
 }
 
-/// The number of join steps `dp_path` takes (one per reachable subset and candidate next
-/// unit), or None once it exceeds `limit`.
-fn dp_steps(adj: &[usize], seeded: usize, limit: usize) -> Option<usize> {
+/// The work `dp_path` does at most under each of [`Keep::TIERS`]: per reachable subset, its
+/// candidate next units times the states it keeps (each is extended by each candidate), from
+/// `extra(subset)` ([`Group::extra_states`]); None once even the plainest search exceeds
+/// `limit`.
+fn dp_work(adj: &[usize], seeded: usize, extra: impl Fn(usize) -> (usize, usize), limit: usize) -> Option<[usize; 4]> {
     let full = (1usize << adj.len()) - 1;
     let mut reached = vec![false; full + 1];
     for i in 0..adj.len() {
         reached[1 << i] = true;
     }
-    let mut steps = 0;
+    let mut work = [0; 4];
     for mask in 1..full {
         if !reached[mask] {
             continue;
         }
         let next = dp_candidates(adj, seeded, mask);
-        steps += next.count_ones() as usize;
-        if steps > limit {
+        let (n, extra) = (next.count_ones() as usize, extra(mask));
+        for (w, keep) in work.iter_mut().zip(Keep::TIERS) {
+            *w += n * keep.states(extra);
+        }
+        if work[3] > limit {
             return None;
         }
         for i in mask_iter(next) {
             reached[mask | 1 << i] = true;
         }
     }
-    Some(steps)
+    Some(work)
 }
 
 /// Whether a join decision only needs estimates (the ordering search) or builds the plan.
@@ -286,7 +361,8 @@ pub(super) struct Shape {
     /// The slot the prefix's rows are sorted by (as the executor guarantees it).
     pub(super) sorted: Option<Slot>,
     /// Number of units of the open SQL chain the prefix is (0: none): one plain sqlable scan,
-    /// or such scans joined by SQL steps only, with no filter applied yet.
+    /// or such scans joined by SQL steps only, with no filter applied yet. At most
+    /// `sqljoin::MAX_ALIASES`.
     pub(super) chain: usize,
     /// The last operator is a merge join without checks: a COUNT of the prefix is the sum of
     /// run products (`fast_count`), no row is produced.
@@ -405,7 +481,8 @@ enum Key {
     Any,
     /// Sorted by a slot a remaining unit binds certainly (a possible merge key).
     Sorted(Slot),
-    /// An open SQL chain of at least two units that a remaining unit may extend.
+    /// An open SQL chain of at least two units that a remaining unit may extend (it has fewer
+    /// than `sqljoin::MAX_ALIASES` units).
     Sql,
 }
 
@@ -432,10 +509,14 @@ type Bucket = SmallVec<[DpState; 2]>;
 
 /// Keep `st` unless the bucket has a state of the same key that is at most as expensive; an
 /// unordered state is also dominated by any state at most as expensive (an order or an open
-/// SQL chain can always be ignored).
+/// SQL chain can always be ignored), and dropped when such a state arrives. Only buckets that
+/// no back pointer refers to yet are changed.
 fn insert(bucket: &mut Bucket, st: DpState) {
     if st.key == Key::Any && bucket.iter().any(|s| s.rank <= st.rank) {
         return;
+    }
+    if st.key != Key::Any {
+        bucket.retain(|s| s.key != Key::Any || s.rank < st.rank);
     }
     match bucket.iter_mut().find(|s| s.key == st.key) {
         Some(s) => {
@@ -450,14 +531,31 @@ fn insert(bucket: &mut Bucket, st: DpState) {
 /// The key a prefix competes under; `rest` is what the units still to join make interesting
 /// ([`Group::interest`]).
 fn key_of(g: &Group<'_>, shape: &Shape, rest: (SlotSet, bool)) -> Key {
+    key_for(g, shape.chain, shape.sorted, rest)
+}
+
+/// [`key_of`] a prefix that is an SQL chain of `chain` units (0: none) sorted by `sorted`.
+fn key_for(g: &Group<'_>, chain: usize, sorted: Option<Slot>, rest: (SlotSet, bool)) -> Key {
     let (interesting, sql_rest) = rest;
-    if shape.chain >= 2 && sql_rest {
+    if g.keep.sql && (2..sqljoin::MAX_ALIASES).contains(&chain) && sql_rest {
         return Key::Sql;
     }
-    match shape.sorted {
-        Some(v) if g.merge && interesting.contains(v) => Key::Sorted(v),
+    match sorted {
+        Some(v) if g.keep.sorted && g.merge && interesting.contains(v) => Key::Sorted(v),
         _ => Key::Any,
     }
+}
+
+/// Can a state of `key` and `rank` not improve `bucket`? A state of the same key, or of any
+/// key for an unordered one, that is at most as expensive already dominates it.
+fn dominated(bucket: &Bucket, key: Key, rank: f64) -> bool {
+    bucket.iter().any(|s| (key == Key::Any || s.key == key) && s.rank <= rank)
+}
+
+/// The length of the open SQL chain after join step `ch` on a prefix with an open chain of
+/// `left_chain` units: SQL steps extend it, every other operator closes it.
+fn step_chain(left_chain: usize, ch: &Choice) -> usize {
+    if matches!(ch.algo, Algo::Sql { .. }) { left_chain + 1 } else { 0 }
 }
 
 /// The cheapest state of a complete bucket.
@@ -465,6 +563,19 @@ fn cheapest(bucket: &Bucket) -> Result<usize> {
     (0..bucket.len())
         .min_by(|&a, &b| bucket[a].rank.total_cmp(&bucket[b].rank))
         .ok_or_else(|| Error::internal("join DP left a subset unreached"))
+}
+
+/// The join candidates a state of a finished bucket is extended with: every one for the
+/// bucket's cheapest state; for a state kept only for its [`Key`], the candidates that keep it
+/// (any other candidate costs at least as much as from the cheapest state, and its output
+/// competes for the same keys); none for an unordered state that is not the cheapest.
+fn extension(state: &DpState, is_cheapest: bool) -> Option<Wanted> {
+    match state.key {
+        _ if is_cheapest => Some(Wanted::All),
+        Key::Sorted(v) => Some(Wanted::KeepOrder(v)),
+        Key::Sql => Some(Wanted::ExtendSql),
+        Key::Any => None,
+    }
 }
 
 /// Walk the back pointers from `buckets[at][idx]` to the first unit.
@@ -505,7 +616,7 @@ fn joined_shape(left: &Shape, right: &Props, unit: Option<usize>, ch: &Choice, k
         maybe: if semi { left.maybe } else { left.maybe.union(right.maybe) },
         units,
         sorted: ch.sorted,
-        chain: if matches!(ch.algo, Algo::Sql { .. }) { left.chain + 1 } else { 0 },
+        chain: step_chain(left.chain, ch),
         factorized: ch.factorized(),
         ranged: if inner { left.ranged.union(ch.right.ranged) } else { left.ranged },
     }
@@ -553,10 +664,17 @@ impl<'a> Planner<'a> {
         let path = if !self.opts.reorder {
             self.fixed_path(&mut g)?
         } else {
-            // Adjacency masks exist for DP-sized groups only.
-            let dp = (g.units.len() <= MAX_DP_UNITS)
-                .then(|| g.adjacency())
-                .filter(|(adj, seeded)| dp_steps(adj, *seeded, MAX_DP_STEPS).is_some());
+            // Adjacency masks exist for DP-sized groups only. The richest search that fits the
+            // budget, else greedy.
+            let mut dp = None;
+            if g.units.len() <= MAX_DP_UNITS {
+                let (adj, seeded) = g.adjacency();
+                let work = dp_work(&adj, seeded, |m| g.extra_states(m), MAX_DP_WORK);
+                if let Some(tier) = work.and_then(|w| w.iter().position(|&w| w <= MAX_DP_WORK)) {
+                    g.keep = Keep::TIERS[tier];
+                    dp = Some((adj, seeded));
+                }
+            }
             match dp {
                 Some((adj, seeded)) => self.dp_path(&mut g, &adj, seeded)?,
                 None => self.greedy_path(&mut g)?,
@@ -696,13 +814,22 @@ impl<'a> Planner<'a> {
         g: &mut Group<'_>,
         i: usize,
         p: &QuadPat,
-    ) -> SmallVec<[(Access, Option<Slot>); 4]> {
+    ) -> SortedAccesses {
         if let Some(a) = &g.accesses[i] {
             return a.clone();
         }
         let a = sorted_accesses(p, g.ctx.bound(), self.dataset);
         g.accesses[i] = Some(a.clone());
         a
+    }
+
+    /// The plain access path of quad pattern unit `i` (in the group's context) whose output is
+    /// sorted by `key`, if any.
+    pub(super) fn sorted_access(&self, g: &mut Group<'_>, i: usize, p: &QuadPat, key: Slot) -> Option<Access> {
+        if g.accesses[i].is_none() {
+            g.accesses[i] = Some(sorted_accesses(p, g.ctx.bound(), self.dataset));
+        }
+        g.accesses[i].as_ref()?.iter().find(|(_, s)| *s == Some(key)).map(|(a, _)| *a)
     }
 
     /// Open unit `i` in `ctx` (see [`Opened`]), a quad pattern through `access` (None: the
@@ -852,9 +979,14 @@ impl<'a> Planner<'a> {
     /// What a complete group costs for its goal: under a COUNT a factorized merge join on top
     /// produces no row.
     fn final_cost(&self, g: &Group<'_>, shape: &Shape) -> f64 {
+        self.final_cost_of(g, shape.cost, shape.rows, shape.factorized)
+    }
+
+    /// [`Self::final_cost`] of a complete group with these estimates.
+    fn final_cost_of(&self, g: &Group<'_>, cost: f64, rows: f64, factorized: bool) -> f64 {
         match g.goal {
-            Goal::Count if shape.factorized => (shape.cost - shape.rows * self.row_copy()).max(0.0),
-            _ => shape.cost,
+            Goal::Count if factorized => (cost - rows * self.row_copy()).max(0.0),
+            _ => cost,
         }
     }
 
@@ -875,16 +1007,6 @@ impl<'a> Planner<'a> {
         Ok(DpState { key, rank, shape, applied, from })
     }
 
-    /// Can the join step to `shape` (before its filters) not improve `bucket`? Filters only add
-    /// cost, keep the order and may close an SQL chain (whose rows are unordered, so the state
-    /// then competes as `Key::Any`): a state of the same key, or of any key for an unordered
-    /// one, that is at most as expensive already dominates it.
-    fn dominated(&self, g: &Group<'_>, bucket: &Bucket, shape: &Shape, rest: (SlotSet, bool), complete: bool) -> bool {
-        let key = key_of(g, shape, rest);
-        let rank = if complete { self.final_cost(g, shape) } else { shape.cost };
-        bucket.iter().any(|s| (key == Key::Any || s.key == key) && s.rank <= rank)
-    }
-
     /// Left-deep dynamic programming over connected subsets (DPsub) on shapes only, keeping the
     /// cheapest prefix per (subset, [`Key`]). `adj` / `seeded` are the group's
     /// [`Group::adjacency`].
@@ -901,35 +1023,21 @@ impl<'a> Planner<'a> {
             }
         }
         // Every superset of a subset is numerically larger: ascending order sees final states,
-        // and back pointers only point into finished buckets.
-        let (mut z_steps, mut z_states, mut z_choices, mut z_settled, mut z_bsum) = (0usize, 0usize, 0usize, 0usize, 0usize);
+        // and back pointers only point into finished buckets. Unreachable subsets stay empty.
         for mask in 1..full {
+            if best[mask].is_empty() {
+                continue;
+            }
             let bucket = std::mem::take(&mut best[mask]);
-            z_bsum += bucket.len();
+            // The planning budget relies on this bound (`dp_work`).
+            debug_assert!(bucket.len() <= g.keep.states(g.extra_states(mask)), "subset {mask:#b} over its state bound");
+            let top = cheapest(&bucket)?;
             for i in mask_iter(dp_candidates(adj, seeded, mask)) {
-                z_steps += 1;
                 let next = mask | 1 << i;
                 let rest = g.interest(mask_iter(full & !next));
-                for (idx, state) in bucket.iter().enumerate() {
-                    z_states += 1;
-                    for ch in self.join_choices(g, &state.shape, i, None, Mode::Probe, None)? {
-                        z_choices += 1;
-                        let shape = joined_shape(&state.shape, &g.units[i].props, Some(i), &ch, &JoinKind::Inner);
-                        if self.dominated(g, &best[next], &shape, rest, next == full) {
-                            continue;
-                        }
-                        z_settled += 1;
-                        let from = From::Step { prev: mask, idx, unit: i, algo: ch.algo };
-                        let st = self.settle(g, &shape, state.applied.clone(), from, rest, next == full)?;
-                        insert(&mut best[next], st);
-                    }
-                }
+                self.extend_bucket(g, (&bucket, mask, top), i, &mut best[next], rest, next == full)?;
             }
             best[mask] = bucket;
-        }
-        if std::env::var("SQ_DP_STATS").is_ok() {
-            let nonempty = best.iter().filter(|b| !b.is_empty()).count();
-            eprintln!("DP n={n} steps={z_steps} states={z_states} choices={z_choices} settled={z_settled} buckets={nonempty} avg_bucket={:.2}", z_bsum as f64 / nonempty as f64);
         }
         let idx = cheapest(&best[full])?;
         Ok(reconstruct(&best, full, idx))
@@ -948,44 +1056,90 @@ impl<'a> Planner<'a> {
         }
         for k in 1..n {
             let prev = std::mem::take(&mut buckets[k - 1]);
+            let top = cheapest(&prev)?;
             let rest = g.interest(k + 1..n);
-            for (idx, state) in prev.iter().enumerate() {
-                for ch in self.join_choices(g, &state.shape, k, None, Mode::Probe, None)? {
-                    let shape = joined_shape(&state.shape, &g.units[k].props, Some(k), &ch, &JoinKind::Inner);
-                    if self.dominated(g, &buckets[k], &shape, rest, k == n - 1) {
-                        continue;
-                    }
-                    let from = From::Step { prev: k - 1, idx, unit: k, algo: ch.algo };
-                    let st = self.settle(g, &shape, state.applied.clone(), from, rest, k == n - 1)?;
-                    insert(&mut buckets[k], st);
-                }
-            }
+            self.extend_bucket(g, (&prev, k - 1, top), k, &mut buckets[k], rest, k == n - 1)?;
             buckets[k - 1] = prev;
         }
         let idx = cheapest(&buckets[n - 1])?;
         Ok(reconstruct(&buckets, n - 1, idx))
     }
 
-    /// Greedy order: the unit with the fewest rows first, then the cheapest connected next
-    /// unit and operator.
-    fn greedy_path(&mut self, g: &mut Group<'_>) -> Result<Path> {
-        let ctx = g.ctx;
-        let mut start = (0, f64::INFINITY);
-        for i in 0..g.units.len() {
-            let rows = self.open_unit(g, i, ctx, Mode::Probe, None)?.rows;
-            if rows < start.1 {
-                start = (i, rows);
+    /// One DP transition: join unit `i` to the states of the finished bucket `from` = (bucket,
+    /// its index, its cheapest state), each with the candidates [`extension`] allows, into
+    /// `into`. `rest` is what the units still to join afterwards make interesting; `complete`:
+    /// the transition completes the group.
+    fn extend_bucket(
+        &mut self,
+        g: &mut Group<'_>,
+        from: (&Bucket, usize, usize),
+        i: usize,
+        into: &mut Bucket,
+        rest: (SlotSet, bool),
+        complete: bool,
+    ) -> Result<()> {
+        let (bucket, prev, top) = from;
+        let mut chs = std::mem::take(&mut g.choices);
+        for (idx, state) in bucket.iter().enumerate() {
+            let Some(wanted) = extension(state, idx == top) else { continue };
+            chs.clear();
+            self.join_choices(g, &state.shape, i, None, Mode::Probe, wanted, &mut chs)?;
+            for ch in &chs {
+                // A step that cannot improve `into` before its filters cannot after them either:
+                // filters only add cost, keep the order and may close an SQL chain (whose rows
+                // are unordered, so the state then competes as `Key::Any`).
+                let key = key_for(g, step_chain(state.shape.chain, ch), ch.sorted, rest);
+                let rank = if complete { self.final_cost_of(g, ch.cost, ch.rows, ch.factorized()) } else { ch.cost };
+                if dominated(into, key, rank) {
+                    continue;
+                }
+                let shape = joined_shape(&state.shape, &g.units[i].props, Some(i), ch, &JoinKind::Inner);
+                let from = From::Step { prev, idx, unit: i, algo: ch.algo };
+                let st = self.settle(g, &shape, state.applied.clone(), from, rest, complete)?;
+                insert(into, st);
             }
         }
-        let (_, shape) = self.start_shape(g, start.0, Mode::Probe, None)?;
-        let mut applied = Bits::default();
-        let (_, mut shape) = self.filter_steps(g, &shape, &mut applied, false, Mode::Probe)?;
-        let mut path = Path { start: (start.0, None), steps: Vec::new() };
-        let mut remaining: Vec<usize> = (0..g.units.len()).filter(|&i| i != start.0).collect();
+        g.choices = chs;
+        Ok(())
+    }
+
+    /// Greedy order: first the unit with the fewest rows once the conjuncts it completes are
+    /// applied, read through its cheapest access path (an IntRange scan, a sorted order or the
+    /// default one, see [`Self::start_accesses`]); then the cheapest connected next unit and
+    /// operator.
+    fn greedy_path(&mut self, g: &mut Group<'_>) -> Result<Path> {
+        // (unit, access, settled shape, conjuncts it applied)
+        let mut start: Option<(usize, Option<Access>, Shape, Bits)> = None;
+        for i in 0..g.units.len() {
+            // The access paths of one unit return the same rows: the cheapest one represents it.
+            let mut best: Option<(Option<Access>, Shape, Bits)> = None;
+            for access in self.start_accesses(g, i) {
+                let (_, shape) = self.start_shape(g, i, Mode::Probe, access)?;
+                let mut applied = Bits::default();
+                let (_, shape) = self.filter_steps(g, &shape, &mut applied, false, Mode::Probe)?;
+                if best.as_ref().is_none_or(|(_, b, _)| shape.cost < b.cost) {
+                    best = Some((access, shape, applied));
+                }
+            }
+            let Some((access, shape, applied)) = best else { continue };
+            let fewer = |s: &(usize, Option<Access>, Shape, Bits)| {
+                shape.rows.total_cmp(&s.2.rows).then(shape.cost.total_cmp(&s.2.cost)) == Ordering::Less
+            };
+            if start.as_ref().is_none_or(fewer) {
+                start = Some((i, access, shape, applied));
+            }
+        }
+        let (first, access, mut shape, mut applied) =
+            start.ok_or_else(|| Error::internal("greedy join order of an empty group"))?;
+        let mut path = Path { start: (first, access), steps: Vec::new() };
+        let mut remaining: Vec<usize> = (0..g.units.len()).filter(|&i| i != first).collect();
+        let mut chs = std::mem::take(&mut g.choices);
         while !remaining.is_empty() {
             let mut best: Option<(usize, Choice)> = None;
             for i in Self::next_candidates(g, &shape, remaining.iter().copied()) {
-                for ch in self.join_choices(g, &shape, i, None, Mode::Probe, None)? {
+                chs.clear();
+                self.join_choices(g, &shape, i, None, Mode::Probe, Wanted::All, &mut chs)?;
+                for ch in chs.drain(..) {
                     if best.as_ref().is_none_or(|(_, b)| cheaper(&ch, b)) {
                         best = Some((i, ch));
                     }
@@ -997,6 +1151,7 @@ impl<'a> Planner<'a> {
             let joined = joined_shape(&shape, &g.units[i].props, Some(i), &ch, &JoinKind::Inner);
             shape = self.filter_steps(g, &joined, &mut applied, false, Mode::Probe)?.1;
         }
+        g.choices = chs;
         Ok(path)
     }
 
@@ -1019,16 +1174,17 @@ impl<'a> Planner<'a> {
         }
         let side = self.apply_filters(g, side, &mut applied, true)?;
         let side = self.close_sql(side)?;
-        Ok(self.star_merges(side.plan))
+        Ok(self.star_merges(side.plan, g.goal, g.ctx.bound()))
     }
 
     /// The real-plan choice for a recorded step: the same decision when it is still legal,
     /// else the cheapest legal one of the same family, else the cheapest legal one.
     fn replay_choice(&mut self, g: &mut Group<'_>, left: &Shape, i: usize, algo: &Algo) -> Result<Choice> {
         let family = algo.family();
-        let mut chs = self.join_choices(g, left, i, None, Mode::Build, Some(family))?;
+        let mut chs = Vec::new();
+        self.join_choices(g, left, i, None, Mode::Build, Wanted::Family(family), &mut chs)?;
         if chs.is_empty() {
-            chs = self.join_choices(g, left, i, None, Mode::Build, None)?;
+            self.join_choices(g, left, i, None, Mode::Build, Wanted::All, &mut chs)?;
         }
         let exact = chs.iter().position(|c| c.algo.same_as(algo));
         let pick = match exact {
@@ -1138,10 +1294,10 @@ impl<'a> Planner<'a> {
         if !plain.is_empty() {
             let n = plain.len() as f64;
             let (rows, cost) = (clamp_est(shape.rows * sel), clamp_est(shape.cost + shape.rows * n * EXPR_EVAL_NS));
-            if mode == Mode::Build {
-                if let Some(expr) = and_all(plain.iter().map(|&i| g.conj[i].expr.clone()).collect()) {
-                    steps.push(Step::Filter { expr, rows, cost });
-                }
+            if mode == Mode::Build
+                && let Some(expr) = and_all(plain.iter().map(|&i| g.conj[i].expr.clone()).collect())
+            {
+                steps.push(Step::Filter { expr, rows, cost });
             }
             (shape.rows, shape.cost) = (rows, cost);
         }
@@ -1204,7 +1360,8 @@ impl<'a> Planner<'a> {
         let unit = Unit { r: UnitRef::Node(right), props: pr, sqlable: false, range: None };
         let mut g = Group::new(vec![unit], ctx, Goal::Rows, &self.card);
         let sel = filter.map_or(1.0, crate::card::selectivity);
-        let chs = self.join_choices(&mut g, &shape, 0, Some(sel), Mode::Build, None)?;
+        let mut chs = Vec::new();
+        self.join_choices(&mut g, &shape, 0, Some(sel), Mode::Build, Wanted::All, &mut chs)?;
         let ch = chs
             .into_iter()
             .reduce(|a, b| if cheaper(&b, &a) { b } else { a })
@@ -1245,25 +1402,39 @@ impl<'a> Planner<'a> {
 mod tests {
     use super::*;
 
+    fn steps(adj: &[usize], limit: usize) -> Option<usize> {
+        dp_work(adj, 0, |_| (0, 0), limit).map(|w| w[3])
+    }
+
     #[test]
     fn dp_step_counts() {
         // Dense groups of n units take n·2^(n-1) - n steps.
         for n in [3usize, 9, 10] {
             let all = (1usize << n) - 1;
             let adj: Vec<usize> = (0..n).map(|i| all & !(1 << i)).collect();
-            assert_eq!(dp_steps(&adj, 0, usize::MAX), Some((n << (n - 1)) - n), "dense {n}");
+            assert_eq!(steps(&adj, usize::MAX), Some((n << (n - 1)) - n), "dense {n}");
         }
         // A chain of n units: every connected subset is an interval with at most two
         // neighbours; n(n-1) steps.
         let n = 12;
         let adj: Vec<usize> = (0..n).map(|i| ((1 << i) >> 1 | (1 << i) << 1) & ((1 << n) - 1)).collect();
-        assert_eq!(dp_steps(&adj, 0, usize::MAX), Some(n * (n - 1)));
+        assert_eq!(steps(&adj, usize::MAX), Some(n * (n - 1)));
         // Over the limit: None. A dense 12-unit group is not searched by DP.
         let all = (1usize << 12) - 1;
         let dense: Vec<usize> = (0..12).map(|i| all & !(1 << i)).collect();
-        assert_eq!(dp_steps(&dense, 0, MAX_DP_STEPS), None);
+        assert_eq!(steps(&dense, MAX_DP_WORK), None);
         // Disconnected units: every subset is reachable through cross products.
-        assert_eq!(dp_steps(&[0, 0, 0], 0, usize::MAX), Some(9));
+        assert_eq!(steps(&[0, 0, 0], usize::MAX), Some(9));
+        // Every state a subset keeps is extended by every candidate next unit: per tier, with up
+        // to one sorted state and one open SQL chain per subset.
+        let all = (1usize << 10) - 1;
+        let dense: Vec<usize> = (0..10).map(|i| all & !(1 << i)).collect();
+        assert_eq!(dp_work(&dense, 0, |_| (1, 1), usize::MAX), Some([3 * 5_110, 2 * 5_110, 2 * 5_110, 5_110]));
+        // A dense group of 10 units fits the budget with one state per subset only.
+        let w = dp_work(&dense, 0, |_| (1, 1), MAX_DP_WORK).unwrap();
+        assert_eq!(w.iter().position(|&w| w <= MAX_DP_WORK), Some(3));
+        // None once even one state per subset is over the limit.
+        assert_eq!(dp_work(&dense, 0, |_| (1, 1), 5_000), None);
         // A unit touching the seed is connected to every prefix.
         assert_eq!(dp_candidates(&[0, 0, 0], 0b100, 0b001), 0b100);
         assert_eq!(dp_candidates(&[0b010, 0b001, 0], 0, 0b001), 0b010);
@@ -1299,12 +1470,144 @@ mod tests {
         assert_eq!(b.iter().find(|s| s.key == Key::Sorted(3)).unwrap().rank, 11.0);
         insert(&mut b, state(Key::Sorted(3), 13.0));
         assert_eq!(b.iter().find(|s| s.key == Key::Sorted(3)).unwrap().rank, 11.0);
-        // An unordered prefix is dominated by any state that is at most as expensive.
+        // An unordered prefix is dominated by any state that is at most as expensive, and
+        // dropped when one arrives.
         insert(&mut b, state(Key::Any, 11.5));
         assert_eq!(b.iter().find(|s| s.key == Key::Any).unwrap().rank, 10.0);
         insert(&mut b, state(Key::Sql, 9.0));
+        assert!(b.iter().all(|s| s.key != Key::Any));
         insert(&mut b, state(Key::Any, 9.5));
-        assert_eq!(b.iter().find(|s| s.key == Key::Any).unwrap().rank, 10.0);
+        assert!(b.iter().all(|s| s.key != Key::Any));
         assert_eq!(b[cheapest(&b).unwrap()].key, Key::Sql);
+        insert(&mut b, state(Key::Any, 8.0));
+        assert_eq!(b.len(), 3, "a cheaper unordered prefix joins the ordered ones");
+        assert_eq!(b[cheapest(&b).unwrap()].key, Key::Any);
+    }
+
+    #[test]
+    fn only_the_cheapest_state_takes_every_operator() {
+        let mut b = Bucket::new();
+        insert(&mut b, state(Key::Sorted(3), 12.0));
+        insert(&mut b, state(Key::Sql, 11.0));
+        insert(&mut b, state(Key::Any, 10.0));
+        let top = cheapest(&b).unwrap();
+        let wanted: Vec<Option<Wanted>> = b.iter().enumerate().map(|(i, s)| extension(s, i == top)).collect();
+        assert_eq!(wanted, vec![Some(Wanted::KeepOrder(3)), Some(Wanted::ExtendSql), Some(Wanted::All)]);
+        // A sorted prefix that is the cheapest is extended with every operator.
+        assert_eq!(extension(&state(Key::Sorted(3), 1.0), true), Some(Wanted::All));
+        assert_eq!(extension(&state(Key::Any, 1.0), false), None);
+    }
+
+    /// A group of quad patterns `(s, p, o)` (slots, predicate number) over the default graph,
+    /// with merge joins on, the way `plan_group` sets it up under `Auto` on a MemStore.
+    fn group_of<'c>(pats: &[(Slot, i64, Slot)], card: &Card<'c>) -> Group<'static> {
+        use sq_core::id::Tag;
+        use sq_core::ir::GraphSel;
+        use sq_core::TermId;
+        let units = pats
+            .iter()
+            .map(|&(s, pred, o)| {
+                let q = QuadPat {
+                    g: GraphSel::Default,
+                    s: PatTerm::Slot(s),
+                    p: PatTerm::Const(TermId::from_dict(2000 + pred, Tag::Iri)),
+                    o: PatTerm::Slot(o),
+                };
+                Unit { r: UnitRef::Pat(q), props: props::pattern(&q), sqlable: true, range: None }
+            })
+            .collect();
+        let mut g = Group::new(units, Ctx::default(), Goal::Rows, card);
+        g.merge = true;
+        g
+    }
+
+    /// The tier of [`Keep::TIERS`] `plan_group` searches `g` with (None: greedy).
+    fn tier(g: &Group<'_>) -> Option<usize> {
+        let (adj, seeded) = g.adjacency();
+        let work = dp_work(&adj, seeded, |m| g.extra_states(m), MAX_DP_WORK)?;
+        work.iter().position(|&w| w <= MAX_DP_WORK)
+    }
+
+    #[test]
+    fn dense_groups_keep_fewer_properties() {
+        let store = sq_memstore::MemStore::new();
+        let ds = sq_core::ir::DatasetSpec {
+            default: sq_core::ir::DefaultGraph::StoreDefault,
+            named: sq_core::ir::NamedGraphs::All,
+        };
+        let opts = sq_core::plan::QueryOptions::default();
+        let card = Card::new(&store, &ds, 0, &opts);
+        // Every edge of a k-clique of slots is a :knows pattern.
+        let clique = |k: Slot| -> Vec<(Slot, i64, Slot)> {
+            (0..k).flat_map(|a| (a + 1..k).map(move |b| (a, 1, b))).collect()
+        };
+        assert_eq!(tier(&group_of(&clique(4), &card)), Some(0), "a 4-clique keeps sorted prefixes");
+        let g = group_of(&clique(5), &card);
+        let (adj, seeded) = g.adjacency();
+        let work = dp_work(&adj, seeded, |m| g.extra_states(m), usize::MAX).unwrap();
+        assert!(work[0] > 4 * work[3], "interesting orders multiply the work: {work:?}");
+        // The sorted search would exceed the budget; without SQL chains the next tiers are the
+        // plain search.
+        assert!(work[1] > MAX_DP_WORK && work[3] <= MAX_DP_WORK, "{work:?}");
+        assert_eq!(tier(&g), Some(2));
+        // A subject star of 9 patterns keeps its sorted prefixes, but not its open SQL chains
+        // as well.
+        let star: Vec<(Slot, i64, Slot)> = (1..=9).map(|o| (0, o as i64, o)).collect();
+        let mut g = group_of(&star, &card);
+        assert_eq!(tier(&g), Some(0));
+        g.sql = true;
+        assert_eq!(tier(&g), Some(1));
+        // 12 dense units: greedy.
+        let star: Vec<(Slot, i64, Slot)> = (1..=12).map(|o| (0, o as i64, o)).collect();
+        assert_eq!(tier(&group_of(&star, &card)), None);
+    }
+
+    #[test]
+    fn kept_states_follow_join_slots_and_sql_chains() {
+        // ?x :p ?a . ?x :q ?b . ?b :r ?c over the store default graph: join slots ?x and ?b.
+        use sq_core::id::Tag;
+        use sq_core::ir::GraphSel;
+        use sq_core::TermId;
+        let p = |s: Slot, pred: i64, o: Slot| QuadPat {
+            g: GraphSel::Default,
+            s: PatTerm::Slot(s),
+            p: PatTerm::Const(TermId::from_dict(2000 + pred, Tag::Iri)),
+            o: PatTerm::Slot(o),
+        };
+        let unit = |q: QuadPat| Unit { r: UnitRef::Pat(q), props: props::pattern(&q), sqlable: true, range: None };
+        let units = vec![unit(p(0, 1, 1)), unit(p(0, 2, 2)), unit(p(2, 3, 3))];
+        let store = sq_memstore::MemStore::new();
+        let ds = sq_core::ir::DatasetSpec {
+            default: sq_core::ir::DefaultGraph::StoreDefault,
+            named: sq_core::ir::NamedGraphs::All,
+        };
+        let opts = sq_core::plan::QueryOptions::default();
+        let card = Card::new(&store, &ds, 0, &opts);
+        let mut g = Group::new(units, Ctx::default(), Goal::Rows, &card);
+        assert_eq!(g.extra_states(0b001), (0, 0), "no merge joins, no SQL chains");
+        g.merge = true;
+        assert_eq!(g.extra_states(0b001), (1, 0), "{{0}} binds ?x, which unit 1 binds too");
+        assert_eq!(g.extra_states(0b010), (2, 0), "{{1}} binds ?x and ?b, which units 0 and 2 bind");
+        assert_eq!(g.extra_states(0b011), (1, 0), "{{0, 1}}: only ?b is left to join on");
+        g.sql = true;
+        assert_eq!(g.extra_states(0b011), (1, 1), "an open SQL chain that unit 2 may extend");
+        assert_eq!(g.extra_states(0b001), (1, 0), "one unit is no SQL chain state yet");
+        assert_eq!(g.extra_states(0b111), (0, 0), "nothing left to join");
+        // Keys follow the kept properties.
+        let rest = (SlotSet::from_slots([2]), true);
+        assert_eq!(key_for(&g, 2, Some(2), rest), Key::Sql);
+        assert_eq!(key_for(&g, 0, Some(2), rest), Key::Sorted(2));
+        let (sorted_only, sql_only) = (Keep { sorted: true, sql: false }, Keep { sorted: false, sql: true });
+        g.keep = sorted_only;
+        assert_eq!(key_for(&g, 2, Some(2), rest), Key::Sorted(2), "open chains not kept");
+        g.keep = sql_only;
+        assert_eq!(key_for(&g, 0, Some(2), rest), Key::Any, "sorted prefixes not kept");
+        g.keep = Keep::TIERS[3];
+        assert_eq!(key_for(&g, 2, Some(2), rest), Key::Any, "nothing but the cheapest prefix kept");
+        assert_eq!((sorted_only.states((3, 1)), sql_only.states((3, 1)), Keep::TIERS[0].states((3, 1))), (4, 2, 5));
+        // From the richest search to the plainest.
+        let (all, none) = (Keep { sorted: true, sql: true }, Keep { sorted: false, sql: false });
+        assert_eq!(Keep::TIERS, [all, sorted_only, sql_only, none]);
     }
 }
+

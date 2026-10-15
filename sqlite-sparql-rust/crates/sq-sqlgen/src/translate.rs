@@ -8,22 +8,27 @@
 //! EXISTS patterns are translated in the enclosing row's environment ([`Env::outer`]): every
 //! slot bound there acts as a constant inside the pattern (substitution semantics, spec 18.6),
 //! through correlated references, which SQLite allows from any depth of an EXISTS subquery.
+//!
+//! A BIND value is computed once per row: its expression stays in the block's SELECT list
+//! until something reads the variable, and then the block becomes an opaque derived table
+//! ([`Translator::settle`]) whose column is read instead. Every expression's text therefore
+//! appears once in the statement, whatever the number of references to it.
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sq_core::codec::encode_short_str;
 use sq_core::ir::{
-    AggFunc, AggSpec, DefaultGraph, GraphSel, Logical, LoweredQuery, NamedGraphs, PatTerm, QuadPat, QueryForm,
+    AggFunc, AggSpec, DefaultGraph, Expr, GraphSel, Logical, LoweredQuery, NamedGraphs, PatTerm, QuadPat, QueryForm,
     VarOrigin,
 };
 use sq_core::{Error, Result, Slot, TermId};
 
 use crate::SqlQuery;
-use crate::expr::{Ctx, View};
-use crate::graph::{GClass, classify, mentions};
+use crate::expr::{Ctx, TermSql, View};
+use crate::graph::{GClass, classify, expr_mentions, mentions};
 use crate::helpers::{INT_TAG, aggregate_name};
 use crate::limits;
-use crate::sql::{Block, Col, Item, PLACEHOLDER, Params, and_all, col_name, or_all};
+use crate::sql::{Block, Col, Item, MAX_TABLES, PLACEHOLDER, Params, and_all, col_name, or_all, union_all};
 
 /// `Error::Unsupported("baseline: …")`.
 pub(crate) fn unsupported(what: impl std::fmt::Display) -> Error {
@@ -69,10 +74,7 @@ pub(crate) fn compat(a: &Col, b: &Col) -> (Option<String>, Col) {
         (false, false) => (Some(format!("{x} = {y}")), a.clone()),
         (false, true) => (Some(format!("({y} IS NULL OR {y} = {x})")), a.clone()),
         (true, false) => (Some(format!("({x} IS NULL OR {x} = {y})")), b.clone()),
-        (true, true) => (
-            Some(format!("({x} IS NULL OR {y} IS NULL OR {x} = {y})")),
-            Col::nullable(format!("COALESCE({x}, {y})")),
-        ),
+        (true, true) => (Some(format!("({x} IS NULL OR {y} IS NULL OR {x} = {y})")), Col::coalesce(a, b, true)),
     }
 }
 
@@ -151,11 +153,25 @@ impl Stmt {
 pub(crate) enum QuadSrc {
     /// `main.rdf_quad` restricted by a graph condition.
     Table(GraphCond),
-    /// The RDF merge of several graphs: a derived table of distinct `(s, p, o)`.
-    Merged(String),
+    /// The RDF merge of several graphs (see [`Translator::merge_conds`]).
+    Merged(Merge),
     /// No triples at all (an empty default graph or no named graphs).
     Nothing,
 }
+
+/// The graphs an RDF merge reads.
+#[derive(Clone, Debug)]
+pub(crate) enum Merge {
+    /// Every graph of the store, the default graph included (`union_default_graph`).
+    All,
+    /// The FROM graphs (placeholders).
+    Graphs(Vec<String>),
+}
+
+/// The distinct graph ids of the store, by a loose index scan (one B-tree seek per graph).
+const ALL_GRAPHS: &str = "WITH RECURSIVE gs(g) AS (SELECT min(g) FROM main.rdf_quad UNION ALL SELECT (SELECT \
+                          min(g) FROM main.rdf_quad WHERE g > gs.g) FROM gs WHERE gs.g IS NOT NULL) SELECT g \
+                          FROM gs WHERE g IS NOT NULL";
 
 /// Graph restriction of a `main.rdf_quad` alias.
 pub(crate) enum GraphCond {
@@ -201,8 +217,10 @@ impl<'q> Translator<'q> {
             QueryForm::Construct(_) => return Err(unsupported("CONSTRUCT queries")),
             QueryForm::Describe(_) => return Err(unsupported("DESCRIBE queries")),
         };
+        limits::check_size(sql.len())?;
         let (sql, params) = self.params.finish(&sql);
-        if std::env::var_os("SQ_NO_LIMITS").is_none() { limits::check(&sql)?; }
+        limits::check_params(params.len())?;
+        limits::check(&sql)?;
         Ok(SqlQuery { sql, params, columns })
     }
 
@@ -254,6 +272,8 @@ impl<'q> Translator<'q> {
                 if !s.is_plain() {
                     s = Stmt::of(self.derive_stmt(s, env));
                 }
+                let q = self.q;
+                s.block = self.settle(s.block, |x| keys.iter().any(|k| expr_mentions(&k.expr, x, &q.exists)), env);
                 let mut order = Vec::with_capacity(keys.len());
                 for k in keys {
                     let t = self.term_expr(&k.expr, &View::new(&s.block.cols, env))?;
@@ -315,7 +335,8 @@ impl<'q> Translator<'q> {
     }
 
     /// A statement as a block: itself when it has no modifiers (an ORDER BY without a slice
-    /// is meaningless in a derived table), else a derived table of its projection.
+    /// is meaningless in a derived table), else a derived table of its projection (opaque when
+    /// it computes a projected value, see [`Block::computes`]).
     fn derive_stmt(&mut self, s: Stmt, env: &Env) -> Block {
         if s.proj.is_none() && !s.distinct && s.slice.is_none() {
             return s.block;
@@ -326,33 +347,92 @@ impl<'q> Translator<'q> {
         let out = s.proj.clone().unwrap_or_else(|| s.block.slots());
         let bound: Vec<(Slot, bool)> =
             out.iter().filter_map(|x| s.block.cols.get(x).map(|c| (*x, c.nullable))).collect();
-        let sql = self.render_stmt(s, &out);
-        self.derived(sql, bound, env)
+        let opaque = s.slice.is_none() && s.block.computes(&out);
+        let tables = if opaque { 1 } else { s.block.tables() };
+        let mut sql = self.render_stmt(s, &out);
+        if opaque {
+            sql.push_str(" LIMIT -1");
+        }
+        self.derived(sql, bound, tables, env)
     }
 
     /// A derived-table block over `sql`, whose result columns `v<slot>` bind `slots`
-    /// (`(slot, nullable)`).
-    pub(crate) fn derived(&mut self, sql: String, slots: impl IntoIterator<Item = (Slot, bool)>, env: &Env) -> Block {
+    /// (`(slot, nullable)`); `tables` bounds the tables SQLite may flatten it into.
+    pub(crate) fn derived(
+        &mut self,
+        sql: String,
+        slots: impl IntoIterator<Item = (Slot, bool)>,
+        tables: usize,
+        env: &Env,
+    ) -> Block {
         let alias = self.alias("d");
         let mut b = Block::unit();
         for (s, nullable) in slots {
-            bind(&mut b, s, Col { sql: format!("{alias}.{}", col_name(s)), nullable }, env);
+            let col = format!("{alias}.{}", col_name(s));
+            bind(&mut b, s, if nullable { Col::nullable(col) } else { Col::new(col) }, env);
         }
-        b.items.insert(0, Item::Derived { sql, alias });
+        b.items.insert(0, Item::Derived { sql, alias, tables });
         b
     }
 
-    /// A block as a single derived table (all its bindings exposed).
-    fn derive_block(&mut self, b: Block, env: &Env) -> Block {
+    /// A block as a single derived table (all its bindings exposed). An `opaque` one carries
+    /// `LIMIT -1`, which SQLite never flattens into a join: it counts as one table.
+    fn derive_block(&mut self, b: Block, opaque: bool, env: &Env) -> Block {
         let slots = b.slots();
         let bound: Vec<(Slot, bool)> = b.cols.iter().map(|(s, c)| (*s, c.nullable)).collect();
-        let sql = b.render(&slots, false);
-        self.derived(sql, bound, env)
+        let mut sql = b.render(&slots, false);
+        let tables = if opaque {
+            sql.push_str(" LIMIT -1");
+            1
+        } else {
+            b.tables()
+        };
+        self.derived(sql, bound, tables, env)
+    }
+
+    /// The block, or an opaque derived table of it when `reads` some slot whose binding is
+    /// computed: the value is then computed once per row and read by column (see [`Col`]).
+    /// Called before anything reads a block's bindings (an expression, a join condition).
+    pub(crate) fn settle(&mut self, b: Block, reads: impl Fn(Slot) -> bool, env: &Env) -> Block {
+        if !b.empty && b.cols.iter().any(|(s, c)| c.computed && reads(*s)) { self.derive_block(b, true, env) } else { b }
+    }
+
+    /// Keeps a block that is about to receive `more` tables within [`MAX_TABLES`] by turning
+    /// what it has so far into one opaque derived table.
+    fn cap_tables(&mut self, b: Block, more: usize, env: &Env) -> Block {
+        if b.empty || b.tables() + more <= MAX_TABLES || b.tables() <= 1 {
+            return b;
+        }
+        self.derive_block(b, true, env)
+    }
+
+    /// Natural join of two blocks within [`MAX_TABLES`].
+    fn join_capped(&mut self, a: Block, b: Block, env: &Env) -> Block {
+        // Slots bound on both sides are compared.
+        let a = self.settle(a, |s| b.cols.contains_key(&s), env);
+        let b = self.settle(b, |s| a.cols.contains_key(&s), env);
+        let (a, b) = if a.tables() >= b.tables() {
+            let a = self.cap_tables(a, b.tables(), env);
+            let b = self.cap_tables(b, a.tables(), env);
+            (a, b)
+        } else {
+            let b = self.cap_tables(b, a.tables(), env);
+            let a = self.cap_tables(a, b.tables(), env);
+            (a, b)
+        };
+        join(a, b)
     }
 
     // ------------------------------------------------------------------ graph patterns
 
+    /// A graph pattern as a block, within [`limits::MAX_SQL_BYTES`].
     pub(crate) fn block(&mut self, node: &Logical, env: &Env) -> Result<Block> {
+        let b = self.pattern(node, env)?;
+        limits::check_size(b.text_len())?;
+        Ok(b)
+    }
+
+    fn pattern(&mut self, node: &Logical, env: &Env) -> Result<Block> {
         match node {
             Logical::Unit => Ok(Block::unit()),
             Logical::Empty => Ok(Block::empty()),
@@ -361,26 +441,31 @@ impl<'q> Translator<'q> {
             Logical::Join(a, b) => {
                 let a = self.block(a, env)?;
                 let b = self.block(b, env)?;
-                Ok(join(a, b))
+                Ok(self.join_capped(a, b, env))
             }
             Logical::LeftJoin { left, right, filter } => self.left_join(left, right, filter.as_ref(), env),
             Logical::Minus { left, right } => self.minus(left, right, env),
             Logical::Union(..) => self.union(node, env),
             Logical::Filter { input, expr } => {
-                let mut b = self.block(input, env)?;
-                if !b.empty {
-                    let cond = self.bool_expr(expr, &View::new(&b.cols, env), Ctx::Truth)?;
-                    b.conds.push(cond);
+                let b = self.block(input, env)?;
+                if b.empty {
+                    return Ok(b);
                 }
+                let q = self.q;
+                let mut b = self.settle(b, |s| expr_mentions(expr, s, &q.exists), env);
+                let cond = self.bool_expr(expr, &View::new(&b.cols, env), Ctx::Truth)?;
+                b.conds.push(cond);
                 Ok(b)
             }
             Logical::Extend { input, slot, expr } => {
-                let mut b = self.block(input, env)?;
-                if !b.empty {
-                    let t = self.term_expr(expr, &View::new(&b.cols, env))?;
-                    bind(&mut b, *slot, Col { sql: t.sql, nullable: t.nullable }, env);
+                let b = self.block(input, env)?;
+                if b.empty {
+                    return Ok(b);
                 }
-                Ok(b)
+                let q = self.q;
+                let b = self.settle(b, |s| s == *slot || expr_mentions(expr, s, &q.exists), env);
+                let t = self.term_expr(expr, &View::new(&b.cols, env))?;
+                Ok(self.extend(b, *slot, expr, t, env))
             }
             Logical::Values { slots, rows } => Ok(self.values(slots, rows, env)),
             Logical::Graph { name, input } => self.graph(*name, input, env),
@@ -396,6 +481,22 @@ impl<'q> Translator<'q> {
             Logical::Service { silent: true } => Ok(Block::unit()),
             Logical::Service { silent: false } => Err(unsupported("SERVICE")),
         }
+    }
+
+    /// BIND: binds `slot` to `expr`'s value `t`. A variable's binding, a constant or NULL is
+    /// plain. A computed value stays in the block until something reads it (see
+    /// [`Translator::settle`]); when it has to be compared with an EXISTS substitution of the
+    /// slot right away, it is computed in an opaque derived table and compared by column.
+    fn extend(&mut self, mut b: Block, slot: Slot, expr: &Expr, t: TermSql, env: &Env) -> Block {
+        let plain = t.simple || matches!(expr, Expr::Slot(_));
+        let col = Col { sql: t.sql, nullable: t.nullable, computed: !plain };
+        if !col.computed || b.cols.contains_key(&slot) {
+            // (BIND never rebinds an in-scope variable; any other rebinding is compared as is.)
+            bind(&mut b, slot, col, env);
+            return b;
+        }
+        b.cols.insert(slot, col);
+        if env.outer.contains_key(&slot) { self.derive_block(b, true, env) } else { b }
     }
 
     /// Where the quads read through `sel` come from.
@@ -414,20 +515,50 @@ impl<'q> Translator<'q> {
             },
             GraphCtx::Default => match &self.q.dataset.default {
                 DefaultGraph::StoreDefault => QuadSrc::Table(GraphCond::Eq("0".into())),
-                DefaultGraph::UnionAll => QuadSrc::Merged("SELECT DISTINCT s, p, o FROM main.rdf_quad".into()),
+                DefaultGraph::UnionAll => QuadSrc::Merged(Merge::All),
                 DefaultGraph::Graphs(list) => match list.len() {
                     0 => QuadSrc::Nothing,
                     1 => QuadSrc::Table(GraphCond::Eq(self.param(list[0]))),
-                    _ => {
-                        let ids: Vec<String> = list.iter().map(|g| self.param(*g)).collect();
-                        QuadSrc::Merged(format!(
-                            "SELECT DISTINCT s, p, o FROM main.rdf_quad WHERE g IN ({})",
-                            ids.join(", ")
-                        ))
-                    }
+                    _ => QuadSrc::Merged(Merge::Graphs(list.iter().map(|g| self.param(*g)).collect())),
                 },
             },
         })
+    }
+
+    /// Conditions making the `main.rdf_quad` alias `alias` read an RDF merge: its graph is one
+    /// of the merged graphs (an index prefix: `g IN (…)`) and, with `once`, it is the copy of
+    /// its triple in the smallest of them, so that every triple of the merge is read exactly
+    /// once (an index probe per row; g = 0, the default graph, sorts first).
+    pub(crate) fn merge_conds(&mut self, m: &Merge, alias: &str, once: bool) -> Vec<String> {
+        let mut conds = vec![match m {
+            Merge::All => format!("{alias}.g IN ({ALL_GRAPHS})"),
+            Merge::Graphs(list) => format!("{alias}.g IN ({})", list.join(", ")),
+        }];
+        if once {
+            conds.push(match m {
+                // Default-graph copies through the primary key, named-graph copies through the
+                // (s, p, o, g) index of g <> 0.
+                Merge::All => {
+                    let default = self.no_copy(alias, |u| format!("{u}.g = 0"));
+                    let named = self.no_copy(alias, |u| format!("{u}.g <> 0 AND {u}.g < {alias}.g"));
+                    format!("({alias}.g = 0 OR {default} AND {named})")
+                }
+                Merge::Graphs(list) => {
+                    self.no_copy(alias, |u| format!("{u}.g IN ({}) AND {u}.g < {alias}.g", list.join(", ")))
+                }
+            });
+        }
+        conds
+    }
+
+    /// `NOT EXISTS` a copy of `alias`'s triple in a graph that `graphs(u)` accepts.
+    fn no_copy(&mut self, alias: &str, graphs: impl FnOnce(&str) -> String) -> String {
+        let u = self.alias("u");
+        format!(
+            "NOT EXISTS (SELECT 1 FROM main.rdf_quad AS {u} WHERE {} AND {u}.s = {alias}.s AND {u}.p = {alias}.p \
+             AND {u}.o = {alias}.o)",
+            graphs(&u)
+        )
     }
 
     /// Conditions restricting `alias.g` to the dataset's named graphs (GRAPH ?g).
@@ -448,6 +579,7 @@ impl<'q> Translator<'q> {
         }
         let mut b = Block::unit();
         for p in pats {
+            b = self.cap_tables(b, 1, env);
             let alias = self.alias("t");
             match self.quad_source(p.g, env)? {
                 QuadSrc::Nothing => return Ok(Block::empty()),
@@ -461,7 +593,11 @@ impl<'q> Translator<'q> {
                         }
                     }
                 }
-                QuadSrc::Merged(sql) => b.items.push(Item::Derived { sql, alias: alias.clone() }),
+                QuadSrc::Merged(m) => {
+                    b.items.push(Item::Quad(alias.clone()));
+                    let conds = self.merge_conds(&m, &alias, true);
+                    b.conds.extend(conds);
+                }
             }
             for (pos, term) in [("s", p.s), ("p", p.p), ("o", p.o)] {
                 let col = format!("{alias}.{pos}");
@@ -473,6 +609,8 @@ impl<'q> Translator<'q> {
                     PatTerm::Slot(x) => bind(&mut b, x, Col::new(col), env),
                 }
             }
+            // An RDF merge repeats its graph list for every pattern.
+            limits::check_size(b.text_len())?;
         }
         Ok(b)
     }
@@ -485,7 +623,7 @@ impl<'q> Translator<'q> {
         filter: Option<&sq_core::ir::Expr>,
         env: &Env,
     ) -> Result<Block> {
-        let mut lb = self.block(left, env)?;
+        let lb = self.block(left, env)?;
         if lb.empty {
             return Ok(lb);
         }
@@ -493,7 +631,19 @@ impl<'q> Translator<'q> {
         if rb.empty {
             return Ok(lb);
         }
-        let rb = if rb.is_single_item() { rb } else { self.derive_block(rb, env) };
+        let rb = if rb.is_single_item() {
+            rb
+        } else {
+            let opaque = rb.computes(&rb.slots());
+            self.derive_block(rb, opaque, env)
+        };
+        // The ON clause reads the shared slots and the filter's.
+        let q = self.q;
+        let reads = |s: Slot| rb.cols.contains_key(&s) || filter.is_some_and(|f| expr_mentions(f, s, &q.exists));
+        let lb = self.settle(lb, reads, env);
+        // Both sides within MAX_TABLES together (before any condition refers to them).
+        let mut lb = self.cap_tables(lb, rb.tables(), env);
+        let rb = if lb.tables() + rb.tables() > MAX_TABLES { self.derive_block(rb, true, env) } else { rb };
         let Block { items, conds, cols, .. } = rb;
         let item = items.into_iter().next().expect("single FROM item");
         let mut on = conds;
@@ -507,12 +657,12 @@ impl<'q> Translator<'q> {
                     on.extend(cond);
                     merged.insert(s, m);
                     if lc.nullable {
-                        out.push((s, Col::nullable(format!("COALESCE({}, {})", lc.sql, rc.sql))));
+                        out.push((s, Col::coalesce(lc, &rc, true)));
                     }
                 }
                 None => {
                     merged.insert(s, rc.clone());
-                    out.push((s, Col::nullable(rc.sql)));
+                    out.push((s, Col { nullable: true, ..rc }));
                 }
             }
         }
@@ -521,7 +671,7 @@ impl<'q> Translator<'q> {
         }
         if lb.items.is_empty() {
             let alias = self.alias("d");
-            lb.items.push(Item::Derived { sql: "SELECT 1".into(), alias });
+            lb.items.push(Item::Derived { sql: "SELECT 1".into(), alias, tables: 1 });
         }
         lb.items.push(Item::Left { item: Box::new(item), on: and_all(&on) });
         lb.cols.extend(out);
@@ -530,7 +680,7 @@ impl<'q> Translator<'q> {
 
     /// MINUS: `NOT EXISTS (<right> AND <compatible> AND <shared domain non-empty>)`.
     fn minus(&mut self, left: &Logical, right: &Logical, env: &Env) -> Result<Block> {
-        let mut lb = self.block(left, env)?;
+        let lb = self.block(left, env)?;
         if lb.empty {
             return Ok(lb);
         }
@@ -538,6 +688,9 @@ impl<'q> Translator<'q> {
         if rb.empty {
             return Ok(lb);
         }
+        // The shared slots are compared.
+        let mut lb = self.settle(lb, |s| rb.cols.contains_key(&s), env);
+        let rb = self.settle(rb, |s| lb.cols.contains_key(&s), env);
         let mut conds = rb.conds.clone();
         // Per shared variable: its compatibility condition and its shared-domain term (None
         // when it is certainly bound on both sides, which makes the domain non-empty).
@@ -615,8 +768,16 @@ impl<'q> Translator<'q> {
             *nullable |= blocks.iter().any(|b| !b.cols.contains_key(s));
         }
         let out: Vec<Slot> = slots.keys().copied().collect();
-        let sql = blocks.iter().map(|b| b.render(&out, false)).collect::<Vec<_>>().join(" UNION ALL ");
-        Ok(self.derived(sql, slots, env))
+        let mut sql = union_all(blocks.iter().map(|b| b.render(&out, false)).collect());
+        let tables = if blocks.iter().any(|b| b.computes(&out)) {
+            // Opaque: see `Block::computes`.
+            sql.push_str(" LIMIT -1");
+            1
+        } else {
+            // SQLite may flatten a UNION ALL into its parent, one copy of the parent per branch.
+            blocks.iter().map(Block::tables).max().unwrap_or(1)
+        };
+        Ok(self.derived(sql, slots, tables, env))
     }
 
     /// VALUES: constants for a single row, else a `VALUES` derived table (UNDEF = NULL).
@@ -651,11 +812,11 @@ impl<'q> Translator<'q> {
         for (i, s) in slots.iter().enumerate() {
             let bound = rows.iter().filter(|r| r[i].is_bound()).count();
             if bound > 0 {
-                let col = Col { sql: format!("{alias}.column{}", i + 1), nullable: bound < rows.len() };
-                bind(&mut b, *s, col, env);
+                let col = format!("{alias}.column{}", i + 1);
+                bind(&mut b, *s, if bound < rows.len() { Col::nullable(col) } else { Col::new(col) }, env);
             }
         }
-        b.items.insert(0, Item::Derived { sql, alias });
+        b.items.insert(0, Item::Derived { sql, alias, tables: 1 });
         b
     }
 
@@ -699,7 +860,7 @@ impl<'q> Translator<'q> {
                 GClass::Indep => {
                     let b = self.block(input, env)?;
                     let names = self.named_graphs(g, env);
-                    Ok(join(b, names))
+                    Ok(self.join_capped(b, names, env))
                 }
                 GClass::Bad => {
                     Err(unsupported("GRAPH ?g over a pattern that does not read the graph in every solution"))
@@ -716,7 +877,7 @@ impl<'q> Translator<'q> {
                     "SELECT g AS {} FROM main.rdf_graph UNION SELECT g FROM main.rdf_quad WHERE g <> 0",
                     col_name(g)
                 );
-                self.derived(sql, [(g, false)], env)
+                self.derived(sql, [(g, false)], 1, env)
             }
             NamedGraphs::Only(list) => {
                 let rows: Vec<Vec<TermId>> = list.iter().map(|id| vec![*id]).collect();
@@ -729,10 +890,15 @@ impl<'q> Translator<'q> {
 
     /// GROUP BY: a derived table of the group keys and aggregate values.
     fn group(&mut self, input: &Logical, keys: &[Slot], aggs: &[(Slot, AggSpec)], env: &Env) -> Result<Block> {
-        let mut b = self.block(input, env)?;
+        let b = self.block(input, env)?;
         if b.empty && !keys.is_empty() {
             return Ok(Block::empty());
         }
+        let q = self.q;
+        let reads = |s: Slot| {
+            keys.contains(&s) || aggs.iter().any(|(_, a)| a.arg.as_ref().is_some_and(|e| expr_mentions(e, s, &q.exists)))
+        };
+        let mut b = self.settle(b, reads, env);
         if aggs.iter().any(|(_, a)| a.func == AggFunc::CountAll && a.distinct) {
             b = self.distinct_solutions(b, keys, aggs, env)?;
         }
@@ -742,7 +908,7 @@ impl<'q> Translator<'q> {
         let mut out = Vec::new();
         for k in keys {
             // A key that is never bound is constant (unbound) and needs no grouping.
-            if let Some(c) = view.lookup(*k) {
+            if let Some(c) = view.read(*k) {
                 select.push(format!("{} AS {}", c.sql, col_name(*k)));
                 group_by.push(c.sql);
                 out.push((*k, c.nullable));
@@ -761,12 +927,13 @@ impl<'q> Translator<'q> {
             // (without GROUP BY, SQL would return one row).
             group_by.push("NULL".to_owned());
         }
+        let tables = b.tables();
         let mut sql = format!("SELECT {}{}{}", select.join(", "), b.from_sql(), b.where_sql());
         if !group_by.is_empty() {
             sql.push_str(" GROUP BY ");
             sql.push_str(&group_by.join(", "));
         }
-        Ok(self.derived(sql, out, env))
+        Ok(self.derived(sql, out, tables, env))
     }
 
     /// One aggregate: `(sql, nullable)`. COUNT is computed in SQL as an inline integer id;
@@ -829,6 +996,6 @@ impl<'q> Translator<'q> {
         }
         let bound: Vec<(Slot, bool)> = visible.iter().map(|s| (*s, b.cols[s].nullable)).collect();
         let sql = b.render(&visible, true);
-        Ok(self.derived(sql, bound, env))
+        Ok(self.derived(sql, bound, b.tables(), env))
     }
 }

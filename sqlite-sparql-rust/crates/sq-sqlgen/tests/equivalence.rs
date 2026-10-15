@@ -197,6 +197,35 @@ const QUERIES: &[&str] = &[
     "SELECT ?s ?b WHERE { ?s :age ?a BIND(?a > 26 AS ?b) }",
     "SELECT ?s ?b WHERE { ?s :name ?n BIND(isLiteral(?n) AS ?b) }",
     "SELECT ?s ?b WHERE { ?s :name ?n BIND(REGEX(?n, \"a\") AS ?b) }",
+    // ---------------- computed bindings read by column (settled blocks)
+    "SELECT ?s ?d WHERE { ?s :age ?a BIND(?a + 1 AS ?b) BIND(?b * ?b AS ?c) BIND(?c - ?b AS ?d) FILTER(?d > 0) } \
+     ORDER BY ?d",
+    "SELECT ?s ?b WHERE { ?s :age ?a BIND(?a + 1 AS ?b) } ORDER BY DESC(?b) ?s",
+    "SELECT ?s ?c WHERE { ?s :name ?n BIND(UCASE(?n) AS ?u) BIND(CONCAT(?u, \"/\", ?u) AS ?c) }",
+    "SELECT ?s ?b WHERE { ?s :age ?a BIND(COALESCE(?a, ?a) AS ?b) BIND(COALESCE(?b, ?b) AS ?c) FILTER(BOUND(?c)) }",
+    "SELECT ?s ?b ?o WHERE { ?s :age ?a BIND(?a - 5 AS ?b) ?o :age ?b }",
+    "SELECT ?s ?b ?o WHERE { ?s :age ?a BIND(?a * 1 AS ?b) OPTIONAL { ?o :age ?b FILTER(?o != ?s) } }",
+    "SELECT ?x ?y WHERE { ?x :age ?a OPTIONAL { ?x :knows ?o BIND(STR(?o) AS ?y) FILTER(STRLEN(?y) > 17) } }",
+    "SELECT ?x ?y WHERE { ?x :age ?a OPTIONAL { ?x :knows ?o BIND(STR(?o) AS ?y) } FILTER(!BOUND(?y) || ?y > \"h\") }",
+    "SELECT ?s ?b WHERE { ?s :age ?a BIND(?a + 0 AS ?b) MINUS { ?o :age ?b FILTER(?o = :bob) } }",
+    "SELECT ?s ?b WHERE { ?s :age ?a BIND(?a + 0 AS ?b) FILTER EXISTS { ?o :age ?b FILTER(?o != ?s) } }",
+    "SELECT ?s ?b WHERE { ?s :age ?a BIND(?a + 11 AS ?b) FILTER NOT EXISTS { ?o :age ?b } }",
+    "SELECT ?s WHERE { ?s :age ?a FILTER EXISTS { BIND(?a AS ?a2) BIND(?a2 + 1 AS ?x) FILTER(?x > 30) } }",
+    "SELECT (SUM(?b) AS ?t) (MAX(?b) AS ?m) (COUNT(DISTINCT ?b) AS ?c) WHERE { ?s :age ?a BIND(?a * 2 AS ?b) }",
+    "SELECT ?k (COUNT(*) AS ?c) WHERE { ?s :age ?a BIND(?a > 30 AS ?k) } GROUP BY ?k",
+    "SELECT ?s ?b WHERE { { ?s :age ?a BIND(?a * 2 AS ?b) } UNION { ?s :height ?h BIND(?h + 1 AS ?b) } FILTER(?b > 3) }",
+    "SELECT ?s ?b WHERE { { SELECT ?s (?a * 2 AS ?b) WHERE { ?s :age ?a } } FILTER(?b > 55 || ?b < 20) }",
+    "SELECT DISTINCT ?b WHERE { ?s :age ?a BIND(?a - ?a AS ?b) } ORDER BY ?b",
+    "SELECT ?s ?b WHERE { ?s :age ?a BIND(?a * 3 AS ?b) } ORDER BY ?b LIMIT 2",
+    // ---------------- IN over a computed value; STRENDS
+    "SELECT ?s WHERE { ?s :name ?n FILTER(!(LCASE(?n) IN (\"alice\", \"carol\", \"bob the builder\"))) }",
+    "SELECT ?s WHERE { ?s :name ?n FILTER(LCASE(?n) IN (\"alice\", \"bob the builder\")) }",
+    "SELECT ?s ?a WHERE { ?s :age ?a FILTER((?a + 1) IN (26, 31, \"x\", ?a)) }",
+    "SELECT ?s ?a WHERE { ?s :age ?a FILTER(!((?a + 1) IN (26, 31.0, \"x\"))) }",
+    "SELECT ?s ?a WHERE { ?s :age ?a FILTER((?a IN (25, 30)) IN (true, ?nope)) }",
+    "SELECT ?s ?b WHERE { ?s :age ?a BIND((?a * 2) IN (50, 60) AS ?b) }",
+    "SELECT ?s ?n WHERE { ?s :name ?n FILTER(STRENDS(?n, \"the Builder\") || STRENDS(UCASE(?n), \"ICE\")) }",
+    "SELECT ?s ?n WHERE { ?s :nick ?n FILTER(STRENDS(?n, \"by\") && !STRENDS(?n, \"\")) }",
     // ---------------- aggregates
     "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }",
     "SELECT (COUNT(*) AS ?c) WHERE { ?s :nope ?o }",
@@ -272,6 +301,12 @@ const QUERIES: &[&str] = &[
     "SELECT ?s ?x WHERE { ?s a :Person ; :knows+ ?x }",
     "SELECT ?s WHERE { ?s a :Person FILTER EXISTS { ?s :knows+ :eve } }",
     "SELECT ?s WHERE { ?s a :Person FILTER EXISTS { ?s :knows* :alice } }",
+    // x+ is zero-length capable when x is
+    "SELECT ?x WHERE { :p1 (:sub*)+ ?x }",
+    "SELECT ?x ?y WHERE { ?x (:sub?)+ ?y }",
+    "SELECT ?x WHERE { ?x (:sub*)+ :p4 }",
+    "SELECT ?x WHERE { ?x ^(:sub*)+ :p1 }",
+    "SELECT ?x WHERE { VALUES ?x { :p5 :p4 } FILTER NOT EXISTS { ?x (:sub?)+ :p1 } }",
     // ---------------- GRAPH and datasets
     "SELECT ?s ?o WHERE { GRAPH :g1 { ?s :likes ?o } }",
     "SELECT ?g ?s ?o WHERE { GRAPH ?g { ?s :likes ?o } }",
@@ -302,6 +337,8 @@ const QUERIES: &[&str] = &[
     "SELECT ?x FROM :g1 FROM :g2 WHERE { :alice (:likes|:knows)+ ?x }",
     "SELECT ?x ?y FROM :g1 FROM :g2 WHERE { ?x :likes+ ?y }",
     "SELECT ?x FROM :g1 FROM :g2 WHERE { ?x :likes? :tea }",
+    "SELECT ?y WHERE { GRAPH :alice { :p1 (:sub*)+ ?y } }",
+    "SELECT ?y WHERE { GRAPH :alice { :p1 (:sub?)+ ?y } }",
     // ---------------- ASK
     "ASK { :alice :knows :bob }",
     "ASK { :alice :knows :eve }",
@@ -361,6 +398,37 @@ const SPEC_ANSWERS: &[(&str, &str, &[&[&str]])] = &[
         &[&["<http://ex.org/absent>"]],
     ),
     (
+        "SELECT ?x WHERE { :absent (:sub?)+ ?x }",
+        "x+ starts with a step of x, here the zero-length pair of the constant (SPEC 18.6, ALP)",
+        &[&["<http://ex.org/absent>"]],
+    ),
+    (
+        "SELECT ?x WHERE { ?x ^(:sub*)+ :absent }",
+        "x+ starts with a step of x, here the zero-length pair of the constant (SPEC 18.6, ALP)",
+        &[&["<http://ex.org/absent>"]],
+    ),
+    (
+        "SELECT ?x WHERE { VALUES ?x { :absent :p5 :x } FILTER NOT EXISTS { ?x (:sub?)+ ?y } }",
+        "every substituted constant has its zero-length pair, so nothing is left",
+        &[],
+    ),
+    (
+        "SELECT ?y WHERE { GRAPH :g1 { :p1 (:sub?)+ ?y } }",
+        "the zero-length pair of a constant exists in every active graph (here a named graph \
+         without :p1)",
+        &[&["<http://ex.org/p1>"]],
+    ),
+    (
+        "SELECT ?y FROM NAMED :g1 WHERE { :p1 (:sub*)+ ?y }",
+        "the zero-length pair of a constant exists in an empty default graph too",
+        &[&["<http://ex.org/p1>"]],
+    ),
+    (
+        "SELECT ?y FROM NAMED :g1 WHERE { :p1 (:sub?)+ ?y }",
+        "the zero-length pair of a constant exists in an empty default graph too",
+        &[&["<http://ex.org/p1>"]],
+    ),
+    (
         "SELECT ?g ?x WHERE { GRAPH ?g { VALUES ?x { 1 2 } } }",
         "GRAPH ?g evaluates its pattern once per named graph",
         &[
@@ -402,6 +470,8 @@ const UNSUPPORTED: &[&str] = &[
     "SELECT ?g ?s WHERE { GRAPH ?g { ?s :likes ?o FILTER(?g = :g1) } }",
     "SELECT ?g ?s WHERE { GRAPH ?g { { ?s :likes ?o } UNION { BIND(1 AS ?s) } } }",
     "SELECT ?g ?x WHERE { GRAPH ?g { ?x :sub+ ?y } }",
+    "SELECT ?g ?y WHERE { GRAPH ?g { :p1 (:sub*)+ ?y } }",
+    "SELECT ?x WHERE { VALUES ?x { :absent UNDEF } FILTER NOT EXISTS { ?x (:sub?)+ ?y } }",
     "SELECT ?s (GROUP_CONCAT(DISTINCT ?n; SEPARATOR=\",\") AS ?all) WHERE { ?s :name ?n } GROUP BY ?s",
     "SELECT ?s (GROUP_CONCAT(?n; SEPARATOR=\"a long separator\") AS ?all) WHERE { ?s :name ?n } GROUP BY ?s",
     "SELECT (COUNT(DISTINCT *) AS ?c) (SUM(?a) AS ?t) WHERE { ?s :age ?a }",
@@ -459,16 +529,52 @@ fn queries_outside_the_subset_are_rejected() {
     }
 }
 
+/// Triples repeated across the default graph and named graphs, for `union_default_graph`.
+const UNION_DATA: &str = r#"
+@prefix : <http://ex.org/> .
+:a :p :b . :b :p :c . :a :q 1 . :c :q 2 .
+:g1 { :a :p :b . :b :p :d . :d :q 1 . :a :q 1 . }
+:g2 { :a :p :b . :b :p :c . :c :p :a . :e :q 2 . }
+:g3 { :c :p :a . }
+"#;
+
+/// Queries over the merge of every graph (`union_default_graph = 1`), and queries whose own
+/// dataset clause takes precedence.
+const UNION_QUERIES: &[&str] = &[
+    "SELECT ?s ?o WHERE { ?s :p ?o }",
+    "SELECT * WHERE { ?s ?p ?o }",
+    "SELECT ?s WHERE { ?s :p :b }",
+    "SELECT ?x ?z WHERE { ?x :p ?y . ?y :p ?z }",
+    "SELECT ?s ?v WHERE { ?s :p ?o OPTIONAL { ?o :q ?v } }",
+    "SELECT ?s WHERE { ?s :p ?o MINUS { ?s :q 1 } }",
+    "SELECT ?s WHERE { ?s :p ?o FILTER NOT EXISTS { ?o :p ?s } }",
+    "SELECT (COUNT(*) AS ?n) WHERE { ?s :p ?o }",
+    "SELECT (COUNT(DISTINCT ?s) AS ?n) WHERE { ?s ?p ?o }",
+    "SELECT ?o WHERE { :a :p/:p ?o }",
+    "SELECT ?o WHERE { :a (:p|:q) ?o }",
+    "SELECT ?o WHERE { :a :p+ ?o }",
+    "SELECT ?s ?o WHERE { ?s :p* ?o }",
+    "SELECT ?s WHERE { ?s :p? :a }",
+    "SELECT ?s ?o WHERE { ?s !(:q) ?o }",
+    "SELECT ?g ?s WHERE { GRAPH ?g { ?s :p :b } }",
+    "SELECT ?s ?o FROM :g1 FROM :g2 WHERE { ?s :p ?o }",
+    "SELECT ?o FROM :g1 FROM :g3 WHERE { :a :p* ?o }",
+    "ASK { :d :p :a }",
+];
+
 #[test]
-fn union_default_graph_merges_all_graphs() {
-    // `union_default_graph = 1`: the default graph is the RDF merge of every graph.
-    let engine = Engine::new(&[DataFile::trig(DATA)]).unwrap();
-    let text = format!("{PREFIXES}SELECT ?s ?o WHERE {{ ?s :likes ?o }}");
-    let query = sq_plan::parse_query(&text, None).unwrap();
+fn union_default_graph_matches_spareval() {
+    let engine = Engine::new(&[DataFile::trig(UNION_DATA)]).unwrap();
     let opts = sq_core::plan::QueryOptions { union_default_graph: true, ..Default::default() };
-    let lowered = sq_plan::lower_query(&query, &engine.store, &opts).unwrap();
-    let sql = sq_sqlgen::translate(&lowered).unwrap();
-    let common::Outcome::Solutions { rows, .. } = engine.execute(&lowered, &sql).unwrap() else { unreachable!() };
-    // (alice tea) (bob coffee) (alice coffee) (carol tea): duplicates across graphs merge.
-    assert_eq!(rows.len(), 4, "{}", sql.sql);
+    for q in UNION_QUERIES {
+        let text = format!("{PREFIXES}{q}");
+        let query = sq_plan::parse_query(&text, None).unwrap();
+        let lowered = sq_plan::lower_query(&query, &engine.store, &opts).unwrap();
+        let sql = sq_sqlgen::translate(&lowered).unwrap_or_else(|e| panic!("{q}: {e}"));
+        let ours = engine.execute(&lowered, &sql).unwrap();
+        let reference = engine.reference_with(&query, true).unwrap();
+        if let Err(e) = common::compare(&ours, &reference, &common::Expect::of(&query)) {
+            panic!("{q}: {e}\nSQL: {}", sql.sql);
+        }
+    }
 }

@@ -8,14 +8,14 @@ use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use oxrdf::{Dataset, GraphName, NamedNode, Quad};
+use oxrdf::{Dataset, GraphName, GraphNameRef, NamedNode, Quad, QuadRef};
 use oxrdfio::{RdfFormat, RdfParser};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
 use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{Connection, params_from_iter};
-use sq_core::codec::{self, RDF_LANG_STRING_IRI};
+use sq_core::codec;
 use sq_core::eval_api::{ExistsEval, TempDict, TermResolver};
 use sq_core::ir::{AggFunc, AggSpec, ExistsId, LoweredQuery};
 use sq_core::plan::QueryOptions;
@@ -427,7 +427,38 @@ impl Engine {
 
     /// spareval's answer on the reference dataset.
     pub fn reference(&self, query: &spargebra::Query) -> Result<Outcome, String> {
-        let results = spareval::QueryEvaluator::new().prepare(query).execute(&self.dataset).map_err(|e| e.to_string())?;
+        self.reference_with(query, false)
+    }
+
+    /// spareval's answer with the default graph materialized as SPARQL defines it: the RDF
+    /// merge (a set) of the FROM graphs, or of every graph when `union` is set
+    /// (`union_default_graph`) and the query has no dataset clause.
+    ///
+    /// spareval keeps duplicate triples both across FROM graphs and in its own
+    /// `set_default_graph_as_union` (a bag over the named graphs only), so the merge is built
+    /// here as the default graph of a copy of the dataset; the named graphs (and the query's
+    /// FROM NAMED list) are unchanged.
+    pub fn reference_with(&self, query: &spargebra::Query, union: bool) -> Result<Outcome, String> {
+        let evaluator = spareval::QueryEvaluator::new();
+        let mut prepared = evaluator.prepare(query);
+        let spec = prepared.dataset();
+        let merged: Option<Vec<GraphName>> = if union && spec.is_default_dataset() {
+            None
+        } else {
+            spec.default_graph_graphs().map(<[GraphName]>::to_vec)
+        };
+        let mut dataset = Dataset::new();
+        for q in self.dataset.iter() {
+            let graph = q.graph_name.into_owned();
+            if merged.as_ref().is_none_or(|m| m.contains(&graph)) {
+                dataset.insert(QuadRef::new(q.subject, q.predicate, q.object, GraphNameRef::DefaultGraph));
+            }
+            if !graph.is_default_graph() {
+                dataset.insert(q);
+            }
+        }
+        prepared.dataset_mut().set_default_graph(vec![GraphName::DefaultGraph]);
+        let results = prepared.execute(&dataset).map_err(|e| e.to_string())?;
         match results {
             spareval::QueryResults::Boolean(b) => Ok(Outcome::Boolean(b)),
             spareval::QueryResults::Solutions(sols) => {
@@ -489,26 +520,48 @@ impl Expect {
 }
 
 /// Literal comparison key: numerics by datatype and value (spareval canonicalizes numeric
-/// lexical forms on load, the store keeps them), everything else by N-Triples.
+/// lexical forms on load, the store keeps them), everything else by N-Triples. Integers and
+/// decimals compare exactly, floats as f32 and doubles as f64.
 fn term_key(t: &oxrdf::Term) -> String {
     if let oxrdf::Term::Literal(l) = t {
         let dt = l.datatype().as_str();
-        let numeric = dt.strip_prefix(codec::XSD).is_some_and(|local| {
-            matches!(
-                local,
-                "integer" | "decimal" | "double" | "float" | "int" | "long" | "short" | "byte" | "nonNegativeInteger"
-                    | "positiveInteger" | "negativeInteger" | "nonPositiveInteger" | "unsignedLong" | "unsignedInt"
-                    | "unsignedShort" | "unsignedByte"
-            )
-        });
-        if numeric && let Ok(v) = l.value().trim().parse::<f64>() {
-            return format!("{v:?}^^{dt}");
-        }
-        if dt == RDF_LANG_STRING_IRI {
-            return t.to_string();
+        if let Some(local) = dt.strip_prefix(codec::XSD) {
+            let value = match local {
+                "integer" | "decimal" | "int" | "long" | "short" | "byte" | "nonNegativeInteger" | "positiveInteger"
+                | "negativeInteger" | "nonPositiveInteger" | "unsignedLong" | "unsignedInt" | "unsignedShort"
+                | "unsignedByte" => exact_decimal(l.value()),
+                "float" => l.value().trim().parse::<f32>().ok().map(|v| format!("{v:?}")),
+                "double" => l.value().trim().parse::<f64>().ok().map(|v| format!("{v:?}")),
+                _ => None,
+            };
+            if let Some(v) = value {
+                return format!("{v}^^{dt}");
+            }
         }
     }
     t.to_string()
+}
+
+/// The canonical form of an integer or decimal lexical form (no sign `+`, no leading zeros,
+/// no trailing fraction zeros), exact at any length; None if it is not one.
+fn exact_decimal(lex: &str) -> Option<String> {
+    let lex = lex.trim();
+    let (neg, body) = match lex.as_bytes().first() {
+        Some(b'-') => (true, &lex[1..]),
+        Some(b'+') => (false, &lex[1..]),
+        _ => (false, lex),
+    };
+    let (int, frac) = body.split_once('.').unwrap_or((body, ""));
+    if int.is_empty() && frac.is_empty() || !int.bytes().chain(frac.bytes()).all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let (int, frac) = (int.trim_start_matches('0'), frac.trim_end_matches('0'));
+    if int.is_empty() && frac.is_empty() {
+        return Some("0".to_owned());
+    }
+    let sign = if neg { "-" } else { "" };
+    let int = if int.is_empty() { "0" } else { int };
+    Some(if frac.is_empty() { format!("{sign}{int}") } else { format!("{sign}{int}.{frac}") })
 }
 
 fn row_key(row: &[Option<oxrdf::Term>]) -> Vec<Option<String>> {

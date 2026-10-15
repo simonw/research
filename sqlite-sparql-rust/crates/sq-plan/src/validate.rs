@@ -30,7 +30,8 @@
 //! * Scan orders match their bound columns; an IntRange scan reads Gpos with exactly g and p
 //!   bound over one fixed graph, its object a slot, `lo <= hi` within the inline range;
 //! * a SqlJoin statement has the rendered shape (`physical::sqljoin`): one result column per
-//!   distinct `out` slot, parameters `?1..?n` with `n = params.len()`, g-first full indexes;
+//!   distinct `out` slot, parameters `?1..?n` with `n = params.len()`, g-first full indexes,
+//!   at most 64 tables (SQLite's join limit);
 //! * `Extend.canonical = false` only for slots no id-comparing consumer reads.
 use sq_core::batch::{Slot, SlotSet};
 use sq_core::ir::{ExistsId, GraphSel, PatTerm, QueryForm, TemplateTerm};
@@ -414,6 +415,10 @@ impl<'q> Validator<'q> {
 /// A SqlJoin statement in the shape `physical::sqljoin` renders.
 fn check_sql_join(p: &Plan, sql: &str, params: &[i64], out: &[Slot]) -> Result<()> {
     let Some(parsed) = sqljoin::parse(sql) else { return fail(p, "SqlJoin text is not a rendered SQL chain") };
+    if parsed.aliases.len() > sqljoin::MAX_ALIASES {
+        let n = parsed.aliases.len();
+        return fail(p, format!("SqlJoin joins {n} tables; SQLite joins at most {}", sqljoin::MAX_ALIASES));
+    }
     if out.is_empty() || parsed.select.len() != out.len() {
         return fail(p, format!("SqlJoin returns {} columns for {} slots", parsed.select.len(), out.len()));
     }

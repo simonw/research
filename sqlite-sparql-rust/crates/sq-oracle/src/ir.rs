@@ -8,6 +8,15 @@ use sq_core::{Error, Result, Slot};
 /// the variable table, VALUES rows of the wrong length, references to missing EXISTS patterns
 /// and EXISTS patterns that reference themselves (directly or through other EXISTS patterns).
 pub(crate) fn validate(q: &LoweredQuery) -> Result<()> {
+    // Slot sets (`ir::in_scope`, COUNT(DISTINCT *)) hold at most SlotSet::MAX_SLOTS slots, the
+    // limit sq-plan's lowering enforces too.
+    if q.vars.width() > SlotSet::MAX_SLOTS {
+        return Err(Error::Invalid(format!(
+            "query needs {} variables (at most {})",
+            q.vars.width(),
+            SlotSet::MAX_SLOTS
+        )));
+    }
     let mut check = Check { width: q.vars.width(), exists: q.exists.len(), refs: Vec::new() };
     check.logical(&q.root)?;
     // refs[i]: the EXISTS patterns exists[i] references (not those nested inside them).

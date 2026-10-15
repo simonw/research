@@ -509,6 +509,8 @@ version = "0.1.0"
 dependencies = [
  "oxrdf",
  "oxrdfio",
+ "oxsdatatypes",
+ "rand",
  "rusqlite",
  "rustc-hash",
  "serde_json",
@@ -516,6 +518,7 @@ dependencies = [
  "sq-core",
  "sq-engine",
  "sq-exec",
+ "sq-expr",
  "sq-plan",
  "sq-results",
  "sq-sqlgen",
@@ -539,6 +542,7 @@ version = "0.1.0"
 dependencies = [
  "oxrdf",
  "oxrdfio",
+ "oxsdatatypes",
  "rustc-hash",
  "spargebra",
  "sq-core",
@@ -595,7 +599,6 @@ version = "0.1.0"
 dependencies = [
  "oxrdf",
  "oxrdfio",
- "serde_json",
  "sparesults",
  "sq-core",
 ]

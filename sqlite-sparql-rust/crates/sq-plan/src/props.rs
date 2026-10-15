@@ -27,14 +27,20 @@ fn not(s: SlotSet) -> SlotSet {
 
 /// The slots of `s` in ascending order, word by word (`SlotSet::iter` tests all 256 bits).
 pub(crate) fn slot_list(s: SlotSet) -> Vec<Slot> {
-    let mut out = Vec::new();
-    for (w, mut bits) in s.0.into_iter().enumerate() {
-        while bits != 0 {
-            out.push((w as u32 * 64 + bits.trailing_zeros()) as Slot);
-            bits &= bits - 1;
-        }
-    }
-    out
+    slots(s).collect()
+}
+
+/// The slots of `s` in ascending order, without allocating.
+pub(crate) fn slots(s: SlotSet) -> impl Iterator<Item = Slot> {
+    s.0.into_iter().enumerate().flat_map(|(w, mut bits)| {
+        std::iter::from_fn(move || {
+            (bits != 0).then(|| {
+                let slot = (w as u32 * 64 + bits.trailing_zeros()) as Slot;
+                bits &= bits - 1;
+                slot
+            })
+        })
+    })
 }
 
 /// Static properties of a (logical or physical) subtree.

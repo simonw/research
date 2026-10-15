@@ -9,6 +9,10 @@
 //! stands for, so the implementation never re-derives the vocabulary.
 //!
 //! Conventions shared by every helper:
+//! * Helpers evaluate in the context of the query the statement was translated from: an
+//!   sq-expr `EvalCtx` whose `base_iri` is `LoweredQuery::base_iri` (IRI() / URI() resolve
+//!   relative strings against it) and whose TempDict is that query's `LoweredQuery::temps`,
+//!   with one ValueCache per execution of the statement.
 //! * A *term argument* is an INTEGER `TermId` or NULL (unbound). TEMP ids are those of the
 //!   executing query: helpers decode them through the `LoweredQuery::temps` TempDict that the
 //!   statement was translated from.
@@ -61,7 +65,9 @@ pub const HELPER_FUNCTIONS: &[HelperFunction] = &[
         kind: HelperKind::Scalar,
         semantics: "Numeric value of a numeric literal: xsd:integer and the derived integer types \
                     -> INTEGER; xsd:decimal, xsd:float, xsd:double -> REAL (NaN -> NULL); NULL for \
-                    every other term, ill-typed literals and NULL input.",
+                    every other term, ill-typed literals and NULL input. A decimal's REAL must be \
+                    the correctly rounded (nearest) double, as sq_expr::Num::to_f64 computes it: the \
+                    translator compares inline decimals through it only where that is exact.",
     },
     HelperFunction {
         name: "sparql_str",
@@ -106,7 +112,10 @@ pub const HELPER_FUNCTIONS: &[HelperFunction] = &[
         semantics: "sparql_eval(op, a1, ..., an): evaluates the operator or builtin named by the \
                     constant TEXT `op` on term arguments exactly like sq-expr evaluates \
                     `eval_template(op, n)` with slot i bound to a(i+1) (NULL = unbound) and \
-                    canonical = true. Returns a term result (booleans as BOOL ids 23 / 7). \
+                    canonical = true, in the query's EvalCtx (base_iri = LoweredQuery::base_iri, \
+                    the query's TempDict, a per-execution ValueCache): IRI(\"x\") under \
+                    BASE <http://ex.org/> is <http://ex.org/x>. Returns a term result (booleans \
+                    as BOOL ids 23 / 7). \
                     Operators: = < <= > >= + - * / (binary), u+ u- (unary); builtins by SPARQL \
                     name (STR, LANG, ..., isIRI, REGEX); casts by the full XSD datatype IRI.",
     },

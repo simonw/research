@@ -11,7 +11,10 @@ use crate::{SqlQuery, translate};
 mod golden;
 mod graph;
 mod helpers;
+mod limits;
+mod numeric;
 mod sql;
+mod shapes;
 
 pub(crate) const PREFIXES: &str = "PREFIX : <http://ex.org/> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> ";
 

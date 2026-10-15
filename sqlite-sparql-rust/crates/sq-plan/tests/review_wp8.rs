@@ -374,15 +374,49 @@ fn review_sql_join_never_renders_more_than_64_aliases() {
 // Planning time.
 // ------------------------------------------------------------------------------------------
 
-/// Best of 7 `optimize` times of `q`, in milliseconds.
-fn time_plan(q: &str, st: &dyn QuadStore, opts: &QueryOptions) -> f64 {
+/// CPU time of the calling thread in milliseconds (`CLOCK_THREAD_CPUTIME_ID`).
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+fn thread_cpu_ms() -> Option<f64> {
+    #[repr(C)]
+    struct Timespec {
+        sec: i64,
+        nsec: i64,
+    }
+    unsafe extern "C" {
+        fn clock_gettime(clock: i32, tp: *mut Timespec) -> i32;
+    }
+    const CLOCK_THREAD_CPUTIME_ID: i32 = 3;
+    let mut t = Timespec { sec: 0, nsec: 0 };
+    // SAFETY: `t` is a valid, writable timespec (64-bit Linux layout) and the clock id exists.
+    let rc = unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut t) };
+    (rc == 0).then(|| t.sec as f64 * 1e3 + t.nsec as f64 / 1e6)
+}
+
+#[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
+fn thread_cpu_ms() -> Option<f64> {
+    None
+}
+
+/// Best of 7 `optimize` times of `q` under each of `opts`, in milliseconds, measured in turns
+/// so that a change of machine load affects every one alike: CPU time of this thread where
+/// available, else wall-clock time. (Under CPU oversubscription, e.g. the parallel tests of
+/// this file next to other builds, best-of-7 wall time inflates the longer of two
+/// measurements: a run longer than a scheduler time slice is almost always preempted, a
+/// shorter one often is not.)
+fn time_plans<const N: usize>(q: &str, st: &dyn QuadStore, opts: [&QueryOptions; N]) -> [f64; N] {
     let parsed = sq_plan::parse_query(&format!("{PREFIXES}{q}"), None).expect("parses");
-    let mut best = f64::INFINITY;
+    let mut best = [f64::INFINITY; N];
     for _ in 0..7 {
-        let lowered = sq_plan::lower_query(&parsed, st, opts).expect("lowers");
-        let t = std::time::Instant::now();
-        sq_plan::optimize(lowered, st, opts).expect("plans");
-        best = best.min(t.elapsed().as_secs_f64() * 1e3);
+        for (b, opts) in best.iter_mut().zip(opts) {
+            let lowered = sq_plan::lower_query(&parsed, st, opts).expect("lowers");
+            let (wall, cpu) = (std::time::Instant::now(), thread_cpu_ms());
+            sq_plan::optimize(lowered, st, opts).expect("plans");
+            let ms = match (cpu, thread_cpu_ms()) {
+                (Some(a), Some(b)) => b - a,
+                _ => wall.elapsed().as_secs_f64() * 1e3,
+            };
+            *b = b.min(ms);
+        }
     }
     best
 }
@@ -398,8 +432,7 @@ fn review_interesting_order_dp_stays_within_the_planning_budget() {
     let mem = social(500);
     let q = "SELECT * { ?a :knows ?b . ?a :knows ?c . ?a :knows ?d . ?a :knows ?e . ?b :knows ?c . ?b :knows ?d . \
              ?b :knows ?e . ?c :knows ?d . ?c :knows ?e . ?d :knows ?e }";
-    let auto = time_plan(q, &mem, &QueryOptions::default());
-    let single = time_plan(q, &mem, &with(JoinPolicy::PreferHash));
+    let [auto, single] = time_plans(q, &mem, [&QueryOptions::default(), &with(JoinPolicy::PreferHash)]);
     assert!(
         auto <= 4.0 * single.max(0.5),
         "planning a 10-pattern clique: Auto {auto:.2} ms vs single-order search {single:.2} ms"

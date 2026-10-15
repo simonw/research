@@ -1,5 +1,7 @@
 //! Quad pattern -> `Op::Scan`: access paths (index order, optional IntRange), estimates and
 //! the order the output is sorted by.
+use std::sync::OnceLock;
+
 use smallvec::SmallVec;
 use sq_core::batch::{Slot, SlotSet};
 use sq_core::ir::{DatasetSpec, DefaultGraph, GraphSel, NamedGraphs, PatTerm, QuadPat};
@@ -40,8 +42,17 @@ pub(crate) fn bound_columns(pat: &QuadPat, bound: SlotSet) -> [bool; 4] {
 /// The default index order for the bound columns: the first of `IndexOrder::candidates`
 /// (s-sorted streams are preferred where there is a choice), except that point probes with g,
 /// s and p bound read GPSO: it clusters each predicate's entries, measured ~1.4 µs per random
-/// probe against ~2.1 µs for GSPO, with the same output order.
+/// probe against ~2.1 µs for GSPO, with the same output order. Also returns the number of
+/// bound columns. A table lookup: the ordering search asks for every unit in many contexts.
 pub(crate) fn choose_order(bound: [bool; 4]) -> (IndexOrder, usize) {
+    static TABLE: OnceLock<[(IndexOrder, usize); 16]> = OnceLock::new();
+    let table =
+        TABLE.get_or_init(|| std::array::from_fn(|bits| order_for(std::array::from_fn(|c| bits >> c & 1 == 1))));
+    table[bound.iter().enumerate().fold(0, |bits, (c, b)| bits | usize::from(*b) << c)]
+}
+
+/// [`choose_order`], computed.
+fn order_for(bound: [bool; 4]) -> (IndexOrder, usize) {
     let cands = IndexOrder::candidates(bound);
     let k = bound.iter().filter(|b| **b).count();
     if k >= 3 && bound[0] && cands.iter().any(|c| c.0 == IndexOrder::Gpso) {
@@ -80,10 +91,11 @@ pub(crate) fn scan_sorted_by(
     if range {
         return None;
     }
-    if let GraphSel::Slot(_) = pat.g {
-        if order.named_only() && !matches!(dataset.named, NamedGraphs::All) {
-            return None;
-        }
+    if let GraphSel::Slot(_) = pat.g
+        && order.named_only()
+        && !matches!(dataset.named, NamedGraphs::All)
+    {
+        return None;
     }
     let col = *order.cols().get(k)?;
     match column_term(pat, col)? {
@@ -114,6 +126,19 @@ pub(crate) fn fixed_graph_id(pat: &QuadPat, dataset: &DatasetSpec) -> Option<Ter
         GraphSel::Default => fixed_default_graph(dataset),
         GraphSel::Const(g) => g.is_storable().then_some(g),
         GraphSel::Active | GraphSel::Slot(_) => None,
+    }
+}
+
+/// Does the executor read `pat`, with `bound` slots bound at open time, through one cursor
+/// (which a merge join can reposition by seeking, `Operator::seek`)? A single graph, or every
+/// named graph through the named-only partial indexes; not a default graph merged from several
+/// graphs (the union default graph, several FROM graphs) or a FROM NAMED list, which may be
+/// read graph by graph.
+pub(crate) fn single_cursor(pat: &QuadPat, bound: SlotSet, dataset: &DatasetSpec) -> bool {
+    match pat.g {
+        GraphSel::Default => fixed_default_graph(dataset).is_some(),
+        GraphSel::Const(_) | GraphSel::Active => true,
+        GraphSel::Slot(g) => bound.contains(g) || matches!(dataset.named, NamedGraphs::All),
     }
 }
 
@@ -248,6 +273,17 @@ mod tests {
     }
 
     #[test]
+    fn order_table_matches_the_rule() {
+        for bits in 0..16usize {
+            let bound: [bool; 4] = std::array::from_fn(|c| bits >> c & 1 == 1);
+            let (order, k) = choose_order(bound);
+            assert_eq!((order, k), order_for(bound));
+            assert_eq!(k, bits.count_ones() as usize);
+            assert!(order.cols()[..k].iter().all(|c| bound[*c as usize]), "{bound:?}: {order:?}");
+        }
+    }
+
+    #[test]
     fn order_choice() {
         let p = QuadPat { g: GraphSel::Default, s: PatTerm::Slot(0), p: c(), o: PatTerm::Slot(1) };
         let cols = bound_columns(&p, SlotSet::EMPTY);
@@ -302,6 +338,15 @@ mod tests {
         let active = QuadPat { g: GraphSel::Active, ..p };
         assert!(range_access(&active, SlotSet::EMPTY, r, &union).is_some());
         assert!(sqlable(&p, &ds()) && !sqlable(&active, &ds()));
+        // Merged default graphs and FROM NAMED lists are read through several cursors.
+        assert!(single_cursor(&p, SlotSet::EMPTY, &ds()) && single_cursor(&active, SlotSet::EMPTY, &union));
+        assert!(!single_cursor(&p, SlotSet::EMPTY, &union));
+        assert!(!single_cursor(&p, SlotSet::EMPTY, &from(vec![g1, TermId::from_dict(10, Tag::Iri)])));
+        assert!(single_cursor(&p, SlotSet::EMPTY, &from(vec![g1])));
+        let named = QuadPat { g: GraphSel::Slot(5), ..p };
+        let only = DatasetSpec { named: NamedGraphs::Only(vec![g1].into()), ..ds() };
+        assert!(single_cursor(&named, SlotSet::EMPTY, &ds()) && !single_cursor(&named, SlotSet::EMPTY, &only));
+        assert!(single_cursor(&named, SlotSet::from_slots([5]), &only), "a bound graph slot is one graph");
         assert!(!sqlable(&QuadPat { o: PatTerm::Const(temp), ..p }, &ds()));
         assert!(repeats_slot(&QuadPat { o: PatTerm::Slot(0), ..p }) && !repeats_slot(&p));
     }

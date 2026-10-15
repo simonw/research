@@ -10,6 +10,11 @@
 //! Filter selectivities (§7.4.5): `=` against a constant is 1/dv of the slot, an integer range
 //! on an object is uniform over the predicate's [imin, imax], everything else uses fixed
 //! factors ([`selectivity_with`] takes the statistics-based leaf estimates as a hook).
+//!
+//! Statistics come in two scopes, the store default graph and the union of the named graphs.
+//! One named graph is estimated as that union divided by the store's number of named graphs;
+//! distinct values and integer bounds of the union default graph come from both scopes.
+use std::cell::OnceCell;
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
@@ -37,7 +42,12 @@ pub(crate) struct Card<'a> {
     store: &'a dyn QuadStore,
     stats: Option<Arc<Stats>>,
     dataset: &'a DatasetSpec,
+    /// Named graphs of the query's dataset (GRAPH ?g fan-out).
     named_count: f64,
+    /// Named graphs of the store, which share the named-graph statistics: the dataset's count
+    /// when the dataset names every graph of the store, else asked from the store when first
+    /// needed.
+    store_named: OnceCell<f64>,
     probes_left: u32,
     cap: u64,
     counts: FxHashMap<ScanSpec, u64>,
@@ -46,14 +56,21 @@ pub(crate) struct Card<'a> {
 }
 
 impl<'a> Card<'a> {
+    /// `named_count`: the number of named graphs of `dataset` (`QueryPlan.named_graphs`).
     pub(crate) fn new(store: &'a dyn QuadStore, dataset: &'a DatasetSpec, named_count: usize, opts: &QueryOptions) -> Self {
         let stats = store.stats();
         let cap = if stats.is_some() { opts.probe_count_cap } else { opts.probe_count_cap.max(NO_STATS_CAP) };
+        let named_count = named_count.max(1) as f64;
+        let store_named = match dataset.named {
+            NamedGraphs::All => OnceCell::from(named_count),
+            NamedGraphs::Only(_) => OnceCell::new(),
+        };
         Card {
             store,
             stats,
             dataset,
-            named_count: named_count.max(1) as f64,
+            named_count,
+            store_named,
             probes_left: opts.max_probe_counts,
             cap,
             counts: FxHashMap::default(),
@@ -61,8 +78,16 @@ impl<'a> Card<'a> {
         }
     }
 
+    /// Named graphs of the query's dataset.
     pub(crate) fn named_count(&self) -> f64 {
         self.named_count
+    }
+
+    /// Named graphs of the store (at least 1): what the named-graph statistics are spread over.
+    fn store_named_count(&self) -> f64 {
+        *self.store_named.get_or_init(|| {
+            self.store.named_graphs().map_or(self.named_count, |gs| gs.len().max(1) as f64)
+        })
     }
 
     fn named_parts(&self) -> Vec<GraphPart> {
@@ -113,10 +138,10 @@ impl<'a> Card<'a> {
         }
         let mut total = 0.0;
         for (part, scale) in self.graph_parts(pat.g, bound) {
-            if let GraphPart::Fixed(g) = part {
-                if g.is_temp() {
-                    continue;
-                }
+            if let GraphPart::Fixed(g) = part
+                && g.is_temp()
+            {
+                continue;
             }
             let c0 = self.standalone(part, consts)?;
             total += c0 * scale;
@@ -137,17 +162,15 @@ impl<'a> Card<'a> {
     fn standalone(&mut self, part: GraphPart, consts: [Option<TermId>; 3]) -> Result<f64> {
         let [s, p, o] = consts;
         let wants_count = s.is_some() || o.is_some() || self.stats.is_none();
-        if wants_count {
-            if let Some(n) = self.bounded_count(part, consts)? {
-                let exceeded = n > self.cap;
-                if !exceeded {
-                    return Ok(n as f64);
-                }
-                return Ok(match self.stats_estimate(part, consts) {
-                    Some(est) => est.max((self.cap + 1) as f64),
-                    None => 10.0 * self.cap as f64,
-                });
+        if wants_count && let Some(n) = self.bounded_count(part, consts)? {
+            let exceeded = n > self.cap;
+            if !exceeded {
+                return Ok(n as f64);
             }
+            return Ok(match self.stats_estimate(part, consts) {
+                Some(est) => est.max((self.cap + 1) as f64),
+                None => 10.0 * self.cap as f64,
+            });
         }
         if let Some(est) = self.stats_estimate(part, consts) {
             return Ok(est);
@@ -184,13 +207,29 @@ impl<'a> Card<'a> {
         Ok(Some(n))
     }
 
+    /// The statistics of a graph part and the share of them it holds: one named graph is an
+    /// even share of the named graphs of the store (not of the query's dataset, which may name
+    /// fewer of them, or none under `FROM <g>`).
     fn scope(&self, part: GraphPart) -> Option<(&ScopeStats, f64)> {
         let stats = self.stats.as_ref()?;
         Some(match part {
             GraphPart::Fixed(g) if g == TermId::DEFAULT_GRAPH => (&stats.scope[0], 1.0),
-            GraphPart::Fixed(_) => (&stats.scope[1], 1.0 / self.named_count),
+            GraphPart::Fixed(_) => (&stats.scope[1], 1.0 / self.store_named_count()),
             GraphPart::AllNamed => (&stats.scope[1], 1.0),
         })
+    }
+
+    /// The statistics scopes holding the rows of a pattern with graph selector `g`, for its
+    /// distinct values and integer bounds: the store default graph, the named graphs (one named
+    /// graph or FROM graphs have no scope of their own), or both for the union default graph.
+    fn value_scopes(&self, g: GraphSel) -> SmallVec<[&ScopeStats; 2]> {
+        let Some(stats) = self.stats.as_deref() else { return SmallVec::new() };
+        let [default, named] = &stats.scope;
+        match (g, &self.dataset.default) {
+            (GraphSel::Default, DefaultGraph::StoreDefault) => smallvec::smallvec![default],
+            (GraphSel::Default, DefaultGraph::UnionAll) => smallvec::smallvec![default, named],
+            _ => smallvec::smallvec![named],
+        }
     }
 
     /// Heavy hitters and per-predicate statistics (§7.4.2-3).
@@ -221,35 +260,38 @@ impl<'a> Card<'a> {
     }
 
     /// Distinct values of column `col` among the rows of `pat` (≥ 1), used to turn a
-    /// standalone estimate into a per-probe one.
+    /// standalone estimate into a per-probe one: the largest count of the scopes holding the
+    /// pattern's rows that know its predicate (the union default graph has at least as many as
+    /// either of its scopes; a scope without the predicate holds none of the rows), else a
+    /// guess from `rows`.
     pub(crate) fn distinct_values(&self, pat: &QuadPat, col: Col, rows: f64) -> f64 {
-        let part = match pat.g {
-            GraphSel::Default if self.dataset.default == DefaultGraph::StoreDefault => {
-                GraphPart::Fixed(TermId::DEFAULT_GRAPH)
-            }
-            _ => GraphPart::AllNamed,
-        };
         let pred = match pat.p {
             PatTerm::Const(p) => Some(p),
             PatTerm::Slot(_) => None,
         };
-        if let Some((sc, _)) = self.scope(part) {
-            let ps = pred.and_then(|p| sc.pred.get(&p));
-            let dv = match (col, ps) {
+        let known = self.value_scopes(pat.g).into_iter().filter_map(|sc| {
+            let ps = match pred {
+                Some(p) => Some(sc.pred.get(&p)?),
+                None if sc.n == 0 => return None,
+                None => None,
+            };
+            Some(match (col, ps) {
                 (Col::S, Some(ps)) => ps.ds,
                 (Col::O, Some(ps)) => ps.dobj,
                 (Col::S, None) => sc.ds,
                 (Col::O, None) => sc.dobj,
                 (Col::P, _) => sc.dp,
                 (Col::G, _) => self.named_count as u64,
-            };
-            return (dv as f64).max(1.0);
-        }
-        let dv = match col {
-            Col::S => rows / 2.0,
-            Col::O => rows / 4.0,
-            Col::P => rows.min(50.0),
-            Col::G => self.named_count,
+            })
+        });
+        let dv = match known.max() {
+            Some(dv) => dv as f64,
+            None => match col {
+                Col::S => rows / 2.0,
+                Col::O => rows / 4.0,
+                Col::P => rows.min(50.0),
+                Col::G => self.named_count,
+            },
         };
         dv.max(1.0)
     }
@@ -259,15 +301,14 @@ impl<'a> Card<'a> {
     /// integer objects (the caller's default applies).
     pub(crate) fn int_range_fraction(&self, pat: &QuadPat, r: IntRange) -> Option<f64> {
         let PatTerm::Const(p) = pat.p else { return None };
-        let part = match pat.g {
-            GraphSel::Default if self.dataset.default == DefaultGraph::StoreDefault => {
-                GraphPart::Fixed(TermId::DEFAULT_GRAPH)
-            }
-            _ => GraphPart::AllNamed,
-        };
-        let (sc, _) = self.scope(part)?;
-        let ps = sc.pred.get(&p)?;
-        let (imin, imax) = (ps.imin?, ps.imax?);
+        let (imin, imax) = self
+            .value_scopes(pat.g)
+            .into_iter()
+            .filter_map(|sc| {
+                let ps = sc.pred.get(&p)?;
+                Some((ps.imin?, ps.imax?))
+            })
+            .reduce(|(a, b), (c, d)| (a.min(c), b.max(d)))?;
         let span = (imax as f64 - imin as f64 + 1.0).max(1.0);
         let overlap = (r.hi.min(imax) as f64 - r.lo.max(imin) as f64 + 1.0).max(0.0);
         Some((overlap / span).clamp(0.0, 1.0))
@@ -503,6 +544,60 @@ mod tests {
         assert_eq!(card.pattern_rows(&p, SlotSet::from_slots([0])).unwrap(), 1.0);
         let named = QuadPat { g: GraphSel::Slot(5), ..p };
         assert!(card.pattern_rows(&named, SlotSet::EMPTY).unwrap() <= 1.0);
+    }
+
+    /// The union default graph reads both statistics scopes: distinct values and integer bounds
+    /// of a predicate come from the scopes that hold it (here only the store default graph).
+    #[test]
+    fn union_default_graph_reads_both_scopes() {
+        let st = store();
+        st.analyze();
+        let union = DatasetSpec { default: DefaultGraph::UnionAll, named: NamedGraphs::All };
+        let mut card = Card::new(&st, &union, 1, &QueryOptions::default());
+        let ints = pat(PatTerm::Slot(0), PatTerm::Const(iri(101)), PatTerm::Slot(1));
+        assert_eq!(card.distinct_values(&ints, Col::S, 50.0), 50.0);
+        // ?s :101 ?o with s seeded: one row per probe, not all of them.
+        let per_probe = card.pattern_rows(&ints, SlotSet::from_slots([0])).unwrap();
+        assert!((1.0..1.1).contains(&per_probe), "{per_probe}");
+        assert_eq!(card.int_range_fraction(&ints, IntRange { lo: 0, hi: 24 }), Some(0.5));
+        // :100 is in both scopes (50 subjects by default, 1 in a named graph): the larger count.
+        let iris = pat(PatTerm::Slot(0), PatTerm::Const(iri(100)), PatTerm::Slot(1));
+        assert_eq!(card.distinct_values(&iris, Col::S, 51.0), 50.0);
+        // A predicate no scope knows: a guess from the rows.
+        let unknown = pat(PatTerm::Slot(0), PatTerm::Const(iri(102)), PatTerm::Slot(1));
+        assert_eq!(card.distinct_values(&unknown, Col::S, 40.0), 20.0);
+        // The named graphs alone (GRAPH ?g) know :100 but not :101.
+        let named = QuadPat { g: GraphSel::Slot(5), ..ints };
+        assert_eq!(card.int_range_fraction(&named, IntRange { lo: 0, hi: 24 }), None);
+    }
+
+    /// One named graph holds an even share of the named-graph statistics of the STORE, whatever
+    /// the query's dataset names (`FROM <g>` names no named graph at all).
+    #[test]
+    fn named_graph_statistics_are_spread_over_the_stores_graphs() {
+        let st = MemStore::new();
+        let mut quads = Vec::new();
+        for g in 0..10 {
+            for s in 0..20 {
+                quads.push([iri(900 + g), iri(100 * g + s), iri(101), TermId::from_int(s).unwrap()]);
+            }
+        }
+        st.insert(&mut quads).unwrap();
+        st.analyze();
+        let p = pat(PatTerm::Slot(0), PatTerm::Const(iri(101)), PatTerm::Slot(1));
+        let one = |g: i64| -> Arc<[TermId]> { vec![iri(g)].into() };
+        for named in [NamedGraphs::Only(Vec::new().into()), NamedGraphs::Only(one(901))] {
+            let from = DatasetSpec { default: DefaultGraph::Graphs(one(900)), named };
+            let mut card = Card::new(&st, &from, 1, &QueryOptions::default());
+            assert_eq!(card.pattern_rows(&p, SlotSet::EMPTY).unwrap(), 20.0, "{from:?}");
+        }
+        let all = DatasetSpec { default: DefaultGraph::StoreDefault, named: NamedGraphs::All };
+        let mut card = Card::new(&st, &all, 10, &QueryOptions::default());
+        let in_g0 = QuadPat { g: GraphSel::Const(iri(900)), ..p };
+        assert_eq!(card.pattern_rows(&in_g0, SlotSet::EMPTY).unwrap(), 20.0);
+        // GRAPH ?g over the whole store: every named graph.
+        let any = QuadPat { g: GraphSel::Slot(5), ..p };
+        assert_eq!(card.pattern_rows(&any, SlotSet::EMPTY).unwrap(), 200.0);
     }
 
     #[test]

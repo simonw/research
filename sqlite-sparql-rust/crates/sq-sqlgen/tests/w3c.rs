@@ -1,7 +1,9 @@
 //! W3C SPARQL 1.0 / 1.1 query-evaluation tests inside the baseline's subset: every test whose
-//! query the translator accepts must give spareval's answer, except the tests listed in
-//! tools/sq-w3c/reference_divergences.txt (spareval bugs), which must give the W3C expected
-//! results instead.
+//! query the translator accepts must give the W3C expected results (spareval's answer when the
+//! expected results cannot be read), except the [`KNOWN_MISMATCHES`].
+//!
+//! Tests that require an entailment regime (`sd:entailmentRegime` without `ent:Simple`) are
+//! outside the subset: the baseline, like the native engine, evaluates simple entailment.
 //!
 //! The suite is read from `$SQ_W3C_DIR` (default: the session scratchpad copy); the test is
 //! skipped with a note when it is absent. Run with `--nocapture` for the report.
@@ -23,6 +25,8 @@ const SUITE_URL: &str = "https://w3c.github.io/rdf-tests/sparql/";
 const MF: &str = "http://www.w3.org/2001/sw/DataAccess/tests/test-manifest#";
 const QT: &str = "http://www.w3.org/2001/sw/DataAccess/tests/test-query#";
 const RS: &str = "http://www.w3.org/2001/sw/DataAccess/tests/result-set#";
+const SD: &str = "http://www.w3.org/ns/sparql-service-description#";
+const ENT_SIMPLE: &str = "http://www.w3.org/ns/entailment/Simple";
 
 /// In-subset tests whose baseline answer is knowingly wrong, with the reason.
 const KNOWN_MISMATCHES: &[(&str, &str)] = &[(
@@ -41,6 +45,8 @@ struct TestCase {
     graph_data: Vec<String>,
     result: Option<String>,
     lax: bool,
+    /// The entailment regimes the test may be run under (empty: simple entailment).
+    regimes: Vec<String>,
 }
 
 fn suite_dir() -> Option<PathBuf> {
@@ -125,6 +131,19 @@ fn load_manifest(root: &Path, url: &str, seen: &mut HashSet<String>, out: &mut V
         let lax = g
             .object_for_subject_predicate(test, &nn(&format!("{MF}resultCardinality")))
             .is_some_and(|c| c == nn(&format!("{MF}LaxCardinality")).as_ref().into());
+        let regimes = g
+            .object_for_subject_predicate(action, &nn(&format!("{SD}entailmentRegime")))
+            .map(|r| match r {
+                TermRef::NamedNode(n) => vec![n.as_str().to_owned()],
+                list => rdf_list(&g, list)
+                    .into_iter()
+                    .filter_map(|t| match t {
+                        TermRef::NamedNode(n) => Some(n.as_str().to_owned()),
+                        _ => None,
+                    })
+                    .collect(),
+            })
+            .unwrap_or_default();
         out.push(TestCase {
             id: test.as_str().to_owned(),
             query,
@@ -132,6 +151,7 @@ fn load_manifest(root: &Path, url: &str, seen: &mut HashSet<String>, out: &mut V
             graph_data: iris(&g, action, &format!("{QT}graphData")),
             result: iris(&g, test.into(), &format!("{MF}result")).pop(),
             lax,
+            regimes,
         });
     }
 }
@@ -222,13 +242,23 @@ fn result_set(bytes: &[u8], url: &str) -> Result<Outcome, String> {
 }
 
 enum Verdict {
+    /// Same answer as the W3C expected results.
     Match,
+    /// Same answer as spareval (the expected results could not be read).
+    MatchReference,
     Mismatch(String),
     Unsupported(String),
     Skipped(String),
 }
 
-fn run_test(root: &Path, t: &TestCase, reference_is_wrong: bool) -> Verdict {
+impl TestCase {
+    /// Does the test require an entailment regime other than simple entailment?
+    fn requires_entailment(&self) -> bool {
+        !self.regimes.is_empty() && !self.regimes.iter().any(|r| r == ENT_SIMPLE)
+    }
+}
+
+fn run_test(root: &Path, t: &TestCase) -> Verdict {
     let Some(qpath) = local_path(root, &t.query) else { return Verdict::Skipped("query outside the suite".into()) };
     let Ok(text) = std::fs::read_to_string(&qpath) else { return Verdict::Skipped("unreadable query".into()) };
     let query = match sq_plan::parse_query(&text, Some(&t.query)) {
@@ -266,39 +296,23 @@ fn run_test(root: &Path, t: &TestCase, reference_is_wrong: bool) -> Verdict {
         Err(e) => return Verdict::Skipped(format!("load: {e}")),
     };
     let ours = match engine.baseline(&query) {
-        Ok(Baseline::Unsupported(msg)) => { if msg.contains("nesting") { eprintln!("DEBUG {}", t.id); } return Verdict::Unsupported(msg) }
+        Ok(Baseline::Unsupported(msg)) => return Verdict::Unsupported(msg),
         Ok(Baseline::Ran { sql, outcome }) => (sql, outcome),
         Err(e) => return Verdict::Mismatch(format!("baseline failed: {e}")),
     };
-    let reference = if reference_is_wrong {
-        match t.result.as_deref().map(|r| expected(root, r)) {
-            Some(Ok(r)) => r,
-            Some(Err(e)) => return Verdict::Skipped(format!("expected results: {e}")),
-            None => return Verdict::Skipped("no expected results".into()),
-        }
-    } else {
-        match engine.reference(&query) {
-            Ok(r) => r,
+    let (reference, verdict) = match t.result.as_deref().map(|r| expected(root, r)) {
+        Some(Ok(r)) => (r, Verdict::Match),
+        _ => match engine.reference(&query) {
+            Ok(r) => (r, Verdict::MatchReference),
             Err(e) => return Verdict::Skipped(format!("reference: {e}")),
-        }
+        },
     };
     let mut expect = Expect::of(&query);
     expect.lax |= t.lax;
     match compare(&ours.1, &reference, &expect) {
-        Ok(()) => Verdict::Match,
+        Ok(()) => verdict,
         Err(e) => Verdict::Mismatch(format!("{e}\nSQL: {}", ours.0.sql)),
     }
-}
-
-fn reference_divergences() -> HashSet<String> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/sq-w3c/reference_divergences.txt");
-    std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| l.split_whitespace().next())
-        .filter(|w| !w.starts_with('#'))
-        .map(str::to_owned)
-        .collect()
 }
 
 #[test]
@@ -312,16 +326,22 @@ fn w3c_query_evaluation_tests_in_the_subset_match() {
     for m in ["sparql11/manifest-all.ttl", "sparql10/manifest-evaluation.ttl"] {
         load_manifest(&root, &format!("{SUITE_URL}{m}"), &mut seen, &mut tests);
     }
-    let divergent = reference_divergences();
     let known: HashMap<&str, &str> = KNOWN_MISMATCHES.iter().copied().collect();
-    let (mut matched, mut matched_expected, mut unsupported, mut skipped, mut known_count) = (0, 0, 0, 0, 0);
+    let (mut matched, mut matched_reference, mut unsupported, mut skipped, mut known_count) = (0, 0, 0, 0, 0);
+    let (mut entailment, mut entailment_matched) = (0, 0);
     let mut reasons: HashMap<String, usize> = HashMap::new();
     let mut failures = Vec::new();
     for t in &tests {
-        let reference_is_wrong = divergent.contains(&t.id);
-        match run_test(&root, t, reference_is_wrong) {
-            Verdict::Match if reference_is_wrong => matched_expected += 1,
+        let verdict = run_test(&root, t);
+        if t.requires_entailment() {
+            // Outside the subset; reported only.
+            entailment += 1;
+            entailment_matched += usize::from(matches!(verdict, Verdict::Match | Verdict::MatchReference));
+            continue;
+        }
+        match verdict {
             Verdict::Match => matched += 1,
+            Verdict::MatchReference => matched_reference += 1,
             Verdict::Unsupported(msg) => {
                 unsupported += 1;
                 *reasons.entry(msg).or_default() += 1;
@@ -337,14 +357,17 @@ fn w3c_query_evaluation_tests_in_the_subset_match() {
             Verdict::Mismatch(why) => failures.push(format!("{}\n  {why}", t.id)),
         }
     }
-    let in_subset = matched + matched_expected + known_count + failures.len();
+    let in_subset = matched + matched_reference + known_count + failures.len();
     eprintln!(
-        "W3C query-evaluation tests: {} total, {in_subset} inside the baseline subset: {} match \
-         ({matched} vs spareval, {matched_expected} vs the W3C expected results where spareval is \
-         wrong), {known_count} known mismatches, {} unexpected mismatches; {unsupported} unsupported, \
+        "W3C query-evaluation tests: {} total; {entailment} require an entailment regime (outside \
+         the subset; {entailment_matched} of them still give the expected results under simple \
+         entailment); {in_subset} simple-entailment tests inside the baseline subset: {} match \
+         ({matched} the W3C expected results, {matched_reference} spareval where the expected \
+         results are unreadable), \
+         {known_count} known mismatches, {} unexpected mismatches; {unsupported} unsupported, \
          {skipped} skipped",
         tests.len(),
-        matched + matched_expected,
+        matched + matched_reference,
         failures.len()
     );
     let mut reasons: Vec<_> = reasons.into_iter().collect();

@@ -130,3 +130,14 @@ translating SPARQL to SQL text or running as an external client.
   528 pass + 8 lenient, same under Auto / PreferBind / PreferHash / no-reorder.
 - Disk: agents' cargo target dirs reached ~20 GB (the allowance filled up once); cleaned and added a
   one-target-dir + CARGO_INCREMENTAL=0 rule to the pipeline preamble.
+- WP8 optimizer (implement -> 2 review/fix rounds): interesting-order DP (best prefix per output order),
+  MergeJoin with galloping + SortBySlot enforcers, StarMerge post-pass (cost-gated), SqlJoin hybrid
+  (`main.rdf_quad AS tN INDEXED BY idx` + CROSS JOIN, constants as ?N params — every one of ~600
+  generated SqlJoins checked with EXPLAIN QUERY PLAN to run in exactly our alias order), exact
+  IntRange pushdown (exhaustive test: 4 ops x 17 constants x 4 shapes x 2 stores; off-by-one mutations
+  caught), factorized COUNT over merge joins (chain-2 COUNT = Count{MergeJoin(Gpos sorted ?b, Gpso
+  sorted ?b)}). Differential test in sq-plan: 1,000 random queries x 8 option sets x {MemStore,
+  SQLite} = 16,000 runs vs the oracle, 0 differences; 1,646 forced StarMerge rewrites all match.
+  Reviewers caught: SqlJoin chains not capped at SQLite's 64-table join limit; DP budget no longer
+  bounding work; union-default-graph cardinality explosions; StarMerge never chosen (cost per row
+  instead of per distinct key).
