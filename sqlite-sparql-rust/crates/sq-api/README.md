@@ -19,7 +19,8 @@ and a close hook so connections close fully. The same code runs in the loadable 
     \________\_______\________\__________\___________\__________\__________/
                                    |
                                  sq-api      rusqlite 0.40.2 ("functions", "vtab"; system libsqlite3),
-                                   |         spargebra, oxrdf, oxrdfio, oxsdatatypes, serde_json, rand
+                                   |         spargebra, oxrdf, oxrdfio, oxsdatatypes, serde_json,
+                                   |         rustc-hash, rand  (dev: sq-core with feature `testing`)
           +------------------------+---------------------------+
    ext/ (cdylib libsparqlite,   tools/sq-w3c (feature `sqlite`,   tools/sq-bench
    own workspace, rusqlite      default on: `--backend sqlite`)   (declared dependency;
@@ -43,17 +44,23 @@ closure and module holds a clone. It is single-threaded (`Rc`, `Cell`, `RefCell`
 debug builds assert at each entry that no second thread entered (rule R7). Borrows are O(1) and
 taken with `try_borrow*`; a violation is `Error::Reentrant`, never a deadlock (rule R1).
 
-**2. The entry protocol.** Every function that reads or writes the store, and every `xFilter`,
-goes through one of (`sparql_version`, `sparql_config` and `sparql_term_kind` need no entry;
-helpers running inside a baseline statement reuse that statement's entry):
+**2. The entry protocol.** Every function that reads or writes the store, and every
+`sparql_rows` / `sparql_view` `xFilter`, goes through one of the entries below (`sparql_version`,
+`sparql_config` and `sparql_term_kind` need no entry; helpers running inside a baseline statement
+reuse that statement's entry; `sparql_status`'s `xFilter` only copies counters):
 - `read_call(f)`: `enter()` (re-arm the pool, record depth), `store.read_scope(depth)`, `validate()`
   (the §4.4 epoch check; an absent schema reads as an empty store, an incompatible one fails),
   `f`, then `scope.close()` with its error reported.
 - `write_call(auto_init, f)`: refuses with `Error::WriteWhileReading` while a scan is open,
   runs `ensure_schema()` outside any scope when asked (loads and updates auto-initialize; analyze
-  and vacuum do not), opens the `WriteScope` *before* any read
-  (so `busy_timeout` applies to taking the write lock), validates, runs `f`, commits.
+  and vacuum do not), opens the `WriteScope` *before* any read inside it (the schema-state check
+  and auto-init run before it opens, outside any scope), so `busy_timeout` applies to
+  taking the write lock; then validates, runs `f`, commits.
 - `writer_call(f)`: for `sparql_init`, whose storage call manages its own scopes.
+
+`xNext` and `xColumn` read the store without an entry (the execution's next batch, decodes, the
+dictionary probe behind `id*` / `__id`): the snapshot comes from the host statement's read
+transaction, and nothing re-arms the pool or checks the epoch between rows.
 
 Inside a statement that writes (`INSERT INTO t SELECT sparql_update(...)`) SQLite refuses every
 `SAVEPOINT`. `write_call` then runs without a scope only if `host_statement_writes()` proves that
@@ -69,8 +76,9 @@ statement pool; its `Drop` (xDisconnect, which `sqlite3_close` runs before its b
 disarms the pool and finalizes idle statements, so the connection closes fully and the `-wal`
 file disappears. Each entry re-arms if the instance was disconnected.
 
-**4. Two engines behind `Run`** (`src/query.rs`). `Run::Native(Execution)` comes from
-`sq_engine::prepare`; `Run::Baseline(BaselineRun)` steps `sq_sqlgen::translate`'s SQL through
+**4. Two engines behind `Run`** (`src/query.rs`). `Run::Native(Box<Execution>)` comes from
+`sq_engine::prepare` (or, on the `sparql_view` pushdown path, from `sq_plan::optimize` +
+`Execution::new`); `Run::Baseline(Box<BaselineRun>)` steps `sq_sqlgen::translate`'s SQL through
 `SqliteStore::sql_rows` on the same connection. That SQL calls this crate's helper functions
 (`src/helpers.rs`) while this crate steps it, so the run pushes its `HelperCtx` (TempDict,
 value cache) onto `Baselines` around each step: TEMP ids flow between SQL and the helpers as
@@ -82,15 +90,16 @@ thread (`src/watchdog.rs`) that calls `sqlite3_interrupt`; no progress handler i
 **5. Streaming scans with late materialization** (`src/vtab/mod.rs`). A `Stream` pulls
 `BATCH_ROWS` (1024) ids per batch and decodes, in one batched call, only the columns that
 SQLite's `colUsed` mask says the statement reads (passed from `xBestIndex` to `xFilter` as hex in
-`idx_str`). `count(*)` and `id*` columns decode nothing; an unannounced column is decoded on
-demand. `id*` / `__id` hold the term's id in the store: a computed (TEMP) term that exists in the
-dictionary reports its stored id, otherwise NULL (one decode and one dictionary probe per TEMP
-cell read; stored ids cost nothing).
+`idx_str`). `count(*)` decodes nothing, and `id*` columns decode nothing for stored ids; an
+unannounced column is decoded on demand. `id*` / `__id` hold the term's id in the store: a
+computed (TEMP) term that exists in the dictionary reports its stored id, otherwise NULL (each
+TEMP cell read costs one decode plus one dictionary probe).
 
 **6. View pushdown** (`src/vtab/view.rs`). `xBestIndex` consumes `=` constraints on `__id`
 columns, on `__term` columns under BINARY collation only, and on the hidden `opts` column.
 `xFilter` resolves each value to an id and wraps the lowered query's root in a top-level
-`FILTER(sameTerm(?v, c) && ...)` before `sq_plan::optimize`, so the result equals the SQL filter
+`FILTER(sameTerm(?v, c) && ...)` before planning (`sq_plan::optimize` for the native engine, the
+`sq-sqlgen` translator for `engine=sql`), so the result equals the SQL filter
 applied to the view's rows (after LIMIT, unbound never matches). A value that can never equal
 the column (wrong type, non-canonical N-Triples spelling, an id naming no term) gives an empty
 scan; a well-formed term absent from the store becomes a TEMP constant.
@@ -131,14 +140,14 @@ so not callable from views, triggers or the schema):
 |---|---|---|---|
 | `sparql_version` | 0 | | TEXT |
 | `sparql_init` | 0 | D | schema version (idempotent) |
-| `sparql_load(data [, format [, base [, graph]]])` | 1-4 | D | new quads; data TEXT or BLOB; format default `turtle` |
-| `sparql_load_file(path [, format [, base [, graph]]])` | 1-4 | D | new quads; needs `allow_files`; format from extension, base = `file://` URL |
+| `sparql_load(data [, format [, base [, graph]]])` | 1-4 | D | new quads; data TEXT or BLOB; format (case-insensitive, default `turtle`): `turtle`/`ttl`, `ntriples`/`nt`, `nquads`/`nq`, `trig`, `rdfxml`/`xml`/`rdf`/`owl`, `n3`, `jsonld`/`json` |
+| `sparql_load_file(path [, format [, base [, graph]]])` | 1-4 | D | new quads; needs `allow_files`; format guessed from the file extension (same names), base = `file://` URL |
 | `sparql_update(update)` | 1 | D | inserted + deleted; `LOAD <file:...>` follows `allow_files` |
 | `sparql_analyze()` / `sparql_vacuum_terms()` | 0 | D | JSON summary / rows deleted |
 | `sparql_check()` | 0 | | `ok: ...` or `errors: ...` |
 | `sparql_config(key)` / `sparql_config(key, value)` | 1 / 2 | - / D | current / new value as TEXT |
 | `sparql_query(q [, format])` | 1-2 | | json (default)/xml/csv/tsv; graphs: ntriples (default)/nquads/turtle |
-| `sparql_ask`, `sparql_count`, `sparql_value` | 1 | | 0/1; count with no decode; native value |
+| `sparql_ask`, `sparql_count`, `sparql_value` | 1 | | 0/1; count with no decode; native value of the first row's first variable (ASK: 0/1; CONSTRUCT/DESCRIBE: the first triple's subject) |
 | `sparql_explain(q [, mode])` | 1-2 | | `algebra`, `logical`, `plan` (default), `analyze`, `sql`, `sqlplan` |
 | `sparql_query_sql`, `sparql_count_sql`, `sparql_to_sql` | 1-2, 1, 1 | | baseline engine regardless of `engine` |
 | `sparql_term`, `sparql_term_value`, `sparql_term_id`, `sparql_term_kind/_lex/_lang/_datatype` | 1 | | term accessors |
@@ -168,7 +177,8 @@ DESCRIBE give one row per triple with `vars` = `["subject","predicate","object"]
 16 variables read `json`. A NULL query gives no rows (like `json_each(NULL)`); without a query
 constraint `xBestIndex` returns `false` and SQLite reports "no query solution". `opts` is a JSON
 object of per-call keys. `sparql_view` declares the projected variables as value columns, then
-hidden `<v>__term`, `<v>__id` and `opts`; it accepts `key=value` arguments after the query and
+hidden `<v>__term`, `<v>__id` and `opts`; it accepts per-call `key=value` arguments (the same keys
+as `sparql_rows` opts; a connection setting such as `allow_files` is refused) after the query and
 fails at `CREATE` on non-SELECT queries and column-name clashes. Without `temp.` the definition
 persists in the schema; a connection without the extension fails only on that table.
 
@@ -182,6 +192,32 @@ keys (`schema_state`, `dict_gen`, `decode_*`, `pool_*`, `armed`, `btree_*`, ...)
 `sqlite_version`, `open_cursors`, `parsed_cache_entries/_hits/_misses`, `cursors_opened`,
 `rows_emitted`, `terms_decoded`, `last_op/_inserted/_deleted/_quads_read/_terms_new/_bulk/_ms`
 and `config.<key>` for the 12 documented keys; integer-looking values are returned as INTEGER.
+
+## Loading the extension
+
+`ext/` builds `libsparqlite.so`, whose entry point `sqlite3_sparqlite_init` calls
+`sq_api::register`. SQLite derives the entry-point name from the file name (`libsparqlite` →
+`sparqlite`), so a renamed file needs the entry point passed explicitly.
+
+```sh
+sqlite3 data.db '.load ./libsparqlite' "SELECT sparql_version()"
+sqlite3 data.db '.load ./renamed.so sqlite3_sparqlite_init' "SELECT sparql_version()"
+```
+
+```python
+conn = sqlite3.connect("data.db")
+conn.enable_load_extension(True)
+conn.load_extension("ext/target/release/libsparqlite")  # the .so suffix is optional
+```
+
+- The init returns `SQLITE_OK_LOAD_PERMANENTLY`: the library is never unloaded (a Rust cdylib
+  must not be `dlclose`d).
+- Registration is per connection: every pooled connection must load the extension (or, from
+  Rust, call `register`).
+- Never enable rusqlite's `bundled` or `modern_sqlite` features in any crate `ext/` depends on:
+  the bindings would no longer be the 3.34.1 loadable-extension ones and `extension_init2` aborts
+  the host. `ext/src/lib.rs` const-asserts `SQLITE_VERSION_NUMBER`, and `scripts/check.sh`
+  checks `ext/`'s feature tree.
 
 ## Testing
 
@@ -200,7 +236,7 @@ themselves.
 
 | Where | Covers |
 |---|---|
-| `src/**` unit tests (43) | config parsing and defaults, error codes, `guard`, LRU eviction, the nesting cost model (14), value mapping, watchdog, view schema and `idx_str`, entry re-arming and write refusal |
+| `src/**` unit tests (43) | config parsing and defaults, error codes, `guard`, LRU eviction, the nesting cost model (14), value mapping, watchdog, view schema and `idx_str`, entry re-arming and write refusal, debug-hook arming, RDF format names and `file://` URLs, helper id rules, result-format checks, `colUsed` bits, the parsed-query cache |
 | `tests/functions.rs` (19) | every scalar function, formats, `allow_files`, DIRECTONLY in triggers/views, result codes, the `HELPER_FUNCTIONS` contract, `sparql_count` decodes nothing |
 | `tests/rows.rs` (14) | `sparql_rows` columns, `colUsed` and decode counters, ASK/CONSTRUCT/20 variables, opts, 10,000-row streaming, correlation, write refusal while open |
 | `tests/view.rs` (5) | typed columns, `__term`/`__id` pushdown, LIMIT and computed values, options, persistent views |
@@ -209,10 +245,13 @@ themselves.
 | `tests/robustness.rs` (11) | interrupts, `timeout_ms`, `max_memory_mb`, panics in every entry point, nesting limit on a 2 MiB stack, close hook (WAL removed) |
 | `tests/review.rs` (10), `tests/review2.rs` (5) | regressions for the adversarial review findings |
 
-The built extension is tested from Python 3.45.1 (`py/tests`, 33 test functions; `conftest.py` reads
-`SPARQLITE_EXT` and sets `SPARQLITE_DEBUG_HOOKS=1` by default):
+The built extension is tested from Python's `sqlite3` module (Python 3.13, SQLite 3.45.1;
+`py/tests`, 33 test functions). `conftest.py` loads the path in `SPARQLITE_EXT` (default
+`ext/target/release/libsparqlite`) and sets `SPARQLITE_DEBUG_HOOKS=1` by default. Run from the
+workspace root, with `pytest` installed (`scripts/check.sh` installs it into its venv):
 
 ```sh
+EXT=/path/to/ext-target   # any target directory for the ext/ build
 CARGO_TARGET_DIR=$EXT cargo build --release --manifest-path ext/Cargo.toml
 SPARQLITE_EXT=$EXT/release/libsparqlite python -m pytest py/tests -q
 cargo run --release -p sq-w3c -- --suite <rdf-tests/sparql> --backend sqlite \
@@ -260,19 +299,29 @@ Measured on the project's 4-vCPU dev VM, SQLite 3.45.1, release builds (author n
 - `__term` matches only the exact canonical N-Triples text (`"x"@EN` does not match `"x"@en`), and
   `BNODE()` results cannot be matched through it. Value columns are never pushed down.
 - The `debug_panic` key is compiled into release builds; it is armed only in debug builds or when
-  `SPARQLITE_DEBUG_HOOKS=1` is set before the extension loads, and is absent from `config.*`.
+  `SPARQLITE_DEBUG_HOOKS=1` is in the environment when `register()` runs for that connection
+  (for the extension: when it is loaded into the connection), and is absent from `config.*`.
 - Plain-SQL writes to `rdf_quad` during an open scan are undefined; only sparqlite's own writers
   are refused while `open_cursors > 0`.
 
-**Deviations from docs/SPEC.md §8** (the code is current): `xFilter` is a full read entry and opens
-a savepoint when `main` has no transaction (a `temp.` view), releasing it before returning, instead
-of "nothing is opened" (§8.6); no scope is held between rows. `id*`/`__id` report the stored id of a
-computed term instead of NULL for every TEMP id (§8.3a). An absent `__term` value is a TEMP constant
-rather than "zero rows" (§8.3b). The watchdog uses a `Mutex` despite R1's "no Mutex" (it never
-guards connection state and is never held while a statement steps). `reader=auto` uses the B-tree
-reader when its preconditions hold (§8.5 says `sql` in v1), and `page_cache_mb` is an extra key.
+**Deviations from docs/SPEC.md §8 and §1.6** (the code is current): `xFilter` is a full read
+entry and opens a savepoint when `main` has no transaction (a `temp.` view), releasing it before
+returning, instead of "nothing is opened" (§8.6); no scope is held between rows. `id*`/`__id`
+report the stored id of a computed term instead of NULL for every TEMP id (§8.3a). An absent
+`__term` value is a TEMP constant rather than "zero rows" (§8.3b). The watchdog uses a `Mutex`
+despite R1's "no Mutex" (it never guards connection state and is never held while a statement
+steps). `reader=auto` uses the B-tree reader when its preconditions hold (§8.5 says `sql` in v1),
+and `page_cache_mb` is an extra key.
 `sparql_rows` opts also accept `probe_counts` / `probe_cap`. `sparql_term` also returns NULL for
 the ERROR sentinel, reserved tags and invalid inline ids, and errors on a dictionary id with no row.
+`sparql_value` also answers ASK (0/1) and CONSTRUCT / DESCRIBE (the first triple's subject); §8.2
+only defines the first projected variable of the first row. Outside the §1.6 SQLite API
+allow-list, the crate also calls `sqlite3_next_stmt`, `sqlite3_stmt_busy` and
+`sqlite3_stmt_readonly` (`host_statement_writes`) and `sqlite3_vtab_collation` (through
+`IndexInfo::collation` in `sparql_view`'s `xBestIndex`); all four exist in libsqlite3-sys's
+`bindgen_3.34.1_ext` bindings. Any new FFI call must exist in those 3.34.1 loadable-extension
+bindings too, or the `ext/` build fails; `scripts/check.sh` only greps for the known forbidden
+names.
 
 ## Further reading
 
