@@ -141,3 +141,12 @@ translating SPARQL to SQL text or running as an external client.
   Reviewers caught: SqlJoin chains not capped at SQLite's 64-table join limit; DP budget no longer
   bounding work; union-default-graph cardinality explosions; StarMerge never chosen (cost per row
   instead of per distinct key).
+- sq-sqlgen baseline (implement -> 2 review/fix rounds): one SQL statement per query over the same
+  storage; inline-int fast paths, LEFT JOIN with nullable compatibility, NOT EXISTS for MINUS,
+  correlated EXISTS with substitution semantics, WITH RECURSIVE for p+/p*, window functions for
+  DISTINCT+ORDER BY, helper UDFs (sparql_num/str/ebv/sortkey/regex/eval + aggregate helpers) backed by
+  sq-expr. W3C: 579 of 613 query-evaluation tests inside its subset, 578 match (the 1 is the shared
+  spargebra parser quirk). All 17 benchmark queries supported. A seeded fuzzer vs spareval (150K
+  queries exploratory) found real bugs (GROUP BY on never-bound keys, OPTIONAL with constant right side);
+  reviewers found zero-length-path / GRAPH membership bugs, float promotion in truth-only comparisons,
+  exponential SQL growth when a BIND variable is referenced repeatedly.

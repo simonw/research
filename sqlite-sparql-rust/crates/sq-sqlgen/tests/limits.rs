@@ -209,6 +209,30 @@ const FAMILIES: &[Family] = &[
         accepted_up_to: 600,
     },
     Family {
+        name: "BIND chain, each read twice",
+        make: |n| {
+            let mut p = "?s :rank ?v0".to_owned();
+            for i in 1..=n {
+                p.push_str(&format!(" BIND(COALESCE(?v{0}, ?v{0}) AS ?v{i})", i - 1));
+            }
+            format!("SELECT ?s ?v{n} WHERE {{ {p} FILTER(?v{n} > 1) }} ORDER BY ?v{n}")
+        },
+        sizes: DEPTHS,
+        accepted_up_to: 10,
+    },
+    Family {
+        name: "nested IN, computed operand",
+        make: |n| {
+            let mut e = "?r".to_owned();
+            for _ in 0..n {
+                e = format!("(COALESCE({e}, 0) IN (?r, 1, 2.5, \"x\"))");
+            }
+            format!("SELECT ?s WHERE {{ ?s :rank ?r FILTER({e}) }}")
+        },
+        sizes: DEPTHS,
+        accepted_up_to: 2,
+    },
+    Family {
         name: "wide CONCAT",
         make: |n| format!("SELECT ?v WHERE {{ :a :rank ?r BIND(CONCAT({}) AS ?v) }}", vec!["STR(?r)"; n].join(", ")),
         sizes: &[2, 126, 127, 200],

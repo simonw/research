@@ -502,7 +502,11 @@ impl Translator<'_> {
         }
         for item in rest {
             // A constant `a` keeps the constant on the right, where the fast paths are.
-            terms.push(if matches!(a, Expr::Const(_)) { self.equal(a, item, v, ctx)? } else { self.equal_to(x, item, v, ctx)? });
+            let term = match a {
+                Expr::Const(_) => self.equal(a, item, v, ctx)?,
+                _ => self.equal_to(x, item, v, ctx)?,
+            };
+            terms.push(term);
         }
         Ok(or_all(&terms))
     }

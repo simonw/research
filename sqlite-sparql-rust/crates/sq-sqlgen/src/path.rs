@@ -6,7 +6,8 @@
 //!   when there is one (forward from the subject, else backward from the object);
 //! * `p*`, `p?` add the zero-length pairs: a constant endpoint matches itself even when it is
 //!   absent from the graph; with both endpoints free every node (subject or object) of the
-//!   active graph matches itself.
+//!   active graph matches itself. `x+` has them too when `x` does (its first step is a pair
+//!   of `x`): `(p*)+`, `(p?)+` ([`zero_length`]).
 //!
 //! Inside EXISTS an endpoint substituted by the enclosing row is treated as a constant
 //! (correlated reference), as the spec's substitution semantics require.

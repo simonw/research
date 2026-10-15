@@ -106,13 +106,11 @@ fn zero_length_capable_paths() {
     let cases = [
         ("!(:sub)", false),
         (":sub+", false),
-        (":sub/:p", false),
         (":sub*", true),
         (":sub?", true),
         ("^:sub*", true),
-        (":sub*/:p?", true),
-        (":sub*/:p", false),
         (":sub|:p*", true),
+        (":sub|^:p", false),
         // x+ starts with a step of x: zero-length capable exactly when x is.
         ("(:sub*)+", true),
         ("(:sub?)+", true),

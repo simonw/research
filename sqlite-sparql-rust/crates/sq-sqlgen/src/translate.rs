@@ -217,7 +217,6 @@ impl<'q> Translator<'q> {
             QueryForm::Construct(_) => return Err(unsupported("CONSTRUCT queries")),
             QueryForm::Describe(_) => return Err(unsupported("DESCRIBE queries")),
         };
-        limits::check_size(sql.len())?;
         let (sql, params) = self.params.finish(&sql);
         limits::check_params(params.len())?;
         limits::check(&sql)?;
@@ -394,7 +393,10 @@ impl<'q> Translator<'q> {
     /// computed: the value is then computed once per row and read by column (see [`Col`]).
     /// Called before anything reads a block's bindings (an expression, a join condition).
     pub(crate) fn settle(&mut self, b: Block, reads: impl Fn(Slot) -> bool, env: &Env) -> Block {
-        if !b.empty && b.cols.iter().any(|(s, c)| c.computed && reads(*s)) { self.derive_block(b, true, env) } else { b }
+        if b.empty || !b.cols.iter().any(|(s, c)| c.computed && reads(*s)) {
+            return b;
+        }
+        self.derive_block(b, true, env)
     }
 
     /// Keeps a block that is about to receive `more` tables within [`MAX_TABLES`] by turning
@@ -620,7 +622,7 @@ impl<'q> Translator<'q> {
         &mut self,
         left: &Logical,
         right: &Logical,
-        filter: Option<&sq_core::ir::Expr>,
+        filter: Option<&Expr>,
         env: &Env,
     ) -> Result<Block> {
         let lb = self.block(left, env)?;
@@ -896,7 +898,8 @@ impl<'q> Translator<'q> {
         }
         let q = self.q;
         let reads = |s: Slot| {
-            keys.contains(&s) || aggs.iter().any(|(_, a)| a.arg.as_ref().is_some_and(|e| expr_mentions(e, s, &q.exists)))
+            keys.contains(&s)
+                || aggs.iter().any(|(_, a)| a.arg.as_ref().is_some_and(|e| expr_mentions(e, s, &q.exists)))
         };
         let mut b = self.settle(b, reads, env);
         if aggs.iter().any(|(_, a)| a.func == AggFunc::CountAll && a.distinct) {

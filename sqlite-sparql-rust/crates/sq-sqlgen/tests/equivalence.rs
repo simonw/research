@@ -213,7 +213,8 @@ const QUERIES: &[&str] = &[
     "SELECT ?s WHERE { ?s :age ?a FILTER EXISTS { BIND(?a AS ?a2) BIND(?a2 + 1 AS ?x) FILTER(?x > 30) } }",
     "SELECT (SUM(?b) AS ?t) (MAX(?b) AS ?m) (COUNT(DISTINCT ?b) AS ?c) WHERE { ?s :age ?a BIND(?a * 2 AS ?b) }",
     "SELECT ?k (COUNT(*) AS ?c) WHERE { ?s :age ?a BIND(?a > 30 AS ?k) } GROUP BY ?k",
-    "SELECT ?s ?b WHERE { { ?s :age ?a BIND(?a * 2 AS ?b) } UNION { ?s :height ?h BIND(?h + 1 AS ?b) } FILTER(?b > 3) }",
+    "SELECT ?s ?b WHERE { { ?s :age ?a BIND(?a * 2 AS ?b) } UNION { ?s :height ?h BIND(?h + 1 AS ?b) } \
+     FILTER(?b > 3) }",
     "SELECT ?s ?b WHERE { { SELECT ?s (?a * 2 AS ?b) WHERE { ?s :age ?a } } FILTER(?b > 55 || ?b < 20) }",
     "SELECT DISTINCT ?b WHERE { ?s :age ?a BIND(?a - ?a AS ?b) } ORDER BY ?b",
     "SELECT ?s ?b WHERE { ?s :age ?a BIND(?a * 3 AS ?b) } ORDER BY ?b LIMIT 2",

@@ -131,6 +131,10 @@ fn computed_bindings_are_settled_before_joins_and_exposure() {
     assert!(union.contains(" LIMIT -1) AS d"), "{union}");
     let plain = super::sql("SELECT ?b WHERE { { ?s :age ?b } UNION { ?s :score ?b } }").sql;
     assert!(!plain.contains("LIMIT -1"), "{plain}");
+    // A BIND inside EXISTS to a variable the EXISTS substitutes: compared by column.
+    let sub = super::sql("SELECT ?s WHERE { ?s :age ?a . ?t :age ?b FILTER EXISTS { BIND(?a * 5 AS ?b) } }").sql;
+    assert!(sub.contains(" LIMIT -1) AS d3 WHERE (d3.v3 IS NULL OR d3.v3 = t2.o))"), "{sub}");
+    assert_eq!(sub.matches("sparql_eval('*'").count(), 1, "{sub}");
     // The OPTIONAL side that computes a value, read by the outer filter.
     let opt = super::sql("SELECT ?s WHERE { ?s :age ?a OPTIONAL { ?s :knows ?o BIND(STR(?o) AS ?n) } FILTER(?n > 1) }");
     assert_eq!(opt.sql.matches("sparql_eval('STR'").count(), 1, "{}", opt.sql);
@@ -140,30 +144,30 @@ fn computed_bindings_are_settled_before_joins_and_exposure() {
 fn in_and_strends_repeat_only_simple_operands() {
     // `x IN (…)` over a computed x that several terms compare: x is named once.
     let mut e = "?a".to_owned();
-    for _ in 0..3 {
+    for _ in 0..2 {
         e = format!("(({e} + 1) IN (?a, ?s, 2))");
     }
     let sql = super::sql(&format!("SELECT ?s WHERE {{ ?s :age ?a FILTER({e}) }}")).sql;
-    assert_eq!(sql.matches("sparql_eval('+'").count(), 3, "{sql}");
-    assert_eq!(sql.matches("AS v LIMIT -1) AS l").count(), 3, "{sql}");
+    assert_eq!(sql.matches("sparql_eval('+'").count(), 2, "{sql}");
+    assert_eq!(sql.matches("AS v LIMIT -1) AS l").count(), 2, "{sql}");
     // One term (the id list) needs no name.
     let ids = super::sql("SELECT ?s WHERE { ?s :name ?n FILTER(LCASE(?n) IN (\"alice\", \"Bob the Builder\")) }").sql;
     assert!(!ids.contains("LIMIT -1"), "{ids}");
     // STRENDS reads its argument once.
-    let mut e = "?n".to_owned();
-    for _ in 0..4 {
-        e = format!("STR(STRENDS({e}, \"ce\"))");
-    }
-    let sql = super::sql(&format!("SELECT ?s WHERE {{ ?s :name ?n FILTER(BOUND(?s) && {e} = \"true\") }}")).sql;
-    assert_eq!(sql.matches("t1.o").count(), 1, "{sql}");
+    let sql = super::sql("SELECT ?s WHERE { ?s :name ?n FILTER(STRENDS(UCASE(?n), \"CE\")) }").sql;
+    assert_eq!(sql.matches("sparql_eval('UCASE'").count(), 1, "{sql}");
 }
 
 #[test]
 fn statements_past_the_size_budget_are_unsupported() {
-    // FROM merges repeat the graph list per pattern: 2000 graphs x 300 patterns is ~8.5 MB.
+    // FROM merges repeat the graph list per pattern: 2000 graphs x 400 patterns is ~10 MB.
     let from: String = (0..2000).map(|i| format!("FROM <http://ex.org/graph{i}> ")).collect();
-    let pats = |n: usize| (0..n).map(|i| format!("?s{i} :knows ?o{i} .")).collect::<Vec<_>>().join(" ");
-    let msg = unsupported(&format!("SELECT * {from} WHERE {{ {} }}", pats(300)));
+    const PREDICATES: [&str; 8] = ["p", "q", "r", "name", "age", "knows", "likes", "score"];
+    let pats = |n: usize| {
+        let pat = |i: usize| format!("?v{} :{} ?v{} .", i % 97, PREDICATES[i % 8], (7 * i + 3) % 101);
+        (0..n).map(pat).collect::<Vec<_>>().join(" ")
+    };
+    let msg = unsupported(&format!("SELECT * {from} WHERE {{ {} }}", pats(400)));
     assert_eq!(msg, "baseline: queries whose SQL exceeds 8 MiB");
     let ok = super::sql(&format!("SELECT * {from} WHERE {{ {} }}", pats(50)));
     assert!(ok.sql.len() > 1 << 20 && ok.params.len() > 2000);

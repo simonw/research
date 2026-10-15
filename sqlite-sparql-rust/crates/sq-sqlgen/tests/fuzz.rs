@@ -80,6 +80,9 @@ struct Gen {
     rng: Rng,
     /// Fresh BIND targets.
     next_var: usize,
+    /// The BIND targets of the current sub-select level so far: expressions read them too, so
+    /// computed values reach FILTERs, other BINDs, OPTIONAL conditions and EXISTS.
+    binds: Vec<String>,
     /// The variables patterns use (`VARS`, or `INNER_VARS` inside a sub-select).
     vars: &'static [&'static str],
     /// Sub-select nesting depth.
@@ -108,6 +111,16 @@ impl Gen {
         self.rng.pick(self.vars)
     }
 
+    /// A variable an expression reads: sometimes a BIND target.
+    fn expr_var(&mut self) -> String {
+        if !self.binds.is_empty() && self.rng.chance(30) {
+            let i = self.rng.below(self.binds.len());
+            self.binds[i].clone()
+        } else {
+            self.var().to_owned()
+        }
+    }
+
     fn triple(&mut self) -> String {
         format!("{} {} {} .", self.term(0), self.term(1), self.term(2))
     }
@@ -134,14 +147,14 @@ impl Gen {
     fn operand(&mut self) -> String {
         match self.rng.below(6) {
             0 => self.rng.pick(&["0", "1", "2", "1.5", "\"a\"", ":s1"]).to_owned(),
-            1 => format!("({} + 1)", self.var()),
-            2 => format!("COALESCE({}, 0)", self.var()),
-            _ => self.var().to_owned(),
+            1 => format!("({} + 1)", self.expr_var()),
+            2 => format!("COALESCE({}, 0)", self.expr_var()),
+            _ => self.expr_var(),
         }
     }
 
     fn expr(&mut self, depth: usize) -> String {
-        let v = self.var();
+        let v = self.expr_var();
         match self.rng.below(if depth == 0 { 9 } else { 13 }) {
             0 => format!("BOUND({v})"),
             1 => format!("{} = {}", self.operand(), self.operand()),
@@ -153,7 +166,7 @@ impl Gen {
             4 => format!("{}({v})", self.rng.pick(&["isIRI", "isLiteral", "isBlank", "isNumeric"])),
             5 => format!("{v} IN ({}, {})", self.operand(), self.operand()),
             6 => format!("REGEX(STR({v}), \"{}\")", self.rng.pick(&["s1", "^a", "1$"])),
-            7 => format!("sameTerm({v}, {})", self.var()),
+            7 => format!("sameTerm({v}, {})", self.expr_var()),
             8 if self.rng.chance(50) => {
                 format!("{v} {} {}", self.rng.pick(&["<=", ">="]), self.rng.pick(&["0", "1", "2", "1.5", "\"a\""]))
             }
@@ -188,11 +201,13 @@ impl Gen {
                 self.next_var += 1;
                 let n = self.next_var;
                 let e = match self.rng.below(3) {
-                    0 => format!("{} + 1", self.var()),
-                    1 => format!("STR({})", self.var()),
-                    _ => format!("COALESCE({}, {})", self.var(), self.var()),
+                    0 => format!("{} + 1", self.expr_var()),
+                    1 => format!("STR({})", self.expr_var()),
+                    _ => format!("COALESCE({}, {})", self.expr_var(), self.expr_var()),
                 };
-                format!("{} BIND({e} AS ?x{n})", self.pattern(d, in_exists))
+                let text = format!("{} BIND({e} AS ?x{n})", self.pattern(d, in_exists));
+                self.binds.push(format!("?x{n}"));
+                text
             }
             9 => {
                 let v = self.var();
@@ -218,16 +233,19 @@ impl Gen {
                 let distinct = if self.rng.chance(40) { "DISTINCT " } else { "" };
                 let level = INNER_VARS[self.sub_depth.min(INNER_VARS.len() - 1)];
                 let outer = std::mem::replace(&mut self.vars, level);
+                let outer_binds = std::mem::take(&mut self.binds);
                 self.sub_depth += 1;
                 let body = self.pattern(d, in_exists);
                 self.sub_depth -= 1;
                 self.vars = outer;
+                self.binds = outer_binds;
                 format!("{{ SELECT {distinct}?a WHERE {{ {body} }} }}")
             }
         }
     }
 
     fn query(&mut self) -> String {
+        self.binds.clear();
         let depth = 1 + self.rng.below(3);
         let body = self.pattern(depth, false);
         let prefix = "PREFIX : <http://ex.org/> ";
@@ -267,7 +285,7 @@ fn baseline_rows(engine: &Engine, q: &str) -> Option<Vec<Vec<Option<oxrdf::Term>
 fn run(seed: u64, queries: usize) -> (usize, Vec<String>) {
     let mut rng = Rng(seed);
     let engine = Engine::new(&[DataFile::trig(&data(&mut rng))]).unwrap();
-    let mut generator = Gen { rng, next_var: 0, vars: VARS, sub_depth: 0, in_graph: false };
+    let mut generator = Gen { rng, next_var: 0, binds: Vec::new(), vars: VARS, sub_depth: 0, in_graph: false };
     let mut supported = 0;
     let mut failures = Vec::new();
     for i in 0..queries {

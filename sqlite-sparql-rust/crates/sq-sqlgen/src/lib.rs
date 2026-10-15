@@ -13,7 +13,9 @@
 //!   values;
 //! * OPTIONAL → `LEFT JOIN … ON <compat> AND <filter>`; UNION → `UNION ALL` with NULL padding;
 //!   MINUS → `NOT EXISTS` with the shared-domain condition; `[NOT] EXISTS` → correlated
-//!   `[NOT] EXISTS`; VALUES → constants or a `VALUES` derived table; BIND → helper calls;
+//!   `[NOT] EXISTS`; VALUES → constants or a `VALUES` derived table; BIND → helper calls,
+//!   evaluated once per row (a value something reads is computed in an opaque derived table
+//!   and read by column, so its SQL appears once whatever the number of references);
 //! * GROUP BY → SQL `GROUP BY` with COUNT in SQL and the other aggregates as helper
 //!   aggregates; DISTINCT, ORDER BY `sparql_sortkey(id)`, LIMIT / OFFSET;
 //! * property paths → derived tables, closures as `WITH RECURSIVE … UNION`;
@@ -22,7 +24,9 @@
 //!
 //! Every accepted statement prepares on the host's SQLite 3.45: joins stay within 64 tables,
 //! compound SELECTs within 500 terms, AND / OR lists are balanced, and a final check of the
-//! parser-stack depth and the other compile-time limits (`limits`) rejects what remains.
+//! parser-stack depth, the parameter count and the other compile-time limits (`limits`)
+//! rejects what remains. Statements are also kept under 8 MiB, checked pattern by pattern as
+//! they are built.
 //!
 //! Anything outside that subset is `Error::Unsupported("baseline: …")`. The helper functions
 //! the SQL calls, and their exact semantics, are listed in [`helpers`].
