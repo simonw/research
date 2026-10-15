@@ -130,7 +130,7 @@ impl Sort {
                 break;
             }
         }
-        self.input.close(cx);
+        self.input.reset(cx);
         let n = self.rows.len();
         let rows = &self.rows;
         cx.charge(&mut self.charge, n * 16)?;
@@ -182,6 +182,15 @@ impl Sort {
     }
 }
 
+impl Sort {
+    /// Frees the materialized rows.
+    fn release_rows(&mut self, cx: &ExecCtx) {
+        self.rows.reset();
+        self.perm = Vec::new();
+        cx.release(&mut self.charge);
+    }
+}
+
 impl Operator for Sort {
     fn open(&mut self, cx: &mut ExecCtx, seed: Option<Seed<'_>>) -> Result<()> {
         self.seed.set(seed);
@@ -207,14 +216,17 @@ impl Operator for Sort {
         Ok(false)
     }
 
-    fn fast_count(&mut self, cx: &mut ExecCtx) -> Option<Result<u64>> {
-        if self.built { None } else { self.input.fast_count(cx) }
+    fn fast_count(&mut self, cx: &mut ExecCtx, cap: Option<u64>) -> Option<Result<u64>> {
+        if self.built { None } else { self.input.fast_count(cx, cap) }
+    }
+
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.release_rows(cx);
+        self.input.reset(cx)
     }
 
     fn close(&mut self, cx: &mut ExecCtx) {
-        self.rows.reset();
-        self.perm = Vec::new();
-        cx.release(&mut self.charge);
+        self.release_rows(cx);
         self.input.close(cx)
     }
 }
@@ -257,13 +269,22 @@ impl SortBySlot {
                 break;
             }
         }
-        self.input.close(cx);
+        self.input.reset(cx);
         let k = self.key as usize;
         let rows = &self.rows;
         cx.charge(&mut self.charge, rows.len() * 16)?;
         self.perm = sorted_perm((0..rows.len()).map(|i| rows.row(i)[k]));
         self.built = true;
         Ok(())
+    }
+}
+
+impl SortBySlot {
+    /// Frees the materialized rows.
+    fn release_rows(&mut self, cx: &ExecCtx) {
+        self.rows.reset();
+        self.perm = Vec::new();
+        cx.release(&mut self.charge);
     }
 }
 
@@ -292,8 +313,8 @@ impl Operator for SortBySlot {
         Ok(false)
     }
 
-    fn fast_count(&mut self, cx: &mut ExecCtx) -> Option<Result<u64>> {
-        if self.built { None } else { self.input.fast_count(cx) }
+    fn fast_count(&mut self, cx: &mut ExecCtx, cap: Option<u64>) -> Option<Result<u64>> {
+        if self.built { None } else { self.input.fast_count(cx, cap) }
     }
 
     /// Binary search in the sorted buffer (merge-join galloping over an enforcer).
@@ -310,10 +331,13 @@ impl Operator for SortBySlot {
         Ok(true)
     }
 
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.release_rows(cx);
+        self.input.reset(cx)
+    }
+
     fn close(&mut self, cx: &mut ExecCtx) {
-        self.rows.reset();
-        self.perm = Vec::new();
-        cx.release(&mut self.charge);
+        self.release_rows(cx);
         self.input.close(cx)
     }
 }
@@ -470,12 +494,22 @@ impl TopK {
                 break;
             }
         }
-        self.input.close(cx);
+        self.input.reset(cx);
         let mut order: Vec<usize> = (0..self.heap.len()).collect();
         order.sort_by(|a, b| self.cmp(&self.heap[*a], &self.heap[*b]));
         self.out_order = order.into_iter().map(|i| self.heap[i].row).collect();
         self.built = true;
         Ok(())
+    }
+}
+
+impl TopK {
+    /// Frees the materialized rows.
+    fn release_rows(&mut self, cx: &ExecCtx) {
+        self.rows.reset();
+        self.heap = Vec::new();
+        self.out_order = Vec::new();
+        cx.release(&mut self.charge);
     }
 }
 
@@ -510,11 +544,13 @@ impl Operator for TopK {
         Ok(false)
     }
 
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.release_rows(cx);
+        self.input.reset(cx)
+    }
+
     fn close(&mut self, cx: &mut ExecCtx) {
-        self.rows.reset();
-        self.heap = Vec::new();
-        self.out_order = Vec::new();
-        cx.release(&mut self.charge);
+        self.release_rows(cx);
         self.input.close(cx)
     }
 }

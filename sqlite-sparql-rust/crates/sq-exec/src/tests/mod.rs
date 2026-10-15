@@ -27,6 +27,8 @@ mod limits;
 mod modifiers;
 mod paths;
 mod prop;
+mod review;
+mod review_exec;
 mod scan;
 mod seeds;
 
@@ -361,6 +363,8 @@ pub struct TestStore {
     pub polls: Cell<u64>,
     pub cursors: Cell<u64>,
     pub counts: Cell<u64>,
+    /// `count` calls without a cap (exact counts of a whole range).
+    pub uncapped: Cell<u64>,
     pub sql: Option<(usize, Vec<TermId>)>,
 }
 
@@ -372,6 +376,7 @@ impl TestStore {
             polls: Cell::new(0),
             cursors: Cell::new(0),
             counts: Cell::new(0),
+            uncapped: Cell::new(0),
             sql: None,
         }
     }
@@ -412,6 +417,9 @@ impl QuadStore for TestStore {
     }
     fn count(&self, spec: &ScanSpec, cap: Option<u64>) -> Result<u64> {
         self.counts.set(self.counts.get() + 1);
+        if cap.is_none() {
+            self.uncapped.set(self.uncapped.get() + 1);
+        }
         self.inner.count(spec, cap)
     }
     fn dict(&self) -> &dyn Dictionary {

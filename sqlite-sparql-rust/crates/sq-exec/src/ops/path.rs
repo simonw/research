@@ -1,32 +1,45 @@
 //! Property paths (§5.5): `Op::Path { g, s, path, o }`.
 //!
-//! A path is evaluated by `step(path, dir, starts) -> (start, end) pairs` over sorted,
-//! deduplicated start sets:
+//! A path is evaluated by `step(path, dir, starts, ends) -> (start, end) pairs` over sorted,
+//! deduplicated start sets, following SPARQL 1.1 §18.4 literally:
 //! * `Pred(p)`: a probe per start (forward GSPO `(g,s,p)`, backward GPOS `(g,p,o)`), or one
 //!   scan of all p edges semi-joined with the starts when that is cheaper
-//!   (`|starts| * seek_sorted > |edges(p)| * scan_row`);
-//! * `Inv` flips the direction, `Seq` composes, `Alt` concatenates (bag semantics);
-//! * `Nps(set)` scans `(g,s)` (backward `(g,o)`) and drops predicates in the set;
-//! * `*`, `+`: multi-source BFS by level with a visited set of (start, node) pairs, so it
-//!   terminates on cycles and has set semantics per (start, end); `?` likewise.
+//!   (`|starts| * seek_sorted > |edges(p)| * scan_row`), decided with a count of the p edges
+//!   capped at the break-even point and remembered per graph for the whole execution;
+//! * `Nps(set)` scans `(g,s)` (backward `(g,o)`), drops predicates in the set and yields a SET
+//!   of pairs per start ("there exists a triple x p y with p not in the set");
+//! * `Inv` flips the direction; `Alt` is a bag union (`!(a|^b)` = `Alt(Nps, Inv(Nps))` counts a
+//!   self-loop found both ways twice);
+//! * `Seq` is a join on a fresh middle variable, duplicates kept (see below);
+//! * `*`, `+`: multi-source BFS by level with a visited set of (start, node) pairs (ALP), so it
+//!   terminates on cycles and has set semantics per (start, end); `?` is a set too.
+//!
+//! Zero-length rules. A constant (or Substitute-mode seeded) endpoint matches itself even when
+//! it is absent from the graph; any other value bound by a zero-length step must be a node of
+//! the active graph (it occurs as a subject or object there), except that it also matches a
+//! constant at the other end:
+//! * a Join-mode seeded endpoint must satisfy `has_node`, so a seeded evaluation equals the
+//!   free one filtered by the seed;
+//! * both endpoints free: every node of the active graph (loose index scans of the distinct
+//!   subjects on GSPO and objects on GOSP); `?x p* ?x` binds every node, `?x p+ ?x` needs a
+//!   cycle;
+//! * the middle of a sequence is such a variable: expanding the second operand from a middle
+//!   `m`, a zero-length step matches iff `has_node(m)` when its other end is free, and iff
+//!   that end is a constant equal to `m` otherwise. So `:zz (:p?/:q?) ?y` is empty when `:zz`
+//!   is not a node, while `:zz :p?/:q? :zz` holds (each operand binds the middle to `:zz` from
+//!   its own constant endpoint). Steps therefore carry the binding of their starts ([`Kind`])
+//!   and the constant far end, if any ([`Ends`]).
 //!
 //! Endpoints: a bound subject evaluates forward, a bound object backward over the inverse;
 //! when both are bound the path runs from a constant side (forward by default, with early exit
 //! for `*` / `+`) and keeps the pairs ending on the other value; with both free, one BFS per
 //! start candidate (the possible first-step subjects; every node of the graph when the path
-//! can be zero-length). Zero-length rules:
-//! * a constant (or Substitute-mode seeded) endpoint matches itself even when it is absent
-//!   from the graph;
-//! * a Join-mode seeded endpoint must satisfy `has_node` (it occurs as a subject or object in
-//!   the active graph), so a seeded evaluation equals the free one filtered by the seed;
-//! * both endpoints free: every node of the active graph (loose index scans of the distinct
-//!   subjects on GSPO and objects on GOSP); `?x p* ?x` binds every node, `?x p+ ?x` needs a
-//!   cycle.
+//! can be zero-length).
 //!
 //! Paths never cross graphs: the edge scans read the default graph (merged when it has several
 //! graphs), the GraphLoop register (`Active`), a constant graph, or — for `GraphSel::Slot` —
 //! each named graph in turn, pushed on the register by this operator.
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use sq_core::ir::{GraphSel, PatTerm, PathPlan, QuadPat};
 use sq_core::store::IndexOrder;
 use sq_core::{BATCH_ROWS, Batch, Error, Result, Slot, SlotSet, TermId};
@@ -43,6 +56,8 @@ const O: Slot = 1;
 const P: Slot = 2;
 /// Start candidates evaluated per step when both endpoints are free.
 const CHUNK_STARTS: usize = 256;
+/// Steps from at most this many starts always probe.
+const PROBE_ALWAYS: usize = 64;
 /// Bytes charged per (start, end) pair held and per visited entry.
 const PAIR_BYTES: usize = 16;
 const VISITED_BYTES: usize = 24;
@@ -80,8 +95,55 @@ struct PredScans {
     by_s: Scan,
     /// (g, p) -> o, s: the p edges in object order.
     by_o: Scan,
-    /// |edges(p)| for the register value it was counted under (None: not countable).
-    edges: Option<(TermId, Option<u64>)>,
+    /// What the capped counts found out about |edges(p)|, per register value (the graph of
+    /// `GraphSel::Active`; UNBOUND otherwise). The store does not change during an execution,
+    /// so this survives `reset` and `close` (EXISTS patterns are re-opened per outer row).
+    edges: FxHashMap<TermId, EdgeCount>,
+}
+
+/// What is known about the number of edges of a predicate in one graph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EdgeCount {
+    /// The scan cannot be counted without reading it (a merged default graph): always probe.
+    Unknown,
+    Exact(u64),
+    /// More than this many edges.
+    Over(u64),
+}
+
+impl PredScans {
+    /// Is one scan of every p edge, semi-joined with `starts` start nodes, cheaper than a
+    /// probe per start (`|edges(p)| * scan_row < |starts| * seek_sorted`, §5.5)? Only the
+    /// break-even point matters, so the edges are counted with that cap (§7.4: runtime counts
+    /// are bounded), and a count is only repeated for a larger cap than a previous one.
+    fn scan_all(&mut self, cx: &mut ExecCtx, env: &Env, starts: usize) -> Result<bool> {
+        if starts <= PROBE_ALWAYS {
+            return Ok(false);
+        }
+        // The largest edge count for which the scan wins: n < starts * seek_sorted / scan_row.
+        let break_even = starts as f64 * env.seek_sorted / env.scan_row;
+        let max = break_even.ceil() - 1.0;
+        if max.is_nan() || max < 0.0 {
+            return Ok(false);
+        }
+        let max = if max >= u64::MAX as f64 { u64::MAX - 1 } else { max as u64 };
+        let reg = cx.active_graph().unwrap_or(TermId::UNBOUND);
+        match self.edges.get(&reg) {
+            Some(EdgeCount::Unknown) => return Ok(false),
+            Some(EdgeCount::Exact(n)) => return Ok(*n <= max),
+            Some(EdgeCount::Over(n)) if *n >= max => return Ok(false),
+            _ => {}
+        }
+        // A capped count gives min(|edges(p)|, max + 1).
+        self.by_s.open(cx, None)?;
+        let known = match self.by_s.fast_count(cx, Some(max)).transpose()? {
+            None => EdgeCount::Unknown,
+            Some(n) if n <= max => EdgeCount::Exact(n),
+            Some(_) => EdgeCount::Over(max),
+        };
+        self.edges.insert(reg, known);
+        Ok(matches!(known, EdgeCount::Exact(_)))
+    }
 }
 
 /// The edge scans of a negated property set.
@@ -116,7 +178,7 @@ impl CPath {
                     bwd: Scan::internal(pat(g, pt), b(false, true, true), PW),
                     by_s: Scan::internal(pat(g, pt), IndexOrder::Gpso, PW),
                     by_o: Scan::internal(pat(g, pt), IndexOrder::Gpos, PW),
-                    edges: None,
+                    edges: FxHashMap::default(),
                 }))
             }
             PathPlan::Inv(q) => CPath::Inv(Box::new(CPath::new(q, g))),
@@ -150,6 +212,20 @@ impl CPath {
         }
     }
 
+    /// Number of zero-length solutions binding a value that is not a graph node to itself,
+    /// with one endpoint that constant and the other a free variable (either way round: the
+    /// count is the same in both directions). A sequence has none, since its middle would have
+    /// to be a graph node; `|` adds (a bag union); `?`, `*`, `+` are sets.
+    fn absent_zero(&self) -> usize {
+        match self {
+            CPath::Pred(_) | CPath::Nps(_) | CPath::Seq(..) => 0,
+            CPath::Star(_) | CPath::Opt(_) => 1,
+            CPath::Inv(q) => q.absent_zero(),
+            CPath::Plus(q) => q.absent_zero().min(1),
+            CPath::Alt(a, b) => a.absent_zero() + b.absent_zero(),
+        }
+    }
+
     /// Releases the cursors of every edge scan.
     fn close(&mut self, cx: &mut ExecCtx) {
         match self {
@@ -157,7 +233,6 @@ impl CPath {
                 for s in [&mut e.fwd, &mut e.bwd, &mut e.by_s, &mut e.by_o] {
                     s.close(cx);
                 }
-                e.edges = None;
             }
             CPath::Nps(e) => {
                 e.fwd.close(cx);
@@ -261,6 +336,19 @@ fn sort_dedup(v: &mut Vec<TermId>) {
     v.dedup();
 }
 
+/// Sorts `v[from..]` and removes its duplicates in place.
+fn dedup_tail(v: &mut Vec<(TermId, TermId)>, from: usize) {
+    v[from..].sort_unstable();
+    let mut w = from;
+    for r in from..v.len() {
+        if w == from || v[r] != v[w - 1] {
+            v[w] = v[r];
+            w += 1;
+        }
+    }
+    v.truncate(w);
+}
+
 /// Reads every row of an opened scan, calling `f` on each (private layout).
 fn drain(cx: &mut ExecCtx, scan: &mut Scan, tmp: &mut Batch, mut f: impl FnMut(&[TermId])) -> Result<()> {
     loop {
@@ -275,34 +363,59 @@ fn drain(cx: &mut ExecCtx, scan: &mut Scan, tmp: &mut Batch, mut f: impl FnMut(&
     }
 }
 
+/// How the starts of a step are bound, for its zero-length matches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    /// Constants (or substituted values): a zero-length step matches a start even when it is
+    /// not a node of the active graph.
+    Const,
+    /// Nodes of the active graph: free endpoints, checked Join-mode seeds, sequence middles
+    /// and BFS frontiers.
+    Nodes,
+}
+
+/// The binding of the two ends of a step.
+#[derive(Clone, Copy, Debug)]
+struct Ends {
+    starts: Kind,
+    /// The far end, when it is a constant: a zero-length step of a sequence's last operand from
+    /// a middle that is not a graph node still matches it. None: the far end is a variable.
+    far: Option<TermId>,
+    /// Early exit once (start, target) is found (top-level `*` / `+` with both endpoints bound).
+    target: Option<TermId>,
+}
+
+impl Ends {
+    /// Starts that are graph nodes, far end free.
+    const NODES: Ends = Ends { starts: Kind::Nodes, far: None, target: None };
+
+    fn far_free(starts: Kind) -> Ends {
+        Ends { starts, far: None, target: None }
+    }
+}
+
 /// Appends the (start, end) pairs of `path` from `starts` (sorted, deduplicated) in direction
-/// `dir`. `target` (top-level `*` / `+` with both endpoints bound) allows an early exit once
-/// (start, target) is found.
+/// `dir`, with the starts and the far end bound as `ends` says. The result is exact when the
+/// far end is free; with a constant far end `y` it may also hold pairs ending elsewhere than
+/// `y`, which the caller drops (those ending on `y` are exact, multiplicities included).
 fn step(
     path: &mut CPath,
     env: &mut Env,
     cx: &mut ExecCtx,
     dir: Dir,
     starts: &[TermId],
-    target: Option<TermId>,
+    ends: Ends,
     out: &mut Vec<(TermId, TermId)>,
 ) -> Result<()> {
     if starts.is_empty() {
         return Ok(());
     }
     let before = out.len();
+    let inner = Ends { target: None, ..ends };
     match path {
         CPath::Pred(e) => {
-            let PredScans { fwd, bwd, by_s, by_o, edges } = &mut **e;
-            let reg = cx.active_graph().unwrap_or(TermId::UNBOUND);
-            if starts.len() > 64 && edges.is_none_or(|(g, _)| g != reg) {
-                by_s.open(cx, None)?;
-                let n = by_s.fast_count(cx).transpose()?;
-                by_s.close(cx);
-                *edges = Some((reg, n));
-            }
-            let full_scan = matches!(edges, Some((g, Some(n))) if *g == reg
-                && starts.len() > 64 && starts.len() as f64 * env.seek_sorted > *n as f64 * env.scan_row);
+            let full_scan = e.scan_all(cx, env, starts.len())?;
+            let PredScans { fwd, bwd, by_s, by_o, .. } = &mut **e;
             let (probe, from, to, all, key) = match dir {
                 Dir::Fwd => (fwd, S, O, by_s, S),
                 Dir::Bwd => (bwd, O, S, by_o, O),
@@ -329,57 +442,99 @@ fn step(
                 Dir::Fwd => (fwd, S, O),
                 Dir::Bwd => (bwd, O, S),
             };
-            for &x in starts.iter() {
+            for &x in starts {
+                let first = out.len();
                 Env::open_seeded(&mut env.seed, scan, cx, from, x)?;
                 drain(cx, scan, &mut env.tmp, |r| {
                     if set.binary_search(&r[P as usize]).is_err() {
                         out.push((x, r[to as usize]));
                     }
                 })?;
+                // A set of pairs: two predicates outside the set linking x and y give one pair.
+                dedup_tail(out, first);
             }
         }
-        CPath::Inv(q) => step(q, env, cx, dir.flip(), starts, target, out)?,
+        CPath::Inv(q) => step(q, env, cx, dir.flip(), starts, ends, out)?,
         CPath::Seq(a, b) => {
             let (first, second) = match dir {
                 Dir::Fwd => (a, b),
                 Dir::Bwd => (b, a),
             };
-            let mut p1 = Vec::new();
-            step(first, env, cx, dir, starts, None, &mut p1)?;
-            let mut mids: Vec<TermId> = p1.iter().map(|p| p.1).collect();
-            sort_dedup(&mut mids);
-            let mut p2 = Vec::new();
-            step(second, env, cx, dir, &mids, None, &mut p2)?;
-            p2.sort_by_key(|p| p.0);
-            env.charge_pairs(cx, p1.len() + p2.len())?;
-            for (x, m) in p1 {
-                let lo = p2.partition_point(|p| p.0 < m);
-                for &(_, y) in p2[lo..].iter().take_while(|p| p.0 == m) {
-                    out.push((x, y));
-                }
-            }
+            sequence(first, second, env, cx, dir, starts, inner, out)?;
         }
         CPath::Alt(a, b) => {
-            step(a, env, cx, dir, starts, None, out)?;
-            step(b, env, cx, dir, starts, None, out)?;
+            step(a, env, cx, dir, starts, inner, out)?;
+            step(b, env, cx, dir, starts, inner, out)?;
         }
         CPath::Opt(q) => {
+            // Every start is a constant or a node: its zero-length match holds.
             out.extend(starts.iter().map(|x| (*x, *x)));
-            step(q, env, cx, dir, starts, None, out)?;
-            out[before..].sort_unstable();
-            let mut tail = out.split_off(before);
-            tail.dedup();
-            out.extend(tail);
+            step(q, env, cx, dir, starts, inner, out)?;
+            dedup_tail(out, before);
         }
-        CPath::Star(q) => closure(q, env, cx, dir, starts, true, target, out)?,
-        CPath::Plus(q) => closure(q, env, cx, dir, starts, false, target, out)?,
+        CPath::Star(q) => closure(q, env, cx, dir, starts, ends, true, out)?,
+        CPath::Plus(q) => closure(q, env, cx, dir, starts, ends, false, out)?,
     }
     let n = out.len() - before;
     env.charge_pairs(cx, n)?;
     cx.tick(n)
 }
 
-/// Multi-source BFS for `q*` (`star`) / `q+`: set semantics per (start, end).
+/// `first/second` (§18.4): `Join(eval(X first ?V), eval(?V second Y))` on a fresh middle
+/// variable `?V`, projected, duplicates kept.
+///
+/// `?V` is a variable, so `second` runs from the middles as graph nodes: a middle reached
+/// over an edge is one, a middle reached by a zero-length `first` from a constant start is one
+/// iff that start is. A middle that is not a node only has the zero-length matches of
+/// `second` onto a constant far end equal to it ([`CPath::absent_zero`]).
+#[allow(clippy::too_many_arguments)]
+fn sequence(
+    first: &mut CPath,
+    second: &mut CPath,
+    env: &mut Env,
+    cx: &mut ExecCtx,
+    dir: Dir,
+    starts: &[TermId],
+    ends: Ends,
+    out: &mut Vec<(TermId, TermId)>,
+) -> Result<()> {
+    let mut p1 = Vec::new();
+    step(first, env, cx, dir, starts, Ends::far_free(ends.starts), &mut p1)?;
+    let mut mids: Vec<TermId> = p1.iter().map(|p| p.1).collect();
+    sort_dedup(&mut mids);
+    // Constant starts that are middles and not graph nodes (sorted, as the starts are).
+    let mut absent = Vec::new();
+    if ends.starts == Kind::Const {
+        for &x in starts {
+            if mids.binary_search(&x).is_ok() && !env.has_node(cx, x)? {
+                absent.push(x);
+            }
+        }
+        mids.retain(|m| absent.binary_search(m).is_err());
+    }
+    let mut p2 = Vec::new();
+    step(second, env, cx, dir, &mids, Ends { starts: Kind::Nodes, ..ends }, &mut p2)?;
+    if let Some(y) = ends.far
+        && absent.binary_search(&y).is_ok()
+    {
+        p2.extend(std::iter::repeat_n((y, y), second.absent_zero()));
+    }
+    p2.sort_unstable_by_key(|p| p.0);
+    env.charge_pairs(cx, p1.len() + p2.len())?;
+    for (x, m) in p1 {
+        let lo = p2.partition_point(|p| p.0 < m);
+        for &(_, y) in p2[lo..].iter().take_while(|p| p.0 == m) {
+            out.push((x, y));
+        }
+    }
+    Ok(())
+}
+
+/// Multi-source BFS for `q*` (`star`) / `q+` (ALP): set semantics per (start, end).
+///
+/// The body runs from each frontier node with a free far end. The first level keeps the
+/// binding of the starts; later frontiers are graph nodes, except a constant start reached
+/// again by a zero-length step, from which nothing new can be reached anyway.
 #[allow(clippy::too_many_arguments)]
 fn closure(
     q: &mut CPath,
@@ -387,10 +542,11 @@ fn closure(
     cx: &mut ExecCtx,
     dir: Dir,
     starts: &[TermId],
+    ends: Ends,
     star: bool,
-    target: Option<TermId>,
     out: &mut Vec<(TermId, TermId)>,
 ) -> Result<()> {
+    let target = ends.target;
     let mut visited: FxHashSet<(TermId, TermId)> = FxHashSet::default();
     let mut frontier: Vec<(TermId, TermId)> = starts.iter().map(|x| (*x, *x)).collect();
     if star {
@@ -402,6 +558,7 @@ fn closure(
             return Ok(());
         }
     }
+    let mut body = Ends::far_free(ends.starts);
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
     while !frontier.is_empty() {
@@ -409,7 +566,8 @@ fn closure(
         nodes.extend(frontier.iter().map(|p| p.1));
         sort_dedup(&mut nodes);
         edges.clear();
-        step(q, env, cx, dir, &nodes, None, &mut edges)?;
+        step(q, env, cx, dir, &nodes, body, &mut edges)?;
+        body = Ends::NODES;
         edges.sort_unstable_by_key(|p| p.0);
         let mut next = Vec::new();
         for &(x, m) in &frontier {
@@ -597,11 +755,13 @@ impl PathOp {
         let set = self.path.is_set();
         let env = &mut self.env;
         let path = &mut self.path;
-        // A Join-mode seeded endpoint of a zero-length-capable path must be a graph node.
-        let absent = |env: &mut Env, cx: &mut ExecCtx, e: End| -> Result<bool> {
+        // How a bound endpoint binds the start of the evaluation; None: nothing can match. A
+        // Join-mode seed of a zero-length-capable path must be a graph node. One of a path that
+        // is not may be taken as a constant: every match then needs an edge from it.
+        let kind = |env: &mut Env, cx: &mut ExecCtx, e: End| -> Result<Option<Kind>> {
             Ok(match e {
-                End::Join(v) if nullable => !env.has_node(cx, v)?,
-                _ => false,
+                End::Join(v) if nullable => env.has_node(cx, v)?.then_some(Kind::Nodes),
+                _ => Some(Kind::Const),
             })
         };
         match (s, o) {
@@ -614,17 +774,17 @@ impl PathOp {
                 self.chunks = Some(Chunks { cands, pos: 0, same: x == y });
             }
             (known, End::Free(y)) => {
-                if !absent(env, cx, known)? {
+                if let Some(k) = kind(env, cx, known)? {
                     let a = known.value().expect("bound endpoint");
-                    step(path, env, cx, Dir::Fwd, &[a], None, &mut self.pairs)?;
+                    step(path, env, cx, Dir::Fwd, &[a], Ends::far_free(k), &mut self.pairs)?;
                 }
                 self.bind_start = None;
                 self.bind_end = Some(y);
             }
             (End::Free(x), known) => {
-                if !absent(env, cx, known)? {
+                if let Some(k) = kind(env, cx, known)? {
                     let b = known.value().expect("bound endpoint");
-                    step(path, env, cx, Dir::Bwd, &[b], None, &mut self.pairs)?;
+                    step(path, env, cx, Dir::Bwd, &[b], Ends::far_free(k), &mut self.pairs)?;
                 }
                 self.bind_start = None;
                 self.bind_end = Some(x);
@@ -636,10 +796,12 @@ impl PathOp {
                     (_, End::Const(_)) => (b, a, Dir::Bwd),
                     _ => (a, b, Dir::Fwd),
                 };
-                if !absent(env, cx, from)? {
+                if let Some(k) = kind(env, cx, from)? {
                     let (x, t) = (from.value().expect("bound"), to.value().expect("bound"));
-                    let target = set.then_some(t);
-                    step(path, env, cx, dir, &[x], target, &mut self.pairs)?;
+                    // A Join-mode far end is a variable joined afterwards: the pairs ending on it.
+                    let far = matches!(to, End::Const(_)).then_some(t);
+                    let ends = Ends { starts: k, far, target: set.then_some(t) };
+                    step(path, env, cx, dir, &[x], ends, &mut self.pairs)?;
                     self.pairs.retain(|p| p.1 == t);
                     if set {
                         self.pairs.truncate(1);
@@ -650,6 +812,14 @@ impl PathOp {
             }
         }
         Ok(())
+    }
+
+    /// Ends the evaluation: drops the start candidates and releases the memory charges.
+    fn release(&mut self, cx: &ExecCtx) {
+        self.chunks = None;
+        self.gi = self.graphs.len();
+        cx.release(&mut self.env.charge);
+        cx.release(&mut self.cand_charge);
     }
 
     /// Evaluates the next chunk of start candidates; false when they are used up.
@@ -666,7 +836,7 @@ impl PathOp {
         self.pairs.clear();
         self.pp = 0;
         cx.sh.release(&mut self.env.charge);
-        self.in_graph(cx, |me, cx| step(&mut me.path, &mut me.env, cx, Dir::Fwd, &starts, None, &mut me.pairs))?;
+        self.in_graph(cx, |me, cx| step(&mut me.path, &mut me.env, cx, Dir::Fwd, &starts, Ends::NODES, &mut me.pairs))?;
         if same {
             self.pairs.retain(|p| p.0 == p.1);
         }
@@ -733,15 +903,19 @@ impl Operator for PathOp {
         }
     }
 
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        // Keeps a batch worth of pair capacity for the next evaluation.
+        self.pairs.clear();
+        self.pairs.shrink_to(BATCH_ROWS);
+        self.release(cx);
+    }
+
     fn close(&mut self, cx: &mut ExecCtx) {
         self.pairs = Vec::new();
-        self.chunks = None;
-        self.gi = self.graphs.len();
+        self.release(cx);
         self.path.close(cx);
         for s in [&mut self.env.nodes_s, &mut self.env.nodes_o, &mut self.env.as_s, &mut self.env.as_o] {
             s.close(cx);
         }
-        cx.release(&mut self.env.charge);
-        cx.release(&mut self.cand_charge);
     }
 }

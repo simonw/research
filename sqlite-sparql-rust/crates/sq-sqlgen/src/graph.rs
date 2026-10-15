@@ -6,10 +6,15 @@
 //! through a quad ([`GClass::GForm`]), and ?g is not otherwise used inside P. A body that never
 //! reads the active graph ([`GClass::Indep`]) is joined with the list of named graphs instead.
 //! Anything mixed ([`GClass::Bad`]) — a UNION whose branches disagree, an OPTIONAL whose left
-//! side does not read the graph while its right side does, a sub-select over the graph — is
-//! not supported by the baseline.
+//! side does not read the graph while its right side does, a sub-select over the graph, a
+//! zero-length-capable path — is not supported by the baseline.
+//!
+//! The same classification decides whether `GRAPH <c> { P }` needs its dataset-membership
+//! check: only a [`GClass::GForm`] body proves that c is a graph of the store by itself.
 use sq_core::Slot;
 use sq_core::ir::{Expr, GraphSel, Logical, PatTerm};
+
+use crate::path::zero_length;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum GClass {
@@ -17,7 +22,8 @@ pub(crate) enum GClass {
     Indep,
     /// Every solution binds the active graph through a quad pattern.
     GForm,
-    /// Reads the active graph in some solutions only.
+    /// Reads the active graph in some solutions only, or may produce solutions that read no
+    /// quad of it (a zero-length path pairs a constant endpoint with itself).
     Bad,
 }
 
@@ -56,13 +62,11 @@ pub(crate) fn classify(node: &Logical, exists: &[Logical]) -> GClass {
                 Indep
             }
         }
-        Logical::Path { g, .. } => {
-            if *g == GraphSel::Active {
-                GForm
-            } else {
-                Indep
-            }
-        }
+        Logical::Path { g, path, .. } => match (*g == GraphSel::Active, zero_length(path)) {
+            (false, _) => Indep,
+            (true, false) => GForm,
+            (true, true) => Bad,
+        },
         Logical::Join(a, b) => join_class(classify(a, exists), classify(b, exists)),
         Logical::LeftJoin { left, right, filter } => left_class(
             classify(left, exists),

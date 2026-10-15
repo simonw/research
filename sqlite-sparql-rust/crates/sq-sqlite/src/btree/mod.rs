@@ -14,8 +14,9 @@
 //!   integer columns). It treats every byte as untrusted;
 //! * `roots`: root pages from `sqlite_schema`, with each b-tree's column layout and
 //!   partial-index predicate verified before it is read directly;
-//! * `reader`: per-connection state. It holds the §13 preconditions, the validated snapshot,
-//!   the CLOCK page cache (`page_cache_mb`) and the reader mode (`auto` | `sql` | `btree`);
+//! * `reader`: per-connection state. It holds the §13 preconditions (plus: `main` is not in
+//!   shared-cache mode), the validated snapshot, the CLOCK page cache (`page_cache_mb`) and
+//!   the reader mode (`auto` | `sql` | `btree`);
 //! * `cursor`: [`BtreeCursor`], with leaf pinning, finger seeks, and the transparent fallback
 //!   to a `SqlCursor` at the row-value resume key.
 mod cursor;
@@ -32,9 +33,10 @@ pub(crate) use reader::BtreeReader;
 /// a `SqlCursor`, so callers never see a difference.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Fallback {
-    /// A §13 precondition does not hold: not a rollback-journal file database, no read
-    /// transaction, an open write transaction, or a changed data version. This is transient:
-    /// a later `rebind` returns to the reader once the preconditions hold again.
+    /// A §13 precondition does not hold: not a rollback-journal file database with a private
+    /// cache, no read transaction, an open write transaction, or a changed data version; or
+    /// the kill switch (`reader = sql`) is on. This is transient: a later `rebind` returns to
+    /// the reader once the preconditions hold again.
     Precondition(&'static str),
     /// A page or record feature the reader does not implement: an overflow payload, a
     /// non-integer column, or an unexpected b-tree layout.

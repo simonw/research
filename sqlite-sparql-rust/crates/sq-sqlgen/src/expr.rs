@@ -51,7 +51,7 @@ impl TermSql {
 }
 
 /// `alias.column` or `?N`.
-fn is_simple_sql(s: &str) -> bool {
+pub(crate) fn is_simple_sql(s: &str) -> bool {
     let ident = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
     match s.strip_prefix('?') {
         Some(n) => !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()),
@@ -148,7 +148,8 @@ fn const_tag(id: TermId) -> Tag {
 /// A condition as a BOOL term id.
 fn bool_term(cond: String, never_error: bool) -> TermSql {
     if never_error {
-        TermSql { sql: format!("CASE WHEN {cond} THEN {TRUE_ID} ELSE {FALSE_ID} END"), nullable: false, simple: false, boolean: true }
+        let sql = format!("CASE WHEN {cond} THEN {TRUE_ID} ELSE {FALSE_ID} END");
+        TermSql { sql, nullable: false, simple: false, boolean: true }
     } else {
         TermSql::computed(format!("CASE {cond} WHEN 1 THEN {TRUE_ID} WHEN 0 THEN {FALSE_ID} END"), true)
     }
@@ -211,7 +212,7 @@ impl Translator<'_> {
             Expr::Exists(id) => self.exists(*id, v)?,
             Expr::Call(f, args) => match self.call_condition(f, args, v)? {
                 Some(sql) => sql,
-                None => ebv(&self.term_expr(e, v)?),
+                None => ebv(&self.call_value(f, args, v)?),
             },
             Expr::Add(..)
             | Expr::Subtract(..)
@@ -306,20 +307,29 @@ impl Translator<'_> {
         let xs = &xt.sql;
         if let Expr::Const(cid) = c {
             let pc = self.param(*cid);
-            match const_tag(*cid) {
-                // An IRI equals only itself, and never errors: id equality is exact.
-                Tag::Iri => return Ok(format!("({xs} = {pc})")),
-                // A simple literal equals only itself, or errors against unknown datatypes.
-                Tag::Str | Tag::ShortStr if ctx == Ctx::Truth => return Ok(format!("({xs} = {pc})")),
+            let generic = format!("{} = {TRUE_ID}", eval_sql("=", &[xs, &pc]));
+            return Ok(match const_tag(*cid) {
+                // An IRI or a language-tagged literal equals only itself (ids are canonical) and
+                // never errors against another term: id equality is exact.
+                Tag::Iri | Tag::Lang => format!("({xs} = {pc})"),
+                // A simple literal equals only itself, but errors against unknown datatypes.
+                Tag::Str | Tag::ShortStr if ctx == Ctx::Truth => format!("({xs} = {pc})"),
+                Tag::Str | Tag::ShortStr if xt.simple => format!(
+                    "CASE WHEN {xs} = {pc} THEN 1 WHEN ({xs} & 15) IN ({}, {}) THEN {generic} WHEN {xs} IS NOT NULL \
+                     THEN 0 END",
+                    Tag::Typed as i64,
+                    Tag::Temp as i64
+                ),
+                // Integers: same id ⇔ same value among inline ints; other numerics by value.
                 Tag::Int if xt.simple => {
                     let slow = match ctx {
                         Ctx::Truth => format!("sparql_num({xs}) = {}", self.params.get(cid.as_int().expect("INT"))),
-                        Ctx::Exact => format!("{} = {TRUE_ID}", eval_sql("=", &[xs, &pc])),
+                        Ctx::Exact => generic,
                     };
-                    return Ok(format!("(({xs} & 15) = {INT_TAG} AND {xs} = {pc} OR ({xs} & 15) <> {INT_TAG} AND {slow})"));
+                    format!("(({xs} & 15) = {INT_TAG} AND {xs} = {pc} OR ({xs} & 15) <> {INT_TAG} AND {slow})")
                 }
-                _ => {}
-            }
+                _ => format!("({generic})"),
+            });
         }
         let ct = self.term_expr(c, v)?;
         let cs = &ct.sql;
@@ -328,10 +338,12 @@ impl Translator<'_> {
             // different id ⇒ false; everything else needs the values.
             return Ok(format!(
                 "CASE WHEN {xs} IS NULL OR {cs} IS NULL THEN NULL \
-                 WHEN {xs} = {cs} AND ({xs} & 15) NOT IN (5, 14) THEN 1 \
+                 WHEN {xs} = {cs} AND ({xs} & 15) NOT IN ({typed}, {temp}) THEN 1 \
                  WHEN ({xs} & 15) IN (1, 2) OR ({cs} & 15) IN (1, 2) THEN 0 \
                  ELSE {} = {TRUE_ID} END",
-                eval_sql("=", &[xs, cs])
+                eval_sql("=", &[xs, cs]),
+                typed = Tag::Typed as i64,
+                temp = Tag::Temp as i64,
             ));
         }
         Ok(format!("({} = {TRUE_ID})", eval_sql("=", &[xs, cs])))
@@ -346,27 +358,31 @@ impl Translator<'_> {
         let xs = &xt.sql;
         if let Expr::Const(cid) = c {
             let pc = self.param(*cid);
-            if xt.simple && let Some(k) = cid.as_int() {
+            let generic = format!("{} = {TRUE_ID}", eval_sql(o, &[xs, &pc]));
+            return Ok(match cid.as_int() {
                 // §9: integers compare on the payload; every other numeric through sparql_num.
-                let pk = self.params.get(k);
-                let slow = match ctx {
-                    Ctx::Truth => format!("sparql_num({xs}) {o} {pk}"),
-                    Ctx::Exact => format!("{} = {TRUE_ID}", eval_sql(o, &[xs, &pc])),
-                };
-                return Ok(format!("(({xs} & 15) = {INT_TAG} AND ({xs} >> 4) {o} {pk} OR ({xs} & 15) <> {INT_TAG} AND {slow})"));
-            }
-            if xt.simple && matches!(cid.tag(), Tag::DateTime | Tag::Date) {
-                // Same tag and timezone field ⇒ the payload orders like the values.
-                let mask = self.params.get(cid.raw() & 0xFFFF);
-                let pk = self.params.get(cid.raw() >> 16);
-                return Ok(format!(
-                    "(({xs} & 65535) = {mask} AND ({xs} >> 16) {o} {pk} OR ({xs} & 65535) <> {mask} AND {} = {TRUE_ID})",
-                    eval_sql(o, &[xs, &pc])
-                ));
-            }
-            if ctx == Ctx::Truth && cid.tag() == Tag::Decimal {
-                return Ok(format!("(sparql_num({xs}) {o} sparql_num({pc}))"));
-            }
+                Some(k) if xt.simple => {
+                    let pk = self.params.get(k);
+                    let slow = match ctx {
+                        Ctx::Truth => format!("sparql_num({xs}) {o} {pk}"),
+                        Ctx::Exact => generic,
+                    };
+                    format!("(({xs} & 15) = {INT_TAG} AND ({xs} >> 4) {o} {pk} OR ({xs} & 15) <> {INT_TAG} AND {slow})")
+                }
+                _ if xt.simple && matches!(cid.tag(), Tag::DateTime | Tag::Date) => {
+                    // Same tag and timezone field ⇒ the payload orders like the values.
+                    let mask = self.params.get(cid.raw() & 0xFFFF);
+                    let pk = self.params.get(cid.raw() >> 16);
+                    format!(
+                        "(({xs} & 65535) = {mask} AND ({xs} >> 16) {o} {pk} \
+                         OR ({xs} & 65535) <> {mask} AND {generic})"
+                    )
+                }
+                _ if ctx == Ctx::Truth && cid.tag() == Tag::Decimal => {
+                    format!("(sparql_num({xs}) {o} sparql_num({pc}))")
+                }
+                _ => format!("({generic})"),
+            });
         }
         let ct = self.term_expr(c, v)?;
         let cs = &ct.sql;
@@ -385,23 +401,21 @@ impl Translator<'_> {
         if list.is_empty() {
             return Ok("0".to_owned());
         }
-        let by_id = |e: &Expr| match e {
-            Expr::Const(id) => match const_tag(*id) {
-                Tag::Iri => true,
-                Tag::Str | Tag::ShortStr => ctx == Ctx::Truth,
-                _ => false,
-            },
-            _ => false,
-        };
-        if list.iter().all(by_id) {
+        // Constants whose `=` is plain id equality in this context (see `equal`).
+        let by_id: Option<Vec<TermId>> = list
+            .iter()
+            .map(|e| match e {
+                Expr::Const(id) => match const_tag(*id) {
+                    Tag::Iri | Tag::Lang => Some(*id),
+                    Tag::Str | Tag::ShortStr if ctx == Ctx::Truth => Some(*id),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        if let Some(ids) = by_id {
             let x = self.term_expr(a, v)?;
-            let ids: Vec<String> = list
-                .iter()
-                .map(|e| match e {
-                    Expr::Const(id) => self.param(*id),
-                    _ => unreachable!("checked above"),
-                })
-                .collect();
+            let ids: Vec<String> = ids.into_iter().map(|id| self.param(id)).collect();
             return Ok(format!("({} IN ({}))", x.sql, ids.join(", ")));
         }
         let terms = list.iter().map(|item| self.equal(a, item, v, ctx)).collect::<Result<Vec<_>>>()?;
@@ -412,18 +426,25 @@ impl Translator<'_> {
     fn arith(&mut self, op: &'static str, a: &Expr, b: &Expr, v: &View<'_>) -> Result<TermSql> {
         let (at, bt) = (self.term_expr(a, v)?, self.term_expr(b, v)?);
         let generic = eval_sql(op, &[&at.sql, &bt.sql]);
-        if op == "/" || !at.simple || !bt.simple {
+        if op == "/" {
             return Ok(TermSql::computed(generic, false));
         }
-        let (x, y) = (&at.sql, &bt.sql);
-        let r = format!("(({x} >> 4) {op} ({y} >> 4))");
+        // Per operand: (tag check, integer value); an INT constant needs no check.
+        let mut int_operand = |e: &Expr, t: &TermSql| -> Option<(Option<String>, String)> {
+            match e {
+                Expr::Const(id) => id.as_int().map(|k| (None, self.params.get(k))),
+                _ if t.simple => Some((Some(format!("({} & 15) = {INT_TAG}", t.sql)), format!("({} >> 4)", t.sql))),
+                _ => None,
+            }
+        };
+        let (Some((ca, va)), Some((cb, vb))) = (int_operand(a, &at), int_operand(b, &bt)) else {
+            return Ok(TermSql::computed(generic, false));
+        };
+        let r = format!("({va} {op} {vb})");
+        let mut conds: Vec<String> = ca.into_iter().chain(cb).collect();
+        conds.push(format!("{r} BETWEEN {} AND {}", TermId::INT_MIN, TermId::INT_MAX));
         Ok(TermSql::computed(
-            format!(
-                "CASE WHEN ({x} & 15) = {INT_TAG} AND ({y} & 15) = {INT_TAG} AND {r} BETWEEN {} AND {} \
-                 THEN ({r} << 4) | {INT_TAG} ELSE {generic} END",
-                TermId::INT_MIN,
-                TermId::INT_MAX
-            ),
+            format!("CASE WHEN {} THEN ({r} << 4) | {INT_TAG} ELSE {generic} END", conds.join(" AND ")),
             false,
         ))
     }
@@ -437,9 +458,14 @@ impl Translator<'_> {
 
     /// A builtin call as a term.
     fn call_term(&mut self, f: &Function, args: &[Expr], v: &View<'_>) -> Result<TermSql> {
-        if let Some(cond) = self.call_condition(f, args, v)? {
-            return Ok(bool_term(cond, false));
+        match self.call_condition(f, args, v)? {
+            Some(cond) => Ok(bool_term(cond, false)),
+            None => self.call_value(f, args, v),
         }
+    }
+
+    /// A builtin call through `sparql_eval` (casts by datatype IRI).
+    fn call_value(&mut self, f: &Function, args: &[Expr], v: &View<'_>) -> Result<TermSql> {
         if let Function::Custom(iri) = f {
             // Casts; any other custom function is an evaluation error (unbound).
             return match cast_name(iri.as_str()) {

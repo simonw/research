@@ -389,6 +389,46 @@ fn memory_databases_and_missing_read_transactions_use_sql_cursors() {
     assert_eq!(drain(cur.as_mut(), 64), expected_rows(&q, &spec));
 }
 
+/// Shared-cache connections share one pager and one file lock, so a read transaction does not
+/// keep other connections of the cache out of the file. The reader detects the mode however
+/// it was requested (URI parameter or open flag) and declines; `cache=private` is served.
+#[test]
+fn shared_cache_connections_use_sql_cursors() {
+    use rusqlite::OpenFlags;
+    let q = random_quads(17, 1500, true);
+    let path = TempPath::new("shared");
+    {
+        let conn = Connection::open(&path.0).unwrap();
+        Db::with(conn, None).insert(&q);
+    }
+    let base = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_URI;
+    let p = path.0.display();
+    for (uri, flags, shared) in [
+        (format!("file:{p}?cache=shared"), base, true),
+        (format!("file:{p}"), base | OpenFlags::SQLITE_OPEN_SHARED_CACHE, true),
+        (format!("file:{p}?cache=private"), base, false),
+        (format!("file:{p}"), base | OpenFlags::SQLITE_OPEN_PRIVATE_CACHE, false),
+    ] {
+        let conn = Connection::open_with_flags(&uri, flags).unwrap();
+        let db = Db::with(conn, None);
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        assert_eq!(db.shared().btree_active(), !shared, "{uri} {flags:?}");
+        let want = if shared { ReaderKind::SqlCursor } else { ReaderKind::Btree };
+        assert_eq!(db.store.caps().reader, want, "{uri}");
+        for order in [IndexOrder::Gspo, IndexOrder::Psog] {
+            let spec = ScanSpec::new(order, &[]);
+            let mut cur = db.store.cursor(&spec).unwrap();
+            assert_eq!(cur.counters().reader, want, "{uri} {order:?}");
+            assert_eq!(drain(cur.as_mut(), 200), expected_rows(&q, &spec), "{uri} {order:?}");
+        }
+        if shared {
+            assert!(last_fallback(&db).contains("shared-cache"), "{}", last_fallback(&db));
+            assert_eq!(db.shared().btree_counters().cursors, 0);
+        }
+    }
+}
+
 #[test]
 fn own_write_transaction_uses_sql_cursors_and_sees_its_writes() {
     let q = random_quads(15, 2000, true);
@@ -703,6 +743,14 @@ fn unexpected_index_layouts_are_read_through_sql() {
     // the reader must not read it either.
     assert!(db.store.cursor(&ScanSpec::new(IndexOrder::Spog, &[])).is_err());
     assert!(last_fallback(&db).contains("layout"), "{}", last_fallback(&db));
+    // Per-order reporting; a store that serves some orders through SQL is costed as SQL.
+    for order in IndexOrder::ALL {
+        let direct = !matches!(order, IndexOrder::Gpso | IndexOrder::Spog);
+        assert_eq!(db.shared().btree_serves(order), direct, "{order:?}");
+    }
+    assert!(!db.shared().btree_active());
+    assert_eq!(db.store.caps().reader, ReaderKind::SqlCursor);
+    assert_eq!(db.store.costs().scan_row, SQL_CURSOR_COSTS.scan_row);
 }
 
 /// Randomly damaged index pages: every scan either returns rows or reports an error (from
@@ -801,6 +849,45 @@ fn kill_switch_page_cache_budget_and_status() {
     let status = shared.status();
     for key in ["reader", "page_cache_mb", "btree_cursors", "btree_pages_read", "btree_fallbacks", "btree_last_fallback"] {
         assert!(status.iter().any(|(k, _)| k == key), "status lacks {key}");
+    }
+}
+
+/// The kill switch also applies to open cursors: their next call continues on SQL at the
+/// exact key, a rebind stays there while the switch is on, and returns to the reader after.
+#[test]
+fn kill_switch_moves_open_cursors_to_sql_at_the_exact_key() {
+    let q = random_quads(33, 4000, true);
+    let db = file_db(1024, 0, &q);
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    for order in [IndexOrder::Gspo, IndexOrder::Gpos, IndexOrder::Ospg] {
+        let spec = ScanSpec::new(order, &[]);
+        let want = expected_rows(&q, &spec);
+        // Fill: switched off between two fills.
+        let mut cur = db.store.cursor(&spec).unwrap();
+        assert_eq!(cur.counters().reader, ReaderKind::Btree);
+        let mut buf = Vec::new();
+        assert_eq!(cur.fill(&mut buf, 123).unwrap(), 123);
+        db.shared().set_reader(ReaderMode::Sql);
+        let mut got: Vec<Vec<TermId>> = buf.chunks(4).map(<[TermId]>::to_vec).collect();
+        got.extend(drain(cur.as_mut(), 77));
+        assert_eq!(got, want, "{order:?}");
+        assert_eq!(cur.counters().reader, ReaderKind::SqlCursor);
+        assert!(last_fallback(&db).contains("switched off"), "{}", last_fallback(&db));
+        cur.rebind(&[], Bound::Unbounded, Bound::Unbounded).unwrap();
+        assert_eq!(cur.counters().reader, ReaderKind::SqlCursor, "a rebind stays on SQL while switched off");
+        db.shared().set_reader(ReaderMode::Auto);
+        cur.rebind(&[], Bound::Unbounded, Bound::Unbounded).unwrap();
+        assert_eq!(cur.counters().reader, ReaderKind::Btree, "{}", last_fallback(&db));
+        // Seek: switched off between a fill and a seek.
+        assert_eq!(cur.fill(&mut buf, 5).unwrap(), 5);
+        db.shared().set_reader(ReaderMode::Sql);
+        let target = &want[want.len() / 2];
+        cur.seek(&target[..2]).unwrap();
+        assert_eq!(cur.counters().reader, ReaderKind::SqlCursor);
+        let from = want.iter().position(|r| r[..2] >= target[..2]).unwrap();
+        assert_eq!(drain(cur.as_mut(), 50), want[from..], "{order:?}");
+        db.shared().set_reader(ReaderMode::Auto);
     }
 }
 

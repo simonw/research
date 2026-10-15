@@ -190,6 +190,11 @@ fn id_arg(ctx: &Context<'_>, i: usize) -> rusqlite::Result<Option<TermId>> {
     }
 }
 
+/// Term arguments `from..` as ids (NULL = UNBOUND).
+fn id_args(ctx: &Context<'_>, from: usize) -> rusqlite::Result<Vec<TermId>> {
+    (from..ctx.len()).map(|i| id_arg(ctx, i).map(Option::unwrap_or_default)).collect()
+}
+
 fn sql_bool(b: Option<bool>) -> Option<i64> {
     b.map(i64::from)
 }
@@ -292,14 +297,14 @@ fn register_helpers(conn: &Connection, state: &Shared) {
     .unwrap();
     let s = state.clone();
     conn.create_scalar_function("sparql_regex", -1, flags, move |ctx| {
-        let args = (0..ctx.len()).map(|i| id_arg(ctx, i).map(Option::unwrap_or_default)).collect::<Result<Vec<_>, _>>()?;
+        let args = id_args(ctx, 0)?;
         eval_op(&mut lock(&s), "REGEX", &args, true)
     })
     .unwrap();
     let s = state.clone();
     conn.create_scalar_function("sparql_eval", -1, flags, move |ctx| {
         let op: String = ctx.get(0)?;
-        let args = (1..ctx.len()).map(|i| id_arg(ctx, i).map(Option::unwrap_or_default)).collect::<Result<Vec<_>, _>>()?;
+        let args = id_args(ctx, 1)?;
         eval_op(&mut lock(&s), &op, &args, false)
     })
     .unwrap();
@@ -342,7 +347,12 @@ impl Engine {
         store.ensure_schema().map_err(|e| e.to_string())?;
         let mut dataset = Dataset::new();
         for f in files {
-            let opts = LoadOptions { format: f.format, base_iri: f.base.clone(), graph: f.graph.clone(), bulk: BulkMode::Never };
+            let opts = LoadOptions {
+                format: f.format,
+                base_iri: f.base.clone(),
+                graph: f.graph.clone(),
+                bulk: BulkMode::Never,
+            };
             store.bulk_load(LoadSource::Bytes(&f.data), &opts).map_err(|e| format!("sqlite load: {e}"))?;
             let mut parser = RdfParser::from_format(f.format).rename_blank_nodes();
             if let Some(base) = &f.base {
@@ -398,7 +408,8 @@ impl Engine {
         {
             let mut rows = stmt.query(params_from_iter(sql.params.iter())).map_err(|e| format!("query: {e}"))?;
             while let Some(row) = rows.next().map_err(|e| format!("step: {e}\nSQL: {}", sql.sql))? {
-                ids.push((0..width).map(|i| row.get::<_, Option<i64>>(i)).collect::<Result<_, _>>().map_err(|e| e.to_string())?);
+                let cells = (0..width).map(|i| row.get::<_, Option<i64>>(i)).collect::<Result<_, _>>();
+                ids.push(cells.map_err(|e| e.to_string())?);
             }
         }
         if matches!(lowered.form, sq_core::ir::QueryForm::Ask) {
@@ -465,9 +476,8 @@ impl Expect {
                 expression
                     .iter()
                     .map_while(|k| match k {
-                        OrderExpression::Asc(Expression::Variable(v)) | OrderExpression::Desc(Expression::Variable(v)) => {
-                            Some(v.as_str().to_owned())
-                        }
+                        OrderExpression::Asc(Expression::Variable(v))
+                        | OrderExpression::Desc(Expression::Variable(v)) => Some(v.as_str().to_owned()),
                         _ => None,
                     })
                     .collect(),
@@ -509,91 +519,118 @@ fn has_bnode(row: &[Option<oxrdf::Term>]) -> bool {
     row.iter().any(|t| matches!(t, Some(oxrdf::Term::BlankNode(_))))
 }
 
-/// Can `a` map onto `b` under the bnode bijection `map` (extended in place; returns the
-/// labels added so a failed branch can undo them)?
-fn match_row(
-    a: &[Option<oxrdf::Term>],
-    b: &[Option<oxrdf::Term>],
-    map: &mut HashMap<String, String>,
-    rev: &mut HashMap<String, String>,
-) -> Option<Vec<String>> {
-    let mut added = Vec::new();
-    let undo = |added: &[String], map: &mut HashMap<String, String>, rev: &mut HashMap<String, String>| {
-        for k in added {
-            if let Some(v) = map.remove(k) {
-                rev.remove(&v);
-            }
-        }
-    };
-    for (x, y) in a.iter().zip(b) {
-        let ok = match (x, y) {
-            (Some(oxrdf::Term::BlankNode(x)), Some(oxrdf::Term::BlankNode(y))) => {
-                match (map.get(x.as_str()), rev.get(y.as_str())) {
-                    (Some(m), _) => m == y.as_str(),
-                    (None, Some(_)) => false,
-                    (None, None) => {
-                        map.insert(x.as_str().to_owned(), y.as_str().to_owned());
-                        rev.insert(y.as_str().to_owned(), x.as_str().to_owned());
-                        added.push(x.as_str().to_owned());
-                        true
-                    }
-                }
-            }
-            (Some(x), Some(y)) => term_key(x) == term_key(y),
-            (None, None) => true,
-            _ => false,
-        };
-        if !ok {
-            undo(&added, map, rev);
-            return None;
+/// Blank-node labels of a result, in first-occurrence order.
+fn bnode_labels(rows: &[Vec<Option<oxrdf::Term>>]) -> Vec<String> {
+    let mut labels: Vec<String> = Vec::new();
+    for t in rows.iter().flatten().flatten() {
+        if let oxrdf::Term::BlankNode(b) = t
+            && !labels.iter().any(|l| l == b.as_str())
+        {
+            labels.push(b.as_str().to_owned());
         }
     }
-    Some(added)
+    labels
 }
 
-/// Multiset equality of rows under one result-wide bnode bijection (backtracking).
+/// Every label renamed to the same placeholder.
+fn all_zero(labels: &[String]) -> HashMap<&str, usize> {
+    labels.iter().map(|l| (l.as_str(), 0)).collect()
+}
+
+/// Sorted row keys with blank nodes renamed through `rename` (label → index).
+fn keys_with(rows: &[Vec<Option<oxrdf::Term>>], rename: &HashMap<&str, usize>) -> Vec<Vec<Option<String>>> {
+    let mut keys: Vec<Vec<Option<String>>> = rows
+        .iter()
+        .map(|r| {
+            r.iter()
+                .map(|t| match t {
+                    Some(oxrdf::Term::BlankNode(b)) => Some(format!("_:#{}", rename[b.as_str()])),
+                    t => t.as_ref().map(term_key),
+                })
+                .collect()
+        })
+        .collect();
+    keys.sort();
+    keys
+}
+
+/// Multiset equality of rows under one result-wide blank-node bijection. Results hold few
+/// distinct blank nodes, so the bijections themselves are enumerated (with a cheap necessary
+/// condition first: equal multisets once every blank node is the same placeholder).
 fn same_bag(a: &[Vec<Option<oxrdf::Term>>], b: &[Vec<Option<oxrdf::Term>>]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    if !a.iter().any(|r| has_bnode(r)) && !b.iter().any(|r| has_bnode(r)) {
-        let mut ka: Vec<_> = a.iter().map(|r| row_key(r)).collect();
-        let mut kb: Vec<_> = b.iter().map(|r| row_key(r)).collect();
-        ka.sort();
-        kb.sort();
-        return ka == kb;
+    let (la, lb) = (bnode_labels(a), bnode_labels(b));
+    if la.len() != lb.len() {
+        return false;
     }
-    fn go(
+    if keys_with(a, &all_zero(&la)) != keys_with(b, &all_zero(&lb)) {
+        return false;
+    }
+    if la.is_empty() {
+        return true;
+    }
+    // A label may only map to a label with the same signature: the sorted keys of the rows
+    // it occurs in, with itself marked and every other blank node masked.
+    fn signature(rows: &[Vec<Option<oxrdf::Term>>], label: &str) -> Vec<Vec<Option<String>>> {
+        let mut sig: Vec<Vec<Option<String>>> = rows
+            .iter()
+            .filter(|r| r.iter().flatten().any(|t| matches!(t, oxrdf::Term::BlankNode(b) if b.as_str() == label)))
+            .map(|r| {
+                r.iter()
+                    .map(|t| match t {
+                        Some(oxrdf::Term::BlankNode(b)) => {
+                            Some(if b.as_str() == label { "SELF" } else { "_" }.to_owned())
+                        }
+                        t => t.as_ref().map(term_key),
+                    })
+                    .collect()
+            })
+            .collect();
+        sig.sort();
+        sig
+    }
+    let sb: Vec<_> = lb.iter().map(|l| signature(b, l)).collect();
+    let candidates: Vec<Vec<usize>> = la
+        .iter()
+        .map(|l| {
+            let sa = signature(a, l);
+            (0..lb.len()).filter(|j| sb[*j] == sa).collect()
+        })
+        .collect();
+    if candidates.iter().any(Vec::is_empty) {
+        return false;
+    }
+    let target = keys_with(b, &lb.iter().enumerate().map(|(i, l)| (l.as_str(), i)).collect());
+    // Depth-first over the candidate assignments.
+    fn permute(
         i: usize,
+        la: &[String],
+        candidates: &[Vec<usize>],
+        used: &mut Vec<bool>,
+        assign: &mut Vec<usize>,
         a: &[Vec<Option<oxrdf::Term>>],
-        b: &[Vec<Option<oxrdf::Term>>],
-        used: &mut [bool],
-        map: &mut HashMap<String, String>,
-        rev: &mut HashMap<String, String>,
+        target: &[Vec<Option<String>>],
     ) -> bool {
-        if i == a.len() {
-            return true;
+        if i == la.len() {
+            let rename: HashMap<&str, usize> = la.iter().map(String::as_str).zip(assign.iter().copied()).collect();
+            return keys_with(a, &rename) == target;
         }
-        for j in 0..b.len() {
-            if used[j] {
-                continue;
-            }
-            if let Some(added) = match_row(&a[i], &b[j], map, rev) {
+        for &j in &candidates[i] {
+            if !used[j] {
                 used[j] = true;
-                if go(i + 1, a, b, used, map, rev) {
+                assign.push(j);
+                if permute(i + 1, la, candidates, used, assign, a, target) {
                     return true;
                 }
+                assign.pop();
                 used[j] = false;
-                for k in added {
-                    if let Some(v) = map.remove(&k) {
-                        rev.remove(&v);
-                    }
-                }
             }
         }
         false
     }
-    go(0, a, b, &mut vec![false; b.len()], &mut HashMap::new(), &mut HashMap::new())
+    permute(0, &la, &candidates, &mut vec![false; lb.len()], &mut Vec::new(), a, &target)
 }
 
 fn dedup(rows: &[Vec<Option<oxrdf::Term>>]) -> Vec<Vec<Option<oxrdf::Term>>> {
@@ -619,7 +656,8 @@ pub fn compare(ours: &Outcome, reference: &Outcome, expect: &Expect) -> Result<(
                 rb.iter().map(|r| idx.iter().map(|i| r[*i].clone()).collect()).collect();
             let equal = if expect.lax { same_bag(&dedup(ra), &dedup(&rb)) } else { same_bag(ra, &rb) };
             if !equal {
-                return Err(format!("solutions differ:\n ours ({}): {}\n reference ({}): {}", ra.len(), show(ra), rb.len(), show(&rb)));
+                let (na, nb) = (ra.len(), rb.len());
+                return Err(format!("solutions differ:\n ours ({na}): {}\n reference ({nb}): {}", show(ra), show(&rb)));
             }
             if let Some(keys) = &expect.order_keys {
                 let ki: Vec<usize> = keys.iter().filter_map(|k| va.iter().position(|v| v == k)).collect();
@@ -643,7 +681,8 @@ fn show(rows: &[Vec<Option<oxrdf::Term>>]) -> String {
         .iter()
         .take(MAX)
         .map(|r| {
-            let cells: Vec<String> = r.iter().map(|t| t.as_ref().map_or("UNDEF".to_owned(), |t| t.to_string())).collect();
+            let cells: Vec<String> =
+                r.iter().map(|t| t.as_ref().map_or("UNDEF".to_owned(), |t| t.to_string())).collect();
             format!("({})", cells.join(" "))
         })
         .collect();

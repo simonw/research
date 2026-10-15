@@ -102,13 +102,7 @@ impl Builder<'_> {
             Op::Group { input, keys, aggs, streaming } => {
                 let compiled = aggs
                     .iter()
-                    .map(|(slot, spec)| {
-                        Ok(Agg {
-                            slot: *slot,
-                            spec: spec.clone(),
-                            arg: spec.arg.as_ref().map(|e| self.expr(e)).transpose()?,
-                        })
-                    })
+                    .map(|(slot, spec)| Ok(Agg::new(*slot, spec, spec.arg.as_ref().map(|e| self.expr(e)).transpose()?)))
                     .collect::<Result<Vec<_>>>()?;
                 Box::new(Group::new(self.group_input(input, keys)?, keys.clone(), compiled, *streaming, w))
             }

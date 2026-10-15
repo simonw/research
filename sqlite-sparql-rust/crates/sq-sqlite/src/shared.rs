@@ -7,6 +7,7 @@ use std::sync::Arc;
 use rusqlite::ffi;
 use sq_core::codec::{ENCODING_VERSION, RDF_LANG_STRING_IRI, SCHEMA_VERSION, WELL_KNOWN, XSD_STRING_IRI};
 use sq_core::stats::Stats;
+use sq_core::store::IndexOrder;
 use sq_core::term::Term;
 use sq_core::{Error, Result, Tag, TermId};
 
@@ -152,7 +153,8 @@ impl StorageShared {
     // ------------------------------------------------------------------ B-tree reader (§13)
 
     /// `sparql_config('reader', 'auto' | 'sql' | 'btree')`: the reader `SqliteStore::cursor`
-    /// uses for new cursors. `sql` is the kill switch; open cursors are not affected.
+    /// uses. `sql` is the kill switch: new cursors are SQL cursors, and open B-tree cursors
+    /// continue as SQL cursors at their next call (at the exact key).
     pub fn set_reader(&self, mode: ReaderMode) {
         self.btree.set_mode(mode);
     }
@@ -180,11 +182,20 @@ impl StorageShared {
         self.btree.counters()
     }
 
-    /// Whether new cursors would read b-tree pages directly right now: the mode allows it,
-    /// the §13 preconditions hold (a rollback-journal file database, a read transaction and
-    /// no write transaction) and the quad b-trees have the expected layout.
+    /// Whether new cursors over every order would read b-tree pages directly right now: the
+    /// mode allows it, the §13 preconditions hold (a rollback-journal file database with a
+    /// private cache, a read transaction and no write transaction) and all nine quad b-trees
+    /// have the expected layout. `costs()` / `caps()` report the B-tree reader only then; a
+    /// store where some orders are served by SQL is costed as a SQL store
+    /// ([`StorageShared::btree_serves`] tells the orders apart).
     pub fn btree_active(&self) -> bool {
-        self.btree.mode() != ReaderMode::Sql && self.btree.snapshot().is_ok_and(|s| s.roots.any())
+        self.btree.snapshot().is_ok_and(|s| s.roots.all())
+    }
+
+    /// Whether a new cursor over `order` would read b-tree pages directly right now (see
+    /// [`StorageShared::btree_active`]).
+    pub fn btree_serves(&self, order: IndexOrder) -> bool {
+        self.btree.snapshot().is_ok_and(|s| s.roots.get(order) != 0)
     }
 
     // ------------------------------------------------------------------ epoch (§4.4)

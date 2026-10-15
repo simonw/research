@@ -1,9 +1,13 @@
 //! Physical planning (spec §5.4, §7.5): Logical (after rewrites) -> `sq_core::plan::Plan`.
 //!
-//! Correctness-first planner: join groups are ordered by dynamic programming over connected
-//! subsets when the search is small, greedily otherwise (cheapest connected next unit, cross
-//! products last; see `join`), and each step picks BindJoin / HashJoin / NestedLoop by cost and
-//! `JoinPolicy`. Estimates are clamped to [`MAX_ESTIMATE`].
+//! Join groups are ordered by dynamic programming over connected subsets with interesting
+//! orders when the search is small, greedily otherwise (cheapest connected next unit, cross
+//! products last; see `join`), and each step picks BindJoin / HashJoin / MergeJoin (with
+//! SortBySlot enforcers) / NestedLoop or extends an SQL chain by cost and `JoinPolicy` (see
+//! `choice`). Quad patterns choose an access path (`scan`): the index order for the bound
+//! columns, another order for a sorted stream, or an IntRange scan (`range`). Post-passes render
+//! SQL chains as SqlJoin (`sqljoin`) and merge chains as StarMerge (`star`). Estimates are
+//! clamped to [`MAX_ESTIMATE`].
 //!
 //! Seed propagation contract (what `validate()` checks and the executor must implement):
 //! a subtree opened with a Join-mode seed S passes S to every input of an inner join (and the
@@ -26,18 +30,25 @@
 //! costs opaque units from estimates (`estimate`) instead of planning them for every seed set
 //! it probes. EXISTS substitution hints are read off the emitted plans (`exists_hints`).
 //!
-//! Deferred to the optimizer package (structured so they slot in as extra join choices /
-//! post-passes): MergeJoin, StarMerge, SortBySlot, SqlJoin rendering, IntRange pushdown,
-//! interesting-order DP and constant calibration.
+//! Sortedness (`Plan::sorted_by`) is claimed only where the executor guarantees it: a Scan
+//! read as one sorted stream (`scan::scan_sorted_by`), MergeJoin / StarMerge / SortBySlot (the
+//! key), BindJoin (the left order unless batches are re-sorted by another slot), HashJoin (the
+//! probe order), NestedLoop / Minus / Filter / Extend / Distinct / Reduced / Slice / Project
+//! (their input's). EXISTS plans claim nothing (their scans may re-pick orders per row).
 mod bits;
+mod choice;
 mod estimate;
 mod finish;
 mod join;
+pub(crate) mod range;
 mod scan;
 mod semi;
+pub(crate) mod sqljoin;
+mod star;
 
 pub(crate) use finish::{canonical_needed, node_exprs, walk};
-pub(crate) use scan::{bound_columns, scan_sorted_by};
+pub(crate) use join::Goal;
+pub(crate) use scan::{bound_columns, scan_sorted_by, single_fixed_graph};
 
 use rustc_hash::FxHashMap;
 use sq_core::batch::{Slot, SlotSet};
@@ -45,9 +56,11 @@ use sq_core::ir::{
     AggFunc, DatasetSpec, ExistsId, GraphSel, Logical, LoweredQuery, NamedGraphs, OrderKey, PatTerm, PathPlan,
     QuadPat, QueryForm,
 };
+use sq_core::eval_api::TempDict;
 use sq_core::plan::{JoinKind, Op, Plan, QueryOptions, QueryPlan};
 use sq_core::stats::CostConstants;
-use sq_core::store::QuadStore;
+use sq_core::store::{QuadStore, ReaderKind, StoreCaps};
+use sq_core::term::Term;
 use sq_core::{Error, Result, TermId};
 
 use crate::card::Card;
@@ -159,7 +172,14 @@ pub(crate) fn input_seeds(p: &Plan, s: SlotSet) -> Vec<(&Plan, SlotSet)> {
 pub(crate) struct Planner<'a> {
     opts: &'a QueryOptions,
     dataset: &'a DatasetSpec,
+    store: &'a dyn QuadStore,
     costs: &'a CostConstants,
+    caps: StoreCaps,
+    /// MergeJoin galloping threshold: 6 consecutive misses on SQL cursors, 10 with the direct
+    /// B-tree reader (spec §5.3).
+    gallop: u32,
+    /// The query's TEMP terms (constants absent from the store).
+    temps: &'a TempDict,
     card: Card<'a>,
     lp: LogicalProps<'a>,
     /// The rewritten EXISTS patterns (decorrelation plans them as join inputs).
@@ -168,7 +188,7 @@ pub(crate) struct Planner<'a> {
     width: f64,
     /// Plans per (node address, context normalized to the node's slots).
     memo: FxHashMap<(usize, Ctx), Plan>,
-    scan_memo: FxHashMap<(QuadPat, Ctx), Plan>,
+    scan_memo: FxHashMap<(QuadPat, Ctx, Option<scan::Access>), Plan>,
     /// Ordering-search estimates per (node address, normalized context).
     est_memo: FxHashMap<(usize, Ctx), Est>,
     /// `vars` per node address (the logical trees outlive the planner and never move).
@@ -182,12 +202,18 @@ impl<'a> Planner<'a> {
         dataset: &'a DatasetSpec,
         named_graphs: usize,
         exists: &'a [Logical],
+        temps: &'a TempDict,
         width: usize,
     ) -> Self {
+        let caps = store.caps();
         Planner {
             opts,
             dataset,
+            store,
             costs: store.costs(),
+            caps,
+            gallop: if caps.reader == ReaderKind::Btree { 10 } else { 6 },
+            temps,
             card: Card::new(store, dataset, named_graphs, opts),
             lp: LogicalProps::new(exists),
             exists_pats: exists,
@@ -201,6 +227,20 @@ impl<'a> Planner<'a> {
 
     fn row_copy(&self) -> f64 {
         self.costs.row_copy_per_slot * self.width
+    }
+
+    /// The numeric value of a query constant (inline, TEMP or dictionary literal), for
+    /// integer range bounds.
+    fn numeric(&self, id: TermId) -> Option<range::Num> {
+        range::numeric(id, || self.constant_term(id))
+    }
+
+    /// The term of a non-inline query constant: TEMP terms from the query, others decoded.
+    fn constant_term(&self, id: TermId) -> Option<Term> {
+        if id.is_temp() {
+            return self.temps.get(id).map(|t| (**t).clone());
+        }
+        self.store.dict().decode_one(id).ok().map(|t| (*t).clone())
     }
 
     /// The memo key of `l` in `ctx`: bound slots `l` never mentions cannot change its plan
@@ -237,7 +277,7 @@ impl<'a> Planner<'a> {
             Logical::Service { silent: false } => {
                 return Err(Error::Unsupported("SERVICE (federated query); use SERVICE SILENT".into()));
             }
-            Logical::Bgp(_) | Logical::Join(..) | Logical::Filter { .. } => self.plan_group(l, ctx)?,
+            Logical::Bgp(_) | Logical::Join(..) | Logical::Filter { .. } => self.plan_group(l, ctx, Goal::Rows)?,
             Logical::Path { g, s, path, o } => self.plan_path(*g, *s, path, *o, ctx),
             Logical::Values { slots, rows } => self.plan_values(slots, rows, ctx),
             Logical::LeftJoin { left, right, filter } => self.plan_left_join(left, right, filter.as_ref(), ctx)?,
@@ -268,15 +308,25 @@ impl<'a> Planner<'a> {
                     _ => None,
                 };
                 if let Some(out) = count_out {
-                    let p = self.plan(input, ctx.unseeded())?;
-                    let cost = p.est_cost_ns + p.est_rows * self.costs.vdbe_count_row;
+                    // The input is planned for counting (a factorized merge join on top is free
+                    // of output rows) and never seeded.
+                    let p = match &**input {
+                        Logical::Bgp(_) | Logical::Join(..) | Logical::Filter { .. } => {
+                            self.plan_group(input, ctx.unseeded(), Goal::Count)?
+                        }
+                        other => self.plan(other, ctx.unseeded())?,
+                    };
+                    let cost = self.count_cost(&p);
                     mk(Op::Count { input: Box::new(p), out }, 1.0, cost, None)
                 } else {
                     let p = self.plan(input, ctx)?;
-                    let cost = p.est_cost_ns + p.est_rows * (self.costs.hash_probe_small + EXPR_EVAL_NS);
+                    // Input sorted by the single key: each group is one run, no hash table.
+                    let streaming = keys.len() == 1 && p.sorted_by == keys.first().copied();
+                    let per_row = if streaming { 0.0 } else { self.costs.hash_probe_small };
+                    let cost = p.est_cost_ns + p.est_rows * (per_row + EXPR_EVAL_NS);
                     let rows = if keys.is_empty() { 1.0 } else { (p.est_rows / 2.0).max(1.0) };
-                    let op = Op::Group { input: Box::new(p), keys: keys.clone(), aggs: aggs.clone(), streaming: false };
-                    mk(op, rows, cost, None)
+                    let (keys, aggs) = (keys.clone(), aggs.clone());
+                    mk(Op::Group { input: Box::new(p), keys, aggs, streaming }, rows, cost, None)
                 }
             }
             Logical::OrderBy { input, keys } => {
@@ -305,6 +355,16 @@ impl<'a> Planner<'a> {
             }
             Logical::Slice { input, offset, limit } => self.plan_slice(input, *offset, *limit, ctx)?,
         })
+    }
+
+    /// Cost of `Op::Count` over `p`: the executor's fast path when `p` has one (§7.3.6), else
+    /// iterating its rows.
+    fn count_cost(&self, p: &Plan) -> f64 {
+        match count_fast_path(p, self.dataset) {
+            Some(FastCount::Scan) => self.costs.seek_random + p.est_rows * self.costs.vdbe_count_row,
+            Some(FastCount::Merge | FastCount::Star) => (p.est_cost_ns - p.est_rows * self.row_copy()).max(0.0),
+            None => p.est_cost_ns + p.est_rows * self.costs.row_copy_per_slot,
+        }
     }
 
     fn plan_values(&mut self, slots: &[Slot], rows: &[Vec<TermId>], ctx: Ctx) -> Plan {
@@ -397,6 +457,48 @@ impl<'a> Planner<'a> {
     }
 }
 
+/// How `Op::Count` counts its input without producing rows (spec §5.3, §7.3.6).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum FastCount {
+    /// `store.count()` in the VDBE: a Scan with no repeated slot and no IntRange over one
+    /// graph (the store default graph or one FROM graph, a constant graph, the GraphLoop
+    /// register, every named graph through the partial index, or a short FROM NAMED list
+    /// counted graph by graph).
+    Scan,
+    /// Sum over key runs of the run products of a MergeJoin without checks.
+    Merge,
+    /// Product of the runs per common key of a StarMerge without checks.
+    Star,
+}
+
+/// The fast path `Op::Count` takes over `p` (looking through Extend and Project, which keep
+/// one row per input row), if any.
+pub(crate) fn count_fast_path(p: &Plan, dataset: &DatasetSpec) -> Option<FastCount> {
+    match &p.op {
+        Op::Scan(s) => {
+            // An empty FROM list (every graph absent from the store) counts nothing at all.
+            let no_graph = |l: &[TermId]| l.iter().all(|g| !g.is_storable());
+            let graph_ok = match s.pat.g {
+                GraphSel::Default => {
+                    scan::fixed_default_graph(dataset).is_some()
+                        || matches!(&dataset.default, sq_core::ir::DefaultGraph::Graphs(l) if no_graph(l))
+                }
+                GraphSel::Const(_) | GraphSel::Active => true,
+                GraphSel::Slot(_) => match &dataset.named {
+                    NamedGraphs::All => true,
+                    // Up to 8 graphs are read (and counted) one g-first cursor at a time.
+                    NamedGraphs::Only(list) => list.len() <= 8,
+                },
+            };
+            (s.range.is_none() && graph_ok && !scan::repeats_slot(&s.pat)).then_some(FastCount::Scan)
+        }
+        Op::MergeJoin { check, .. } if check.is_empty() => Some(FastCount::Merge),
+        Op::StarMerge { check, .. } if check.is_empty() => Some(FastCount::Star),
+        Op::Extend { input, .. } | Op::Project { input, .. } => count_fast_path(input, dataset),
+        _ => None,
+    }
+}
+
 /// Narrow `hints[id]` to the slots bound wherever plan `p` (opened with seed `seeded`, inside an
 /// EXISTS evaluation substituting `subst`) evaluates `EXISTS #id`: the certain slots of the rows
 /// the expression sees, the seeded slots they carry and the substituted ones. The EXISTS plan is
@@ -451,7 +553,7 @@ pub(crate) fn plan_query(
     store: &dyn QuadStore,
     opts: &QueryOptions,
 ) -> Result<QueryPlan> {
-    let mut planner = Planner::new(store, opts, &q.dataset, named.len(), &rw.exists, q.vars.width());
+    let mut planner = Planner::new(store, opts, &q.dataset, named.len(), &rw.exists, &q.temps, q.vars.width());
     let mut root = planner.plan(&rw.root, Ctx::default())?;
     if q.form == QueryForm::Ask {
         let (rows, cost) = (root.est_rows.min(1.0), root.est_cost_ns);

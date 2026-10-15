@@ -5,15 +5,19 @@
 //! [`validate()`] (debug builds). `optimize` runs, in order:
 //! * logical rewrites (`rewrite`): `GRAPH <c>` membership, Empty propagation, GRAPH ?g
 //!   push-or-loop, filter placement and sameTerm seed constants;
-//! * physical planning (`physical`): join groups ordered by DP over connected subsets (up to
-//!   12 units and a bounded number of DP steps; greedy otherwise), BindJoin / HashJoin /
-//!   NestedLoop per `JoinPolicy` and cost, OPTIONAL, MINUS, EXISTS (correlated or decorrelated
-//!   into Semi / Anti joins), TopK, Count, GraphLoop / GraphNames, then pre-order ids and
-//!   canonical flags.
+//! * physical planning (`physical`): join groups ordered by DP over connected subsets with
+//!   interesting orders (up to 12 units and a bounded number of DP steps; greedy otherwise);
+//!   per step BindJoin / HashJoin / MergeJoin (SortBySlot enforcers) / NestedLoop or an SQL
+//!   chain step, per `JoinPolicy` and cost; access paths per quad pattern (index order for a
+//!   sorted stream, IntRange scans for integer range filters); OPTIONAL, MINUS, EXISTS
+//!   (correlated or decorrelated into Semi / Anti joins), TopK, Count (VDBE count, factorized
+//!   merge count), GraphLoop / GraphNames; post-passes render SQL chains as SqlJoin and merge
+//!   chains as StarMerge where cheaper, then pre-order ids and canonical flags.
 //!
 //! Module map: `lower` (IR construction), `props` (certain / maybe / safe_inject),
 //! `rewrite::{graph, empty, filter}`, `card` (cardinality),
-//! `physical::{join, scan, semi, estimate, finish}`, `validate`, `explain`.
+//! `physical::{join, choice, scan, range, sqljoin, star, semi, estimate, finish}`, `validate`,
+//! `explain`.
 mod card;
 mod explain;
 mod expr;

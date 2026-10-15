@@ -12,6 +12,9 @@
 //! inline id and store blank-node labels their counter id; otherwise, when a canonical id is
 //! required, the store dictionary is probed (results cached per execution, including misses)
 //! and a miss falls back to the `TempDict`; non-canonical interns go straight to the `TempDict`.
+//!
+//! The `TempDict` only grows during an execution (the decoded and canonical-lookup maps are
+//! bounded), so every TEMP term it adds is charged against the memory budget.
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
@@ -20,26 +23,72 @@ use sq_core::eval_api::{TempDict, TermResolver};
 use sq_core::store::QuadStore;
 use sq_core::{Error, Result, Tag, Term, TermId};
 
-use crate::ctx::Shared;
+use crate::ctx::{Charge, Shared};
 
 /// Bound on the per-execution decoded-term map (cleared when full).
 const DECODED_LIMIT: usize = 1 << 17;
 /// Bound on the per-execution canonical-lookup cache (cleared when full).
 const LOOKUP_LIMIT: usize = 1 << 16;
+/// Bytes of a TEMP term besides its strings: the `Arc<Term>`, its `TempDict` slot and index
+/// entry.
+const TEMP_TERM_BYTES: usize = size_of::<Term>() + 64;
+/// Bytes per string of a term (the `Arc<str>` header).
+const STR_BYTES: usize = 16;
+
+/// Memory held by a TEMP term.
+fn temp_bytes(t: &Term) -> usize {
+    let strings = match t {
+        Term::Iri(s) | Term::BNode(s) => STR_BYTES + s.len(),
+        Term::Literal(l) => {
+            2 * STR_BYTES + l.lex.len() + l.datatype.len() + l.lang.as_ref().map_or(0, |g| STR_BYTES + g.len())
+        }
+    };
+    TEMP_TERM_BYTES + strings
+}
 
 /// Execution-local term state behind the resolver.
 pub(crate) struct Terms {
-    pub temps: TempDict,
+    temps: TempDict,
     decoded: FxHashMap<TermId, Arc<Term>>,
     /// Canonical ids of interned terms (dictionary ids, or TEMP ids for terms the store lacks).
     canonical: FxHashMap<Term, TermId>,
+    /// The TEMP terms added by this execution (held until it ends).
+    charge: Charge,
     pub hits: u64,
     pub misses: u64,
 }
 
 impl Terms {
     pub fn new(temps: TempDict) -> Self {
-        Terms { temps, decoded: FxHashMap::default(), canonical: FxHashMap::default(), hits: 0, misses: 0 }
+        Terms {
+            temps,
+            decoded: FxHashMap::default(),
+            canonical: FxHashMap::default(),
+            charge: Charge::default(),
+            hits: 0,
+            misses: 0,
+        }
+    }
+
+    /// The TEMP id of `t`, charging the term when it is new.
+    fn temp(&mut self, sh: &Shared, t: &Term) -> Result<TermId> {
+        let n = self.temps.len();
+        let id = self.temps.intern(t.clone());
+        if self.temps.len() > n {
+            sh.charge(&mut self.charge, temp_bytes(t))?;
+        }
+        Ok(id)
+    }
+
+    /// A fresh TEMP blank node (BNODE(), CONSTRUCT template blank nodes). Its memory is
+    /// recorded without a budget check (the resolver's `fresh_bnode` cannot fail): an exceeded
+    /// budget is reported by the next charge or interrupt poll.
+    pub fn fresh_bnode(&mut self, sh: &Shared) -> TermId {
+        let id = self.temps.fresh_bnode();
+        if let Some(t) = self.temps.get(id) {
+            sh.record(&mut self.charge, temp_bytes(t));
+        }
+        id
     }
 
     /// Decodes a bound id without dictionary I/O, if possible (inline, blank node, TEMP).
@@ -128,7 +177,7 @@ impl Terms {
         Ok(())
     }
 
-    pub fn intern(&mut self, store: &dyn QuadStore, t: &Term, canonical: bool) -> Result<TermId> {
+    pub fn intern(&mut self, sh: &Shared, t: &Term, canonical: bool) -> Result<TermId> {
         match t {
             Term::Literal(l) => {
                 if let Some(id) = codec::encode_inline_literal(&l.lex, &l.datatype, l.lang.as_deref()) {
@@ -140,19 +189,19 @@ impl Terms {
                     return Ok(id);
                 }
                 // TEMP blank nodes ("t<index>") are found by label in the TempDict.
-                return Ok(self.temps.intern(t.clone()));
+                return self.temp(sh, t);
             }
             Term::Iri(_) => {}
         }
         if !canonical {
-            return Ok(self.temps.intern(t.clone()));
+            return self.temp(sh, t);
         }
         if let Some(id) = self.canonical.get(t) {
             return Ok(*id);
         }
-        let id = match store.dict().lookup(t.to_oxrdf().as_ref())? {
+        let id = match sh.store.dict().lookup(t.to_oxrdf().as_ref())? {
             Some(id) => id,
-            None => self.temps.intern(t.clone()),
+            None => self.temp(sh, t)?,
         };
         if self.canonical.len() >= LOOKUP_LIMIT {
             self.canonical.clear();
@@ -175,10 +224,10 @@ impl TermResolver for Resolver<'_> {
     }
 
     fn intern(&mut self, t: &Term, canonical: bool) -> Result<TermId> {
-        self.sh.terms.borrow_mut().intern(&*self.sh.store, t, canonical)
+        self.sh.terms.borrow_mut().intern(self.sh, t, canonical)
     }
 
     fn fresh_bnode(&mut self) -> TermId {
-        self.sh.terms.borrow_mut().temps.fresh_bnode()
+        self.sh.terms.borrow_mut().fresh_bnode(self.sh)
     }
 }

@@ -28,8 +28,27 @@ impl Params {
         format!("?{n}")
     }
 
-    pub fn into_values(self) -> Vec<i64> {
-        self.values
+    /// The final statement and its parameter values: placeholders are renumbered by first use,
+    /// dropping values allocated for fragments the translation discarded (an empty UNION
+    /// branch, a pattern that cannot match). Generated SQL contains `?` only in placeholders.
+    pub fn finish(self, sql: &str) -> (String, Vec<i64>) {
+        let mut out = String::with_capacity(sql.len());
+        let mut values = Vec::new();
+        let mut renumbered: FxHashMap<usize, usize> = FxHashMap::default();
+        let mut rest = sql;
+        while let Some(at) = rest.find('?') {
+            out.push_str(&rest[..at]);
+            let digits = rest[at + 1..].bytes().take_while(u8::is_ascii_digit).count();
+            let old: usize = rest[at + 1..at + 1 + digits].parse().expect("placeholders are ?N");
+            let new = *renumbered.entry(old).or_insert_with(|| {
+                values.push(self.values[old - 1]);
+                values.len()
+            });
+            let _ = write!(out, "?{new}");
+            rest = &rest[at + 1 + digits..];
+        }
+        out.push_str(rest);
+        (out, values)
     }
 }
 
@@ -112,10 +131,19 @@ impl Block {
         Block { conds: vec!["0".into()], empty: true, ..Block::default() }
     }
 
-    /// True if the block is a single plain FROM item (no LEFT JOIN): it can be the right
-    /// operand of a LEFT JOIN as is.
+    /// True if the block is a single plain FROM item (no LEFT JOIN) and every binding is a
+    /// column of that item: it can then be the right operand of a LEFT JOIN as is (its
+    /// bindings become NULL when nothing matches; a constant or computed binding would not).
     pub fn is_single_item(&self) -> bool {
-        self.items.len() == 1 && !matches!(self.items[0], Item::Left { .. })
+        let alias = match self.items.as_slice() {
+            [Item::Quad(alias) | Item::Derived { alias, .. }] => alias,
+            _ => return false,
+        };
+        self.cols.values().all(|c| {
+            c.sql.strip_prefix(alias.as_str()).and_then(|rest| rest.strip_prefix('.')).is_some_and(|col| {
+                !col.is_empty() && col.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            })
+        })
     }
 
     /// ` FROM …` (empty when there are no items).

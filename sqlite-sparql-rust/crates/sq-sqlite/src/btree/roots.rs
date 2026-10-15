@@ -55,9 +55,9 @@ impl Roots {
         self.0[slot(order)]
     }
 
-    /// At least one order is readable directly.
-    pub fn any(&self) -> bool {
-        self.0.iter().any(|r| *r != 0)
+    /// Every order is readable directly.
+    pub fn all(&self) -> bool {
+        self.0.iter().all(|r| *r != 0)
     }
 }
 

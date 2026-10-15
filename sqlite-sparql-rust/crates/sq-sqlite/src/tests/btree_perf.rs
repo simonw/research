@@ -20,7 +20,9 @@ use super::{Db, iri};
 use crate::{BulkMode, LoadOptions, LoadSource, ReaderMode};
 
 const PERSONS: usize = 142_000; // ~1.0M triples
-const ROUNDS: usize = 5;
+/// Best-of rounds (the machine is shared): scans are cheap, so they get more rounds.
+const SCAN_ROUNDS: usize = 9;
+const PROBE_ROUNDS: usize = 5;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Reader {
@@ -39,13 +41,13 @@ impl Reader {
     }
 }
 
-/// Best-of-ROUNDS ns per unit of `f` (which returns the number of units it processed).
-fn measure(db: &Db, reader: Reader, mut f: impl FnMut() -> usize) -> f64 {
+/// Best-of-`rounds` ns per unit of `f` (which returns the number of units it processed).
+fn measure(db: &Db, reader: Reader, rounds: usize, mut f: impl FnMut() -> usize) -> f64 {
     db.shared().set_reader(if reader == Reader::Sql { ReaderMode::Sql } else { ReaderMode::Btree });
     if reader == Reader::BtreeWarm {
         f(); // warm the page cache
     }
-    (0..ROUNDS)
+    (0..rounds)
         .map(|_| {
             if reader == Reader::BtreeCold {
                 db.shared().clear_page_cache().unwrap();
@@ -80,6 +82,7 @@ fn perf_btree_reader_vs_sql_cursor_1m_triples() {
         eprintln!("skipped: performance numbers are only meaningful with --release");
         return;
     }
+    let _serial = super::perf_lock();
     let db = Db::file();
     db.conn.execute_batch("PRAGMA page_size=8192; VACUUM; PRAGMA cache_size=-524288;").unwrap();
     let data = social_ntriples(PERSONS);
@@ -105,7 +108,7 @@ fn perf_btree_reader_vs_sql_cursor_1m_triples() {
         let rows = scan(&db, spec, ReaderKind::SqlCursor);
         println!("{name}: {rows} rows");
         for r in readers {
-            let ns = measure(&db, r, || scan(&db, spec, kind(r)));
+            let ns = measure(&db, r, SCAN_ROUNDS, || scan(&db, spec, kind(r)));
             println!("  {} {ns:6.1} ns/row", r.label());
             scan_ns.push(ns);
         }
@@ -129,7 +132,7 @@ fn perf_btree_reader_vs_sql_cursor_1m_triples() {
         for (label, subjects) in [("sorted", &sorted), ("random", &random)] {
             println!("point probes {order:?} {label} (rebind + fill):");
             for r in readers {
-                let ns = measure(&db, r, || {
+                let ns = measure(&db, r, PROBE_ROUNDS, || {
                     let mut cur = db.store.cursor(&ScanSpec::new(order, &prefix(subjects[0]))).unwrap();
                     assert_eq!(cur.counters().reader, kind(r));
                     let mut buf = Vec::with_capacity(16);

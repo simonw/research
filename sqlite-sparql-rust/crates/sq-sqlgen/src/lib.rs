@@ -1,6 +1,6 @@
 //! sq-sqlgen: the baseline SPARQL→SQL translator (docs/SPEC.md §9).
 //!
-//! [`translate`] turns a [`LoweredQuery`] into ONE SQL statement over the same `main.rdf_quad`
+//! [`translate()`] turns a [`LoweredQuery`] into ONE SQL statement over the same `main.rdf_quad`
 //! / `main.rdf_term` storage the native engine reads. Its result columns are the projected
 //! variables' `TermId`s (INTEGER, NULL = unbound), so the benchmark compares evaluation
 //! strategies only: SQLite's planner and VDBE instead of ours, same ids, same decode path.

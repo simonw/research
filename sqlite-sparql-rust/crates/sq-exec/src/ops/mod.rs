@@ -25,7 +25,9 @@ pub(crate) mod union;
 /// with another seed, without an intervening `close`. `next` appends rows to `out` until it is
 /// full (then returns `Ok(true)`) or the operator is exhausted (`Ok(false)`; rows appended by
 /// that last call are valid). `fast_count`, when supported, counts the remaining rows of a
-/// freshly opened operator without producing them. `close` releases cursors and memory.
+/// freshly opened operator without producing them. `reset` releases the memory an operator
+/// holds between two opens but keeps its cursors for rebinding; `close` releases cursors and
+/// memory.
 pub(crate) trait Operator {
     /// (Re)start. `seed` holds the values bound by the caller: Join-mode seeds (BindJoin
     /// probes) and/or Substitute-mode seeds (EXISTS), see [`crate::seed`].
@@ -43,7 +45,10 @@ pub(crate) trait Operator {
 
     /// COUNT fast path on a freshly opened operator (Scan -> `store.count`, MergeJoin -> sum of
     /// run products, row-preserving operators -> their input's). None = iterate instead.
-    fn fast_count(&mut self, _cx: &mut ExecCtx) -> Option<Result<u64>> {
+    ///
+    /// `cap = Some(c)`: only `min(count, c)` is needed (a LIMIT above), so the result may be
+    /// any `r` with `min(r, c) == min(count, c)` and counting stops once past `c`.
+    fn fast_count(&mut self, _cx: &mut ExecCtx, _cap: Option<u64>) -> Option<Result<u64>> {
         None
     }
 
@@ -52,6 +57,16 @@ pub(crate) trait Operator {
     /// unsupported (nothing changed).
     fn seek(&mut self, _cx: &mut ExecCtx, _slot: Slot, _key: TermId) -> Result<bool> {
         Ok(false)
+    }
+
+    /// Done with this operator until its next `open`: release everything charged against the
+    /// memory budget (buffers, hash tables, materialized rows) but keep the cursors, so that a
+    /// re-open with a seed of the same shape `rebind`s them (§5.3) instead of leasing new ones.
+    /// Used for subtrees that are opened again and again: correlated EXISTS patterns
+    /// evaluated per outer row, hash-join build sides, counted inputs. Operators that hold
+    /// no cursor keep the default, which closes.
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.close(cx)
     }
 
     fn close(&mut self, cx: &mut ExecCtx);
@@ -105,9 +120,9 @@ impl Operator for Instrumented {
         Ok(more)
     }
 
-    fn fast_count(&mut self, cx: &mut ExecCtx) -> Option<Result<u64>> {
+    fn fast_count(&mut self, cx: &mut ExecCtx, cap: Option<u64>) -> Option<Result<u64>> {
         let start = cx.sh.timing.get().then(std::time::Instant::now);
-        let r = self.inner.fast_count(cx);
+        let r = self.inner.fast_count(cx, cap);
         if let (Some(Ok(n)), id) = (&r, self.id) {
             cx.sh.prof(Some(id), |p| {
                 p.rows_out += *n;
@@ -121,6 +136,10 @@ impl Operator for Instrumented {
 
     fn seek(&mut self, cx: &mut ExecCtx, slot: Slot, key: TermId) -> Result<bool> {
         self.inner.seek(cx, slot, key)
+    }
+
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.inner.reset(cx)
     }
 
     fn close(&mut self, cx: &mut ExecCtx) {

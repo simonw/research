@@ -40,6 +40,7 @@ fn perf_budgets_1m_triples() {
         eprintln!("skipped: performance budgets are only meaningful with --release");
         return;
     }
+    let _serial = super::perf_lock();
     let db = Db::file();
     db.shared().set_reader(ReaderMode::Sql);
     db.conn.execute_batch("PRAGMA page_size=8192; VACUUM; PRAGMA cache_size=-524288;").unwrap();

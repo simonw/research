@@ -21,6 +21,12 @@ pub(crate) const KEY_COLS: usize = 4;
 /// lexicographically over signed i64, which is SQLite's order for integer keys.
 pub(crate) type Key = [i64; KEY_COLS];
 
+/// Lexicographic order of two keys (signed, column by column), as one inlined comparison.
+#[inline(always)]
+pub(crate) fn cmp_keys(a: &Key, b: &Key) -> Ordering {
+    (a[0], a[1], a[2], a[3]).cmp(&(b[0], b[1], b[2], b[3]))
+}
+
 const fn corrupt(what: &'static str) -> Fallback {
     Fallback::Corrupt(what)
 }
@@ -173,7 +179,7 @@ impl<'p> Cells<'p> {
     }
 
     /// Offset of cell `i`, inside the cell content area.
-    #[inline]
+    #[inline(always)]
     fn offset(&self, i: usize) -> Result<usize, Fallback> {
         let p = self.ptrs.get(2 * i..2 * i + 2).ok_or(corrupt("cell index out of range"))?;
         let off = usize::from(u16::from_be_bytes([p[0], p[1]]));
@@ -184,7 +190,7 @@ impl<'p> Cells<'p> {
     }
 
     /// The record (payload) of cell `i`.
-    #[inline]
+    #[inline(always)]
     fn record(&self, i: usize) -> Result<&'p [u8], Fallback> {
         let at = self.offset(i)? + self.skip;
         // The payload size is a one-byte varint for every record of 4 integer columns.
@@ -202,7 +208,7 @@ impl<'p> Cells<'p> {
 
     /// The key of cell `i`. Interior cells of index b-trees are entries too (they come
     /// between their left child and the next child in key order).
-    #[inline]
+    #[inline(always)]
     pub fn key(&self, i: usize) -> Result<Key, Fallback> {
         decode_record(self.record(i)?)
     }
@@ -235,12 +241,6 @@ pub(crate) fn child(page: &[u8], h: &NodeHeader, i: usize, g: &Geometry) -> Resu
     Cells::new(page, h, g)?.child(i)
 }
 
-/// The key of cell `i` (see [`Cells::key`]).
-#[inline]
-pub(crate) fn cell_key(page: &[u8], h: &NodeHeader, i: usize, g: &Geometry) -> Result<Key, Fallback> {
-    Cells::new(page, h, g)?.key(i)
-}
-
 /// The key of cell `i` compared with `t` (see [`Cells::cmp`]).
 #[inline]
 pub(crate) fn cell_cmp(page: &[u8], h: &NodeHeader, i: usize, g: &Geometry, t: &Key) -> Result<Ordering, Fallback> {
@@ -256,13 +256,8 @@ fn cmp_record(rec: &[u8], t: &Key) -> Result<Ordering, Fallback> {
     {
         let mut at = 0;
         for (st, want) in [t0, t1, t2, t3].into_iter().zip(t) {
-            let w = int_width(st).unwrap_or(0);
-            let v = match st {
-                8 => 0,
-                9 => 1,
-                _ => be_signed(body.get(at..at + w).ok_or(corrupt("record body is truncated"))?),
-            };
-            at += w;
+            let v = int_at(st, body, at).ok_or(corrupt("record body is truncated"))?;
+            at += int_width(st).unwrap_or(0);
             match v.cmp(want) {
                 Ordering::Equal => {}
                 other => return Ok(other),
@@ -309,37 +304,21 @@ pub(crate) fn varint(b: &[u8], at: usize) -> Result<(u64, usize), Fallback> {
     Ok(((v << 8) | u64::from(last), 9))
 }
 
-/// Value and body width of an integer column of serial type `st`, read from `body`.
+/// Value and body width of a column of serial type `st` (any varint value), read from
+/// `body`; only integer columns are supported.
 #[inline]
 fn int_column(st: u64, body: &[u8]) -> Result<(i64, usize), Fallback> {
-    let truncated = || corrupt("record body is truncated");
-    let fixed = |w: usize| body.get(..w).ok_or_else(truncated);
-    Ok(match st {
-        1 => (i64::from(fixed(1)?[0] as i8), 1),
-        2 => (i64::from(i16::from_be_bytes([fixed(2)?[0], body[1]])), 2),
-        3 => {
-            let s = fixed(3)?;
-            (i64::from(i32::from_be_bytes([s[0], s[1], s[2], 0]) >> 8), 3)
+    match st {
+        1..=6 | 8 | 9 => {
+            let st = st as u8;
+            let v = int_at(st, body, 0).ok_or(corrupt("record body is truncated"))?;
+            Ok((v, int_width(st).unwrap_or(0)))
         }
-        4 => {
-            let s = fixed(4)?;
-            (i64::from(i32::from_be_bytes([s[0], s[1], s[2], s[3]])), 4)
-        }
-        5 => {
-            let s = fixed(6)?;
-            (i64::from_be_bytes([s[0], s[1], s[2], s[3], s[4], s[5], 0, 0]) >> 16, 6)
-        }
-        6 => {
-            let s = fixed(8)?;
-            (i64::from_be_bytes([s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7]]), 8)
-        }
-        8 => (0, 0),
-        9 => (1, 0),
-        0 => return Err(Fallback::Unsupported("NULL column in a quad record")),
-        7 => return Err(Fallback::Unsupported("REAL column in a quad record")),
-        10 | 11 => return Err(corrupt("reserved serial type")),
-        _ => return Err(Fallback::Unsupported("TEXT or BLOB column in a quad record")),
-    })
+        0 => Err(Fallback::Unsupported("NULL column in a quad record")),
+        7 => Err(Fallback::Unsupported("REAL column in a quad record")),
+        10 | 11 => Err(corrupt("reserved serial type")),
+        _ => Err(Fallback::Unsupported("TEXT or BLOB column in a quad record")),
+    }
 }
 
 /// The record header (serial types included) and the offset of the first serial type.
@@ -353,49 +332,82 @@ fn record_header(rec: &[u8]) -> Result<(&[u8], usize), Fallback> {
     Ok((&rec[..hlen], at))
 }
 
+/// Body width of each serial type that fits a one-byte header entry; `NOT_INT` for the
+/// non-integer ones (NULL, REAL, reserved, TEXT, BLOB) and for multi-byte varints.
+const INT_WIDTH: [u8; 256] = {
+    let mut w = [NOT_INT; 256];
+    w[1] = 1;
+    w[2] = 2;
+    w[3] = 3;
+    w[4] = 4;
+    w[5] = 6;
+    w[6] = 8;
+    w[8] = 0;
+    w[9] = 0;
+    w
+};
+const NOT_INT: u8 = 0x80;
+
 /// Body width of an integer serial type that fits a one-byte header entry.
-#[inline]
+#[inline(always)]
 fn int_width(st: u8) -> Option<usize> {
-    match st {
-        1..=4 => Some(usize::from(st)),
-        5 => Some(6),
-        6 => Some(8),
-        8 | 9 => Some(0),
-        _ => None,
-    }
+    let w = INT_WIDTH[usize::from(st)];
+    (w != NOT_INT).then_some(usize::from(w))
 }
 
-/// Big-endian two's-complement integer of 1..=8 bytes.
-#[inline]
-fn be_signed(b: &[u8]) -> i64 {
-    let mut v = i64::from(b[0] as i8);
-    for &x in &b[1..] {
-        v = (v << 8) | i64::from(x);
+/// Value of an integer column of serial type `st` (1–6, 8, 9) at `body[at..]`. Out-of-range
+/// reads yield `None` (the fast path checks the total width first, so they never happen).
+#[inline(always)]
+fn int_at(st: u8, body: &[u8], at: usize) -> Option<i64> {
+    fn be<const N: usize>(body: &[u8], at: usize) -> Option<[u8; N]> {
+        body.get(at..at + N)?.try_into().ok()
     }
-    v
+    Some(match st {
+        1 => i64::from(i8::from_be_bytes(be::<1>(body, at)?)),
+        2 => i64::from(i16::from_be_bytes(be::<2>(body, at)?)),
+        3 => {
+            let [a, b, c] = be::<3>(body, at)?;
+            i64::from(i32::from_be_bytes([a, b, c, 0]) >> 8)
+        }
+        4 => i64::from(i32::from_be_bytes(be::<4>(body, at)?)),
+        5 => {
+            let [a, b, c, d, e, f] = be::<6>(body, at)?;
+            i64::from_be_bytes([a, b, c, d, e, f, 0, 0]) >> 16
+        }
+        6 => i64::from_be_bytes(be::<8>(body, at)?),
+        8 => 0,
+        _ => 1,
+    })
 }
 
 /// Decodes a record of exactly 4 integer columns.
-#[inline]
+#[inline(always)]
 pub(crate) fn decode_record(rec: &[u8]) -> Result<Key, Fallback> {
     // Fast path: a 5-byte header holding 4 one-byte integer serial types, which is the
     // shape of every record SQLite writes for 4 integer columns.
-    if let &[5, t0, t1, t2, t3, ref body @ ..] = rec
-        && let (Some(w0), Some(w1), Some(w2), Some(w3)) = (int_width(t0), int_width(t1), int_width(t2), int_width(t3))
-        && w0 + w1 + w2 + w3 == body.len()
-    {
-        let mut key = [0i64; KEY_COLS];
-        let mut at = 0;
-        for ((col, st), w) in key.iter_mut().zip([t0, t1, t2, t3]).zip([w0, w1, w2, w3]) {
-            *col = match st {
-                8 => 0,
-                9 => 1,
-                _ => be_signed(&body[at..at + w]),
-            };
-            at += w;
+    if let &[5, t0, t1, t2, t3, ref body @ ..] = rec {
+        let w = [t0, t1, t2, t3].map(|t| INT_WIDTH[usize::from(t)]);
+        if (w[0] | w[1] | w[2] | w[3]) & NOT_INT == 0
+            && usize::from(w[0]) + usize::from(w[1]) + usize::from(w[2]) + usize::from(w[3]) == body.len()
+        {
+            let a1 = usize::from(w[0]);
+            let a2 = a1 + usize::from(w[1]);
+            let a3 = a2 + usize::from(w[2]);
+            if let (Some(c0), Some(c1), Some(c2), Some(c3)) =
+                (int_at(t0, body, 0), int_at(t1, body, a1), int_at(t2, body, a2), int_at(t3, body, a3))
+            {
+                return Ok([c0, c1, c2, c3]);
+            }
         }
-        return Ok(key);
     }
+    decode_record_general(rec)
+}
+
+/// Any record shape: multi-byte header varints, and every non-integer or malformed column
+/// reported as a `Fallback`.
+#[cold]
+#[inline(never)]
+fn decode_record_general(rec: &[u8]) -> Result<Key, Fallback> {
     let (header, mut at) = record_header(rec)?;
     let hlen = header.len();
     let mut body = hlen;
@@ -618,6 +630,10 @@ mod tests {
             p[ptrs + 2 * i..ptrs + 2 * i + 2].copy_from_slice(&(content as u16).to_be_bytes());
         }
         p
+    }
+
+    fn cell_key(page: &[u8], h: &NodeHeader, i: usize, g: &Geometry) -> Result<Key, Fallback> {
+        Cells::new(page, h, g)?.key(i)
     }
 
     #[test]

@@ -1,4 +1,7 @@
 //! Interrupts, deadlines and the memory budget.
+use sq_core::ir::{AggFunc, AggSpec};
+use sq_core::spargebra::algebra::Function;
+
 use super::*;
 
 fn big(fx: &Fx, n: i64) -> TermId {
@@ -69,6 +72,80 @@ fn memory_budget_is_charged_by_materializing_operators() {
     let mut e = Q::new(&fx.store, 3, sort()).exec(fx.rc());
     assert_eq!(collect(&mut e).unwrap().len(), 3000);
     assert_eq!(e.memory_used(), 0);
+}
+
+fn budget_error(store: &dyn QuadStore, width: usize, root: Plan, rc: Rc<dyn QuadStore>) -> Result<Vec<Vec<TermId>>> {
+    let mut q = Q::new(store, width, root);
+    q.opts.max_memory_mb = 1;
+    collect(&mut q.exec(rc))
+}
+
+fn group_of(input: Plan, keys: &[Slot], aggs: Vec<(Slot, AggSpec)>, streaming: bool) -> Plan {
+    plan(Op::Group { input: Box::new(input), keys: keys.to_vec(), aggs, streaming })
+}
+
+#[test]
+fn aggregate_state_is_charged_against_the_memory_budget() {
+    let fx = Fx::new();
+    // COUNT(DISTINCT *) over 100K distinct solutions in one group.
+    let rows: Vec<Vec<TermId>> = (0..100_000).map(|i| vec![int(i)]).collect();
+    let all = AggSpec { func: AggFunc::CountAll, distinct: true, arg: None };
+    let r = budget_error(&fx.store, 2, group_of(values(&[0], rows), &[], vec![(1, all)], false), fx.rc());
+    assert!(matches!(r, Err(Error::MemoryBudget(1))), "COUNT(DISTINCT *): {:?}", r.map(|v| v.len()));
+    // GROUP_CONCAT over 20K stored strings of about 80 bytes.
+    let p = fx.iri("p");
+    let mut quads: Vec<[TermId; 4]> = (0..20_000)
+        .map(|i| [TermId::DEFAULT_GRAPH, fx.iri(&format!("s{i}")), p, fx.lit(&format!("{i:0>80}"))])
+        .collect();
+    fx.store.insert(&mut quads).unwrap();
+    let concat = AggSpec { func: AggFunc::GroupConcat { separator: ",".into() }, distinct: false, arg: Some(sv(1)) };
+    let r = budget_error(&fx.store, 3, group_of(scan(v(0), c(p), v(1)), &[], vec![(2, concat)], false), fx.rc());
+    assert!(matches!(r, Err(Error::MemoryBudget(1))), "GROUP_CONCAT: {:?}", r.map(|v| v.len()));
+}
+
+#[test]
+fn streaming_groups_release_their_state() {
+    let fx = Fx::new();
+    // 2000 groups of 100 distinct values, sorted by key: one group's set at a time, while a
+    // hash aggregation holds them all (200K values) and exceeds the budget.
+    let rows: Vec<Vec<TermId>> = (0..200_000).map(|i| vec![int(i / 100), int(i)]).collect();
+    let agg = || vec![(2, AggSpec { func: AggFunc::Count, distinct: true, arg: Some(sv(1)) })];
+    let streaming = group_of(values(&[0, 1], rows.clone()), &[0], agg(), true);
+    let mut q = Q::new(&fx.store, 3, streaming);
+    q.opts.max_memory_mb = 1;
+    let mut e = q.exec(fx.rc());
+    let got = collect(&mut e).unwrap();
+    assert_eq!(got.len(), 2000);
+    assert!(got.iter().all(|r| r[2] == int(100)));
+    assert_eq!(e.memory_used(), 0);
+    let hash = group_of(values(&[0, 1], rows), &[0], agg(), false);
+    assert!(matches!(budget_error(&fx.store, 3, hash, fx.rc()), Err(Error::MemoryBudget(1))));
+}
+
+#[test]
+fn computed_terms_and_fresh_blank_nodes_are_charged() {
+    let fx = Fx::new();
+    let p = big(&fx, 20_000);
+    // BIND(BNODE() AS ?2) per row: recorded by the infallible resolver call, reported by a poll.
+    let bnode = plan(Op::Extend {
+        input: Box::new(scan(v(0), c(p), v(1))),
+        slot: 2,
+        expr: Expr::Call(Function::BNode, vec![]),
+        canonical: false,
+    });
+    let r = budget_error(&fx.store, 3, bnode, fx.rc());
+    assert!(matches!(r, Err(Error::MemoryBudget(1))), "BNODE(): {:?}", r.map(|v| v.len()));
+    // A computed term stays charged for the whole execution; an already interned one is free.
+    let ucase = |input: Plan| plan(Op::Extend {
+        input: Box::new(input),
+        slot: 2,
+        expr: Expr::Call(Function::UCase, vec![cv(fx.lit("computed"))]),
+        canonical: false,
+    });
+    let mut e = Q::new(&fx.store, 3, ucase(scan(v(0), c(p), v(1)))).exec(fx.rc());
+    assert_eq!(collect(&mut e).unwrap().len(), 20_000);
+    let one = e.memory_used();
+    assert!(one > 0 && one < 1024, "one TEMP term: {one} bytes");
 }
 
 #[test]

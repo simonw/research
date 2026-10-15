@@ -158,7 +158,7 @@ impl BindJoin {
         let mut table = HashTable::new(width, self.seed_slots.clone(), Vec::new());
         self.right.open(cx, self.seed.subst_only())?;
         table.build_from(cx, self.right.as_mut(), &mut self.rb)?;
-        self.right.close(cx);
+        self.right.reset(cx);
         cx.release(&mut self.charge);
         self.run.reset();
         self.run_valid = false;
@@ -213,6 +213,24 @@ impl BindJoin {
     }
 }
 
+impl BindJoin {
+    /// Frees the buffered probe result and the hash table of the adaptive switch.
+    fn release_buffers(&mut self, cx: &ExecCtx) {
+        cx.release(&mut self.charge);
+        self.drop_hashed(cx);
+        self.run.reset();
+        self.run_valid = false;
+    }
+
+    /// Leaves the adaptive hash join, releasing its table's charge.
+    fn drop_hashed(&mut self, cx: &ExecCtx) {
+        if let Some(h) = self.hashed.take() {
+            let (mut table, _) = *h;
+            table.reset(cx);
+        }
+    }
+}
+
 impl Operator for BindJoin {
     fn open(&mut self, cx: &mut ExecCtx, seed: Option<Seed<'_>>) -> Result<()> {
         self.seed.set(seed);
@@ -225,11 +243,12 @@ impl Operator for BindJoin {
         self.l_more = true;
         self.order.clear();
         self.li = 0;
+        self.left_rows = 0;
+        // The run buffer keeps its capacity for the probes of this open.
         self.run.clear();
         self.run_valid = false;
-        self.left_rows = 0;
-        self.hashed = None;
         cx.release(&mut self.charge);
+        self.drop_hashed(cx);
         self.left.open(cx, self.seed.full())
     }
 
@@ -270,14 +289,14 @@ impl Operator for BindJoin {
         }
     }
 
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.release_buffers(cx);
+        self.left.reset(cx);
+        self.right.reset(cx);
+    }
+
     fn close(&mut self, cx: &mut ExecCtx) {
-        cx.release(&mut self.charge);
-        if let Some(h) = self.hashed.take() {
-            let (mut table, _) = *h;
-            table.reset(cx);
-        }
-        self.run.reset();
-        self.run_valid = false;
+        self.release_buffers(cx);
         self.left.close(cx);
         self.right.close(cx);
     }

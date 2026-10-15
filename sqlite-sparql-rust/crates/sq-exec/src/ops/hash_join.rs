@@ -16,7 +16,7 @@ use sq_core::{Batch, Result, Slot, TermId};
 use sq_expr::CompiledExpr;
 
 use super::{BoxOp, Operator};
-use crate::ctx::{Charge, ExecCtx};
+use crate::ctx::{Charge, ExecCtx, POLL_ROWS};
 use crate::rows::{Rows, compatible, push_merged, refill};
 use crate::seed::{Seed, SeedBuf};
 
@@ -184,10 +184,14 @@ impl HashTable {
         }
     }
 
-    /// The next build row compatible with `probe` on the keys and the check slots.
+    /// The next build row compatible with `probe` on the keys and the check slots. Adds the
+    /// number of candidates visited to `work`: a probe row that visits every build row (no
+    /// keys, or an unbound key) and matches none is CPU work without output rows, which the
+    /// caller charges to the interrupt-polling counter.
     #[inline]
-    pub fn next_match(&self, probe: &[TermId], cur: &mut Cand) -> Option<u32> {
+    pub fn next_match(&self, probe: &[TermId], cur: &mut Cand, work: &mut usize) -> Option<u32> {
         loop {
+            *work += 1;
             match *cur {
                 Cand::Chain(i) if i != NIL => {
                     *cur = Cand::Chain(self.next[i as usize]);
@@ -238,11 +242,13 @@ pub(crate) struct Prober {
     more: bool,
     cur: Option<Cand>,
     matched: bool,
+    /// Candidates visited since the last tick.
+    work: usize,
 }
 
 impl Prober {
     pub fn new(width: usize) -> Self {
-        Prober { pb: Batch::new(width), pi: 0, more: true, cur: None, matched: false }
+        Prober { pb: Batch::new(width), pi: 0, more: true, cur: None, matched: false, work: 0 }
     }
 
     /// Restarts with an empty probe batch.
@@ -295,7 +301,7 @@ impl Prober {
             });
             match (mode, build_is_left) {
                 (JoinMode::Inner, _) => {
-                    while let Some(b) = table.next_match(prow, cur) {
+                    while let Some(b) = table.next_match(prow, cur, &mut self.work) {
                         push_merged(out, prow, table.rows.row(b as usize));
                         if out.is_full() {
                             return Ok(true);
@@ -303,7 +309,7 @@ impl Prober {
                     }
                 }
                 (JoinMode::Left(filter), false) => {
-                    while let Some(b) = table.next_match(prow, cur) {
+                    while let Some(b) = table.next_match(prow, cur, &mut self.work) {
                         let i = push_merged(out, prow, table.rows.row(b as usize));
                         if keep_if(filter, cx, out, i)? {
                             self.matched = true;
@@ -320,17 +326,17 @@ impl Prober {
                     }
                 }
                 (JoinMode::Semi, false) => {
-                    if table.next_match(prow, cur).is_some() {
+                    if table.next_match(prow, cur, &mut self.work).is_some() {
                         out.push_row(prow);
                     }
                 }
                 (JoinMode::Anti, false) => {
-                    if table.next_match(prow, cur).is_none() {
+                    if table.next_match(prow, cur, &mut self.work).is_none() {
                         out.push_row(prow);
                     }
                 }
                 (JoinMode::Left(filter), true) => {
-                    while let Some(b) = table.next_match(prow, cur) {
+                    while let Some(b) = table.next_match(prow, cur, &mut self.work) {
                         let i = push_merged(out, prow, table.rows.row(b as usize));
                         if keep_if(filter, cx, out, i)? {
                             marks[b as usize] = true;
@@ -341,15 +347,23 @@ impl Prober {
                     }
                 }
                 (JoinMode::Semi | JoinMode::Anti, true) => {
-                    while let Some(b) = table.next_match(prow, cur) {
+                    while let Some(b) = table.next_match(prow, cur, &mut self.work) {
                         marks[b as usize] = true;
                     }
                 }
             }
             self.pi += 1;
             self.cur = None;
+            tick_work(cx, &mut self.work)?;
         }
     }
+}
+
+/// Charges accumulated probe work to the interrupt-polling counter once it amounts to a
+/// polling interval.
+#[inline]
+pub(crate) fn tick_work(cx: &ExecCtx, work: &mut usize) -> Result<()> {
+    if *work >= POLL_ROWS as usize { cx.tick(std::mem::take(work)) } else { Ok(()) }
 }
 
 /// `HashJoin { build, probe, keys, check, kind, build_is_left }`; also NestedLoop (no keys,
@@ -406,7 +420,7 @@ impl HashJoin {
         self.table.clear(cx);
         self.build.open(cx, bseed)?;
         self.table.build_from(cx, self.build.as_mut(), &mut self.buf)?;
-        self.build.close(cx);
+        self.build.reset(cx);
         let n = self.table.len();
         if self.build_is_left {
             self.marks.clear();
@@ -416,6 +430,15 @@ impl HashJoin {
         self.prober.reset();
         self.built = true;
         Ok(())
+    }
+}
+
+impl HashJoin {
+    fn release_table(&mut self, cx: &ExecCtx) {
+        self.table.reset(cx);
+        self.marks = Vec::new();
+        self.built = false;
+        self.done = true;
     }
 }
 
@@ -438,7 +461,7 @@ impl Operator for HashJoin {
             if self.table.len() == 0 && nothing {
                 // An empty build side that can produce no row: skip the probe input.
                 self.done = true;
-                self.probe.close(cx);
+                self.probe.reset(cx);
                 return Ok(false);
             }
         }
@@ -467,11 +490,14 @@ impl Operator for HashJoin {
         Ok(false)
     }
 
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.release_table(cx);
+        self.build.reset(cx);
+        self.probe.reset(cx);
+    }
+
     fn close(&mut self, cx: &mut ExecCtx) {
-        self.table.reset(cx);
-        self.marks = Vec::new();
-        self.built = false;
-        self.done = true;
+        self.release_table(cx);
         self.build.close(cx);
         self.probe.close(cx);
     }

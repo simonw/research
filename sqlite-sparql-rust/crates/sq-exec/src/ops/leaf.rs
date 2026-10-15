@@ -37,7 +37,7 @@ impl Operator for Unit {
         Ok(false)
     }
 
-    fn fast_count(&mut self, _cx: &mut ExecCtx) -> Option<Result<u64>> {
+    fn fast_count(&mut self, _cx: &mut ExecCtx, _cap: Option<u64>) -> Option<Result<u64>> {
         let n = u64::from(!self.done);
         self.done = true;
         Some(Ok(n))
@@ -60,7 +60,7 @@ impl Operator for Empty {
         Ok(false)
     }
 
-    fn fast_count(&mut self, _cx: &mut ExecCtx) -> Option<Result<u64>> {
+    fn fast_count(&mut self, _cx: &mut ExecCtx, _cap: Option<u64>) -> Option<Result<u64>> {
         Some(Ok(0))
     }
 
@@ -165,7 +165,7 @@ impl Operator for GraphNames {
         Ok(false)
     }
 
-    fn fast_count(&mut self, _cx: &mut ExecCtx) -> Option<Result<u64>> {
+    fn fast_count(&mut self, _cx: &mut ExecCtx, _cap: Option<u64>) -> Option<Result<u64>> {
         let n = (self.end - self.pos) as u64;
         self.pos = self.end;
         Some(Ok(n))

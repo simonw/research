@@ -10,12 +10,14 @@
 //!
 //! **Watermark.** `wm` records how far the scan got. The position is the first entry `>= wm`
 //! (`wm_incl`), or the entry just returned, which equals `wm`, when `consumed`. Every row
-//! that is read must lie strictly above the watermark. That one comparison catches keys out of
-//! order, so a corrupt or cyclic b-tree cannot produce duplicate rows or loop forever. It
-//! also lets every repositioning to a target `t >= wm` (forward seeks, and `rebind`s to
-//! later prefixes, which are the sorted probes of index-nested-loop joins) start from the
-//! current position instead of the root: a **finger search**. That search walks up only as
-//! far as the first ancestor whose separator key bounds `t`, then gallops forward.
+//! that is read must lie above the watermark (or on it, right after a repositioning). That
+//! one comparison catches keys out of order, so a corrupt or cyclic b-tree cannot produce
+//! duplicate rows or loop forever. It also lets every repositioning to a target `t >= wm`
+//! (forward seeks, and `rebind`s to later prefixes, which are the sorted probes of
+//! index-nested-loop joins) start from the current position instead of the root: a **finger
+//! search**. That search walks up only as far as the first ancestor whose separator key bounds
+//! `t`, then gallops forward. A target below the watermark (a repeated probe of the same key)
+//! is searched within the pinned leaf when the leaf's first key bounds it.
 //!
 //! **Preconditions and fallback.** Every entry point (`fill`, `seek`, `rebind`) first re-checks
 //! the §13 preconditions against the cursor's snapshot. That is two `sqlite3_*` calls, and it
@@ -49,11 +51,6 @@ struct Node {
 }
 
 impl Node {
-    #[inline]
-    fn key(&self, i: usize, g: &Geometry) -> Result<Key, Fallback> {
-        format::cell_key(&self.page, &self.hdr, i, g)
-    }
-
     /// `key(i)` compared with `t` (decoding only up to the first differing column).
     #[inline]
     fn cmp(&self, i: usize, t: &Key, g: &Geometry) -> Result<Ordering, Fallback> {
@@ -508,15 +505,20 @@ impl BtreeCursor {
             let cells = format::Cells::new(&top.page, &top.hdr, &g)?;
             loop {
                 let key = cells.key(top.idx)?;
-                if key < self.wm || (key == self.wm && !self.wm_incl) {
-                    return Err(Fallback::Corrupt("index keys out of order"));
+                match format::cmp_keys(&key, &self.wm) {
+                    Ordering::Greater => {}
+                    Ordering::Equal if self.wm_incl => {}
+                    _ => return Err(Fallback::Corrupt("index keys out of order")),
                 }
-                if key > end {
+                if format::cmp_keys(&key, &end) == Ordering::Greater {
                     self.done = true;
                     return Ok(());
                 }
                 filter.check(&key)?;
-                out.extend(key[k..].iter().map(|v| TermId(*v)));
+                // Only the free suffix columns are output (capacity is reserved by `fill`).
+                for &v in &key[k..] {
+                    out.push(TermId(v));
+                }
                 self.wm = key;
                 self.wm_incl = false;
                 *n += 1;
@@ -581,9 +583,10 @@ impl BtreeCursor {
     /// After a fallback, a `rebind` returns to the reader when the fallback was transient and
     /// the preconditions hold again.
     fn try_resume(&mut self) {
-        if self.sticky || self.reader.mode() == ReaderMode::Sql {
+        if self.sticky {
             return;
         }
+        // `snapshot` also refuses while the reader is switched off (`reader = sql`).
         let Ok(snap) = self.reader.snapshot() else { return };
         let root = snap.roots.get(self.order);
         if root == 0 {

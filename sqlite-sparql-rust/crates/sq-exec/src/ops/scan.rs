@@ -578,7 +578,7 @@ impl Operator for Scan {
         self.read(cx, out, max)
     }
 
-    fn fast_count(&mut self, cx: &mut ExecCtx) -> Option<Result<u64>> {
+    fn fast_count(&mut self, cx: &mut ExecCtx, cap: Option<u64>) -> Option<Result<u64>> {
         if self.checks {
             return None;
         }
@@ -588,12 +588,17 @@ impl Operator for Scan {
                 // Single accesses have no graph positions in the prefix.
                 let spec = ScanSpec::new(self.order, &self.prefix[..self.prefix_len]);
                 self.access = Access::Empty;
-                Some(cx.store().count(&spec, None))
+                // A capped store count gives min(count, cap + 1).
+                Some(cx.store().count(&spec, cap))
             }
             Access::PerGraph { .. } => {
-                let mut total = 0;
+                let mut total = 0u64;
                 for &g in &self.graphs[self.gnext..] {
-                    match cx.store().count(&self.spec_for(g), None) {
+                    let rest = match cap {
+                        Some(c) if total > c => break,
+                        c => c.map(|c| c - total),
+                    };
+                    match cx.store().count(&self.spec_for(g), rest) {
                         Ok(n) => total += n,
                         Err(e) => return Some(Err(e)),
                     }
@@ -617,6 +622,11 @@ impl Operator for Scan {
         s.rows = 0;
         s.done = false;
         Ok(true)
+    }
+
+    fn reset(&mut self, _cx: &mut ExecCtx) {
+        // Nothing is charged; the cursors stay leased for the next `open` to rebind.
+        self.access = Access::Empty;
     }
 
     fn close(&mut self, _cx: &mut ExecCtx) {

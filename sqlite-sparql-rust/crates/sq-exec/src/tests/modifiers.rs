@@ -290,3 +290,46 @@ fn slice_offsets_limits_and_stops_early() {
     let mut e = Q::new(&fx.store, 2, slice(scan(v(0), c(p), v(1)), 100, Some(7000))).exec(fx.rc());
     assert_eq!(e.count().unwrap(), 4900);
 }
+
+/// count() of a LIMIT query asks for capped counts (offset + limit) and equals the number of
+/// rows the query returns, through every fast-countable operator and through nested slices.
+#[test]
+fn limited_counts_are_capped_and_exact() {
+    let fx = Fx::new();
+    let [p, g1, g2, g3] = ["p", "g1", "g2", "g3"].map(|n| fx.iri(n));
+    let subjects: Vec<TermId> = (0..300).map(|i| fx.iri(&format!("s{i}"))).collect();
+    let mut quads: Vec<[TermId; 4]> = Vec::new();
+    for (g, n) in [(TermId::DEFAULT_GRAPH, 300), (g1, 100), (g2, 50), (g3, 200)] {
+        quads.extend(subjects[..n].iter().enumerate().map(|(i, s)| [g, *s, p, int(i as i64)]));
+    }
+    fx.store.insert(&mut quads).unwrap();
+    let named = vec![g1, g2, g3];
+    let only = NamedGraphs::Only(Arc::from(named.clone()));
+    let sp = move || scan(v(0), c(p), v(1));
+    let per_graph = move || scan_bound(GraphSel::Slot(2), v(0), c(p), v(1), &[]);
+    let not_fast = move || filter(sp(), Expr::Less(Box::new(sv(1)), Box::new(cv(int(250)))));
+    type Input = (&'static str, Box<dyn Fn() -> Plan>);
+    let inputs: Vec<Input> = vec![
+        ("scan", Box::new(sp)),
+        ("per graph", Box::new(per_graph)),
+        ("union", Box::new(move || union(vec![sp(), sp(), sp()]))),
+        ("union with iteration", Box::new(move || union(vec![sp(), not_fast(), sp()]))),
+        ("merge join", Box::new(move || merge_join(sp(), scan(v(0), c(p), v(2)), 0, &[], 6))),
+        ("nested slice", Box::new(move || slice(slice(sp(), 10, Some(200)), 5, Some(150)))),
+    ];
+    for (name, input) in &inputs {
+        for (off, lim) in [(0, Some(0)), (0, Some(3)), (7, Some(10)), (290, Some(100)), (0, Some(1000)), (5000, Some(1))] {
+            let q = || {
+                Q::new(&fx.store, 3, slice(input(), off, lim)).dataset(DefaultGraph::StoreDefault, only.clone(), named.clone())
+            };
+            let want = q().rows(fx.rc()).len() as u64;
+            let ts = Rc::new(TestStore::new(fx.store.clone()));
+            let mut e = q().exec(ts.clone());
+            assert_eq!(e.count().unwrap(), want, "{name}: OFFSET {off} LIMIT {lim:?}");
+            assert_eq!(ts.uncapped.get(), 0, "{name}: OFFSET {off} LIMIT {lim:?} counted a whole range");
+            if lim != Some(0) && *name != "merge join" {
+                assert!(ts.counts.get() > 0, "{name}: OFFSET {off} LIMIT {lim:?} is counted by the store");
+            }
+        }
+    }
+}

@@ -1,5 +1,7 @@
 //! EXPLAIN output (spec §7.6): readable pre-order trees of the logical IR and of physical
 //! plans (`#id op details  est= cost=`, plus `rows= opens= seeks= ms=` with a profile).
+//! A SqlJoin prints its aliases (`t1:Gpso(s=t0.s,p=:age)`: index order and the bound columns
+//! of its prefix, the default graph omitted) and a Count the fast path it takes.
 //!
 //! Constants are rendered without I/O by default (inline values, TEMP terms, well-known IRIs;
 //! other dictionary ids as `<#id>`); the `_with` variants decode them through a dictionary.
@@ -14,9 +16,12 @@ use sq_core::ir::{
     PatTerm, PathPlan, QueryForm, QuadPat, TemplateTerm, VarOrigin, VarTable,
 };
 use sq_core::plan::{ExecProfile, JoinKind, Op, Plan, QueryPlan};
-use sq_core::store::Dictionary;
+use sq_core::store::{Col, Dictionary};
 use sq_core::term::Term;
 use sq_core::TermId;
+
+use crate::physical::sqljoin::{self, Operand};
+use crate::physical::{count_fast_path, FastCount};
 
 /// What `sparql_explain` prints.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -48,7 +53,7 @@ pub fn explain_logical(q: &LoweredQuery) -> String {
 
 /// [`explain_logical`], decoding dictionary constants through `dict`.
 pub fn explain_logical_with(q: &LoweredQuery, dict: Option<&dyn Dictionary>) -> String {
-    let r = Render { vars: &q.vars, temps: &q.temps, dict };
+    let r = Render { vars: &q.vars, temps: &q.temps, dict, dataset: None };
     let mut out = String::new();
     let _ = writeln!(out, "{}", r.form(&q.form));
     let _ = writeln!(out, "Dataset {}", dataset(&q.dataset, &r));
@@ -67,7 +72,7 @@ pub fn explain(p: &QueryPlan, profile: Option<&ExecProfile>) -> String {
 
 /// [`explain`], decoding dictionary constants through `dict`.
 pub fn explain_with(p: &QueryPlan, profile: Option<&ExecProfile>, dict: Option<&dyn Dictionary>) -> String {
-    let r = Render { vars: &p.vars, temps: &p.temps, dict };
+    let r = Render { vars: &p.vars, temps: &p.temps, dict, dataset: Some(&p.dataset) };
     let mut out = String::new();
     r.plan(&p.root, 0, profile, &mut out);
     let used = referenced_exists(p);
@@ -172,6 +177,8 @@ struct Render<'a> {
     vars: &'a VarTable,
     temps: &'a TempDict,
     dict: Option<&'a dyn Dictionary>,
+    /// The dataset of a physical plan (Count fast paths depend on it).
+    dataset: Option<&'a DatasetSpec>,
 }
 
 impl Render<'_> {
@@ -405,7 +412,9 @@ impl Render<'_> {
             Op::Scan(sc) => {
                 let mut t = format!("Scan {:?} {}", sc.order, self.quad(&sc.pat));
                 if let Some(r) = sc.range {
-                    let _ = write!(t, " range=[{},{}]", r.lo, r.hi);
+                    let lo = if r.lo == TermId::INT_MIN { String::new() } else { r.lo.to_string() };
+                    let hi = if r.hi == TermId::INT_MAX { String::new() } else { r.hi.to_string() };
+                    let _ = write!(t, " range=[{lo}..{hi}]");
                 }
                 if let Some(x) = p.sorted_by {
                     let _ = write!(t, " (sorted {})", self.slot(x));
@@ -458,7 +467,15 @@ impl Render<'_> {
                 aggs.iter().map(|(o, a)| self.agg(*o, a)).collect::<Vec<_>>().join(", "),
                 if *streaming { " streaming" } else { "" }
             ),
-            Op::Count { out, .. } => format!("Count -> {}", self.slot(*out)),
+            Op::Count { out, input } => {
+                let fast = match self.dataset.and_then(|d| count_fast_path(input, d)) {
+                    Some(FastCount::Scan) => " fast=scan-vdbe",
+                    Some(FastCount::Merge) => " fast=merge-factorized",
+                    Some(FastCount::Star) => " fast=star-factorized",
+                    None => "",
+                };
+                format!("Count -> {}{fast}", self.slot(*out))
+            }
             Op::Sort { keys, .. } => format!("Sort {}", self.order_keys(keys)),
             Op::SortBySlot { key, .. } => format!("SortBySlot {}", self.slot(*key)),
             Op::TopK { keys, k, .. } => format!("TopK k={k} {}", self.order_keys(keys)),
@@ -466,8 +483,35 @@ impl Render<'_> {
             Op::Reduced { slots, .. } => format!("Reduced {}", s(slots)),
             Op::Slice { offset, limit, .. } => format!("Slice offset={offset} limit={}", fmt_limit(*limit)),
             Op::Project { slots, .. } => format!("Project {}", s(slots)),
-            Op::SqlJoin { out, params, .. } => format!("SqlJoin out={} params={}", s(out), params.len()),
+            Op::SqlJoin { sql, params, out } => self.sql_join(sql, params, out),
         }
+    }
+
+    /// `SqlJoin t0:Gpos(p=rdf:type,o=:C3) t1:Gpso(s=t0.s,p=:age) -> [?x ?a]`; the raw text for a
+    /// statement of another shape.
+    fn sql_join(&self, sql: &str, params: &[i64], out: &[Slot]) -> String {
+        let outs = self.slots(out.iter().copied());
+        let Some(parsed) = sqljoin::parse(sql) else {
+            return format!("SqlJoin {sql} -> {outs}");
+        };
+        let col = |c: Col| ["g", "s", "p", "o"][c as usize];
+        let mut text = String::from("SqlJoin");
+        for (i, alias) in parsed.aliases.iter().enumerate() {
+            let terms: Vec<String> = alias
+                .terms
+                .iter()
+                .filter_map(|(c, operand)| match operand {
+                    Operand::Param(n) => {
+                        let v = TermId(params.get(n - 1).copied().unwrap_or_default());
+                        (*c != Col::G || v != TermId::DEFAULT_GRAPH).then(|| format!("{}={}", col(*c), self.term(v)))
+                    }
+                    Operand::Column(a, d) => Some(format!("{}=t{a}.{}", col(*c), col(*d))),
+                })
+                .collect();
+            let _ = write!(text, " t{i}:{:?}({})", alias.order, terms.join(","));
+        }
+        let _ = write!(text, " -> {outs}");
+        text
     }
 
     fn plan(&self, p: &Plan, depth: usize, profile: Option<&ExecProfile>, out: &mut String) {
@@ -522,7 +566,7 @@ mod tests {
         let vars = VarTable::default();
         let mut temps = TempDict::new();
         let t = temps.intern(Term::Iri("http://example.org/absent".into()));
-        let r = Render { vars: &vars, temps: &temps, dict: None };
+        let r = Render { vars: &vars, temps: &temps, dict: None, dataset: None };
         assert_eq!(r.term(t), "<http://example.org/absent>");
         assert_eq!(r.term(codec::RDF_TYPE), "rdf:type");
         assert_eq!(r.term(TermId::from_int(-4).unwrap()), "-4");

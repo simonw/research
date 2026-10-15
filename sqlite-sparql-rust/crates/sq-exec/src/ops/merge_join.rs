@@ -102,11 +102,12 @@ impl Sorted {
         }
     }
 
-    fn close(&mut self, cx: &mut ExecCtx) {
+    /// Drops the buffered rows; `keep_cursors` resets the input instead of closing it.
+    fn stop(&mut self, cx: &mut ExecCtx, keep_cursors: bool) {
         self.b.clear();
         self.pos = 0;
         self.more = false;
-        self.op.close(cx);
+        if keep_cursors { self.op.reset(cx) } else { self.op.close(cx) }
     }
 }
 
@@ -225,7 +226,7 @@ impl Operator for MergeJoin {
         }
     }
 
-    fn fast_count(&mut self, cx: &mut ExecCtx) -> Option<Result<u64>> {
+    fn fast_count(&mut self, cx: &mut ExecCtx, cap: Option<u64>) -> Option<Result<u64>> {
         if !self.check.is_empty() || self.done {
             return None;
         }
@@ -248,6 +249,9 @@ impl Operator for MergeJoin {
                     self.right.advance(key)?;
                 }
                 total += nl * nr;
+                if cap.is_some_and(|c| total > c) {
+                    break;
+                }
                 if nr == 0 {
                     let rk = self.right.key(key);
                     if !self.left.advance_to(cx, key, rk, self.gallop)? {
@@ -263,13 +267,24 @@ impl Operator for MergeJoin {
         Some(r)
     }
 
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.stop(cx, true);
+    }
+
     fn close(&mut self, cx: &mut ExecCtx) {
+        self.stop(cx, false);
+    }
+}
+
+impl MergeJoin {
+    /// Frees the buffered run and stops both inputs (`keep_cursors`: reset, else close).
+    fn stop(&mut self, cx: &mut ExecCtx, keep_cursors: bool) {
         self.run.reset();
         self.run_valid = false;
         self.done = true;
         cx.release(&mut self.charge);
-        self.left.close(cx);
-        self.right.close(cx);
+        self.left.stop(cx, keep_cursors);
+        self.right.stop(cx, keep_cursors);
     }
 }
 
@@ -421,7 +436,7 @@ impl Operator for StarMerge {
         }
     }
 
-    fn fast_count(&mut self, cx: &mut ExecCtx) -> Option<Result<u64>> {
+    fn fast_count(&mut self, cx: &mut ExecCtx, cap: Option<u64>) -> Option<Result<u64>> {
         if !self.check.is_empty() || self.done {
             return None;
         }
@@ -438,6 +453,9 @@ impl Operator for StarMerge {
                     product = product.saturating_mul(n);
                 }
                 total = total.saturating_add(product);
+                if cap.is_some_and(|c| total > c) {
+                    break;
+                }
             }
             Ok(total)
         };
@@ -446,14 +464,25 @@ impl Operator for StarMerge {
         Some(r)
     }
 
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.stop(cx, true);
+    }
+
     fn close(&mut self, cx: &mut ExecCtx) {
+        self.stop(cx, false);
+    }
+}
+
+impl StarMerge {
+    /// Frees the buffered runs and stops every input (`keep_cursors`: reset, else close).
+    fn stop(&mut self, cx: &mut ExecCtx, keep_cursors: bool) {
         for r in &mut self.runs {
             r.reset();
         }
         self.done = true;
         cx.release(&mut self.charge);
         for inp in &mut self.inputs {
-            inp.close(cx);
+            inp.stop(cx, keep_cursors);
         }
     }
 }

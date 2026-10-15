@@ -6,13 +6,17 @@
 //! a constant besides the predicate (or when there are no statistics at all), otherwise
 //! heavy hitters / per-predicate statistics, otherwise fixed defaults. Slots bound at open time
 //! (BindJoin seeds) then divide the estimate by the number of distinct values of their column.
+//!
+//! Filter selectivities (§7.4.5): `=` against a constant is 1/dv of the slot, an integer range
+//! on an object is uniform over the predicate's [imin, imax], everything else uses fixed
+//! factors ([`selectivity_with`] takes the statistics-based leaf estimates as a hook).
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use sq_core::batch::SlotSet;
 use sq_core::ir::{DatasetSpec, DefaultGraph, Expr, GraphSel, NamedGraphs, PatTerm, PathPlan, QuadPat};
-use sq_core::plan::QueryOptions;
+use sq_core::plan::{IntRange, QueryOptions};
 use sq_core::stats::{ScopeStats, Stats};
 use sq_core::store::{Col, IndexOrder, QuadStore, ScanSpec};
 use sq_core::{Result, TermId};
@@ -218,7 +222,7 @@ impl<'a> Card<'a> {
 
     /// Distinct values of column `col` among the rows of `pat` (≥ 1), used to turn a
     /// standalone estimate into a per-probe one.
-    fn distinct_values(&self, pat: &QuadPat, col: Col, rows: f64) -> f64 {
+    pub(crate) fn distinct_values(&self, pat: &QuadPat, col: Col, rows: f64) -> f64 {
         let part = match pat.g {
             GraphSel::Default if self.dataset.default == DefaultGraph::StoreDefault => {
                 GraphPart::Fixed(TermId::DEFAULT_GRAPH)
@@ -248,6 +252,42 @@ impl<'a> Card<'a> {
             Col::G => self.named_count,
         };
         dv.max(1.0)
+    }
+
+    /// Fraction of `pat`'s rows whose object is an integer in `r`, uniform over the [imin, imax]
+    /// of its constant predicate (§7.4.5). None without statistics for the predicate or without
+    /// integer objects (the caller's default applies).
+    pub(crate) fn int_range_fraction(&self, pat: &QuadPat, r: IntRange) -> Option<f64> {
+        let PatTerm::Const(p) = pat.p else { return None };
+        let part = match pat.g {
+            GraphSel::Default if self.dataset.default == DefaultGraph::StoreDefault => {
+                GraphPart::Fixed(TermId::DEFAULT_GRAPH)
+            }
+            _ => GraphPart::AllNamed,
+        };
+        let (sc, _) = self.scope(part)?;
+        let ps = sc.pred.get(&p)?;
+        let (imin, imax) = (ps.imin?, ps.imax?);
+        let span = (imax as f64 - imin as f64 + 1.0).max(1.0);
+        let overlap = (r.hi.min(imax) as f64 - r.lo.max(imin) as f64 + 1.0).max(0.0);
+        Some((overlap / span).clamp(0.0, 1.0))
+    }
+
+    /// Objects of (g, p) that are dictionary-typed literals or inline decimals (the rdf_gpox
+    /// partial index, which an IntRange scan also reads): a bounded count within the per-query
+    /// budget, 0 when the budget is spent.
+    pub(crate) fn numeric_exceptions(&mut self, g: TermId, p: TermId) -> Result<f64> {
+        let spec = ScanSpec::new(IndexOrder::Gpox, &[g, p]);
+        if let Some(n) = self.counts.get(&spec) {
+            return Ok(*n as f64);
+        }
+        if self.probes_left == 0 || !p.is_storable() {
+            return Ok(0.0);
+        }
+        self.probes_left -= 1;
+        let n = self.store.count(&spec, Some(self.cap))?;
+        self.counts.insert(spec, n);
+        Ok(n as f64)
     }
 
     /// Can quad pattern `next` extend a subject star by characteristic sets (§7.4.4)? It needs a
@@ -355,8 +395,17 @@ fn default_rows(s: bool, p: bool, o: bool) -> f64 {
     }
 }
 
-/// Selectivity of a filter conjunct (§7.4.5).
+/// Selectivity of a filter conjunct (§7.4.5) from fixed factors only.
 pub(crate) fn selectivity(e: &Expr) -> f64 {
+    selectivity_with(e, &mut |_| None)
+}
+
+/// Selectivity of a filter conjunct (§7.4.5); `leaf` may estimate any sub-expression from
+/// statistics (`=` against a constant, integer ranges) and is consulted first at every level.
+pub(crate) fn selectivity_with(e: &Expr, leaf: &mut impl FnMut(&Expr) -> Option<f64>) -> f64 {
+    if let Some(s) = leaf(e) {
+        return s.clamp(0.0, 1.0);
+    }
     match e {
         Expr::Equal(..) | Expr::SameTerm(..) => 0.1,
         Expr::Greater(..) | Expr::GreaterOrEqual(..) | Expr::Less(..) | Expr::LessOrEqual(..) => 1.0 / 3.0,
@@ -365,11 +414,11 @@ pub(crate) fn selectivity(e: &Expr) -> f64 {
         Expr::Not(inner) => match &**inner {
             Expr::Exists(_) => 0.5,
             Expr::Bound(_) => 0.1,
-            other => (1.0 - selectivity(other)).clamp(0.05, 1.0),
+            other => (1.0 - selectivity_with(other, leaf)).clamp(0.05, 1.0),
         },
-        Expr::And(a, b) => selectivity(a) * selectivity(b),
+        Expr::And(a, b) => selectivity_with(a, leaf) * selectivity_with(b, leaf),
         Expr::Or(a, b) => {
-            let (x, y) = (selectivity(a), selectivity(b));
+            let (x, y) = (selectivity_with(a, leaf), selectivity_with(b, leaf));
             x + y - x * y
         }
         Expr::In(_, list) => (0.1 * list.len() as f64).min(1.0),

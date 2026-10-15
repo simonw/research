@@ -111,7 +111,7 @@ impl Construct {
                     TemplateTerm::BNode(n) => {
                         let slot = &mut self.bnodes[n as usize];
                         if slot.0 != self.generation {
-                            *slot = (self.generation, cx.sh.terms.borrow_mut().temps.fresh_bnode());
+                            *slot = (self.generation, cx.sh.terms.borrow_mut().fresh_bnode(&cx.sh));
                         }
                         slot.1
                     }

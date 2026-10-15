@@ -195,15 +195,18 @@ fn rejects_seed_slots_read_from_rows_that_do_not_carry_them() {
     let st = social(30);
     let text = "SELECT * { ?v :name \"Person 5\" \
                 OPTIONAL { { SELECT ?a { ?a :name \"Person 1\" } LIMIT 1 } ?a :knows ?v } }";
-    let q = plan(text, &st);
+    // PreferHash keeps the inner join a HashJoin with the sub-select as its left input.
+    let hash = sq_core::plan::QueryOptions { join_policy: sq_core::plan::JoinPolicy::PreferHash, ..Default::default() };
+    let q = plan_with(text, &st, &hash);
     let (a, v) = (slot(&q, "a"), slot(&q, "v"));
     let as_bind_join = |p: &mut Plan, seed: Vec<u16>| {
-        let Op::HashJoin { build, probe, kind: JoinKind::Inner, build_is_left, .. } = &p.op else { return false };
-        let (left, right) =
-            if *build_is_left { (build.clone(), probe.clone()) } else { (probe.clone(), build.clone()) };
-        if !matches!(left.op, Op::Slice { .. }) {
-            return false;
-        }
+        let Op::HashJoin { build, probe, kind: JoinKind::Inner, .. } = &p.op else { return false };
+        // The sub-select side becomes the BindJoin's left input, whichever side it was built on.
+        let (left, right) = match (&build.op, &probe.op) {
+            (Op::Slice { .. }, _) => (build.clone(), probe.clone()),
+            (_, Op::Slice { .. }) => (probe.clone(), build.clone()),
+            _ => return false,
+        };
         p.op = Op::BindJoin { left, right, seed, kind: JoinKind::Inner, sort_left: false, adaptive: true };
         true
     };

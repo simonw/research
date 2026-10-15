@@ -40,11 +40,17 @@ impl Root {
         Ok(())
     }
 
+    /// Closes the operator tree, and the EXISTS patterns' trees, which keep their cursors
+    /// between evaluations.
     fn finish(&mut self, cx: &mut ExecCtx) {
         if !self.closed {
             self.closed = true;
             self.more = false;
             self.op.close(cx);
+            let sh = Rc::clone(&cx.sh);
+            if let Ok(mut st) = sh.exists.try_borrow_mut() {
+                st.close(cx);
+            }
         }
     }
 
@@ -52,7 +58,7 @@ impl Root {
     fn count(&mut self, cx: &mut ExecCtx) -> Result<u64> {
         if !self.opened {
             self.open(cx)?;
-            if let Some(n) = self.op.fast_count(cx) {
+            if let Some(n) = self.op.fast_count(cx, None) {
                 let n = n?;
                 self.finish(cx);
                 return Ok(n);

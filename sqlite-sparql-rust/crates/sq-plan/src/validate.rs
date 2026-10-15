@@ -19,7 +19,18 @@
 //!   placement itself in debug builds (`rewrite::filter::check_barriers`);
 //! * `GraphSel::Active` only under a GraphLoop (for EXISTS plans: every evaluation of the
 //!   pattern is under one);
-//! * `sorted_by` claims are derivable; Scan orders match their bound columns;
+//! * `sorted_by` claims are derivable from what the executor guarantees (see `physical`): a
+//!   Scan's first free column, merge keys, SortBySlot keys, a BindJoin's left order (unless
+//!   batches are re-sorted by another slot), a HashJoin's probe order, a NestedLoop's / Minus'
+//!   left order, pass-through operators; a slot carried over from an input must be certain
+//!   there (a merge could not overwrite it);
+//! * MergeJoin / StarMerge inputs are sorted by the key, which is certain on both sides and
+//!   never seeded on both; SortBySlot sorts by a slot its input may bind; a streaming Group has
+//!   one key and an input sorted by it;
+//! * Scan orders match their bound columns; an IntRange scan reads Gpos with exactly g and p
+//!   bound over one fixed graph, its object a slot, `lo <= hi` within the inline range;
+//! * a SqlJoin statement has the rendered shape (`physical::sqljoin`): one result column per
+//!   distinct `out` slot, parameters `?1..?n` with `n = params.len()`, g-first full indexes;
 //! * `Extend.canonical = false` only for slots no id-comparing consumer reads.
 use sq_core::batch::{Slot, SlotSet};
 use sq_core::ir::{ExistsId, GraphSel, PatTerm, QueryForm, TemplateTerm};
@@ -28,8 +39,11 @@ use sq_core::store::IndexOrder;
 use sq_core::{Error, Result};
 
 use crate::expr;
-use crate::physical::{bound_columns, canonical_needed, carried, node_exprs, scan_sorted_by, walk};
+use crate::physical::{
+    bound_columns, canonical_needed, carried, node_exprs, scan_sorted_by, single_fixed_graph, sqljoin, walk,
+};
 use crate::props::{slot_list, PlanProps, Props};
+use sq_core::TermId;
 
 /// Validate a physical plan; `Err(Error::Internal)` names the offending node.
 pub fn validate(p: &QueryPlan) -> Result<()> {
@@ -60,6 +74,11 @@ impl Input {
     /// Slots bound in some row (a seeded slot holds the seed value or nothing).
     fn maybe(&self) -> SlotSet {
         self.props.maybe.union(self.seed)
+    }
+    /// The order of plan `p` (this input) as it survives a merge into joined rows: only a
+    /// slot bound in every row.
+    fn sorted(&self, p: &Plan) -> Option<Slot> {
+        p.sorted_by.filter(|s| self.certain().contains(*s))
     }
 }
 
@@ -189,7 +208,11 @@ impl<'q> Validator<'q> {
         self.check_slots(p, props.vars)?;
         self.check_exprs(p, in_loop)?;
         let derived_sorted = match &p.op {
-            Op::Unit | Op::Empty | Op::GraphNames { .. } | Op::SqlJoin { .. } => None,
+            Op::Unit | Op::Empty | Op::GraphNames { .. } => None,
+            Op::SqlJoin { sql, params, out } => {
+                check_sql_join(p, sql, params, out)?;
+                None
+            }
             Op::Scan(s) => {
                 if s.pat.g == GraphSel::Active && !in_loop {
                     return fail(p, "Scan reads the active graph outside a GraphLoop");
@@ -197,18 +220,27 @@ impl<'q> Validator<'q> {
                 if s.order == IndexOrder::Gpox {
                     return fail(p, "Gpox is only read as part of an IntRange scan");
                 }
+                let cols = bound_columns(&s.pat, seeded);
                 if let Some(r) = s.range {
-                    let int_obj = matches!(s.pat.o, PatTerm::Slot(_));
-                    if s.order != IndexOrder::Gpos || !int_obj || r.lo > r.hi {
-                        return fail(p, "IntRange needs a Gpos scan over an object slot");
+                    let shape = s.order == IndexOrder::Gpos
+                        && matches!(s.pat.o, PatTerm::Slot(_))
+                        && matches!(s.pat.p, PatTerm::Const(_))
+                        && cols == [true, false, true, false]
+                        && single_fixed_graph(&s.pat, &self.q.dataset);
+                    if !shape {
+                        let msg = "IntRange needs a Gpos scan of one fixed graph with g and p bound and an object slot";
+                        return fail(p, msg);
+                    }
+                    if r.lo > r.hi || r.lo < TermId::INT_MIN || r.hi > TermId::INT_MAX {
+                        let (lo, hi) = (r.lo, r.hi);
+                        return fail(p, format!("IntRange [{lo}, {hi}] is empty or outside the inline integers"));
                     }
                 }
-                let cols = bound_columns(&s.pat, seeded);
                 let k = cols.iter().filter(|b| **b).count();
                 if !in_exists && !IndexOrder::candidates(cols).iter().any(|(o, _)| *o == s.order) {
                     return fail(p, format!("order {:?} does not start with the bound columns {cols:?}", s.order));
                 }
-                if in_exists { None } else { scan_sorted_by(&s.pat, s.order, k, &self.q.dataset) }
+                if in_exists { None } else { scan_sorted_by(&s.pat, s.order, k, s.range.is_some(), &self.q.dataset) }
             }
             Op::Path { g, .. } => {
                 if *g == GraphSel::Active && !in_loop {
@@ -222,7 +254,7 @@ impl<'q> Validator<'q> {
                 }
                 None
             }
-            Op::BindJoin { left, right, seed, .. } => {
+            Op::BindJoin { left, right, seed, sort_left, .. } => {
                 let seed_set = set(seed);
                 let l = self.input(left, seeded, in_loop, in_exists)?;
                 let rp = self.node(right, seed_set, in_loop, in_exists)?;
@@ -238,19 +270,23 @@ impl<'q> Validator<'q> {
                 if !l.maybe().intersect(rp.maybe).is_subset(&seed_set) {
                     return fail(p, "BindJoin: a slot both sides may bind is not in the seed list");
                 }
-                None
+                // Left rows are emitted in order, per batch re-sorted by the seed tuple when
+                // `sort_left`.
+                let kept = !*sort_left || seed.first().copied() == left.sorted_by;
+                kept.then_some(l.sorted(left)).flatten()
             }
             Op::HashJoin { build, probe, keys, check, kind, build_is_left } => {
                 let inner = matches!(kind, JoinKind::Inner);
                 if !inner && *build_is_left {
                     return fail(p, "outer / semi / anti HashJoin must build the right side");
                 }
-                let (l, r) = if *build_is_left { (build, probe) } else { (probe, build) };
                 let rseed = if inner { seeded } else { SlotSet::EMPTY };
-                let l = self.input(l, seeded, in_loop, in_exists)?;
-                let r = self.input(r, rseed, in_loop, in_exists)?;
+                let (lp, rp) = if *build_is_left { (build, probe) } else { (probe, build) };
+                let l = self.input(lp, seeded, in_loop, in_exists)?;
+                let r = self.input(rp, rseed, in_loop, in_exists)?;
                 check_keys(p, &l, &r, keys, check, true)?;
-                None
+                // Probe rows stream through in order (inner joins always probe-major).
+                if *build_is_left { r.sorted(rp) } else { l.sorted(lp) }
             }
             Op::NestedLoop { left, right, check, kind } => {
                 let inner = matches!(kind, JoinKind::Inner);
@@ -258,13 +294,16 @@ impl<'q> Validator<'q> {
                 let l = self.input(left, seeded, in_loop, in_exists)?;
                 let r = self.input(right, rseed, in_loop, in_exists)?;
                 check_keys(p, &l, &r, &[], check, false)?;
-                None
+                l.sorted(left)
             }
-            Op::MergeJoin { left, right, key, check, .. } => {
+            Op::MergeJoin { left, right, key, check, gallop } => {
                 let l = self.input(left, seeded, in_loop, in_exists)?;
                 let r = self.input(right, seeded, in_loop, in_exists)?;
                 if left.sorted_by != Some(*key) || right.sorted_by != Some(*key) {
                     return fail(p, "MergeJoin input not sorted by the key");
+                }
+                if *gallop == 0 {
+                    return fail(p, "MergeJoin galloping threshold must be positive");
                 }
                 check_keys(p, &l, &r, &[*key], check, true)?;
                 Some(*key)
@@ -294,7 +333,7 @@ impl<'q> Validator<'q> {
                 let l = self.input(left, seeded, in_loop, in_exists)?;
                 let r = self.input(right, SlotSet::EMPTY, in_loop, in_exists)?;
                 check_keys(p, &l, &r, keys, check, false)?;
-                None
+                l.sorted(left)
             }
             Op::Union(branches) => {
                 if branches.is_empty() {
@@ -320,10 +359,13 @@ impl<'q> Validator<'q> {
                 self.node(input, SlotSet::EMPTY, true, in_exists)?;
                 None
             }
-            Op::Group { input, keys, aggs, .. } => {
+            Op::Group { input, keys, aggs, streaming } => {
                 self.node(input, seeded, in_loop, in_exists)?;
                 if aggs.iter().any(|(o, _)| keys.contains(o)) {
                     return fail(p, "aggregate output slot is also a group key");
+                }
+                if *streaming && (keys.len() != 1 || input.sorted_by != keys.first().copied()) {
+                    return fail(p, "streaming Group needs one key and an input sorted by it");
                 }
                 None
             }
@@ -336,7 +378,10 @@ impl<'q> Validator<'q> {
                 None
             }
             Op::SortBySlot { input, key } => {
-                self.node(input, seeded, in_loop, in_exists)?;
+                let ip = self.node(input, seeded, in_loop, in_exists)?;
+                if !ip.maybe.union(seeded).contains(*key) {
+                    return fail(p, format!("SortBySlot key {key} is never bound by its input"));
+                }
                 Some(*key)
             }
             Op::TopK { input, .. } => {
@@ -364,6 +409,21 @@ impl<'q> Validator<'q> {
         }
         Ok(props)
     }
+}
+
+/// A SqlJoin statement in the shape `physical::sqljoin` renders.
+fn check_sql_join(p: &Plan, sql: &str, params: &[i64], out: &[Slot]) -> Result<()> {
+    let Some(parsed) = sqljoin::parse(sql) else { return fail(p, "SqlJoin text is not a rendered SQL chain") };
+    if out.is_empty() || parsed.select.len() != out.len() {
+        return fail(p, format!("SqlJoin returns {} columns for {} slots", parsed.select.len(), out.len()));
+    }
+    if set(out).0.iter().map(|w| w.count_ones() as usize).sum::<usize>() != out.len() {
+        return fail(p, "SqlJoin binds a slot twice");
+    }
+    if parsed.params != params.len() {
+        return fail(p, format!("SqlJoin uses {} parameters, {} given", parsed.params, params.len()));
+    }
+    Ok(())
 }
 
 /// keys ⊆ certain on both sides; every other slot both sides may bind is in `check`, except

@@ -17,7 +17,9 @@
 //! (projection, DISTINCT, ORDER BY + LIMIT, GROUP BY / HAVING / COUNT), GRAPH ?g / GRAPH <c>,
 //! VALUES with UNDEF, BIND, sameTerm / = seeds, [NOT] EXISTS (incl. MINUS inside), dataset
 //! clauses, union default graph, and top-level DISTINCT / ORDER BY + LIMIT / ASK / COUNT, each
-//! under four join policies. `GRAPH <c>` also names graphs outside the dataset (`:g1` under
+//! under six join policies. (WP8 extended the physical evaluator to MergeJoin, StarMerge,
+//! SortBySlot, IntRange scans, probe-major inner hash joins and `sort_left` batches, emulating
+//! the executor's output order for each, and added the PreferMerge / NoSql policies.) `GRAPH <c>` also names graphs outside the dataset (`:g1` under
 //! `FROM NAMED :g0`, `:absent` everywhere), which resolve to Empty and fold into their ancestors.
 
 mod common;
@@ -660,6 +662,19 @@ impl Phys<'_> {
                                 }
                             }
                         }
+                        // IntRange scans: inline integers of the range, then the numeric
+                        // exceptions (dictionary-typed literals and inline decimals).
+                        let range_phase = match sc.range {
+                            None => 0,
+                            Some(r) => match q[3].as_int() {
+                                Some(v) if (r.lo..=r.hi).contains(&v) => 0,
+                                _ if matches!(q[3].raw() & 15, 5 | 8) => 1,
+                                _ => {
+                                    ok = false;
+                                    0
+                                }
+                            },
+                        };
                         if ok {
                             let mut key = [0i64; 4];
                             for (i, c) in sc.order.cols().iter().enumerate() {
@@ -670,14 +685,15 @@ impl Phys<'_> {
                                     sq_core::store::Col::O => q[3].raw(),
                                 };
                             }
-                            keyed.push((gi, key, nr));
+                            keyed.push((gi + range_phase, key, nr));
                         }
                     }
                 }
                 // Emulate the cursor's output order: one sorted stream, except GRAPH ?g over an
                 // explicit FROM NAMED list, which may read one g-first cursor per graph.
                 let per_graph = matches!(pat.g, GraphSel::Slot(_))
-                    && matches!(self.q.dataset.named, sq_core::ir::NamedGraphs::Only(_));
+                    && matches!(self.q.dataset.named, sq_core::ir::NamedGraphs::Only(_))
+                    || sc.range.is_some();
                 if per_graph {
                     keyed.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
                 } else {
@@ -737,8 +753,18 @@ impl Phys<'_> {
                 }
                 out
             }
-            Op::BindJoin { left, right, seed, kind, .. } => {
-                let lrows = self.eval(left, jseed, reg, subst);
+            Op::BindJoin { left, right, seed, kind, sort_left, .. } => {
+                let mut lrows = self.eval(left, jseed, reg, subst);
+                if *sort_left {
+                    // The executor sorts each 1024-row left batch by the seed tuple (stable).
+                    for batch in lrows.chunks_mut(1024) {
+                        batch.sort_by(|a, b| {
+                            let ka: Vec<i64> = seed.iter().map(|s| a[*s as usize].raw()).collect();
+                            let kb: Vec<i64> = seed.iter().map(|s| b[*s as usize].raw()).collect();
+                            ka.cmp(&kb)
+                        });
+                    }
+                }
                 let mut out = Vec::new();
                 for l in lrows {
                     let mut sj = vec![TermId::UNBOUND; w];
@@ -793,7 +819,46 @@ impl Phys<'_> {
             }
             Op::HashJoin { build, probe, keys, check, kind, build_is_left } => {
                 let (left, right) = if *build_is_left { (build, probe) } else { (probe, build) };
+                if *build_is_left && *kind == JoinKind::Inner {
+                    // Inner joins stream the probe side (here the right one) in order.
+                    let lrows = self.eval(left, jseed, reg, subst);
+                    let rrows = self.eval(right, jseed, reg, subst);
+                    let mut out = Vec::new();
+                    for r in &rrows {
+                        out.extend(lrows.iter().filter_map(|l| self.join_rows(p, l, r, keys, check)));
+                    }
+                    return out;
+                }
                 self.join(p, left, right, keys, check, kind, jseed, reg, subst)
+            }
+            Op::MergeJoin { left, right, key, check, .. } => {
+                // Left rows in order, each with its run of equal right keys: sorted by the key.
+                let lrows = self.eval(left, jseed, reg, subst);
+                let rrows = self.eval(right, jseed, reg, subst);
+                let mut out = Vec::new();
+                for l in &lrows {
+                    out.extend(rrows.iter().filter_map(|r| self.join_rows(p, l, r, &[*key], check)));
+                }
+                out
+            }
+            Op::StarMerge { key, inputs, check } => {
+                // Per common key (ascending) the product of the runs, first input slowest.
+                let mut acc = self.eval(&inputs[0], jseed, reg, subst);
+                for input in &inputs[1..] {
+                    let rows = self.eval(input, jseed, reg, subst);
+                    let mut next = Vec::new();
+                    for l in &acc {
+                        next.extend(rows.iter().filter_map(|r| self.join_rows(p, l, r, &[*key], check)));
+                    }
+                    acc = next;
+                }
+                acc.sort_by_key(|r| r[*key as usize].raw());
+                acc
+            }
+            Op::SortBySlot { input, key } => {
+                let mut rows = self.eval(input, jseed, reg, subst);
+                rows.sort_by_key(|r| r[*key as usize].raw());
+                rows
             }
             Op::NestedLoop { left, right, check, kind } => self.join(p, left, right, &[], check, kind, jseed, reg, subst),
             Op::Minus { left, right, keys, check } => {
@@ -911,7 +976,7 @@ impl Phys<'_> {
             Op::Project { input, slots } => {
                 self.eval(input, jseed, reg, subst).into_iter().map(|r| project(&r, slots)).collect()
             }
-            other => panic!("operator not emitted by WP5: {other:?}"),
+            other => panic!("operator not emitted on a MemStore: {other:?}"),
         }
     }
 
@@ -1008,6 +1073,8 @@ pub fn policies() -> Vec<(&'static str, QueryOptions)> {
         ("auto", QueryOptions::default()),
         ("prefer-bind", QueryOptions { join_policy: JoinPolicy::PreferBind, ..Default::default() }),
         ("prefer-hash", QueryOptions { join_policy: JoinPolicy::PreferHash, ..Default::default() }),
+        ("prefer-merge", QueryOptions { join_policy: JoinPolicy::PreferMerge, ..Default::default() }),
+        ("no-sql", QueryOptions { join_policy: JoinPolicy::NoSql, ..Default::default() }),
         ("no-reorder", QueryOptions { reorder: false, ..Default::default() }),
     ]
 }

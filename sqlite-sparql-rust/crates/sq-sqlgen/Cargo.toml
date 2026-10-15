@@ -19,4 +19,5 @@ oxrdf = { workspace = true }
 oxrdfio = { workspace = true }
 oxttl = { workspace = true }
 oxsdatatypes = { workspace = true }
+sparesults = { workspace = true }
 rand = { workspace = true }

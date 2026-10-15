@@ -38,6 +38,10 @@ impl Operator for Filter {
         )
     }
 
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.input.reset(cx)
+    }
+
     fn close(&mut self, cx: &mut ExecCtx) {
         self.input.close(cx)
     }
@@ -81,9 +85,13 @@ impl Operator for Extend {
         Ok(more)
     }
 
-    fn fast_count(&mut self, cx: &mut ExecCtx) -> Option<Result<u64>> {
+    fn fast_count(&mut self, cx: &mut ExecCtx, cap: Option<u64>) -> Option<Result<u64>> {
         // One output row per input row, whatever the expression evaluates to.
-        self.input.fast_count(cx)
+        self.input.fast_count(cx, cap)
+    }
+
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.input.reset(cx)
     }
 
     fn close(&mut self, cx: &mut ExecCtx) {

@@ -644,11 +644,15 @@ dependencies = [
  "oxrdf",
  "oxrdfio",
  "oxttl",
+ "rusqlite",
  "rustc-hash",
  "smallvec",
  "spargebra",
  "sq-core",
+ "sq-exec",
  "sq-memstore",
+ "sq-oracle",
+ "sq-sqlite",
 ]
 
 [[package]]
@@ -673,6 +677,7 @@ dependencies = [
  "oxttl",
  "rand",
  "rusqlite",
+ "sparesults",
  "spareval",
  "spargebra",
  "sq-core",

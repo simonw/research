@@ -14,7 +14,7 @@ use sq_core::ir::{GraphSel, PathPlan, PatTerm};
 use sq_core::{Result, TermId};
 
 use crate::sql::{Block, Col, Item};
-use crate::translate::{Env, GraphCond, QuadSrc, Translator, bind, unsupported};
+use crate::translate::{Env, GraphCond, GraphCtx, QuadSrc, Translator, bind, unsupported};
 
 /// The edges a path walks.
 enum Edges {
@@ -50,7 +50,7 @@ fn direct_pred(x: &PathPlan) -> Option<(TermId, bool)> {
 }
 
 /// Can the path match a zero-length pair `(x, x)` for a node absent from the graph?
-fn zero_length(p: &PathPlan) -> bool {
+pub(crate) fn zero_length(p: &PathPlan) -> bool {
     match p {
         PathPlan::ZeroOrMore(_) | PathPlan::ZeroOrOne(_) => true,
         PathPlan::Inv(x) => zero_length(x),
@@ -68,11 +68,15 @@ impl Translator<'_> {
             let (s, o) = if inverse { (o, s) } else { (s, o) };
             return self.block(&bgp1(g, s, p, o), env);
         }
+        // Inside a pushed `GRAPH ?g` every solution must bind g, zero-length pairs included.
+        let pushed_graph_var = g == GraphSel::Active && matches!(env.graph, GraphCtx::Var(_));
         let edges = match self.quad_source(g, env)? {
-            QuadSrc::Nothing if !zero_length(path) => return Ok(Block::empty()),
+            QuadSrc::Table(GraphCond::Var(_)) => return Err(unsupported("property paths inside GRAPH ?g")),
+            // No triples: only the zero-length pairs of constants remain, and with no named
+            // graph at all `GRAPH ?g` has no solutions.
+            QuadSrc::Nothing if pushed_graph_var || !zero_length(path) => return Ok(Block::empty()),
             QuadSrc::Nothing => Edges::Nothing,
             QuadSrc::Table(GraphCond::Eq(g)) => Edges::Table(g),
-            QuadSrc::Table(GraphCond::Var(_)) => return Err(unsupported("property paths inside GRAPH ?g")),
             QuadSrc::Merged(sql) => Edges::Merged(sql),
         };
         let zero = zero_length(path);
@@ -203,7 +207,8 @@ impl Translator<'_> {
                 } else {
                     format!("SELECT o FROM ({})", self.path_rel(x, edges, Some(c), None)?)
                 };
-                let rec = format!("SELECT {} FROM {r}, {} WHERE {}", step.o, step.from, and_conds(format!("{} = {r}.n", step.s)));
+                let joined = and_conds(format!("{} = {r}.n", step.s));
+                let rec = format!("SELECT {} FROM {r}, {} WHERE {joined}", step.o, step.from);
                 let filter = end.map(|e| format!(" WHERE n = {e}")).unwrap_or_default();
                 format!("WITH RECURSIVE {r}(n) AS ({seed} UNION {rec}) SELECT {c} AS s, n AS o FROM {r}{filter}")
             }
@@ -213,7 +218,8 @@ impl Translator<'_> {
                 } else {
                     format!("SELECT s FROM ({})", self.path_rel(x, edges, None, Some(e))?)
                 };
-                let rec = format!("SELECT {} FROM {r}, {} WHERE {}", step.s, step.from, and_conds(format!("{} = {r}.n", step.o)));
+                let joined = and_conds(format!("{} = {r}.n", step.o));
+                let rec = format!("SELECT {} FROM {r}, {} WHERE {joined}", step.s, step.from);
                 format!("WITH RECURSIVE {r}(n) AS ({seed} UNION {rec}) SELECT n AS s, {e} AS o FROM {r}")
             }
             (None, None) => {
@@ -224,8 +230,9 @@ impl Translator<'_> {
                     step.from,
                     and_conds(format!("{} = {r}.o", step.s))
                 );
-                let closure =
-                    format!("WITH RECURSIVE {r}(s, o) AS (SELECT s, o FROM ({first}) UNION {rec}) SELECT s, o FROM {r}");
+                let closure = format!(
+                    "WITH RECURSIVE {r}(s, o) AS (SELECT s, o FROM ({first}) UNION {rec}) SELECT s, o FROM {r}"
+                );
                 if reflexive {
                     let zero = self.zero_pairs(edges, None, None);
                     format!("SELECT s, o FROM ({closure}) UNION SELECT s, o FROM ({zero})")

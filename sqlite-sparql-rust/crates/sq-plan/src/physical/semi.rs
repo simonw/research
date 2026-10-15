@@ -17,6 +17,7 @@ use sq_core::ir::{ExistsId, Expr, Logical, PatTerm, PathPlan};
 use sq_core::plan::{JoinKind, JoinPolicy};
 use sq_core::Result;
 
+use super::choice::bind_sorted;
 use super::join::{Algo, Choice, Mode, Shape, SORT_LEFT_ROWS};
 use super::{Ctx, Planner};
 use crate::expr;
@@ -91,27 +92,27 @@ impl Planner<'_> {
         let keys = s.intersect(pq.certain);
         let check = s.minus(keys);
 
+        // The hash and nested-loop variants probe with the left rows and keep their order; the
+        // bind variant keeps it unless it re-sorts batches by another slot.
         let hash = |this: &mut Self| -> Result<Choice> {
             // The outer seed goes to the left side only.
             let right = this.open_node(q, ctx.unseeded(), mode)?;
             let b = right.rows;
-            let (hb, hp) = if b < 32_768.0 {
-                (this.costs.hash_build_small, this.costs.hash_probe_small)
-            } else {
-                (this.costs.hash_build_large, this.costs.hash_probe_large)
-            };
+            let (hb, hp) = this.hash_costs(b);
             let cost = side.cost + right.cost + b * hb + lrows * hp;
             let algo = if keys.is_empty() {
                 Algo::Nested { check: s }
             } else {
                 Algo::Hash { keys, check, build_is_left: false }
             };
-            Ok(Choice::new(algo, right, rows, cost))
+            Ok(Choice::new(algo, right, rows, cost, side.sorted))
         };
         let bind = |this: &mut Self| -> Result<Choice> {
             let right = this.open_node(q, Ctx { seeded: s, ..ctx.unseeded() }, mode)?;
             let cost = side.cost + lrows * right.cost;
-            Ok(Choice::new(Algo::Bind { seed: s, sort_left: lrows > SORT_LEFT_ROWS }, right, rows, cost))
+            let sort_left = lrows > SORT_LEFT_ROWS && !side.sorted.is_some_and(|v| s.contains(v));
+            let sorted = bind_sorted(side.sorted, s, sort_left);
+            Ok(Choice::new(Algo::Bind { seed: s, sort_left }, right, rows, cost, sorted))
         };
         Ok(Some(match self.opts.join_policy {
             JoinPolicy::PreferHash => hash(self)?,

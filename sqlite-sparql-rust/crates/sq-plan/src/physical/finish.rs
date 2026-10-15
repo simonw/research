@@ -71,9 +71,10 @@ pub(crate) fn walk<'p>(p: &'p Plan, f: &mut impl FnMut(&'p Plan)) {
 }
 
 /// Slots whose ids must be canonical: every consumer that compares ids (§7.3.8) — scans, paths,
-/// Values, join keys / checks / seeds, Minus, Distinct / Reduced, group keys, aggregate
-/// arguments, GraphLoop / GraphNames, sameTerm, EXISTS correlation, CONSTRUCT / DESCRIBE — plus
-/// every slot an Extend of such a slot reads (pass-through expressions keep ids as they are).
+/// Values, join keys / checks / seeds, SortBySlot keys, Minus, Distinct / Reduced, group keys,
+/// aggregate arguments, GraphLoop / GraphNames, sameTerm, EXISTS correlation, CONSTRUCT /
+/// DESCRIBE — plus every slot an Extend of such a slot reads (pass-through expressions keep ids
+/// as they are).
 pub(crate) fn canonical_needed(q: &QueryPlan) -> SlotSet {
     let pp = PlanProps::new(&q.exists);
     let mut need = SlotSet::EMPTY;
@@ -112,7 +113,9 @@ pub(crate) fn canonical_needed(q: &QueryPlan) -> SlotSet {
                     }
                 }
             }
-            Op::GraphLoop { slot, .. } | Op::GraphNames { slot } => need.insert(*slot),
+            Op::GraphLoop { slot, .. } | Op::GraphNames { slot } | Op::SortBySlot { key: slot, .. } => {
+                need.insert(*slot)
+            }
             Op::Extend { slot, expr, .. } => deps.push((*slot, expr::slots(expr))),
             _ => {}
         }

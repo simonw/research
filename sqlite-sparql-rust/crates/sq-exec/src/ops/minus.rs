@@ -5,7 +5,7 @@
 //! domain intersection.
 use sq_core::{Batch, Result, Slot};
 
-use super::hash_join::HashTable;
+use super::hash_join::{HashTable, tick_work};
 use super::{BoxOp, Operator};
 use crate::ctx::ExecCtx;
 use crate::rows::Pull;
@@ -23,6 +23,8 @@ pub(crate) struct Minus {
     built: bool,
     buf: Batch,
     pull: Pull,
+    /// Candidates visited since the last tick.
+    work: usize,
 }
 
 impl Minus {
@@ -40,6 +42,7 @@ impl Minus {
             built: false,
             buf: Batch::new(width),
             pull: Pull::new(width),
+            work: 0,
         }
     }
 }
@@ -59,24 +62,34 @@ impl Operator for Minus {
             self.table.clear(cx);
             self.right.open(cx, self.seed.subst_only())?;
             self.table.build_from(cx, self.right.as_mut(), &mut self.buf)?;
-            self.right.close(cx);
+            self.right.reset(cx);
             self.built = true;
         }
         if self.table.len() == 0 || self.domain.is_empty() {
             // Nothing can be removed: stream the left rows.
             return self.left.next(cx, out);
         }
-        let (table, domain) = (&self.table, &self.domain);
-        self.pull.pump(cx, self.left.as_mut(), out, |_, row| {
+        let (table, domain, work) = (&self.table, &self.domain, &mut self.work);
+        self.pull.pump(cx, self.left.as_mut(), out, |cx, row| {
             let mut cur = table.start(row);
-            while let Some(b) = table.next_match(row, &mut cur) {
+            let mut keep = true;
+            while let Some(b) = table.next_match(row, &mut cur, work) {
                 let r = table.rows.row(b as usize);
                 if domain.iter().any(|s| row[*s as usize].is_bound() && r[*s as usize].is_bound()) {
-                    return Ok(false);
+                    keep = false;
+                    break;
                 }
             }
-            Ok(true)
+            tick_work(cx, work)?;
+            Ok(keep)
         })
+    }
+
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.table.reset(cx);
+        self.built = false;
+        self.left.reset(cx);
+        self.right.reset(cx);
     }
 
     fn close(&mut self, cx: &mut ExecCtx) {

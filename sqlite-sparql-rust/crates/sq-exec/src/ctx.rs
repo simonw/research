@@ -96,10 +96,20 @@ impl Shared {
         }
     }
 
-    /// Checks the interrupt flag and the deadline.
+    /// Checks the interrupt flag, the deadline and the memory budget.
     pub fn poll(&self) -> Result<()> {
         self.store.check_interrupt()?;
-        self.check_deadline()
+        self.check_deadline()?;
+        self.check_memory()
+    }
+
+    /// Fails once more memory is in use than the budget allows (charges check this
+    /// themselves; [`Shared::record`] leaves it to the next poll).
+    pub fn check_memory(&self) -> Result<()> {
+        if self.mem_used.get() > self.mem_limit {
+            return Err(Error::MemoryBudget(self.mem_mb));
+        }
+        Ok(())
     }
 
     pub fn check_deadline(&self) -> Result<()> {
@@ -124,13 +134,21 @@ impl Shared {
     /// Charges `bytes` to `c` and to the execution's memory budget.
     #[inline]
     pub fn charge(&self, c: &mut Charge, bytes: usize) -> Result<()> {
-        let used = self.mem_used.get() + bytes as u64;
-        self.mem_used.set(used);
+        self.record(c, bytes);
+        self.check_memory()
+    }
+
+    /// Would `bytes` more stay within the budget? (Caches give way instead of failing.)
+    #[inline]
+    pub fn fits(&self, bytes: usize) -> bool {
+        self.mem_used.get().saturating_add(bytes as u64) <= self.mem_limit
+    }
+
+    /// Charges `bytes` to `c` and to the budget without checking it (for infallible callers).
+    #[inline]
+    pub fn record(&self, c: &mut Charge, bytes: usize) {
+        self.mem_used.set(self.mem_used.get() + bytes as u64);
         c.0 += bytes as u64;
-        if used > self.mem_limit {
-            return Err(Error::MemoryBudget(self.mem_mb));
-        }
-        Ok(())
     }
 
     /// Releases everything charged to `c`.

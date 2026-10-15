@@ -90,9 +90,12 @@ fn large_groups_are_ordered_greedily_and_completely() {
 /// The first unit of a left-deep pipeline (probe / left input all the way down).
 fn first_unit(p: &Plan) -> &Plan {
     match &p.op {
-        Op::BindJoin { left, .. } | Op::NestedLoop { left, .. } => first_unit(left),
+        Op::BindJoin { left, .. } | Op::NestedLoop { left, .. } | Op::MergeJoin { left, .. } => {
+            first_unit(left)
+        }
         Op::HashJoin { build, probe, build_is_left, .. } => first_unit(if *build_is_left { build } else { probe }),
-        Op::Filter { input, .. } | Op::Project { input, .. } => first_unit(input),
+        Op::StarMerge { inputs, .. } => first_unit(&inputs[0]),
+        Op::Filter { input, .. } | Op::Project { input, .. } | Op::SortBySlot { input, .. } => first_unit(input),
         _ => p,
     }
 }
@@ -117,7 +120,7 @@ fn values_estimates_follow_seeds() {
     let q = query(Logical::Unit, 2);
     let named = named_graphs(&q, &st).unwrap();
     let opts = QueryOptions::default();
-    let mut planner = Planner::new(&st, &opts, &q.dataset, named.len(), &[], 2);
+    let mut planner = Planner::new(&st, &opts, &q.dataset, named.len(), &[], &q.temps, 2);
     let rows: Vec<Vec<TermId>> = (0..10).map(|i| vec![iri(i % 2), iri(i)]).collect();
     let unseeded = planner.plan_values(&[0, 1], &rows, Ctx::default());
     assert_eq!(unseeded.est_rows, 10.0);
@@ -183,11 +186,11 @@ fn recost_reproduces_seeded_scan_estimates() {
     let q = query(Logical::Unit, 4);
     let named = named_graphs(&q, &st).unwrap();
     let opts = QueryOptions::default();
-    let mut planner = Planner::new(&st, &opts, &q.dataset, named.len(), &[], 4);
+    let mut planner = Planner::new(&st, &opts, &q.dataset, named.len(), &[], &q.temps, 4);
     let p = pat(0, 2, 1);
-    let unseeded = planner.plan_scan(&p, Ctx::default()).unwrap();
+    let unseeded = planner.plan_scan_with(&p, Ctx::default(), None).unwrap();
     for k in [set(&[0]), set(&[1]), set(&[0, 1])] {
-        let seeded = planner.plan_scan(&p, Ctx { seeded: k, ..Ctx::default() }).unwrap();
+        let seeded = planner.plan_scan_with(&p, Ctx { seeded: k, ..Ctx::default() }, None).unwrap();
         let (rows, cost) = planner.recost(&unseeded, SlotSet::EMPTY, k).unwrap();
         assert_eq!((rows, cost), (seeded.est_rows, seeded.est_cost_ns), "{k:?}");
     }
@@ -231,7 +234,7 @@ fn opaque_units_are_planned_in_few_contexts() {
     let named = named_graphs(&q, &st).unwrap();
     let rw = rewrite::rewrite(q.root.clone(), q.exists.clone(), &named).unwrap();
     let opts = QueryOptions::default();
-    let mut planner = Planner::new(&st, &opts, &q.dataset, named.len(), &rw.exists, q.vars.width());
+    let mut planner = Planner::new(&st, &opts, &q.dataset, named.len(), &rw.exists, &q.temps, q.vars.width());
     planner.plan(&rw.root, Ctx::default()).unwrap();
     // 15 groups and 7 unions; at most depth + 2 contexts each.
     let (nodes, depth) = (22, 4);

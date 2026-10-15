@@ -81,6 +81,11 @@ impl Operator for GraphLoop {
         }
     }
 
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.pos = self.end;
+        self.input.reset(cx)
+    }
+
     fn close(&mut self, cx: &mut ExecCtx) {
         self.pos = self.end;
         self.input.close(cx)

@@ -1,9 +1,10 @@
 //! Property paths: every PathPlan form, both directions, zero-length rules (constants, the
-//! has_node rule for Join seeds, both endpoints free), cycles, graphs, and a brute-force
-//! reachability cross-check that exercises both frontier-expansion strategies.
+//! has_node rule for Join seeds, both endpoints free, sequence middles), negated property set
+//! multiplicities, cycles, graphs, and a brute-force reachability cross-check that exercises
+//! both frontier-expansion strategies.
 use std::collections::{BTreeMap, BTreeSet};
 
-use sq_core::ir::{DefaultGraph, NamedGraphs, PathPlan};
+use sq_core::ir::{DefaultGraph, ExistsId, NamedGraphs, PathPlan};
 use sq_core::testing::Rng;
 
 use super::*;
@@ -328,4 +329,68 @@ fn nested_closures_and_sequences() {
     assert_eq!(g.col(path(c(g.a), inv(plus(pred(g.p))), v(0)), 0, 1), sorted(vec![g.a, g.b, g.c]));
     // (:p?)+ is p*.
     assert_eq!(g.col(path(c(g.d), plus(opt(pred(g.p))), v(0)), 0, 1), sorted(vec![g.d, g.e]));
+}
+
+/// x -p-> y, y -q-> z; `zz` is in no triple.
+fn chain() -> (Fx, [TermId; 7]) {
+    let fx = Fx::new();
+    let [x, y, z, p, q, r, zz] = ["x", "y", "z", "p", "q", "r", "zz"].map(|n| fx.iri(n));
+    fx.add(x, p, y);
+    fx.add(y, q, z);
+    (fx, [x, y, z, p, q, r, zz])
+}
+
+/// The middle of a sequence is a variable joined between its operands (§18.4): from a value
+/// that is not a graph node, a zero-length step only matches a constant on its other end.
+/// Expected results were checked against sq-oracle.
+#[test]
+fn sequence_middles_are_variables_joined_between_the_operands() {
+    let (fx, [x, _, z, p, q, r, zz]) = chain();
+    let rows = |q: Q| q.rows(fx.rc()).len();
+    // :zz :p?/(:q?|:r?) :zz: each branch of the bag union matches the constant far end.
+    let two = seq(opt(pred(p)), alt(opt(pred(q)), opt(pred(r))));
+    assert_eq!(rows(Q::new(&fx.store, 0, path(c(zz), two, c(zz)))), 2);
+    // :zz (:p?/:q?)* ?y: only the zero-length match of the closure itself.
+    let pq = || seq(opt(pred(p)), opt(pred(q)));
+    assert_eq!(Q::new(&fx.store, 1, path(c(zz), star(pq()), v(0))).rows(fx.rc()), vec![vec![zz]]);
+    // ASK { :zz (:p?/:q?)+ :zz }: every step of the closure has a free far end, so false.
+    assert_eq!(rows(Q::new(&fx.store, 0, path(c(zz), plus(pq()), c(zz)))), 0);
+    // A Join-mode seed is a variable too: VALUES ?0 {:x :zz :z} . ?0 :p?/:q? :z keeps :x and :z
+    // (graph nodes), and nothing matches the far end :zz.
+    let seeds = || values(&[0], vec![vec![x], vec![zz], vec![z]]);
+    let joined = |o: TermId| bind_join(seeds(), path(v(0), pq(), c(o)), &[0], JoinKind::Inner);
+    assert_eq!(Q::new(&fx.store, 1, joined(z)).sorted(fx.rc()), ms(vec![vec![x], vec![z]]));
+    assert!(Q::new(&fx.store, 1, joined(zz)).rows(fx.rc()).is_empty());
+    // ... while EXISTS substitutes it as a constant: `:zz :p?/:q? :zz` holds.
+    let outer = filter(seeds(), Expr::Exists(ExistsId(0)));
+    let rows = Q::new(&fx.store, 1, outer).exists(vec![path(v(0), pq(), c(zz))]).rows(fx.rc());
+    assert_eq!(rows, vec![vec![zz]]);
+}
+
+/// A negated property set is a set of pairs in every evaluation mode, including over a merged
+/// default graph holding the same pair under several predicates and in several graphs; `|`
+/// stays a bag union.
+#[test]
+fn negated_property_sets_are_sets_of_pairs() {
+    let fx = Fx::new();
+    let [a, b, p, q, r, g1, g2] = ["a", "b", "p", "q", "r", "g1", "g2"].map(|n| fx.iri(n));
+    fx.add_g(g1, a, p, b);
+    fx.add_g(g2, a, p, b);
+    fx.add_g(g2, a, r, b);
+    let merged = |root: Plan, width: usize| {
+        Q::new(&fx.store, width, root)
+            .dataset(DefaultGraph::Graphs(Arc::from(vec![g1, g2])), NamedGraphs::Only(Arc::from(vec![])), vec![])
+            .rows(fx.rc())
+    };
+    let nps = || PathPlan::Nps(vec![q]);
+    assert_eq!(merged(path(c(a), nps(), v(0)), 1), vec![vec![b]]);
+    assert_eq!(merged(path(v(0), inv(nps()), v(1)), 2), vec![vec![b, a]]);
+    assert_eq!(merged(path(c(a), nps(), c(b)), 0).len(), 1);
+    // !(:q|^:q) = Alt(Nps, Inv(Nps)): a -> b found forward only, b -> a backward only.
+    let both = || alt(nps(), inv(nps()));
+    assert_eq!(merged(path(c(a), both(), v(0)), 1), vec![vec![b]]);
+    assert_eq!(merged(path(v(0), both(), v(1)), 2).len(), 2);
+    // GRAPH ?g { :a !:q ?y }: one pair per graph.
+    let gp = plan(Op::Path { g: GraphSel::Slot(1), s: c(a), path: nps(), o: v(0) });
+    assert_eq!(Q::new(&fx.store, 2, gp).sorted(fx.rc()), ms(vec![vec![b, g1], vec![b, g2]]));
 }

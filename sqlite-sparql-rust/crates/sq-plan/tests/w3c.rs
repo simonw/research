@@ -231,6 +231,8 @@ fn option_sets() -> Vec<QueryOptions> {
         base.clone(),
         QueryOptions { join_policy: JoinPolicy::PreferHash, ..base.clone() },
         QueryOptions { join_policy: JoinPolicy::PreferBind, ..base.clone() },
+        QueryOptions { join_policy: JoinPolicy::PreferMerge, ..base.clone() },
+        QueryOptions { join_policy: JoinPolicy::NoSql, ..base.clone() },
         QueryOptions { reorder: false, union_default_graph: true, ..base },
     ]
 }

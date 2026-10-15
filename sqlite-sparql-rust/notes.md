@@ -109,3 +109,16 @@ translating SPARQL to SQL text or running as an external client.
   (2) the middle of a path sequence is a join variable. pyoxigraph/spareval are not authoritative on
   paths either: they drop zero-length matches for constants absent from the graph and use set
   semantics for `|` and `/` where §18.4 keeps bags.
+- **Direct B-tree page reader (WP15)** in crates/sq-sqlite/src/btree/: obtains the sqlite3_file* via
+  SQLITE_FCNTL_FILE_POINTER, reads pages through the VFS xRead, parses index b-tree pages (0x02/0x0A,
+  in-order interior cells, varints, serial types), own CLOCK page cache keyed by
+  SQLITE_FCNTL_DATA_VERSION. Preconditions re-checked on every fill/seek/rebind (file DB, rollback
+  journal not WAL, read txn held, no write txn on this connection, data version unchanged, not
+  shared-cache); on violation it falls back to the SQL cursor *at the exact resume key*.
+  Release, 1M triples, 8K pages: 2-column scan SQL 116 ns/row -> B-tree 27 ns/row warm / 34 cold
+  (4.2x); 3-column 137 -> 30 ns/row (4.5x); sorted probes GSPO 1.16 -> 0.38 us, GPSO 1.02 -> 0.29 us.
+  Random probes are memory-bound and at parity. Reviewer found a real issue: under shared-cache
+  connections the reader could see another connection's uncommitted spilled pages; shared cache is now
+  detected (EXPLAIN looks for OP_TableLock — no allow-listed API reports the mode) and refused.
+  Conformance suite passes at page sizes 4K/8K/16K/64K, with reserved bytes, after VACUUM, and on 600
+  rounds of randomly corrupted pages (fall back, never panic).

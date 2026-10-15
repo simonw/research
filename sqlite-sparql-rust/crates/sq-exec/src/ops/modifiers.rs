@@ -56,8 +56,12 @@ impl Operator for Project {
         Ok(more)
     }
 
-    fn fast_count(&mut self, cx: &mut ExecCtx) -> Option<Result<u64>> {
-        self.input.fast_count(cx)
+    fn fast_count(&mut self, cx: &mut ExecCtx, cap: Option<u64>) -> Option<Result<u64>> {
+        self.input.fast_count(cx, cap)
+    }
+
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.input.reset(cx)
     }
 
     fn close(&mut self, cx: &mut ExecCtx) {
@@ -152,6 +156,12 @@ impl Operator for Distinct {
         })
     }
 
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.seen.clear();
+        cx.release(&mut self.charge);
+        self.input.reset(cx)
+    }
+
     fn close(&mut self, cx: &mut ExecCtx) {
         self.seen.clear();
         cx.release(&mut self.charge);
@@ -199,13 +209,17 @@ impl Operator for Reduced {
         })
     }
 
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.input.reset(cx)
+    }
+
     fn close(&mut self, cx: &mut ExecCtx) {
         self.input.close(cx)
     }
 }
 
-/// OFFSET / LIMIT with early stop: once the limit is reached the input is closed and no
-/// longer pulled. The input fills a private batch that is padded so that only
+/// OFFSET / LIMIT with early stop: once the limit is reached the input is reset (its memory
+/// released) and no longer pulled. The input fills a private batch that is padded so that only
 /// min(offset + limit left, 1024) rows are free: streaming inputs stop early under small
 /// limits, and skipped rows never reach the output batch.
 pub(crate) struct Slice {
@@ -240,7 +254,7 @@ impl Slice {
 
     fn finish(&mut self, cx: &mut ExecCtx) -> Result<bool> {
         self.done = true;
-        self.input.close(cx);
+        self.input.reset(cx);
         Ok(false)
     }
 }
@@ -299,15 +313,26 @@ impl Operator for Slice {
         }
     }
 
-    fn fast_count(&mut self, cx: &mut ExecCtx) -> Option<Result<u64>> {
+    fn fast_count(&mut self, cx: &mut ExecCtx, cap: Option<u64>) -> Option<Result<u64>> {
         if self.done {
             return Some(Ok(0));
         }
-        let n = self.input.fast_count(cx)?;
+        // Rows of this slice that matter, and the input rows they need (never the whole input
+        // under a LIMIT: `SELECT * {...} LIMIT 10` counts at most offset + 10 rows).
+        let want = match (self.limit, cap) {
+            (Some(l), Some(c)) => Some(l.min(c)),
+            (l, c) => l.or(c),
+        };
+        let n = self.input.fast_count(cx, want.map(|w| self.offset.saturating_add(w)))?;
         Some(n.map(|n| {
             self.done = true;
             n.saturating_sub(self.offset).min(self.limit.unwrap_or(u64::MAX))
         }))
+    }
+
+    fn reset(&mut self, cx: &mut ExecCtx) {
+        self.done = true;
+        self.input.reset(cx)
     }
 
     fn close(&mut self, cx: &mut ExecCtx) {

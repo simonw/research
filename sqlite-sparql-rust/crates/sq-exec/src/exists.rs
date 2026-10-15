@@ -2,6 +2,16 @@
 //! with every bound slot of the outer row that the pattern mentions, and the answer is
 //! memoized per (id, active graph, values of those slots).
 //!
+//! Each pattern's operator tree is built once and re-opened per evaluation: between two
+//! evaluations it is `reset` (memory released, cursors kept), so a scan whose substitution has
+//! the same shape as the previous one is `rebind`-ed rather than leased again (§5.3). The
+//! trees are closed when the execution finishes.
+//!
+//! The memo is a cache, bounded like the resolver's maps ([`MEMO_LIMIT`] entries). Its entries
+//! are charged against the memory budget while they live, but it gives way instead of failing
+//! the query: it is cleared when full or when a new entry would exceed the budget, and an
+//! answer that does not fit even then is not remembered.
+//!
 //! The evaluation runs on its own [`ExecCtx`] level (its own `ValueCache`, the register's
 //! current graph) over the shared execution state, so it can run while the outer level's
 //! expression evaluation holds its `EvalCtx`. The pattern's rows carry the substituted
@@ -21,6 +31,11 @@ use crate::ctx::{Charge, ExecCtx, Shared};
 use crate::ops::BoxOp;
 use crate::seed::Seed;
 
+/// Bound on the memo (cleared when full).
+pub(crate) const MEMO_LIMIT: usize = 1 << 16;
+/// Bytes charged per memo entry besides its correlated values.
+const MEMO_ENTRY_BYTES: usize = 64;
+
 /// One EXISTS pattern: its operator tree and evaluation buffers.
 pub(crate) struct Entry {
     pub op: BoxOp,
@@ -32,13 +47,50 @@ pub(crate) struct Entry {
 
 type MemoKey = (u32, TermId, SmallVec<[TermId; 6]>);
 
+/// Memoized answers per (pattern, active graph, correlated values).
+#[derive(Default)]
+struct Memo {
+    map: FxHashMap<MemoKey, bool>,
+    /// The live entries.
+    charge: Charge,
+}
+
+impl Memo {
+    fn get(&self, key: &MemoKey) -> Option<bool> {
+        self.map.get(key).copied()
+    }
+
+    /// Remembers an answer if the memo and the budget have room for it, clearing the memo
+    /// first when either is exhausted.
+    fn insert(&mut self, sh: &Shared, key: MemoKey, found: bool) {
+        let bytes = MEMO_ENTRY_BYTES + 8 * key.2.len();
+        if self.map.len() >= MEMO_LIMIT || !sh.fits(bytes) {
+            self.clear(sh);
+        }
+        if sh.fits(bytes) {
+            sh.record(&mut self.charge, bytes);
+            self.map.insert(key, found);
+        }
+    }
+
+    /// Drops every entry and frees the table.
+    fn clear(&mut self, sh: &Shared) {
+        self.map = FxHashMap::default();
+        sh.release(&mut self.charge);
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.map.len()
+    }
+}
+
 pub(crate) struct ExistsState {
     /// Operator trees, taken out while being evaluated.
     entries: Vec<Option<Entry>>,
     /// Correlation slots per pattern: every slot it mentions, nested patterns included.
     vars: Vec<Vec<Slot>>,
-    memo: FxHashMap<MemoKey, bool>,
-    charge: Charge,
+    memo: Memo,
 }
 
 impl ExistsState {
@@ -54,7 +106,7 @@ impl ExistsState {
                 Some(Entry { op, batch, seed: vec![TermId::UNBOUND; width] })
             })
             .collect();
-        ExistsState { entries, vars, memo: FxHashMap::default(), charge: Charge::default() }
+        ExistsState { entries, vars, memo: Memo::default() }
     }
 
     /// Closes every pattern's operator tree and releases the memo.
@@ -62,8 +114,13 @@ impl ExistsState {
         for e in self.entries.iter_mut().flatten() {
             e.op.close(cx);
         }
-        self.memo = FxHashMap::default();
-        cx.sh.release(&mut self.charge);
+        self.memo.clear(&cx.sh);
+    }
+
+    /// Number of memoized answers.
+    #[cfg(test)]
+    pub fn memo_len(&self) -> usize {
+        self.memo.len()
     }
 }
 
@@ -88,7 +145,7 @@ fn evaluate(sh: &Rc<Shared>, graph: Option<TermId>, id: ExistsId, row: &[TermId]
         (id.0, graph.unwrap_or(TermId::UNBOUND), vars.iter().map(present).collect())
     };
     if let Some(b) = sh.exists.borrow().memo.get(&key) {
-        return Ok(*b);
+        return Ok(b);
     }
     let mut entry = sh.exists.borrow_mut().entries[ix]
         .take()
@@ -103,17 +160,16 @@ fn evaluate(sh: &Rc<Shared>, graph: Option<TermId>, id: ExistsId, row: &[TermId]
     }
     let mut cx = ExecCtx::new(Rc::clone(sh), sh.take_values(), graph.into_iter().collect());
     let result = run(&mut cx, &mut entry, subst);
-    entry.op.close(&mut cx);
+    // Ready for the next evaluation: the memory is released, the cursors stay leased.
+    match result {
+        Ok(_) => entry.op.reset(&mut cx),
+        Err(_) => entry.op.close(&mut cx),
+    }
     sh.return_values(std::mem::take(&mut cx.values));
     let mut st = sh.exists.borrow_mut();
     st.entries[ix] = Some(entry);
     let found = result?;
-    let bytes = 64 + 8 * key.2.len();
-    st.memo.insert(key, found);
-    let mut charge = std::mem::take(&mut st.charge);
-    let r = sh.charge(&mut charge, bytes);
-    st.charge = charge;
-    r?;
+    st.memo.insert(sh, key, found);
     Ok(found)
 }
 

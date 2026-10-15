@@ -15,6 +15,17 @@
 //! (file, data version) pair and is flushed when the pair changes (precondition 4). Pages are
 //! read only while preconditions 1–3 hold, so a cached page is always committed content of the
 //! current version.
+//!
+//! **Shared cache.** Connections of one shared cache (`cache=shared`, `SQLITE_OPEN_SHAREDCACHE`,
+//! `sqlite3_enable_shared_cache`) share one pager and therefore one file lock. A read
+//! transaction of this connection then does not keep the others out of the file: another
+//! connection of the cache can escalate the shared pager to EXCLUSIVE and spill its
+//! uncommitted pages into the file, and SQLite isolates the connections only through table
+//! locks that page reads bypass. The safety argument above does not hold, so the reader treats
+//! a sharable `main` as a failed precondition (part of precondition 1). No allow-listed API
+//! reports shared-cache mode, but SQLite codes an `OP_TableLock` into a statement exactly when
+//! the b-tree it reads is sharable, and `EXPLAIN` lists the opcodes. The probe runs once per
+//! main database file.
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
@@ -26,7 +37,7 @@ use super::file::{self, FileId, ReadError};
 use super::format::{DbHeader, Geometry, HEADER_LEN};
 use super::roots::{self, Roots};
 use crate::cache::ClockCache;
-use crate::raw::RawDb;
+use crate::raw::{RawDb, RawStmt};
 
 /// Which reader `SqliteStore::cursor` uses (`sparql_config('reader', …)`).
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -34,7 +45,8 @@ pub enum ReaderMode {
     /// The B-tree reader whenever its preconditions hold, otherwise SQL cursors (default).
     #[default]
     Auto,
-    /// Kill switch: SQL cursors only.
+    /// Kill switch: SQL cursors only. Open B-tree cursors continue as SQL cursors at their
+    /// next call, at the exact key.
     Sql,
     /// The B-tree reader, requested explicitly. It still falls back to SQL cursors when a
     /// precondition does not hold (callers never see a difference), so today it behaves
@@ -113,6 +125,8 @@ struct State {
     rejected: Option<(FileId, u32, Fallback)>,
     /// Verified root pages by file and schema cookie.
     roots: Option<(FileId, u32, Roots)>,
+    /// Whether the main database file is opened in shared-cache mode, by file.
+    shared_cache: Option<(FileId, bool)>,
     /// Page number -> page, CLOCK eviction, budget `page_cache_mb`.
     cache: ClockCache<Arc<[u8]>>,
 }
@@ -134,6 +148,8 @@ fn budget_bytes(mb: u64) -> usize {
 const REENTRANT: Fallback = Fallback::Precondition("re-entrant use of the reader state");
 /// A schema read that failed (e.g. interrupted): transient, so it is not remembered.
 const SCHEMA_UNREADABLE: Fallback = Fallback::Precondition("cannot read the schema");
+const SWITCHED_OFF: Fallback = Fallback::Precondition("the reader is switched off (reader = sql)");
+const SHARED_CACHE: Fallback = Fallback::Precondition("main is opened in shared-cache mode");
 
 impl BtreeReader {
     pub fn new(db: RawDb) -> BtreeReader {
@@ -145,6 +161,7 @@ impl BtreeReader {
                 current: None,
                 rejected: None,
                 roots: None,
+                shared_cache: None,
                 cache: ClockCache::new(budget_bytes(DEFAULT_PAGE_CACHE_MB)),
             }),
             counters: Cell::new(BtreeCounters::default()),
@@ -194,6 +211,13 @@ impl BtreeReader {
         }
     }
 
+    /// The kill switch (`reader = sql`) applies to open cursors too: their next call falls
+    /// back at the exact key.
+    #[inline]
+    fn enabled(&self) -> Result<(), Fallback> {
+        if self.mode.get() == ReaderMode::Sql { Err(SWITCHED_OFF) } else { Ok(()) }
+    }
+
     /// Preconditions 2 and 3: a read transaction on `main`, and no write transaction.
     #[inline]
     fn transaction_ok(&self) -> Result<(), Fallback> {
@@ -204,10 +228,13 @@ impl BtreeReader {
         }
     }
 
-    /// Cheap re-check at every cursor entry point: preconditions 2–4 against the snapshot the
-    /// cursor positioned with (two `sqlite3_*` calls, no I/O).
+    /// Cheap re-check at every cursor entry point: the mode and preconditions 2–4 against the
+    /// snapshot the cursor positioned with (two `sqlite3_*` calls, no I/O). Precondition 1
+    /// cannot change without changing the data version: switching to WAL rewrites the header,
+    /// and shared-cache mode is fixed when the connection opens.
     #[inline]
     pub fn check(&self, snap: &Snapshot) -> Result<(), Fallback> {
+        self.enabled()?;
         self.transaction_ok()?;
         if file::data_version(self.db) != Some(snap.data_version) {
             return Err(Fallback::Precondition("the data version changed"));
@@ -215,10 +242,12 @@ impl BtreeReader {
         Ok(())
     }
 
-    /// Full validation: all four preconditions, the database header, and the root pages.
-    /// Returns the current snapshot. When the file or the data version changed, it re-reads
+    /// Full validation: the mode, all four preconditions (precondition 1 including the
+    /// private-cache check), the database header, and the root pages. Returns the current
+    /// snapshot. When the file or the data version changed, it re-reads
     /// the header and flushes the page cache.
     pub fn snapshot(&self) -> Result<Snapshot, Fallback> {
+        self.enabled()?;
         self.transaction_ok()?;
         let file = file::identity(self.db).ok_or(Fallback::Precondition("main has no database file"))?;
         let version = file::data_version(self.db).ok_or(Fallback::Precondition("no data version for main"))?;
@@ -260,6 +289,9 @@ impl BtreeReader {
         if self.db.filename().is_none() {
             return Err(Fallback::Precondition("main is not a file database"));
         }
+        if self.shared_cache(file)? {
+            return Err(SHARED_CACHE);
+        }
         let mut hdr = [0u8; HEADER_LEN];
         file::read_at(self.db, file, &mut hdr, 0).map_err(read_error)?;
         let header = DbHeader::parse(&hdr)?;
@@ -273,6 +305,20 @@ impl BtreeReader {
             page_count: header.page_count.unwrap_or(u32::MAX),
             roots: self.roots_for(file, header.schema_cookie)?,
         })
+    }
+
+    /// Whether `file` (main) is opened in shared-cache mode; probed once per file.
+    fn shared_cache(&self, file: FileId) -> Result<bool, Fallback> {
+        if let Some((f, shared)) = self.state.try_borrow().map_err(|_| REENTRANT)?.shared_cache
+            && f == file
+        {
+            return Ok(shared);
+        }
+        // No borrow is held while SQL runs (rule R1). A failed probe (e.g. interrupted) is
+        // transient and not remembered.
+        let shared = uses_shared_cache(self.db).map_err(|_| SCHEMA_UNREADABLE)?;
+        self.state.try_borrow_mut().map_err(|_| REENTRANT)?.shared_cache = Some((file, shared));
+        Ok(shared)
     }
 
     /// Root pages for a schema cookie (loaded through SQL when the file or the cookie
@@ -341,6 +387,22 @@ impl BtreeReader {
             ("btree_last_fallback".into(), last),
         ]
     }
+}
+
+/// Whether `main` is a sharable b-tree (shared-cache mode). SQLite codes `OP_TableLock`
+/// into a statement that reads a table of a sharable b-tree, and only then
+/// (`sqlite3TableLock` returns early otherwise); `EXPLAIN` lists the opcodes without running
+/// them. `sqlite_schema` always exists, so the probe does not depend on our schema.
+fn uses_shared_cache(db: RawDb) -> Result<bool> {
+    /// `EXPLAIN` result columns: addr, opcode, p1, p2, p3, p4, p5, comment.
+    const OPCODE: std::ffi::c_int = 1;
+    let mut st = RawStmt::prepare(db, "EXPLAIN SELECT 1 FROM main.sqlite_schema WHERE 0", false)?;
+    while st.step()? {
+        if st.col_str(OPCODE)? == "TableLock" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn read_error(e: ReadError) -> Fallback {

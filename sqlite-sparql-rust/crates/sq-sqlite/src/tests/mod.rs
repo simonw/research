@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rusqlite::Connection;
 use sq_core::store::QuadStoreWriter;
@@ -20,8 +21,18 @@ mod loader;
 mod maint;
 mod perf;
 mod review;
+mod review_btree;
 mod scope;
 mod writer;
+
+/// Serializes the release performance tests (`--ignored`): they measure timings, and the
+/// 1M-triple ones start with a multi-threaded bulk load, so running them in parallel (the
+/// default for `cargo test -- --ignored`) makes every budget load-sensitive. Each holds the
+/// guard for its whole run; a failed (panicked) test does not block the others.
+pub(crate) fn perf_lock() -> MutexGuard<'static, ()> {
+    static PERF: Mutex<()> = Mutex::new(());
+    PERF.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Removes a temporary database file (and its journals) after the connection closed.
 pub(crate) struct TempPath(pub PathBuf);

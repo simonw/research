@@ -302,7 +302,11 @@ fn first_unit(p: &Plan) -> &Plan {
             first_unit(left)
         }
         Op::HashJoin { build, probe, build_is_left, .. } => first_unit(if *build_is_left { build } else { probe }),
-        Op::Project { input, .. } | Op::Filter { input, .. } | Op::Extend { input, .. } => first_unit(input),
+        Op::StarMerge { inputs, .. } => first_unit(&inputs[0]),
+        Op::Project { input, .. }
+        | Op::Filter { input, .. }
+        | Op::Extend { input, .. }
+        | Op::SortBySlot { input, .. } => first_unit(input),
         _ => p,
     }
 }
@@ -326,9 +330,9 @@ fn exists_plans_are_planned_with_outer_bindings() {
     let p = plan("SELECT * { ?x a :C1 FILTER (EXISTS { ?x :knows ?y . ?y a :C2 } || false) }", &st);
     assert_eq!(p.exists.len(), 1);
     let x = slot(&p, "x");
-    // ?x is bound when the EXISTS runs: the knows scan starts from it.
+    // ?x is bound when the EXISTS runs: the knows scan starts from it (a (g, p, s) probe).
     let starts_from_x = nodes(&p).into_iter().any(|n| match &n.op {
-        Op::Scan(s) => s.pat.s == PatTerm::Slot(x) && s.order == sq_core::store::IndexOrder::Gspo,
+        Op::Scan(s) => s.pat.s == PatTerm::Slot(x) && s.order == sq_core::store::IndexOrder::Gpso,
         _ => false,
     });
     assert!(starts_from_x, "{}", sq_plan::explain(&p, None));

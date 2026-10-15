@@ -200,7 +200,8 @@ impl<'q> Translator<'q> {
             QueryForm::Construct(_) => return Err(unsupported("CONSTRUCT queries")),
             QueryForm::Describe(_) => return Err(unsupported("DESCRIBE queries")),
         };
-        Ok(SqlQuery { sql, params: self.params.into_values(), columns })
+        let (sql, params) = self.params.finish(&sql);
+        Ok(SqlQuery { sql, params, columns })
     }
 
     /// A fresh alias (`t3`, `d4`, `r5`, …), unique in the statement.
@@ -536,8 +537,9 @@ impl<'q> Translator<'q> {
             return Ok(lb);
         }
         let mut conds = rb.conds.clone();
-        let mut domain = Vec::new();
-        let mut certain_shared = false;
+        // Per shared variable: its compatibility condition and its shared-domain term (None
+        // when it is certainly bound on both sides, which makes the domain non-empty).
+        let mut shared: Vec<(Option<String>, Option<String>)> = Vec::new();
         for (s, rc) in &rb.cols {
             let Some(lc) = lb.cols.get(s) else { continue };
             if env.graph == GraphCtx::Var(*s) {
@@ -552,19 +554,25 @@ impl<'q> Translator<'q> {
                 continue;
             }
             let (cond, _) = compat(lc, rc);
-            conds.extend(cond);
             let eq = format!("{} = {}", lc.sql, rc.sql);
-            match seeded {
-                Some(o) => domain.push(format!("({} IS NULL AND {eq})", o.sql)),
-                None if !lc.nullable && !rc.nullable => certain_shared = true,
-                None => domain.push(eq),
-            }
+            let domain = match seeded {
+                Some(o) => Some(format!("({} IS NULL AND {eq})", o.sql)),
+                None if !lc.nullable && !rc.nullable => None,
+                None => Some(eq),
+            };
+            shared.push((cond, domain));
         }
+        let certain_shared = shared.iter().any(|(_, d)| d.is_none());
+        let domain: Vec<String> = shared.iter().filter_map(|(_, d)| d.clone()).collect();
+        if !certain_shared && domain.is_empty() {
+            // dom(left) and dom(right) can never intersect: MINUS removes nothing.
+            return Ok(lb);
+        }
+        if certain_shared || domain.len() > 1 {
+            conds.extend(shared.into_iter().filter_map(|(c, _)| c));
+        }
+        // A single domain term is an equality, which implies its slot's compatibility.
         if !certain_shared {
-            if domain.is_empty() {
-                // dom(left) and dom(right) can never intersect: MINUS removes nothing.
-                return Ok(lb);
-            }
             conds.push(or_all(&domain));
         }
         let wh = if conds.is_empty() { String::new() } else { format!(" WHERE {}", and_all(&conds)) };
@@ -649,7 +657,7 @@ impl<'q> Translator<'q> {
         b
     }
 
-    /// GRAPH <c> / GRAPH ?g.
+    /// `GRAPH <c>` / `GRAPH ?g`.
     fn graph(&mut self, name: PatTerm, input: &Logical, env: &Env) -> Result<Block> {
         let q = self.q;
         match name {
@@ -663,7 +671,9 @@ impl<'q> Translator<'q> {
                     NamedGraphs::All => true,
                 };
                 let mut b = self.block(input, &env.with_graph(GraphCtx::Const(c)))?;
-                // Rows that come from quads of graph c already prove it exists.
+                // A GForm body reads a quad of graph c in every solution, which proves that c
+                // exists; any other body (including a zero-length path, whose pairs of a
+                // constant endpoint read no quad) needs the explicit check.
                 if check && !b.empty && classify(input, &q.exists) != GClass::GForm {
                     let g = self.param(c);
                     b.conds.push(format!(
@@ -672,6 +682,10 @@ impl<'q> Translator<'q> {
                     ));
                 }
                 Ok(b)
+            }
+            // No named graphs (FROM without FROM NAMED): `GRAPH ?g` has no solutions at all.
+            PatTerm::Slot(_) if matches!(&q.dataset.named, NamedGraphs::Only(list) if list.is_empty()) => {
+                Ok(Block::empty())
             }
             PatTerm::Slot(g) => match classify(input, &q.exists) {
                 GClass::GForm => {
@@ -740,6 +754,11 @@ impl<'q> Translator<'q> {
         if select.is_empty() {
             select.push(PLACEHOLDER.to_owned());
         }
+        if !keys.is_empty() && group_by.is_empty() {
+            // Keys that are never bound form one group, but an empty input still has none
+            // (without GROUP BY, SQL would return one row).
+            group_by.push("NULL".to_owned());
+        }
         let mut sql = format!("SELECT {}{}{}", select.join(", "), b.from_sql(), b.where_sql());
         if !group_by.is_empty() {
             sql.push_str(" GROUP BY ");
@@ -760,11 +779,8 @@ impl<'q> Translator<'q> {
             // COUNT(DISTINCT *) runs over distinct solutions (see `distinct_solutions`).
             AggFunc::CountAll => (format!("(COUNT(*) << 4) | {INT_TAG}"), false),
             AggFunc::Count => (format!("(COUNT({distinct}{}) << 4) | {INT_TAG}", arg(self)?), false),
-            AggFunc::Custom(name) => {
-                // An unknown aggregate is an evaluation error: always unbound.
-                let _ = name;
-                ("NULL".to_owned(), true)
-            }
+            // An unknown aggregate is an evaluation error: always unbound.
+            AggFunc::Custom(_) => ("NULL".to_owned(), true),
             AggFunc::GroupConcat { separator } if separator != " " => {
                 if spec.distinct {
                     return Err(unsupported("GROUP_CONCAT(DISTINCT …; SEPARATOR …)"));
