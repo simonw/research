@@ -150,3 +150,16 @@ translating SPARQL to SQL text or running as an external client.
   queries exploratory) found real bugs (GROUP BY on never-bound keys, OPTIONAL with constant right side);
   reviewers found zero-length-path / GRAPH membership bugs, float promotion in truth-only comparisons,
   exponential SQL growth when a BIND variable is referenced repeatedly.
+
+### Documentation requirements (added by the user mid-project)
+- Every folder in crates/ gets a README.md; tutorial.md teaches install + sqlite3 CLI usage + SPARQL + the
+  extension's features; tutorial/make_tutorial_data.py populates a DB with realistic example data.
+- Installed the sqlite3 CLI (apt: 3.45.1, same as Python's) so every tutorial command can be verified;
+  its built-in readfile() lets the CLI feed Turtle files to sparql_load().
+- Plan: README workflow for the 9 finished crates (write -> fact-check against source -> fix); dataset
+  workflow (curated real programming-language knowledge graph with influencedBy edges for property
+  paths, a paradigm class hierarchy for rdfs:subClassOf*, language-tagged labels, partial homepages for
+  OPTIONAL; clearly-fictional survey named graphs + a relational job_postings table for SQL joins;
+  optional synthetic social network for the performance section) -> independent fact-check + usability
+  review -> fix. Tutorial text and the sq-engine/sq-api READMEs follow once those crates are final, with
+  every tutorial command executed in sqlite3 against the final build.

@@ -519,7 +519,9 @@ fn debug_hooks_enabled(env: Option<&OsStr>) -> bool {
 /// progress", which reads like lock contention. Named for what it is.
 fn savepoint_refusal(e: Error) -> Error {
     match &e {
-        Error::Sqlite { code, msg } if code & 0xff == rusqlite::ffi::SQLITE_BUSY && msg.contains("statements in progress") => {
+        Error::Sqlite { code, msg }
+            if code & 0xff == rusqlite::ffi::SQLITE_BUSY && msg.contains("statements in progress") =>
+        {
             Error::Invalid(
                 "this writer cannot run inside a statement that writes (INSERT … SELECT, UPDATE …) here: only \
                  sparql_update can, and only outside an explicit transaction; call it as its own SELECT statement"

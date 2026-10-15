@@ -217,6 +217,7 @@ pub(crate) struct BaselineRun {
     /// Result columns of the SQL (a query projecting nothing has one placeholder column).
     width: usize,
     scratch: Vec<TermId>,
+    /// `timeout_ms` from the start of the run, as in the native engine (see `QuerySettings`).
     deadline: Option<Instant>,
     /// The statement returned SQLITE_DONE.
     done: bool,

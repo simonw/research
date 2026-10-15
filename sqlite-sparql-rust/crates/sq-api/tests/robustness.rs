@@ -99,7 +99,8 @@ fn in_child(test: &str, env: &str) {
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "{test} in a child process: {:?}\n{}", out.status, stderr.lines().rev().take(12).collect::<Vec<_>>().join("\n"));
+    let tail: Vec<&str> = stderr.lines().rev().take(12).collect();
+    assert!(out.status.success(), "{test} in a child process: {:?}\n{}", out.status, tail.join("\n"));
 }
 
 /// Release builds compile the `debug_panic` hook in, but arm it only with this switch.

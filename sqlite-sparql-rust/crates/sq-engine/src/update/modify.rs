@@ -45,7 +45,8 @@ impl Updater<'_> {
             return Ok(());
         }
         let dict = self.store.dict();
-        let mut deletes = DeleteTemplates::compile(dict, delete, &solutions)?.instantiate(dict, &solutions, &mut budget)?;
+        let mut deletes =
+            DeleteTemplates::compile(dict, delete, &solutions)?.instantiate(dict, &solutions, &mut budget)?;
         let mut inserts =
             InsertTemplates::compile(insert, &solutions).instantiate(&*self.store, &solutions, &mut budget)?;
         self.report.deleted += self.store.remove(&mut deletes)?;

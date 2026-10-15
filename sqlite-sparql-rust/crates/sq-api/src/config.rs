@@ -24,7 +24,9 @@ pub(crate) enum Key {
     AllowFiles,
     Reader,
     PageCacheMb,
-    /// Testing hook: makes one FFI entry point panic (panic-safety tests).
+    /// Testing hook: makes one FFI entry point panic (panic-safety tests). Available in debug
+    /// builds, and in release builds only when `SPARQLITE_DEBUG_HOOKS=1` is set before the
+    /// extension is loaded (see `ConnState::debug_panic`).
     DebugPanic,
 }
 
@@ -96,7 +98,9 @@ impl Key {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct QuerySettings {
     pub engine: EngineKind,
-    /// 0 = no timeout.
+    /// 0 = no timeout. Wall-clock time from the start of the execution: for a `sparql_rows` /
+    /// `sparql_view` scan from its `xFilter`, so time the consumer spends between rows counts
+    /// too (both engines; sq-exec fixes its deadline when the execution starts).
     pub timeout_ms: u64,
     pub max_memory_mb: u64,
     pub union_default_graph: bool,

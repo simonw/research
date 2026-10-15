@@ -17,9 +17,10 @@
 //! 2 MiB threads many hosts spawn. Chains are counted per frame kind:
 //! * expression frames (`FILTER( … )`, `BIND( … )`, projections, function arguments): the
 //!   operators `|| && + - * / !`;
-//! * pattern frames (`{ … }` groups, blank-node lists, collections and path groups): path
-//!   operators `/ | ^ * + ! ?` and child groups / FILTER / BIND elements, which become join,
-//!   left-join, filter and extend chains;
+//! * pattern frames (`{ … }` groups, blank-node lists, collections and path groups): child
+//!   groups and FILTER / BIND elements, and path operators `/ | ^ * + ! ?` (each path triple
+//!   is an element too), which become join, left-join, filter and extend chains of the
+//!   enclosing group;
 //! * data frames (`INSERT DATA`, `DELETE DATA` and the templates of CONSTRUCT / DELETE /
 //!   INSERT): nothing, spargebra keeps their quads flat.
 //!
@@ -30,8 +31,13 @@
 //! is a valid IRI) or, inside an expression right after an operand, the `<` / `<=` operator.
 //! Where both readings are possible the scanner counts the span as an expression too, and
 //! refuses the request when the two readings could tokenize the rest of the text differently
-//! (the span contains `'`, `#` or `\`, or unbalanced brackets). Everything else (keyword-based
-//! classification of frames) only ever errs towards a higher cost.
+//! (the span contains `'`, `#` or `\`, or unbalanced brackets). So `<` may be read as an IRI
+//! only outside expressions, and every expression parenthesis must be recognized: those of the
+//! top level, of a SELECT / GROUP BY / ORDER BY / HAVING clause, and the one after `FILTER` or
+//! `BIND` (with at most a function name in between). These keywords are matched anywhere in a
+//! word (spargebra reads `1FILTER(` as `1` then `FILTER(`); the keywords that make a frame
+//! cheaper (`WHERE`, and `DATA` / `INSERT` / `DELETE` / `CONSTRUCT` before a top-level `{`)
+//! only as whole words. Every other doubt errs towards a higher cost.
 use sq_core::{Error, Result};
 
 /// Maximum recursion cost of one request (see the module docs).
@@ -115,12 +121,13 @@ enum Keyword {
     /// `SELECT`, `GROUP`, `ORDER`, `HAVING`: starts a clause whose `(` are expressions.
     Clause,
     Where,
-    /// `DATA`, `INSERT`, `DELETE`, `CONSTRUCT`: a following `{` is quad data or a template.
+    /// `DATA`, `INSERT`, `DELETE`, `CONSTRUCT`: a following top-level `{` is quad data or a
+    /// template.
     Template,
     Other,
 }
 
-/// The previous significant token.
+/// The previous significant token. Words are names, numbers and keywords.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Token {
     None,
@@ -135,37 +142,37 @@ impl Token {
     /// Whether an operand may end with this token (then a following `<` may be the
     /// comparison operator). Errs towards `true`.
     fn may_end_operand(self) -> bool {
-        !matches!(
-            self,
-            Token::None
-                | Token::Punct(b'(' | b',' | b'{' | b'[' | b';' | b'=' | b'<' | b'!' | b'&' | b'|' | b'+' | b'*' | b'/' | b'^')
-        )
+        let Token::Punct(c) = self else { return self != Token::None };
+        !matches!(c, b'(' | b',' | b'{' | b'[' | b';' | b'=' | b'<' | b'!' | b'&' | b'|' | b'+' | b'*' | b'/' | b'^')
     }
 }
 
+/// Bytes of variable names (a superset of VARNAME: the parser fails on the extra ones).
 fn is_name_byte(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80
 }
 
+/// Bytes of prefixed names, numbers and keywords (plus `\` escapes, see [`Scanner::word`]).
 fn is_word_byte(c: u8) -> bool {
-    is_name_byte(c) || c == b':' || c == b'%'
+    is_name_byte(c) || matches!(c, b':' | b'%' | b'.' | b'-')
 }
 
+/// Classifies a word: the keywords that only ever raise the cost anywhere in it, the others
+/// as the whole word (see the module docs).
 fn keyword(word: &[u8]) -> Keyword {
-    const TABLE: [(&str, Keyword); 11] = [
-        ("FILTER", Keyword::Constraint),
-        ("BIND", Keyword::Constraint),
-        ("SELECT", Keyword::Clause),
-        ("GROUP", Keyword::Clause),
-        ("ORDER", Keyword::Clause),
-        ("HAVING", Keyword::Clause),
-        ("WHERE", Keyword::Where),
-        ("DATA", Keyword::Template),
-        ("INSERT", Keyword::Template),
-        ("DELETE", Keyword::Template),
-        ("CONSTRUCT", Keyword::Template),
-    ];
-    TABLE.iter().find(|(k, _)| k.as_bytes().eq_ignore_ascii_case(word)).map_or(Keyword::Other, |(_, kw)| *kw)
+    let contains = |k: &str| word.windows(k.len()).any(|w| w.eq_ignore_ascii_case(k.as_bytes()));
+    let is = |k: &str| word.eq_ignore_ascii_case(k.as_bytes());
+    if contains("FILTER") || contains("BIND") {
+        Keyword::Constraint
+    } else if ["SELECT", "GROUP", "ORDER", "HAVING"].into_iter().any(contains) {
+        Keyword::Clause
+    } else if is("WHERE") {
+        Keyword::Where
+    } else if ["DATA", "INSERT", "DELETE", "CONSTRUCT"].into_iter().any(is) {
+        Keyword::Template
+    } else {
+        Keyword::Other
+    }
 }
 
 /// spargebra's IRIREF is `<` up to the first `>`, kept only if the content is a valid IRI.
@@ -212,7 +219,10 @@ fn string_end(b: &[u8], at: usize) -> Option<usize> {
 
 /// Length of a valid `ECHAR` / `UCHAR` escape at `at` (which holds `\`).
 fn escape_len(b: &[u8], at: usize) -> Option<usize> {
-    let hex = |n: usize| (b.len() >= at + 2 + n && b[at + 2..at + 2 + n].iter().all(u8::is_ascii_hexdigit)).then_some(n + 2);
+    let hex = |n: usize| {
+        let digits = b.get(at + 2..at + 2 + n)?;
+        digits.iter().all(u8::is_ascii_hexdigit).then_some(n + 2)
+    };
     match b.get(at + 1)? {
         b't' | b'b' | b'n' | b'r' | b'f' | b'"' | b'\'' | b'\\' => Some(2),
         b'u' => hex(4),
@@ -262,12 +272,14 @@ struct Scanner<'a> {
     /// Σ (weight + items) over the open frames: a lower bound of the final cost.
     path: u32,
     prev: Token,
-    prev2: Token,
+    /// A `FILTER` / `BIND` keyword was read, followed by nothing but a possible function name:
+    /// the next `(` is an expression.
+    constraint: bool,
 }
 
 impl<'a> Scanner<'a> {
     fn new(b: &'a [u8], mode: Mode, root: bool) -> Scanner<'a> {
-        Scanner { b, stack: vec![Frame::new(mode, 0, 0, root)], path: 0, prev: Token::None, prev2: Token::None }
+        Scanner { b, stack: vec![Frame::new(mode, 0, 0, root)], path: 0, prev: Token::None, constraint: false }
     }
 
     fn top(&mut self) -> &mut Frame {
@@ -275,15 +287,25 @@ impl<'a> Scanner<'a> {
     }
 
     fn token(&mut self, t: Token) {
-        self.prev2 = self.prev;
+        match t {
+            Token::Word(Keyword::Constraint) => self.constraint = true,
+            // A function name (prefixed name, builtin or IRI) may stand before the `(`.
+            Token::Word(_) | Token::Iri => {}
+            _ => self.constraint = false,
+        }
         self.prev = t;
     }
 
-    fn add(&mut self, w: u32) -> Result<()> {
-        let top = self.top();
-        top.items = top.items.saturating_add(w);
+    /// Adds `w` to the chain of the frame at `at`.
+    fn add_at(&mut self, at: usize, w: u32) -> Result<()> {
+        let frame = &mut self.stack[at];
+        frame.items = frame.items.saturating_add(w);
         self.path = self.path.saturating_add(w);
         if self.path > LIMIT { Err(too_deep(self.path)) } else { Ok(()) }
+    }
+
+    fn add(&mut self, w: u32) -> Result<()> {
+        self.add_at(self.stack.len() - 1, w)
     }
 
     fn child_cost(&mut self, cost: u32) -> Result<()> {
@@ -324,11 +346,6 @@ impl<'a> Scanner<'a> {
                     i = string_end(b, i).unwrap_or(i + 1);
                     self.token(Token::Str);
                 }
-                b'\\' => {
-                    // PN_LOCAL_ESC: the escaped byte belongs to a prefixed name.
-                    i += 2;
-                    self.token(Token::Word(Keyword::Other));
-                }
                 b'<' => i = self.angle(i)?,
                 b'?' | b'$' if b.get(i + 1).is_some_and(|&n| is_name_byte(n)) => {
                     i += 1;
@@ -359,7 +376,7 @@ impl<'a> Scanner<'a> {
                     self.token(Token::Punct(c));
                     i += 1;
                 }
-                b'|' | b'&' | b'+' | b'-' | b'*' | b'/' | b'!' | b'^' | b'?' => {
+                b'|' | b'&' | b'+' | b'*' | b'/' | b'!' | b'^' | b'?' => {
                     let pair = b.get(i + 1) == Some(&c) && matches!(c, b'|' | b'&' | b'^');
                     if !(c == b'^' && pair) {
                         self.operator(c)?;
@@ -367,19 +384,7 @@ impl<'a> Scanner<'a> {
                     self.token(Token::Punct(c));
                     i += if pair { 2 } else { 1 };
                 }
-                _ if is_word_byte(c) => {
-                    let start = i;
-                    while i < b.len() && is_word_byte(b[i]) {
-                        i += 1;
-                    }
-                    let kw = keyword(&b[start..i]);
-                    match kw {
-                        Keyword::Clause => self.top().clause = true,
-                        Keyword::Where => self.top().clause = false,
-                        _ => {}
-                    }
-                    self.token(Token::Word(kw));
-                }
+                _ if is_word_byte(c) || c == b'\\' => i = self.word(i)?,
                 _ => {
                     self.token(Token::Punct(c));
                     i += 1;
@@ -393,25 +398,58 @@ impl<'a> Scanner<'a> {
         if cost > LIMIT { Err(too_deep(cost)) } else { Ok(cost) }
     }
 
+    /// A word at `at`: a name, number or keyword, `\` escapes (PN_LOCAL_ESC) included. Returns
+    /// where scanning continues.
+    fn word(&mut self, at: usize) -> Result<usize> {
+        let b = self.b;
+        let mut i = at;
+        let mut dashes = 0;
+        while i < b.len() {
+            match b[i] {
+                b'\\' => i += 2,
+                b'-' => {
+                    dashes += 1;
+                    i += 1;
+                }
+                c if is_word_byte(c) => i += 1,
+                _ => break,
+            }
+        }
+        // `-` inside a prefixed name is no operator, but in an expression it may be (`1-2`).
+        for _ in 0..dashes {
+            self.operator(b'-')?;
+        }
+        let kw = keyword(&b[at..i.min(b.len())]);
+        match kw {
+            Keyword::Clause => self.top().clause = true,
+            Keyword::Where => self.top().clause = false,
+            _ => {}
+        }
+        self.token(Token::Word(kw));
+        Ok(i)
+    }
+
     /// Counts an operator byte by the frame's mode.
     fn operator(&mut self, c: u8) -> Result<()> {
-        let w = match (self.top().mode, c) {
-            (Mode::Expr, b'|' | b'&' | b'+' | b'-' | b'*' | b'/' | b'!') => W_OP,
-            (Mode::Pattern, b'/' | b'|' | b'^' | b'*' | b'+' | b'!' | b'?') => W_PATH,
-            _ => 0,
-        };
-        if w > 0 { self.add(w) } else { Ok(()) }
+        match (self.top().mode, c) {
+            (Mode::Expr, b'|' | b'&' | b'+' | b'-' | b'*' | b'/' | b'!') => self.add(W_OP),
+            (Mode::Pattern, b'/' | b'|' | b'^' | b'*' | b'+' | b'!' | b'?') => {
+                // Also inside a path group or a blank-node list: the path triple is one more
+                // element of the enclosing group's join chain.
+                let group = self.stack.iter().rposition(|f| f.close == b'}' || f.close == 0).unwrap_or(0);
+                self.add_at(group, W_PATH)
+            }
+            _ => Ok(()),
+        }
     }
 
     fn open_paren(&mut self) -> Result<()> {
         let top = self.top();
         let (mode, root, clause) = (top.mode, top.root, top.clause);
-        let constraint = self.prev == Token::Word(Keyword::Constraint)
-            || (matches!(self.prev, Token::Word(_) | Token::Iri) && self.prev2 == Token::Word(Keyword::Constraint));
         let child = match mode {
             Mode::Data => Mode::Data,
             Mode::Expr => Mode::Expr,
-            Mode::Pattern if root || clause || constraint => Mode::Expr,
+            Mode::Pattern if root || clause || self.constraint => Mode::Expr,
             Mode::Pattern => Mode::Pattern,
         };
         if mode == Mode::Pattern && child == Mode::Expr {
@@ -427,7 +465,8 @@ impl<'a> Scanner<'a> {
         let top = self.top();
         let (mode, root) = (top.mode, top.root);
         top.clause = false;
-        let child = if mode == Mode::Data || self.prev == Token::Word(Keyword::Template) {
+        // Quad data and templates only follow their keyword at the top level.
+        let child = if mode == Mode::Data || (root && self.prev == Token::Word(Keyword::Template)) {
             Mode::Data
         } else {
             Mode::Pattern
@@ -626,6 +665,40 @@ mod tests {
         let groups = "{ <http://ex/a> <http://ex/b> 1 } ".repeat(200);
         assert!(cost(&format!("INSERT DATA {{ GRAPH <http://ex/g> {groups} }}")) < 100);
         assert!(cost(&format!("SELECT * WHERE {{ {groups} }}")) > 800);
+    }
+
+    /// Shapes where the parser reads an expression (or a chain) that a looser scanner would
+    /// miss: each hides 400 levels of nesting behind `<…>` after an operand, or builds a long
+    /// chain.
+    #[test]
+    fn expressions_and_chains_are_found_however_they_are_spelled() {
+        let hidden = format!("?o <{}1{}> 0", "(".repeat(400), ")".repeat(400));
+        for q in [
+            // Function names with `-`, `.` and escapes; keywords glued to a number or a name.
+            format!("SELECT * WHERE {{ ?s ?p ?o FILTER ex:my-func({hidden}) }}"),
+            format!("SELECT * WHERE {{ ?s ?p ?o FILTER ex:my.func({hidden}) }}"),
+            format!("SELECT * WHERE {{ ?s ?p ?o FILTER ex:f\\.g\\-h({hidden}) }}"),
+            format!("SELECT * WHERE {{ ?s ?p 1FILTER({hidden}) }}"),
+            format!("SELECT * WHERE {{ ?s ?p ex:a.b.FILTER({hidden}) }}"),
+            format!("SELECT * WHERE {{ ?s ?p ?o filter # comment\n <http://ex/f> ({hidden}) }}"),
+            format!("SELECT * WHERE {{ ?s ?p ?o BIND(({hidden}) AS ?x) }}"),
+            format!("SELECT * WHERE {{ {{ SELECT ?a (1 AS ?b) ({hidden} AS ?c) {{}} }} }}"),
+            format!("SELECT * WHERE {{ ?s ?p ?o }} GROUP BY ?s ({hidden})"),
+        ] {
+            assert!(refused(&q).contains("nests too deeply"), "{q:.70}");
+        }
+        for q in [
+            // Parenthesized paths and paths in blank-node lists join the group's chain.
+            format!("SELECT * WHERE {{ {} }}", "?s (<http://ex/p>/<http://ex/q>) ?o . ".repeat(300)),
+            format!("SELECT * WHERE {{ {} }}", "[ <http://ex/p>* ?o ] . ".repeat(300)),
+            // `DATA` only makes a top-level `{` flat.
+            format!("SELECT * WHERE {{ ?s ?p ex:o.DATA {{ {} }} }}", "{} ".repeat(300)),
+            format!("SELECT * WHERE {{ ?s ?p ?o DATA {{ {} }} }}", "{} ".repeat(300)),
+        ] {
+            assert!(refused(&q).contains("nests too deeply"), "{q:.70}");
+        }
+        // A FILTER's pending `(` ends with its first other token.
+        assert!(cost("SELECT * WHERE { FILTER(?x) ?s ?p (<http://ex/a#1> <http://ex/a#2>) }") < 40);
     }
 
     /// [`iri_end`] relies on spargebra (through oxiri) refusing these bytes inside `<…>`:

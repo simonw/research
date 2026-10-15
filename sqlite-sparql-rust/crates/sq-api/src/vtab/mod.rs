@@ -5,7 +5,10 @@
 //!   typed columns and pushed-down `__term` / `__id` equality constraints;
 //! * `sparql_status` ([`status`]): eponymous status table and the connection's close hook.
 //!
-//! Every method body runs inside `guard()` (rule R4).
+//! Every method body runs inside `guard()` (rule R4). A scan's `xFilter` is one read entry
+//! that plans the query and fetches the first batch; later batches read the same snapshot
+//! (see `state`). `timeout_ms` counts wall-clock time from `xFilter`, including the time the
+//! consumer spends between rows.
 use std::sync::Arc;
 
 use rusqlite::Connection;
