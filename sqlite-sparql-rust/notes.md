@@ -163,3 +163,13 @@ translating SPARQL to SQL text or running as an external client.
   optional synthetic social network for the performance section) -> independent fact-check + usability
   review -> fix. Tutorial text and the sq-engine/sq-api READMEs follow once those crates are final, with
   every tutorial command executed in sqlite3 against the final build.
+- sq-engine (implement -> 2 review/fix rounds): facade, SPARQL Update executor (WHERE materialized
+  before writes, fresh bnodes per solution, SILENT rules, LOAD file:// gated), generic loader, and the
+  DIFFERENTIAL FUZZER: random data + random queries (OPTIONAL±filter, MINUS, EXISTS, GRAPH, FROM,
+  paths, aggregates, sub-selects, VALUES, ORDER BY...) run on the native engine under 5 join policies x
+  reorder on/off x 3 stores (MemStore, in-memory SQLite via SQL cursors, file SQLite with 512-byte pages
+  so the direct B-tree reader is exercised) vs the oracle. 26 seeds x 10,000 queries = ~7.7 million
+  native comparisons + ~12,000 update requests: zero unexplained mismatches (after fixing what it found:
+  an sq-exec bug, and BNODE() on a BindJoin probe side being re-evaluated per seed). Reviewer found
+  `union_default_graph` leaking into ADD/COPY/MOVE. W3C mem backend: 636/639 (3 = spargebra parser),
+  every UpdateEvaluationTest passes.
