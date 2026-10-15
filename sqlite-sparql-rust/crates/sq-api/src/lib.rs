@@ -16,10 +16,10 @@
 //! and the §1.6 allow-list.
 //!
 //! Module map: `state` (ConnState, entries), `config` (§8.5 settings), `lru` (parsed queries),
-//! `query` (native and baseline runs, output), `helpers` (baseline helper functions),
-//! `functions` (registration and bodies), `vtab` (`sparql_rows`, `sparql_view`,
-//! `sparql_status`), `value` (native mapping, N-Triples), `guard` (panic containment),
-//! `error` (error mapping).
+//! `nesting` (the recursion budget checked before parsing), `query` (native and baseline
+//! runs, output), `helpers` (baseline helper functions), `functions` (registration and
+//! bodies), `vtab` (`sparql_rows`, `sparql_view`, `sparql_status`), `value` (native mapping,
+//! N-Triples), `guard` (panic containment), `error` (error mapping).
 use rusqlite::Connection;
 
 mod config;
@@ -28,6 +28,7 @@ mod functions;
 mod guard;
 mod helpers;
 mod lru;
+mod nesting;
 mod query;
 mod state;
 mod value;

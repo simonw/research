@@ -3,13 +3,14 @@
 //!
 //! The generator only produces queries whose answer is deterministic: LIMIT / OFFSET appear
 //! only under an ORDER BY over every projected variable, and nothing reads the clock,
-//! randomness or input order (no NOW, RAND, UUID, SAMPLE or GROUP_CONCAT). Queries that
-//! spargebra rejects (scoping rules) are simply skipped by the runner.
+//! randomness or input order (no NOW, RAND or UUID; SAMPLE and GROUP_CONCAT only aggregate a
+//! GROUP BY key, which has one value per group). Queries that spargebra rejects (scoping
+//! rules) are simply skipped by the runner.
 mod generate;
 mod print;
 mod shrink;
 
-use super::data::GRAPHS;
+use super::data::{EMPTY_GRAPH, GRAPHS};
 
 pub use generate::Gen;
 pub use print::PREFIXES;
@@ -18,8 +19,9 @@ pub use print::PREFIXES;
 pub const VARS: [&str; 7] = ["a", "b", "c", "d", "e", "f", "g"];
 const GRAPH_VAR: usize = 6;
 
-/// Graphs a query may name: the data's named graphs plus one that never exists.
-const QUERY_GRAPHS: [&str; 3] = [GRAPHS[0], GRAPHS[1], "gx"];
+/// Graphs a query may name: the data's named graphs, the graph that some datasets register
+/// without quads, and one that never exists.
+const QUERY_GRAPHS: [&str; 4] = [GRAPHS[0], GRAPHS[1], EMPTY_GRAPH, "gx"];
 
 /// A term in a pattern position.
 #[derive(Clone, Debug, PartialEq)]
@@ -77,6 +79,20 @@ pub enum Agg {
     Max(usize),
     /// An aggregate of an expression: (function, distinct, argument).
     Expr(&'static str, bool, Box<E>),
+    /// `SAMPLE(?key)` of a GROUP BY key (one value per group, so deterministic).
+    Sample(usize),
+    /// `GROUP_CONCAT([DISTINCT] ?key [; SEPARATOR = ..])` of a GROUP BY key.
+    GroupConcat(bool, usize, Option<&'static str>),
+}
+
+impl Agg {
+    /// The GROUP BY key that a SAMPLE / GROUP_CONCAT aggregates (None for other aggregates).
+    pub fn key(&self) -> Option<usize> {
+        match self {
+            Agg::Sample(k) | Agg::GroupConcat(_, k, _) => Some(*k),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -125,7 +141,12 @@ pub struct Select {
     pub order: Vec<(usize, bool)>,
     pub offset: Option<u64>,
     pub limit: Option<u64>,
+    /// A trailing (query-level) `VALUES` clause.
+    pub values: Option<Box<Table>>,
 }
+
+/// A VALUES table: its variables and rows (None = UNDEF).
+pub type Table = (Vec<usize>, Vec<Vec<Option<T>>>);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Form {

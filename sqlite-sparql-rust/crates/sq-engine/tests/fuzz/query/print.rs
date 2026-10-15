@@ -52,6 +52,14 @@ impl fmt::Display for Agg {
             Agg::Min(v) => write!(f, "MIN(?{})", VARS[*v]),
             Agg::Max(v) => write!(f, "MAX(?{})", VARS[*v]),
             Agg::Expr(func, dist, e) => write!(f, "{func}({}{e})", d(dist)),
+            Agg::Sample(v) => write!(f, "SAMPLE(?{})", VARS[*v]),
+            Agg::GroupConcat(dist, v, sep) => {
+                write!(f, "GROUP_CONCAT({}?{}", d(dist), VARS[*v])?;
+                if let Some(sep) = sep {
+                    write!(f, " ; SEPARATOR = \"{sep}\"")?;
+                }
+                f.write_str(")")
+            }
         }
     }
 }
@@ -143,32 +151,7 @@ impl El {
             El::Bind(e, v) => {
                 let _ = write!(out, "BIND({e} AS ?{})", VARS[*v]);
             }
-            El::Values(vars, rows) => {
-                out.push_str("VALUES (");
-                for (i, v) in vars.iter().enumerate() {
-                    if i > 0 {
-                        out.push(' ');
-                    }
-                    let _ = write!(out, "?{}", VARS[*v]);
-                }
-                out.push_str(") {");
-                for row in rows {
-                    out.push_str(" (");
-                    for (i, t) in row.iter().enumerate() {
-                        if i > 0 {
-                            out.push(' ');
-                        }
-                        match t {
-                            Some(t) => {
-                                let _ = write!(out, "{t}");
-                            }
-                            None => out.push_str("UNDEF"),
-                        }
-                    }
-                    out.push(')');
-                }
-                out.push_str(" }");
-            }
+            El::Values(vars, rows) => print_values(out, vars, rows),
             El::Graph(g, p) => {
                 let _ = write!(out, "GRAPH {g} ");
                 p.print(out, depth);
@@ -181,6 +164,34 @@ impl El {
             El::Group(g) => g.print(out, depth),
         }
     }
+}
+
+/// `VALUES (?x ?y) { (t UNDEF) ... }`.
+fn print_values(out: &mut String, vars: &[usize], rows: &[Vec<Option<T>>]) {
+    out.push_str("VALUES (");
+    for (i, v) in vars.iter().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        let _ = write!(out, "?{}", VARS[*v]);
+    }
+    out.push_str(") {");
+    for row in rows {
+        out.push_str(" (");
+        for (i, t) in row.iter().enumerate() {
+            if i > 0 {
+                out.push(' ');
+            }
+            match t {
+                Some(t) => {
+                    let _ = write!(out, "{t}");
+                }
+                None => out.push_str("UNDEF"),
+            }
+        }
+        out.push(')');
+    }
+    out.push_str(" }");
 }
 
 impl Select {
@@ -255,6 +266,10 @@ impl Select {
         }
         if let Some(o) = self.offset {
             let _ = write!(out, " OFFSET {o}");
+        }
+        if let Some(table) = &self.values {
+            out.push(' ');
+            print_values(out, &table.0, &table.1);
         }
     }
 }

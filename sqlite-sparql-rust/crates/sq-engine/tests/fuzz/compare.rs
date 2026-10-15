@@ -105,7 +105,12 @@ pub fn same(expected: &Outcome, got: &Outcome, order: Order, free: Free) -> Resu
             }
             rows_equal(a, b, order, &is_free)
         }
-        (Outcome::Graph(a), Outcome::Graph(b)) => rows_equal(a, b, Order::Set, &is_free),
+        // CONSTRUCT / DESCRIBE output is a set: a repeated triple is a bug on either side.
+        (Outcome::Graph(a), Outcome::Graph(b)) => {
+            duplicate_free(a, "expected")?;
+            duplicate_free(b, "actual")?;
+            bag_equal(a, b, &is_free)
+        }
         _ => Err("outcomes differ in kind or value".to_owned()),
     }
 }
@@ -114,7 +119,38 @@ fn rows_equal(a: &[Row], b: &[Row], order: Order, free: &dyn Fn(&str) -> bool) -
     match order {
         Order::Sequence => sequence_equal(a, b, free),
         Order::Bag => bag_equal(a, b, free),
-        Order::Set => bag_equal(&dedup(a), &dedup(b), free),
+        // REDUCED may drop duplicates but never adds any: `b` has the rows of `a` (the
+        // unreduced multiset), each at most as often.
+        Order::Set => {
+            bag_equal(&dedup(a), &dedup(b), free)?;
+            at_most_as_often(a, b, free)
+        }
+    }
+}
+
+/// Every row signature (free blank nodes erased) of `b` occurs at most as often as in `a`.
+fn at_most_as_often(a: &[Row], b: &[Row], free: &dyn Fn(&str) -> bool) -> Result<(), String> {
+    let mut count: HashMap<String, i64> = HashMap::new();
+    for r in a {
+        *count.entry(row_text(r, free)).or_default() += 1;
+    }
+    for r in b {
+        let n = count.entry(row_text(r, free)).or_default();
+        *n -= 1;
+        if *n < 0 {
+            return Err(format!("[{}] occurs more often than in the unreduced answer", row_text(r, free)));
+        }
+    }
+    Ok(())
+}
+
+/// No row occurs twice (labels compared exactly).
+fn duplicate_free(rows: &[Row], side: &str) -> Result<(), String> {
+    let mut lines: Vec<String> = rows.iter().map(|r| row_text(r, &|_| false)).collect();
+    lines.sort_unstable();
+    match lines.windows(2).find(|w| w[0] == w[1]) {
+        Some(w) => Err(format!("the {side} graph repeats the triple [{}]", w[0])),
+        None => Ok(()),
     }
 }
 
@@ -226,8 +262,8 @@ fn bag_equal(a: &[Row], b: &[Row], free: &dyn Fn(&str) -> bool) -> Result<(), St
     match search(&xa, &xb, &order, &candidates, &mut bij, free) {
         Some(true) => Ok(()),
         Some(false) => Err("no blank-node bijection maps the expected rows onto the actual rows".to_owned()),
-        // Undecided within the budget: accept (only very large blank-node answers get here).
-        None => Ok(()),
+        // Undecided: a failure, so that a hard mismatch is never waved through.
+        None => Err(format!("no blank-node bijection found within {BIJECTION_BUDGET} unification attempts")),
     }
 }
 
@@ -255,8 +291,7 @@ fn search(
         let x = xa[order[k]];
         let mark = bij.log.len();
         let mut found = None;
-        for c in start..candidates[k].len() {
-            let j = candidates[k][c];
+        for (c, &j) in candidates[k].iter().enumerate().skip(start) {
             if used[j] {
                 continue;
             }
@@ -363,6 +398,17 @@ mod tests {
         assert!(same(&a, &b2, Order::Sequence, Free::Minted).is_err());
         assert!(same(&a, &set, Order::Bag, Free::Minted).is_err());
         assert!(same(&a, &set, Order::Set, Free::Minted).is_ok());
+        assert!(same(&a, &a, Order::Set, Free::Minted).is_ok());
+        // REDUCED never adds duplicates.
+        let more = sols(vec![vec![i("a"), None], vec![i("b"), None], vec![i("b"), None]]);
+        assert!(same(&a, &more, Order::Set, Free::Minted).is_err());
+        // Graph outputs are sets on both sides.
+        let g = |rows: Vec<Row>| Outcome::Graph(rows);
+        let t = || vec![i("s"), i("p"), b("t1")];
+        let u = || vec![i("s"), i("p"), b("t2")];
+        assert!(same(&g(vec![t(), u()]), &g(vec![u(), t()]), Order::Bag, Free::Minted).is_ok());
+        assert!(same(&g(vec![t(), u()]), &g(vec![t(), t()]), Order::Bag, Free::Minted).is_err());
+        assert!(same(&g(vec![t()]), &g(vec![t(), t()]), Order::Bag, Free::Minted).is_err());
         assert!(same(&a, &Outcome::Boolean(true), Order::Bag, Free::Minted).is_err());
         assert!(same(&Outcome::Error("x".into()), &Outcome::Error("y".into()), Order::Bag, Free::Minted).is_ok());
     }

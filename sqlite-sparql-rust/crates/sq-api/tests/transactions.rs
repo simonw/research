@@ -148,3 +148,105 @@ fn a_locked_database_reports_sqlite_busy() {
     assert_eq!(one::<i64>(&b, "SELECT sparql_update('INSERT DATA { <http://ex/a> <http://ex/b> 1 }')"), 1);
     assert_eq!(status(&b, "last_op"), Value::Text("update".into()));
 }
+
+#[test]
+fn an_update_inside_a_writing_statement_commits_and_rolls_back_with_it() {
+    let c = loaded();
+    c.execute_batch(
+        "CREATE TEMP TABLE r(n);
+         CREATE TABLE src(u TEXT);
+         INSERT INTO src VALUES ('INSERT DATA { <http://ex/x> <http://ex/p> \"first long literal\" }'),
+                                ('INSERT DATA { <http://ex/x> <http://ex/p> 2 }');",
+    )
+    .unwrap();
+    // SQLite refuses savepoints here; the host statement's transaction holds the updates.
+    assert_eq!(c.execute("INSERT INTO r SELECT sparql_update(u) FROM src", []).unwrap(), 2);
+    assert_eq!(count(&c), 15);
+    assert!(c.is_autocommit());
+    // A failure after another call's writes, and after this call's own partial writes, fails
+    // the host statement: SQLite rolls its whole transaction back.
+    c.execute_batch(
+        "DELETE FROM src;
+         INSERT INTO src VALUES ('INSERT DATA { <http://ex/y> <http://ex/p> \"rolled back literal\" }'),
+           ('INSERT DATA { <http://ex/w> <http://ex/p> 1 } ; CREATE GRAPH <http://ex/g> ; CREATE GRAPH <http://ex/g>');",
+    )
+    .unwrap();
+    let e = c.execute("INSERT INTO r SELECT sparql_update(u) FROM src", []).unwrap_err();
+    assert!(!e.to_string().contains("own SELECT statement"), "{e}");
+    assert_eq!(count(&c), 15);
+    assert_eq!(one::<i64>(&c, "SELECT count(*) FROM r"), 2);
+    assert_eq!(one::<i64>(&c, "SELECT sparql_ask('ASK { GRAPH <http://ex/g> {} }')"), 0);
+    // Rolled-back dictionary rows are reused for other terms: nothing stale is cached.
+    c.query_row("SELECT sparql_update('INSERT DATA { <http://ex/z> <http://ex/p> \"a committed literal\" }')", [], |_| {
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        one::<String>(&c, "SELECT sparql_value('SELECT ?o WHERE { <http://ex/z> <http://ex/p> ?o }')"),
+        "a committed literal"
+    );
+    assert!(one::<String>(&c, "SELECT sparql_check()").starts_with("ok"));
+}
+
+#[test]
+fn writers_that_need_their_own_savepoint_are_refused_inside_a_writing_statement() {
+    let c = loaded();
+    c.execute_batch("CREATE TEMP TABLE r(x)").unwrap();
+    let refused = |c: &Connection, sql: &str| {
+        let e = c.execute(sql, []).unwrap_err().to_string();
+        assert!(e.contains("cannot run inside a statement that writes") && e.contains("own SELECT statement"), "{sql}: {e}");
+    };
+    // Inside a user transaction a failed host statement could keep partial changes.
+    c.execute_batch("BEGIN").unwrap();
+    refused(&c, "INSERT INTO r SELECT sparql_update('INSERT DATA { <http://ex/a> <http://ex/b> 1 }')");
+    c.execute_batch("COMMIT").unwrap();
+    // The storage layer opens its own write scope for these.
+    for w in ["sparql_load('<http://ex/a> <http://ex/b> <http://ex/c> .')", "sparql_analyze()", "sparql_vacuum_terms()"] {
+        refused(&c, &format!("INSERT INTO r SELECT {w}"));
+    }
+    // An absent schema needs DDL in a write scope first.
+    let fresh = conn();
+    fresh.execute_batch("CREATE TEMP TABLE r(x)").unwrap();
+    refused(&fresh, "INSERT INTO r SELECT sparql_update('INSERT DATA { <http://ex/a> <http://ex/b> 1 }')");
+    refused(&fresh, "INSERT INTO r SELECT sparql_init()");
+    assert_eq!(count(&c), 13);
+    assert!(c.is_autocommit());
+}
+
+#[test]
+fn a_temp_view_scan_keeps_autocommit_and_one_snapshot() {
+    let path = TempPath::new("tempview");
+    let c = Connection::open(&path.0).unwrap();
+    c.pragma_update(None, "journal_mode", "wal").unwrap();
+    sq_api::register(&c).unwrap();
+    let ttl: String = (0..3000).map(|i| format!("<http://ex/s{i}> <http://ex/v> {i} .\n")).collect();
+    c.query_row("SELECT sparql_load(?1, 'turtle')", [&ttl], |_| Ok(())).unwrap();
+    c.execute_batch(
+        "CREATE VIRTUAL TABLE temp.vals USING sparql_view('SELECT ?s ?v WHERE { ?s <http://ex/v> ?v }');
+         CREATE TABLE log(x);",
+    )
+    .unwrap();
+    let other = Connection::open(&path.0).unwrap();
+    sq_api::register(&other).unwrap();
+    // A statement over a temp table holds no transaction on main: xFilter's read entry opens
+    // a savepoint, which must be gone when the first row comes back.
+    let mut st = c.prepare("SELECT v FROM vals").unwrap();
+    let mut it = st.query([]).unwrap();
+    let mut n = 0;
+    while it.next().unwrap().is_some() {
+        n += 1;
+        if n == 1 {
+            assert!(c.is_autocommit(), "no savepoint is held between rows");
+            c.execute("INSERT INTO log VALUES (1)", []).unwrap();
+            assert_eq!(one::<i64>(&other, "SELECT count(*) FROM log"), 1, "the autocommit write committed");
+            c.execute_batch("BEGIN; COMMIT;").unwrap();
+            // Another connection's commit is not seen by the running scan.
+            other.query_row("SELECT sparql_load('<http://ex/new> <http://ex/v> 1 .')", [], |_| Ok(())).unwrap();
+        }
+    }
+    assert_eq!(n, 3000, "the whole scan read one snapshot");
+    drop(it);
+    drop(st);
+    assert_eq!(one::<i64>(&c, "SELECT count(*) FROM vals"), 3001);
+    assert!(c.is_autocommit());
+}

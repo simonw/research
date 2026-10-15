@@ -8,6 +8,12 @@
 //!
 //! spargebra already rewrites `WITH` (into the templates and `USING`), `DELETE WHERE`, and
 //! `ADD` / `MOVE` / `COPY` (into `DROP SILENT` + `INSERT { GRAPH .. } WHERE { GRAPH .. }`).
+//!
+//! `union_default_graph` is a query-only view (as in Oxigraph): every WHERE clause without
+//! `USING` reads the stored default graph (g = 0), the graph that templates, `DELETE DATA`,
+//! `CLEAR DEFAULT` and `DROP DEFAULT` write. Otherwise `COPY DEFAULT TO <g>` (lowered to an
+//! `INSERT .. WHERE { ?s ?p ?o }` without `USING`) would copy every named graph's triples, and
+//! `DELETE WHERE { ?s ?p ?o }` would match triples that its g = 0 template cannot delete.
 mod graphs;
 mod modify;
 
@@ -45,9 +51,10 @@ pub(crate) fn run(
     uopts: &UpdateOptions,
 ) -> Result<UpdateReport> {
     let base = update.base_iri.as_ref().map(|b| b.as_str().to_owned()).or_else(|| opts.base_iri.clone());
+    let opts = QueryOptions { union_default_graph: false, ..opts.clone() };
     let mut ex = Updater {
         store,
-        opts,
+        opts: &opts,
         allow_files: uopts.allow_files,
         now: uopts.now.unwrap_or_else(oxsdatatypes::DateTime::now),
         base,

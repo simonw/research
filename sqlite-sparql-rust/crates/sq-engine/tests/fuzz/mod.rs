@@ -40,8 +40,9 @@ pub struct Settings {
     pub max_reports: usize,
     /// Print every case (query and oracle answer size): SQ_FUZZ_VERBOSE=1.
     pub verbose: bool,
-    /// Generate `BNODE()` in any expression, not only top-level projections:
-    /// SQ_FUZZ_BNODE_ANYWHERE=1 (exposes the known BindJoin re-evaluation planner issue).
+    /// Generate `BNODE()` in any expression, not only top-level projections (on by default;
+    /// SQ_FUZZ_BNODE_ANYWHERE=0 turns it off). A subpattern that mints blank nodes must be
+    /// evaluated once, whatever join re-opens it.
     pub bnode_anywhere: bool,
 }
 
@@ -61,13 +62,13 @@ impl Settings {
             max_rows: 4000,
             max_reports: 5,
             verbose: false,
-            bnode_anywhere: false,
+            bnode_anywhere: true,
         }
     }
 
     /// Overrides from the environment: SQ_FUZZ_SEED, SQ_FUZZ_CASES, SQ_FUZZ_POLICIES
-    /// (comma-separated: auto, hash, bind, merge, nosql).
-    pub fn from_env(mut self) -> Settings {
+    /// (comma-separated: auto, hash, bind, merge, nosql), SQ_FUZZ_BNODE_ANYWHERE.
+    pub fn with_env_overrides(mut self) -> Settings {
         if let Some(seed) = std::env::var("SQ_FUZZ_SEED").ok().and_then(|s| s.parse().ok()) {
             self.seed = seed;
         }
@@ -75,7 +76,9 @@ impl Settings {
             self.cases = cases;
         }
         self.verbose = std::env::var("SQ_FUZZ_VERBOSE").is_ok_and(|v| v == "1");
-        self.bnode_anywhere = std::env::var("SQ_FUZZ_BNODE_ANYWHERE").is_ok_and(|v| v == "1");
+        if let Ok(v) = std::env::var("SQ_FUZZ_BNODE_ANYWHERE") {
+            self.bnode_anywhere = v != "0";
+        }
         if let Ok(p) = std::env::var("SQ_FUZZ_POLICIES") {
             self.policies = p
                 .split(',')

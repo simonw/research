@@ -125,7 +125,7 @@ pub(super) fn update(st: &ConnState, ctx: &Context<'_>) -> Result<i64> {
     let text = text_arg(ctx, 0, "update")?;
     let opts = st.settings()?.options();
     // Parsed before the write scope opens: no lock is held while parsing.
-    let parsed = sq_plan::parse_update(text, opts.base_iri.as_deref())?;
+    let parsed = crate::nesting::parse_update(text, opts.base_iri.as_deref())?;
     let uopts = UpdateOptions { allow_files: st.allow_files()?, ..UpdateOptions::default() };
     let report = st.write_call(true, || sq_engine::update_with(st.writer(), &parsed, &opts, &uopts))?;
     st.record(ChangeReport {

@@ -1,22 +1,29 @@
 //! Update differential: random SPARQL Update requests applied to MemStore and to both
 //! SQLite stores through `sq_engine::update`; the reports, the errors and the resulting
-//! datasets (modulo blank-node renaming) must agree.
+//! datasets (modulo blank-node renaming) must agree. Each request runs under random query
+//! options (join policy, reorder, `union_default_graph`, which updates must ignore), the same
+//! on every store, and the postcondition of its last operation is checked against the state
+//! the earlier operations left (COPY copies the source, DELETE WHERE leaves no match, ...).
+use std::collections::BTreeSet;
 use std::fmt::Write;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use sq_core::plan::{JoinPolicy, QueryOptions};
 use sq_core::store::{IndexOrder, QuadStore, QuadStoreWriter, ScanSpec};
 use sq_core::testing::Rng;
 use sq_core::{Result, Term, TermId};
 use sq_engine::{UpdateOptions, UpdateReport};
+use sq_memstore::MemStore;
 
 use super::compare::{same, Free, Outcome, Row};
-use super::data::{Dataset, D, GRAPHS, LITERALS, PREDICATES, SUBJECTS};
-use super::engines::{now, StoreKind, Stores};
+use super::data::{Dataset, D, EMPTY_GRAPH, GRAPHS, LITERALS, PREDICATES, SUBJECTS};
+use super::engines::{mem_store, now, StoreKind, Stores};
 use super::query::{Gen, Group, PREFIXES, T};
 
-/// Graph names an update may use: the data's, plus one that does not exist.
-const UPDATE_GRAPHS: [&str; 3] = [GRAPHS[0], GRAPHS[1], "gnew"];
+/// Graph names an update may use: the data's, the one some datasets register empty, and one
+/// that does not exist.
+const UPDATE_GRAPHS: [&str; 4] = [GRAPHS[0], GRAPHS[1], EMPTY_GRAPH, "gnew"];
 
 /// A template quad: graph None = default graph.
 type Tpl = (Option<T>, T, T, T);
@@ -102,14 +109,19 @@ impl std::fmt::Display for Op {
     }
 }
 
-/// An update request.
+/// An update request and the query options it runs under.
 #[derive(Clone, Debug)]
-pub struct Request(pub Vec<Op>);
+pub struct Request {
+    pub ops: Vec<Op>,
+    pub union_default: bool,
+    pub policy: JoinPolicy,
+    pub reorder: bool,
+}
 
 impl std::fmt::Display for Request {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(PREFIXES)?;
-        for (i, op) in self.0.iter().enumerate() {
+        for (i, op) in self.ops.iter().enumerate() {
             if i > 0 {
                 f.write_str(" ;\n")?;
             }
@@ -119,25 +131,46 @@ impl std::fmt::Display for Request {
     }
 }
 
+const POLICIES: [JoinPolicy; 5] =
+    [JoinPolicy::Auto, JoinPolicy::PreferHash, JoinPolicy::PreferBind, JoinPolicy::PreferMerge, JoinPolicy::NoSql];
+
 impl Request {
     pub fn generate(r: &mut Rng, data: &Dataset) -> Request {
         let n = 1 + r.below(3);
         let mut bnodes = 0;
         let ops = (0..n).map(|_| op(r, data, &mut bnodes)).collect();
-        Request(ops)
+        Request { ops, union_default: r.below(3) == 0, policy: pick(r, &POLICIES), reorder: r.below(4) != 0 }
     }
 
-    /// One operation fewer, or a simpler operation.
+    fn with_ops(&self, ops: Vec<Op>) -> Request {
+        Request { ops, ..self.clone() }
+    }
+
+    /// The query options of the request's WHERE clauses.
+    pub fn options(&self) -> QueryOptions {
+        QueryOptions {
+            union_default_graph: self.union_default,
+            join_policy: self.policy,
+            reorder: self.reorder,
+            timeout_ms: Some(60_000),
+            ..QueryOptions::default()
+        }
+    }
+
+    /// One operation fewer, or a simpler operation (or default options).
     pub fn simplifications(&self) -> Vec<Request> {
         let mut out = Vec::new();
-        if self.0.len() > 1 {
-            for i in 0..self.0.len() {
-                let mut ops = self.0.clone();
+        if self.union_default || self.policy != JoinPolicy::Auto || !self.reorder {
+            out.push(Request { union_default: false, policy: JoinPolicy::Auto, reorder: true, ..self.clone() });
+        }
+        if self.ops.len() > 1 {
+            for i in 0..self.ops.len() {
+                let mut ops = self.ops.clone();
                 ops.remove(i);
-                out.push(Request(ops));
+                out.push(self.with_ops(ops));
             }
         }
-        for (i, op) in self.0.iter().enumerate() {
+        for (i, op) in self.ops.iter().enumerate() {
             let smaller: Vec<Op> = match op {
                 Op::InsertData(q) | Op::DeleteData(q) | Op::DeleteWhere(q) if q.len() > 1 => (0..q.len())
                     .map(|k| {
@@ -178,9 +211,9 @@ impl Request {
                 _ => Vec::new(),
             };
             for op2 in smaller {
-                let mut ops = self.0.clone();
+                let mut ops = self.ops.clone();
                 ops[i] = op2;
-                out.push(Request(ops));
+                out.push(self.with_ops(ops));
             }
         }
         out
@@ -240,7 +273,7 @@ fn tpl_quad(r: &mut Rng, vars: &[usize], mut bnodes: Option<&mut usize>) -> Tpl 
 }
 
 fn op(r: &mut Rng, data: &Dataset, bnodes: &mut usize) -> Op {
-    match r.below(20) {
+    match r.below(22) {
         0..=3 => {
             let quads = (0..1 + r.below(3))
                 .map(|_| {
@@ -268,18 +301,18 @@ fn op(r: &mut Rng, data: &Dataset, bnodes: &mut usize) -> Op {
             let using = if r.below(6) == 0 { vec![pick(r, &UPDATE_GRAPHS)] } else { Vec::new() };
             Op::Modify { with, delete, insert, using, pattern }
         }
-        14 => {
+        14 | 15 => {
             let vars: Vec<usize> = (0..3).collect();
             Op::DeleteWhere((0..1 + r.below(2)).map(|_| tpl_quad(r, &vars, None)).collect())
         }
-        15 | 16 => {
-            let target = pick(r, &["DEFAULT", "NAMED", "ALL", GRAPHS[0], GRAPHS[1], "gnew"]);
+        16 | 17 => {
+            let target = pick(r, &["DEFAULT", "NAMED", "ALL", GRAPHS[0], GRAPHS[1], EMPTY_GRAPH, "gnew"]);
             Op::ClearDrop(r.below(2) == 0, r.below(2) == 0, target)
         }
-        17 => Op::Create(r.below(2) == 0, pick(r, &UPDATE_GRAPHS)),
+        18 => Op::Create(r.below(2) == 0, pick(r, &UPDATE_GRAPHS)),
         _ => {
-            let from = pick(r, &["DEFAULT", GRAPHS[0], GRAPHS[1], "gnew"]);
-            let to = pick(r, &["DEFAULT", GRAPHS[0], GRAPHS[1], "gnew"]);
+            let from = pick(r, &["DEFAULT", "DEFAULT", GRAPHS[0], GRAPHS[1], EMPTY_GRAPH, "gnew"]);
+            let to = pick(r, &["DEFAULT", GRAPHS[0], GRAPHS[1], EMPTY_GRAPH, "gnew"]);
             Op::Transfer(pick(r, &["ADD", "COPY", "MOVE"]), r.below(2) == 0, from, to)
         }
     }
@@ -292,19 +325,18 @@ struct Applied {
     graphs: Outcome,
 }
 
-fn apply(stores: &Stores, kind: StoreKind, update: &spargebra::Update) -> Applied {
+fn apply(stores: &Stores, kind: StoreKind, update: &spargebra::Update, opts: &QueryOptions) -> Applied {
     let uopts = UpdateOptions { now: Some(now()), ..UpdateOptions::default() };
-    let opts = sq_core::plan::QueryOptions::default();
     let report = match kind {
         StoreKind::Mem => {
             let w: Rc<dyn QuadStoreWriter> = Rc::new(stores.mem.clone());
-            sq_engine::update_with(w, update, &opts, &uopts)
+            sq_engine::update_with(w, update, opts, &uopts)
         }
         StoreKind::Sqlite | StoreKind::File => {
             let db = if kind == StoreKind::Sqlite { &stores.sqlite } else { &stores.file };
             let scope = db.store.write_scope(0).expect("write scope");
             let w: Rc<dyn QuadStoreWriter> = Rc::new(db.store.clone());
-            match sq_engine::update_with(w, update, &opts, &uopts) {
+            match sq_engine::update_with(w, update, opts, &uopts) {
                 Ok(r) => scope.commit().map(|_| r),
                 Err(e) => {
                     scope.rollback().expect("rollback");
@@ -355,7 +387,9 @@ pub fn check(data: &Dataset, req: &Request) -> Option<std::result::Result<String
         return Some(Err(()));
     };
     let stores = Stores::load(data);
-    let results: Vec<(StoreKind, Applied)> = StoreKind::ALL.iter().map(|k| (*k, apply(&stores, *k, &update))).collect();
+    let opts = req.options();
+    let results: Vec<(StoreKind, Applied)> =
+        StoreKind::ALL.iter().map(|k| (*k, apply(&stores, *k, &update, &opts))).collect();
     let (_, base) = &results[0];
     for (kind, a) in &results[1..] {
         let reports_agree = match (&base.report, &a.report) {
@@ -380,6 +414,125 @@ pub fn check(data: &Dataset, req: &Request) -> Option<std::result::Result<String
             return Some(Ok(format!("{kind:?}: named graphs differ from MemStore's: {d}")));
         }
     }
+    postcondition(data, req).map(Ok)
+}
+
+/// A quad as N-Triples terms (graph "" = the default graph).
+type QuadText = [String; 4];
+
+fn quad_set(store: &MemStore) -> BTreeSet<QuadText> {
+    let text = |id: TermId| -> String {
+        if id == TermId::DEFAULT_GRAPH { String::new() } else { store.dict().decode_one(id).expect("decodes").to_ntriples() }
+    };
+    store.quads().into_iter().map(|q| q.map(text)).collect()
+}
+
+/// Runs `req` on `store`; false if the request fails.
+fn run_on(store: &MemStore, req: &Request) -> bool {
+    let Ok(update) = sq_plan::parse_update(&req.to_string(), None) else {
+        return false;
+    };
+    let uopts = UpdateOptions { now: Some(now()), ..UpdateOptions::default() };
+    sq_engine::update_with(Rc::new(store.clone()), &update, &req.options(), &uopts).is_ok()
+}
+
+fn ask(store: &MemStore, pattern: &str) -> bool {
+    let q = sq_plan::parse_query(&format!("{PREFIXES}ASK {{ {pattern} }}"), None).expect("ASK parses");
+    let mut exec = sq_engine::prepare(Rc::new(store.clone()), &q, &QueryOptions::default(), Default::default())
+        .expect("ASK prepares");
+    exec.ask().expect("ASK runs")
+}
+
+/// The postcondition of the request's last operation, on a MemStore holding the state that
+/// the earlier operations left: None when it holds, does not apply, or the operation failed.
+fn postcondition(data: &Dataset, req: &Request) -> Option<String> {
+    let (last, prefix) = req.ops.split_last()?;
+    let store = mem_store(data);
+    if !prefix.is_empty() && !run_on(&store, &req.with_ops(prefix.to_vec())) {
+        return None;
+    }
+    let before = quad_set(&store);
+    if !run_on(&store, &req.with_ops(vec![last.clone()])) {
+        return None;
+    }
+    let after = quad_set(&store);
+    let graph = |g: &str| if g == "DEFAULT" { String::new() } else { format!("<http://ex/{g}>") };
+    let fail = |what: &str| Some(format!("postcondition of `{last}`: {what}"));
+    let unchanged_except = |dropped: &dyn Fn(&QuadText) -> bool| -> BTreeSet<QuadText> {
+        before.iter().filter(|q| !dropped(q)).cloned().collect()
+    };
+    match last {
+        Op::Transfer(kw, _, from, to) => {
+            let (from, to) = (graph(from), graph(to));
+            let mut expected = before.clone();
+            if from != to {
+                let source: Vec<QuadText> = before.iter().filter(|q| q[0] == from).cloned().collect();
+                if *kw != "ADD" {
+                    expected.retain(|q| q[0] != to);
+                }
+                if *kw == "MOVE" {
+                    expected.retain(|q| q[0] != from);
+                }
+                for [_, s, p, o] in source {
+                    expected.insert([to.clone(), s, p, o]);
+                }
+            }
+            if after != expected {
+                let missing: Vec<_> = expected.difference(&after).take(4).collect();
+                let extra: Vec<_> = after.difference(&expected).take(4).collect();
+                return fail(&format!("missing {missing:?}, unexpected {extra:?}"));
+            }
+        }
+        Op::ClearDrop(_, _, target) => {
+            let expected = match *target {
+                "DEFAULT" => unchanged_except(&|q| q[0].is_empty()),
+                "NAMED" => unchanged_except(&|q| !q[0].is_empty()),
+                "ALL" => BTreeSet::new(),
+                g => {
+                    let g = graph(g);
+                    unchanged_except(&|q| q[0] == g)
+                }
+            };
+            if after != expected {
+                return fail("the dataset is not the old one without the cleared graphs");
+            }
+        }
+        Op::Create(..) if after != before => return fail("CREATE changed the quads"),
+        Op::DeleteWhere(tpl) => {
+            if !after.is_subset(&before) {
+                return fail("DELETE WHERE added quads");
+            }
+            if ask(&store, &quads_text(tpl)) {
+                return fail("the pattern still matches");
+            }
+        }
+        Op::DeleteData(quads) => {
+            if !after.is_subset(&before) {
+                return fail("DELETE DATA added quads");
+            }
+            if let Some(q) = quads.iter().find(|q| ask(&store, &quads_text(std::slice::from_ref(q)))) {
+                return fail(&format!("{q:?} is still there"));
+            }
+        }
+        Op::InsertData(quads) => {
+            if !after.is_superset(&before) {
+                return fail("INSERT DATA removed quads");
+            }
+            let ground = quads.iter().filter(|(_, s, _, o)| !matches!(s, T::BNode(_)) && !matches!(o, T::BNode(_)));
+            if let Some(q) = ground.into_iter().find(|q| !ask(&store, &quads_text(std::slice::from_ref(q)))) {
+                return fail(&format!("{q:?} is missing"));
+            }
+        }
+        Op::Modify { delete, insert, .. } => {
+            if insert.is_empty() && !after.is_subset(&before) {
+                return fail("a DELETE-only modify added quads");
+            }
+            if delete.is_empty() && !after.is_superset(&before) {
+                return fail("an INSERT-only modify removed quads");
+            }
+        }
+        Op::Create(..) => {}
+    }
     None
 }
 
@@ -403,7 +556,11 @@ pub fn run(seed: u64, cases: usize, max_reports: usize) -> (usize, usize, Vec<St
                 }
                 let (data, req, detail) = shrink(data, req, detail);
                 let rep = format!(
-                    "=== UPDATE MISMATCH (case {case} of seed {seed})\n--- data (TriG):\n{}\n--- update:\n{req}\n--- difference: {detail}\n",
+                    "=== UPDATE MISMATCH (case {case} of seed {seed}; union_default_graph={}; policy={:?}; reorder={})\n\
+                     --- data (TriG):\n{}\n--- update:\n{req}\n--- difference: {detail}\n",
+                    req.union_default,
+                    req.policy,
+                    req.reorder,
                     data.trig()
                 );
                 eprintln!("{rep}");
@@ -455,6 +612,28 @@ fn shrink(mut data: Dataset, mut req: Request, mut detail: String) -> (Dataset, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The postconditions of ADD / COPY / MOVE, DELETE WHERE and CLEAR hold, including under
+    /// `union_default_graph` (which update WHERE clauses must ignore).
+    #[test]
+    fn postconditions_hold_for_graph_transfers() {
+        let data = Dataset::from_trig(":s0 :p0 :s1 .\n:g0 { :s1 :p1 :s2 }\n:g1 { :s2 :p2 \"a\" }", false);
+        let ops = [
+            Op::Transfer("COPY", false, "DEFAULT", "g1"),
+            Op::Transfer("MOVE", false, "DEFAULT", "g0"),
+            Op::Transfer("ADD", false, "DEFAULT", "gnew"),
+            Op::Transfer("MOVE", false, "g0", "DEFAULT"),
+            Op::Transfer("COPY", true, "gnew", "g0"),
+            Op::ClearDrop(true, false, "NAMED"),
+            Op::DeleteWhere(vec![(None, T::Var(0), T::Var(1), T::Var(2))]),
+        ];
+        for union_default in [false, true] {
+            for op in &ops {
+                let req = Request { ops: vec![op.clone()], union_default, policy: JoinPolicy::Auto, reorder: true };
+                assert_eq!(postcondition(&data, &req), None, "{req}");
+            }
+        }
+    }
 
     #[test]
     fn requests_print_valid_sparql() {

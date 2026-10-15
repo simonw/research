@@ -55,7 +55,9 @@ pub fn explain(store: Rc<dyn QuadStore>, query: &str, mode: ExplainMode, opts: &
 }
 
 /// Runs a SPARQL Update request with the default [`UpdateOptions`] (no `LOAD` of local
-/// files). The caller provides atomicity (a write scope).
+/// files). The caller provides atomicity (a write scope). `opts.union_default_graph` does not
+/// apply: WHERE clauses without `USING` read the stored default graph, the one the templates
+/// write. `opts.max_memory_mb` bounds the materialized WHERE solutions of each operation.
 pub fn update(store: Rc<dyn QuadStoreWriter>, update: &spargebra::Update, opts: &QueryOptions) -> Result<UpdateReport> {
     update::run(store, update, opts, &UpdateOptions::default())
 }

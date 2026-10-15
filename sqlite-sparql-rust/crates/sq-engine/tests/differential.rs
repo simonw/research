@@ -5,7 +5,8 @@
 //! `cargo test -p sq-engine --test differential -- --ignored --nocapture` (10,000 queries,
 //! each under every configuration, and 3,000 update requests). SQ_FUZZ_SEED, SQ_FUZZ_CASES,
 //! SQ_FUZZ_UPDATES and SQ_FUZZ_POLICIES (auto,hash,bind,merge,nosql) override the defaults;
-//! SQ_FUZZ_VERBOSE=1 prints every query.
+//! SQ_FUZZ_BNODE_ANYWHERE=0 keeps `BNODE()` to top-level projections; SQ_FUZZ_VERBOSE=1
+//! prints every query.
 mod fuzz;
 
 use fuzz::{run, Settings};
@@ -23,7 +24,7 @@ fn assert_clean(settings: Settings) {
 
 #[test]
 fn differential_short() {
-    assert_clean(Settings::new(1, 300).from_env());
+    assert_clean(Settings::new(1, 300).with_env_overrides());
 }
 
 /// The harness itself: a native engine that drops a row must be caught, and the repro
@@ -49,7 +50,7 @@ fn harness_catches_and_shrinks_a_wrong_answer() {
 #[test]
 #[ignore = "long run: 10,000 cases per configuration"]
 fn differential_long() {
-    assert_clean(Settings::new(20261015, 10_000).from_env());
+    assert_clean(Settings::new(20261015, 10_000).with_env_overrides());
 }
 
 fn assert_updates_agree(seed: u64, cases: usize) {

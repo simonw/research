@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use rusqlite::Connection;
 use rusqlite::vtab::Module;
+use sq_core::store::Dictionary;
 use sq_core::{BATCH_ROWS, Result, Term, TermId};
 
 use crate::query::Run;
@@ -128,6 +129,20 @@ impl Stream {
             return TermId::UNBOUND;
         }
         self.ids[self.pos * self.width + col]
+    }
+
+    /// The `id*` / `__id` value of column `col` of the current row: the term's id in the
+    /// store, NULL when unbound or absent from the store. A term the execution computed has
+    /// an execution-local TEMP id; when the dictionary holds the same term, its stored id is
+    /// reported, so the column depends only on the term — as `__id` pushdown (a `sameTerm`
+    /// filter) does.
+    pub(crate) fn public_id(&mut self, st: &ConnState, col: usize) -> Result<Option<i64>> {
+        let id = self.id(col);
+        if !id.is_temp() {
+            return Ok(crate::value::public_id(id));
+        }
+        let Some(term) = self.term(st, col)? else { return Ok(None) };
+        Ok(st.store().lookup(crate::helpers::term_ref(&term))?.and_then(crate::value::public_id))
     }
 
     /// Term of column `col` of the current row; decoded on demand (and kept for the row)

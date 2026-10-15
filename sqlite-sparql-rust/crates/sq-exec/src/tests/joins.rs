@@ -214,6 +214,107 @@ fn bind_join_adaptive_switch_to_hash() {
     }
 }
 
+/// A right side that mints values (BNODE, RAND, UUID, STRUUID) is evaluated once per open of
+/// the join, never once per probe: Join(eval(P1), eval(P2)) evaluates P2 once, so every left
+/// row joins the same blank node. Semi / anti joins only test for a match and keep probing.
+#[test]
+fn bind_join_evaluates_a_value_minting_right_side_once() {
+    use sq_core::spargebra::algebra::Function;
+    let t = people();
+    let fresh = |f: Function| extend(plan(Op::Unit), 2, Expr::Call(f, vec![]));
+    for f in [Function::BNode, Function::StrUuid] {
+        for kind in [JoinKind::Inner, left(None)] {
+            // ?0 :name ?1 ⋈ { BIND(f() AS ?2) }, seeded by ?0 (which the right side never binds).
+            let p = bind_join(t.left(), fresh(f.clone()), &[0], kind.clone());
+            let mut e = Q::new(&t.fx.store, 3, p).exec(t.fx.rc());
+            let rows = collect(&mut e).unwrap();
+            assert_eq!(rows.len(), 3, "{f:?} {kind:?}");
+            assert!(rows.iter().all(|r| r[2] == rows[0][2] && r[2].is_bound()), "{f:?} {kind:?}: {rows:?}");
+            assert_eq!(e.profile().nodes[2].opens, 1, "{f:?} {kind:?}: the right side was re-opened");
+        }
+    }
+    // The minting expression deeper in the right side (under a filter and a union branch).
+    let right = union(vec![filter(fresh(Function::BNode), Expr::Bound(2)), plan(Op::Empty)]);
+    let mut e = Q::new(&t.fx.store, 3, bind_join(t.left(), right, &[0], JoinKind::Inner)).exec(t.fx.rc());
+    let rows = collect(&mut e).unwrap();
+    assert_eq!(rows.len(), 3);
+    assert!(rows.iter().all(|r| r[2] == rows[0][2]), "{rows:?}");
+    // Probing stays the rule for other right sides, and for semi joins.
+    let semi = bind_join(t.left(), fresh(Function::BNode), &[0], JoinKind::Semi);
+    let mut e = Q::new(&t.fx.store, 3, semi).exec(t.fx.rc());
+    assert_eq!(collect(&mut e).unwrap().len(), 3);
+    assert_eq!(e.profile().nodes[2].opens, 3);
+    let mut e = Q::new(&t.fx.store, 3, bind_join(t.left(), t.right_seeded(), &[0], JoinKind::Inner)).exec(t.fx.rc());
+    assert_eq!(collect(&mut e).unwrap().len(), 2);
+    assert_eq!(e.profile().nodes[2].opens, 3);
+}
+
+/// ?a :p0 ?f with ?f seeded is sorted by ?a, but not when ?f is free: a right side that
+/// merge-joins such scans must not be evaluated unseeded as planned.
+struct SeededOrder {
+    fx: Fx,
+    p0: TermId,
+    p3: TermId,
+    o: [TermId; 2],
+}
+
+fn seeded_order() -> SeededOrder {
+    let fx = Fx::new();
+    let (p0, p3) = (fx.iri("p0"), fx.iri("p3"));
+    let o = [fx.iri("o1"), fx.iri("o2")];
+    let [s1, s2, d1, d2] = ["s1", "s2", "d1", "d2"].map(|n| fx.iri(n));
+    // In GPOS order: (o1, s2) before (o2, s1), so ?a runs s2, s1 when ?f is free.
+    fx.add(s2, p0, o[0]);
+    fx.add(s1, p0, o[1]);
+    fx.add(d1, p3, s1);
+    fx.add(d2, p3, s2);
+    SeededOrder { fx, p0, p3, o }
+}
+
+impl SeededOrder {
+    /// ?a(0) :p0 ?f(1) MERGE ?d(2) :p3 ?a(0) on ?a, planned with ?f seeded.
+    fn merge(&self) -> Plan {
+        merge_join(
+            scan_bound(GraphSel::Default, v(0), c(self.p0), v(1), &[1]),
+            scan_order(GraphSel::Default, v(2), c(self.p3), v(0), IndexOrder::Gpos),
+            0,
+            &[],
+            6,
+        )
+    }
+}
+
+#[test]
+fn a_value_minting_right_side_is_evaluated_without_relying_on_seeded_orders() {
+    use sq_core::spargebra::algebra::Function;
+    let t = seeded_order();
+    let bnode = extend(plan(Op::Unit), 3, Expr::Call(Function::BNode, vec![]));
+    let right = union(vec![bnode, t.merge()]);
+    let left = values(&[1], t.o.iter().map(|o| vec![*o]).collect());
+    let rows = Q::new(&t.fx.store, 4, bind_join(left, right, &[1], JoinKind::Inner)).rows(t.fx.rc());
+    assert_eq!(rows.len(), 4, "{rows:?}");
+    let minted: Vec<TermId> = rows.iter().map(|r| r[3]).filter(|id| id.is_bound()).collect();
+    assert_eq!(minted.len(), 2);
+    assert_eq!(minted[0], minted[1], "one blank node for the one solution of the BIND branch");
+}
+
+#[test]
+fn the_adaptive_switch_keeps_probing_a_right_side_that_needs_seeded_orders() {
+    let t = seeded_order();
+    // 60K left rows estimated at 10: past the adaptive thresholds.
+    let left = values(&[1], (0..60_000).map(|i| vec![t.o[i % 2]]).collect());
+    let p = plan(Op::BindJoin {
+        left: Box::new(left),
+        right: Box::new(t.merge()),
+        seed: vec![1],
+        kind: JoinKind::Inner,
+        sort_left: false,
+        adaptive: true,
+    });
+    let mut e = Q::new(&t.fx.store, 3, p).exec(t.fx.rc());
+    assert_eq!(collect(&mut e).unwrap().len(), 60_000);
+}
+
 #[test]
 fn merge_join_many_to_many_check_and_factorized_count() {
     let fx = Fx::new();

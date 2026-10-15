@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use sq_core::eval_api::{SolutionSource, TripleSource};
 use sq_core::ir::QueryForm;
 use sq_core::plan::{JoinPolicy, QueryOptions};
-use sq_core::store::QuadStore;
+use sq_core::store::{QuadStore, QuadStoreWriter};
 use sq_core::Result;
 use sq_exec::ExecCaches;
 use sq_memstore::MemStore;
@@ -18,7 +18,7 @@ use sq_oracle::{OracleOptions, OracleOutput};
 use sq_sqlite::{RawDb, SqliteStore, StorageConfig, StorageShared};
 
 use super::compare::{Outcome, Row};
-use super::data::Dataset;
+use super::data::{Dataset, EMPTY_GRAPH};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum StoreKind {
@@ -110,9 +110,12 @@ impl SqliteDb {
         SqliteDb::open(Some(TempFile(path)))
     }
 
-    fn load(&self, trig: &str, analyze: bool) {
+    fn load(&self, trig: &str, empty_graph: bool, analyze: bool) {
         let scope = self.store.write_scope(0).expect("write scope");
         sq_engine::load(&self.store, trig.as_bytes(), oxrdfio::RdfFormat::TriG, None, None).expect("dataset loads");
+        if empty_graph {
+            register_empty_graph(&self.store);
+        }
         if analyze {
             self.store.analyze().expect("analyze");
         }
@@ -145,18 +148,34 @@ pub struct Stores {
     pub file: SqliteDb,
 }
 
+/// Registers the dataset's empty named graph.
+fn register_empty_graph(store: &dyn QuadStoreWriter) {
+    let iri = format!("http://ex/{EMPTY_GRAPH}");
+    let id = store.intern(oxrdf::NamedNodeRef::new_unchecked(&iri).into()).expect("graph IRI interns");
+    store.create_graph(id).expect("graph registers");
+}
+
+/// `data` in a MemStore.
+pub fn mem_store(data: &Dataset) -> MemStore {
+    let mem = MemStore::new();
+    sq_engine::load(&mem, data.trig().as_bytes(), oxrdfio::RdfFormat::TriG, None, None).expect("dataset loads");
+    if data.empty_graph {
+        register_empty_graph(&mem);
+    }
+    if data.analyze {
+        mem.analyze();
+    }
+    mem
+}
+
 impl Stores {
     pub fn load(data: &Dataset) -> Stores {
         let trig = data.trig();
-        let mem = MemStore::new();
-        sq_engine::load(&mem, trig.as_bytes(), oxrdfio::RdfFormat::TriG, None, None).expect("dataset loads");
-        if data.analyze {
-            mem.analyze();
-        }
+        let mem = mem_store(data);
         let sqlite = SqliteDb::memory();
-        sqlite.load(&trig, data.analyze);
+        sqlite.load(&trig, data.empty_graph, data.analyze);
         let file = SqliteDb::file();
-        file.load(&trig, data.analyze);
+        file.load(&trig, data.empty_graph, data.analyze);
         Stores { mem, sqlite, file }
     }
 

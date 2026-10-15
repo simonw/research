@@ -262,3 +262,35 @@ fn writes_are_refused_while_a_scan_is_open() {
     assert_eq!(status_i64(&c, "open_cursors"), 0);
     assert_eq!(one::<i64>(&c, "SELECT sparql_load('<http://ex/x> <http://ex/p> 1 .')"), 1);
 }
+
+#[test]
+fn arguments_must_be_text() {
+    let c = loaded();
+    for (sql, msg) in [
+        ("SELECT * FROM sparql_rows(42)", "sparql: invalid argument: sparql_rows: the query must be TEXT, got Integer"),
+        ("SELECT * FROM sparql_rows(x'00')", "sparql: invalid argument: sparql_rows: the query must be TEXT, got Blob"),
+        ("SELECT * FROM sparql_rows('ASK {}', 1.5)", "sparql: invalid argument: sparql_rows: the opts must be TEXT, got Real"),
+        ("SELECT * FROM sparql_rows(CAST(x'ff' AS TEXT))", "sparql: invalid argument: sparql_rows: the query is not valid UTF-8"),
+    ] {
+        let e = c.prepare(sql).unwrap().query_row([], |_| Ok(())).unwrap_err().to_string();
+        assert_eq!(e, msg, "{sql}");
+    }
+    assert_eq!(one::<i64>(&c, "SELECT count(*) FROM sparql_rows('SELECT * WHERE { ?s ?p ?o }', NULL)"), 13);
+}
+
+#[test]
+fn ids_depend_on_the_term_not_on_how_it_was_computed() {
+    let c = loaded();
+    let dave: i64 = one(&c, "SELECT sparql_term_id('\"Dave the very long name\"')");
+    let q = "SELECT ?x ?y WHERE { BIND(CONCAT(\"Dave the very \", \"long name\") AS ?x) \
+             BIND(CONCAT(\"not in the store \", \"at all\") AS ?y) }";
+    for engine in ["native", "sql"] {
+        let opts = format!("{{\"engine\":\"{engine}\"}}");
+        let r: (Value, Value, String) = c
+            .query_row("SELECT id0, id1, t1 FROM sparql_rows(?1, ?2)", [q, &opts], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .unwrap();
+        assert_eq!(r, (Value::Integer(dave), Value::Null, "\"not in the store at all\"".into()), "{engine}");
+    }
+}

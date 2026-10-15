@@ -87,19 +87,22 @@ pub struct Gen<'r> {
     /// Expressions may call `BNODE()` (fresh blank nodes in an ordered or limited output
     /// would make the comparison depend on blank-node labels).
     allow_bnode_fn: bool,
-    /// `BNODE()` anywhere, not only in top-level projections. Off by default: sq-plan may put
-    /// a subpattern that mints blank nodes on the probe side of a BindJoin, which re-evaluates
-    /// it per left row (a known planner issue, see the sq-engine notes).
+    /// `BNODE()` anywhere, not only in top-level projections (a subpattern that mints blank
+    /// nodes may land on the probe side of a BindJoin, which must not re-evaluate it).
     bnode_anywhere: bool,
     /// Generating a top-level projection expression (evaluated once per final solution).
     in_projection: bool,
 }
 
-/// Constants used in expressions (numbers, strings, IRIs, language strings, dates).
-const EXPR_CONSTS: [&str; 16] = [
+/// Constants used in expressions (numbers, strings, IRIs incl. graph names, language strings,
+/// dates).
+const EXPR_CONSTS: [&str; 18] = [
     "0", "1", "2", "3", "-1", "1.5", "2.0", "\"1.0e0\"^^xsd:double", "\"a\"", "\"b\"", "\"a\"@en", "\"\"", ":s1",
-    "true", "\"2020-01-01\"^^xsd:date", "\"01\"^^xsd:integer",
+    "true", "\"2020-01-01\"^^xsd:date", "\"01\"^^xsd:integer", ":g0", ":g1",
 ];
+
+/// Graph-name constants (as expressions) for binding `?g` outside GRAPH.
+const GRAPH_CONSTS: [&str; 4] = [":g0", ":g1", ":g2", ":gx"];
 
 impl<'r> Gen<'r> {
     pub fn new(r: &'r mut Rng, data: &Dataset) -> Self {
@@ -115,7 +118,7 @@ impl<'r> Gen<'r> {
             bnodes: 0,
             focus: Focus::None,
             allow_bnode_fn: true,
-            bnode_anywhere: false,
+            bnode_anywhere: true,
             in_projection: false,
         }
     }
@@ -375,12 +378,24 @@ impl<'r> Gen<'r> {
             Kind::Path => self.path_el(sc),
             Kind::Filter => El::Filter(self.filter(depth, sc)),
             Kind::Bind => {
+                // Sometimes `BIND(<graph name> AS ?g)`: a graph variable bound outside GRAPH
+                // (seeded GraphLoops, the GRAPH push rule's conditions).
+                if !sc.here.contains(&GRAPH_VAR) && self.chance(15) {
+                    let e = if self.chance(75) { E::Const(self.pick(&GRAPH_CONSTS)) } else { self.bind_expr(sc) };
+                    sc.add(GRAPH_VAR);
+                    return El::Bind(e, GRAPH_VAR);
+                }
                 let free: Vec<usize> = (0..6).filter(|v| !sc.here.contains(v)).collect();
                 if free.is_empty() {
                     return self.triple(sc);
                 }
                 let v = self.pick(&free);
-                let e = self.bind_expr(sc);
+                // `BIND(BNODE() AS ?v)`: a pattern that mints a blank node per solution.
+                let e = if self.allow_bnode_fn && self.bnode_anywhere && self.chance(15) {
+                    E::Call("BNODE", vec![])
+                } else {
+                    self.bind_expr(sc)
+                };
                 sc.add(v);
                 El::Bind(e, v)
             }
@@ -458,35 +473,51 @@ impl<'r> Gen<'r> {
     }
 
     fn values(&mut self, sc: &mut Scope) -> El {
+        let (vars, rows) = self.values_table(&sc.vars);
+        sc.add_all(&vars);
+        El::Values(vars, rows)
+    }
+
+    /// The variables and rows of a VALUES table, mostly over `visible` variables; `?g` takes
+    /// graph names.
+    fn values_table(&mut self, visible: &[usize]) -> Table {
         let nvars = 1 + self.below(2) as usize;
         let mut vars: Vec<usize> = Vec::new();
         while vars.len() < nvars {
-            let v = if !sc.vars.is_empty() && self.chance(65) { self.pick(&sc.vars) } else { self.below(6) as usize };
+            let v = match self.below(100) {
+                0..=64 if !visible.is_empty() => self.pick(visible),
+                65..=74 => GRAPH_VAR,
+                _ => self.below(6) as usize,
+            };
             if !vars.contains(&v) {
                 vars.push(v);
             }
         }
         let rows = (0..1 + self.below(3))
-            .map(|_| {
-                vars.iter()
-                    .map(|v| {
-                        // Usually the data term the variable stands for, so the VALUES joins.
-                        match (self.anchors[*v], self.below(10)) {
-                            (Some(D::Iri(i)), 0..=5) => return Some(T::Iri(i)),
-                            (Some(D::Lit(l)), 0..=5) => return Some(T::Lit(l)),
-                            _ => {}
-                        }
-                        match self.below(10) {
-                            0..=1 => None,
-                            2..=6 => Some(T::Iri(self.pick(&SUBJECTS))),
-                            _ => Some(T::Lit(self.literal())),
-                        }
-                    })
-                    .collect()
-            })
+            .map(|_| vars.iter().map(|v| self.values_cell(*v)).collect())
             .collect();
-        sc.add_all(&vars);
-        El::Values(vars, rows)
+        (vars, rows)
+    }
+
+    fn values_cell(&mut self, v: usize) -> Option<T> {
+        if v == GRAPH_VAR {
+            return match self.below(10) {
+                0..=6 => Some(T::Iri(self.pick(&QUERY_GRAPHS))),
+                7 => None,
+                _ => Some(T::Iri(self.pick(&SUBJECTS))),
+            };
+        }
+        // Usually the data term the variable stands for, so the VALUES joins.
+        match (self.anchors[v], self.below(10)) {
+            (Some(D::Iri(i)), 0..=5) => return Some(T::Iri(i)),
+            (Some(D::Lit(l)), 0..=5) => return Some(T::Lit(l)),
+            _ => {}
+        }
+        match self.below(10) {
+            0..=1 => None,
+            2..=6 => Some(T::Iri(self.pick(&SUBJECTS))),
+            _ => Some(T::Lit(self.literal())),
+        }
     }
 
     fn operand(&mut self, vars: &[usize]) -> E {
@@ -607,6 +638,18 @@ impl<'r> Gen<'r> {
         self.value_expr(&sc.vars, depth)
     }
 
+    /// SAMPLE or GROUP_CONCAT of one of the GROUP BY `keys` (deterministic: one value per
+    /// group, repeated once per row of the group).
+    fn key_agg(&mut self, keys: &[usize]) -> Agg {
+        let k = self.pick(keys);
+        if self.chance(40) {
+            Agg::Sample(k)
+        } else {
+            let sep = if self.chance(30) { Some(self.pick(&["|", "", ", "])) } else { None };
+            Agg::GroupConcat(self.chance(30), k, sep)
+        }
+    }
+
     fn agg(&mut self, vars: &[usize]) -> Agg {
         let v = if vars.is_empty() { 0 } else { self.pick(vars) };
         let d = self.chance(25);
@@ -642,18 +685,25 @@ impl<'r> Gen<'r> {
             order: Vec::new(),
             offset: None,
             limit: None,
+            values: None,
         };
         let unused: Vec<usize> = (0..6).filter(|v| !scope.contains(v)).collect();
         if !scope.is_empty() && self.chance(if self.focus == Focus::Aggregates { 60 } else { 20 }) {
             // Aggregation: keys (variables, or expressions bound to unused variables, which
-            // may err), aggregates bound to unused variables, maybe HAVING.
+            // may err), aggregates bound to unused variables, maybe HAVING. Sometimes every
+            // in-scope variable is a key (groups of identical rows, mostly single rows).
             let mut keys: Vec<(usize, Option<E>)> = Vec::new();
-            for _ in 0..self.below(3) {
-                let k = self.pick(&scope);
-                if !keys.iter().any(|(x, _)| *x == k) {
-                    keys.push((k, None));
+            if self.chance(20) {
+                keys.extend(scope.iter().map(|v| (*v, None)));
+            } else {
+                for _ in 0..self.below(3) {
+                    let k = self.pick(&scope);
+                    if !keys.iter().any(|(x, _)| *x == k) {
+                        keys.push((k, None));
+                    }
                 }
             }
+            let plain_keys: Vec<usize> = keys.iter().map(|(k, _)| *k).collect();
             let mut unused = unused;
             if !unused.is_empty() && self.chance(25) {
                 let v = unused.remove(0);
@@ -663,7 +713,11 @@ impl<'r> Gen<'r> {
             let mut items: Vec<Item> = keys.iter().map(|(k, _)| Item::Var(*k)).collect();
             let naggs = 1 + self.below(2) as usize;
             for (i, out) in unused.iter().take(naggs).enumerate() {
-                let a = E::Agg(Box::new(self.agg(&scope)));
+                let a = if !plain_keys.is_empty() && self.chance(25) {
+                    E::Agg(Box::new(self.key_agg(&plain_keys)))
+                } else {
+                    E::Agg(Box::new(self.agg(&scope)))
+                };
                 let e = if i == 0 || self.chance(50) { a } else { E::Bin("+", Box::new(a), Box::new(E::Const("1"))) };
                 items.push(Item::Expr(e, *out));
             }
@@ -721,6 +775,14 @@ impl<'r> Gen<'r> {
                 if self.chance(40) {
                     s.offset = Some(self.below(3));
                 }
+            }
+        }
+        // A query-level VALUES clause (joined after grouping, before the projection), over the
+        // WHERE pattern's variables.
+        if top && s.group_by.is_none() && !scope.is_empty() && self.chance(8) {
+            let (vars, rows) = self.values_table(&scope);
+            if vars.iter().all(|v| scope.contains(v)) {
+                s.values = Some(Box::new((vars, rows)));
             }
         }
         s

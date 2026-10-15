@@ -118,10 +118,9 @@ fn review_blind_spot_shapes_agree_with_the_oracle() {
 }
 
 #[test]
-#[ignore = "known sq-plan issue already reported by WP10 (BNODE() re-evaluated on the BindJoin probe side)"]
 fn review_bnode_in_join_mints_one_node_per_solution() {
-    // Known sq-plan issue (reported by the implementer): BNODE() on the probe side of a
-    // BindJoin is re-evaluated per seed. Kept here as an executable repro.
+    // BNODE() on the probe side of a BindJoin used to be re-evaluated per seed; sq-exec now
+    // hash-joins against one evaluation of a right side that mints values.
     let st = stores(":s3 :p0 :s0 .\n_:x0 :p0 :s0 .");
     let bad = mismatches(&st, "SELECT * WHERE { { BIND(BNODE() AS ?e) } UNION { VALUES ?f { \"x\"^^:dt } } ?f :p0 :s0 }", Order::Bag);
     assert!(bad.is_empty(), "{}", bad.join("\n"));

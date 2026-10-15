@@ -13,6 +13,11 @@ import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
+# Release builds arm the debug_panic testing hook only with this switch, read when a
+# connection loads the extension (test_robustness checks that it stays off without it).
+DEBUG_HOOKS = "SPARQLITE_DEBUG_HOOKS"
+os.environ.setdefault(DEBUG_HOOKS, "1")
+
 DATA = """
 @prefix ex: <http://ex/> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .

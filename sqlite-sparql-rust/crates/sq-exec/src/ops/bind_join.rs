@@ -7,9 +7,13 @@
 //! may bind). Left{filter} evaluates the filter on the merged row and emits the left row alone
 //! when nothing passes; Semi / Anti only need to know whether a probe produced a row.
 //!
-//! Adaptive switch: when `adaptive` and the left input turns out to exceed both 8x its
-//! estimate and 50,000 rows, the rest of the left input is hash-joined against one full
-//! evaluation of `right` (keys = the seed slots), which by `safe_inject` is equivalent.
+//! Switch to hashing ([`HashSwitch`]): the rest of the left input is hash-joined against one
+//! full evaluation of `right` (keys = the seed slots), which by `safe_inject` is equivalent.
+//! Adaptive joins switch when the left input turns out to exceed both 8x its estimate and
+//! 50,000 rows. A `right` that mints values (BNODE, RAND, UUID, STRUUID) is never probed:
+//! re-opening it per seed tuple would give one solution of it several different values. The
+//! builder only lets a join switch when `right` does not rely on input orders that its seeds
+//! guarantee, or builds `right` for an unseeded evaluation (see `build::Sortedness`).
 use std::cmp::Ordering;
 
 use sq_core::{Batch, Result, Slot, TermId};
@@ -25,14 +29,35 @@ const ADAPTIVE_MIN_ROWS: u64 = 50_000;
 /// ... and past this multiple of the left input's estimate.
 const ADAPTIVE_FACTOR: f64 = 8.0;
 
+/// When a BindJoin stops probing and hash-joins against one evaluation of `right`.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) enum HashSwitch {
+    /// Always probe.
+    Never,
+    /// Past [`ADAPTIVE_MIN_ROWS`] left rows and [`ADAPTIVE_FACTOR`] times this left-input
+    /// estimate.
+    Adaptive(f64),
+    /// Before the first probe: `right` must be evaluated once per open of the join.
+    Immediate,
+}
+
+impl HashSwitch {
+    fn due(self, left_rows: u64) -> bool {
+        match self {
+            HashSwitch::Never => false,
+            HashSwitch::Adaptive(est) => left_rows > ADAPTIVE_MIN_ROWS && left_rows as f64 > ADAPTIVE_FACTOR * est,
+            HashSwitch::Immediate => true,
+        }
+    }
+}
+
 pub(crate) struct BindJoin {
     left: BoxOp,
     right: BoxOp,
     seed_slots: Vec<Slot>,
     mode: JoinMode,
     sort_left: bool,
-    /// Left-input estimate when the adaptive switch is enabled.
-    adaptive: Option<f64>,
+    switch: HashSwitch,
     seed: SeedBuf,
     /// Seed row of the right probes: the substituted constants plus the seed slots.
     rseed: Vec<TermId>,
@@ -51,7 +76,7 @@ pub(crate) struct BindJoin {
     left_rows: u64,
     rb: Batch,
     charge: Charge,
-    /// After the adaptive switch: the right side hashed on the seed slots.
+    /// After the switch to hashing: the right side hashed on the seed slots.
     hashed: Option<Box<(HashTable, Prober)>>,
 }
 
@@ -63,7 +88,7 @@ impl BindJoin {
         seed_slots: Vec<Slot>,
         mode: JoinMode,
         sort_left: bool,
-        adaptive: Option<f64>,
+        switch: HashSwitch,
         width: usize,
     ) -> Self {
         let n = seed_slots.len();
@@ -73,7 +98,7 @@ impl BindJoin {
             seed_slots,
             mode,
             sort_left,
-            adaptive,
+            switch,
             seed: SeedBuf::new(width),
             rseed: vec![TermId::UNBOUND; width],
             lb: Batch::new(width),
@@ -214,7 +239,7 @@ impl BindJoin {
 }
 
 impl BindJoin {
-    /// Frees the buffered probe result and the hash table of the adaptive switch.
+    /// Frees the buffered probe result and the hash table of the switch to hashing.
     fn release_buffers(&mut self, cx: &ExecCtx) {
         cx.release(&mut self.charge);
         self.drop_hashed(cx);
@@ -222,7 +247,7 @@ impl BindJoin {
         self.run_valid = false;
     }
 
-    /// Leaves the adaptive hash join, releasing its table's charge.
+    /// Leaves the hash join of the switch, releasing its table's charge.
     fn drop_hashed(&mut self, cx: &ExecCtx) {
         if let Some(h) = self.hashed.take() {
             let (mut table, _) = *h;
@@ -265,10 +290,7 @@ impl Operator for BindJoin {
                 if !self.next_left_batch(cx)? {
                     return Ok(false);
                 }
-                if let Some(est) = self.adaptive
-                    && self.left_rows > ADAPTIVE_MIN_ROWS
-                    && self.left_rows as f64 > ADAPTIVE_FACTOR * est
-                {
+                if self.switch.due(self.left_rows) {
                     self.switch_to_hash(cx)?;
                 }
                 continue;

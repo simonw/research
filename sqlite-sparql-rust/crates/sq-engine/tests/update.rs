@@ -248,6 +248,64 @@ fn add_move_copy_arrive_lowered() {
     update(&s, "MOVE SILENT :g1 TO :g5").unwrap();
 }
 
+fn update_with_options(
+    store: &sq_memstore::MemStore,
+    text: &str,
+    opts: &sq_core::plan::QueryOptions,
+) -> sq_core::Result<UpdateReport> {
+    let u = sq_plan::parse_update(&format!("{PREFIXES}{text}"), Some(EX))?;
+    let uopts = UpdateOptions { now: Some(fixed_now()), ..UpdateOptions::default() };
+    sq_engine::update_with(Rc::new(store.clone()), &u, opts, &uopts)
+}
+
+/// `union_default_graph` only changes what queries read: WHERE clauses of updates read the
+/// stored default graph, the one their templates, CLEAR DEFAULT and DROP DEFAULT write.
+#[test]
+fn union_default_graph_is_a_query_only_view() {
+    let union = sq_core::plan::QueryOptions { union_default_graph: true, ..options() };
+    let s = mem(":a :p 1 . :g1 { :b :p 2 }");
+    assert_eq!(update_with_options(&s, "INSERT { ?s :seen 1 } WHERE { ?s :p ?o }", &union).unwrap(), report(1, 0));
+    assert_eq!(select_mem(&s, "SELECT ?s { ?s :seen 1 }"), ["?s=:a"]);
+    // DELETE WHERE removes only what its g = 0 template addresses, and says so.
+    assert_eq!(update_with_options(&s, "DELETE WHERE { ?s :p ?o }", &union).unwrap(), report(0, 1));
+    assert_eq!(
+        dump_mem(&s),
+        [
+            "(default) :a :seen \"1\"^^<http://www.w3.org/2001/XMLSchema#integer>",
+            ":g1 :b :p \"2\"^^<http://www.w3.org/2001/XMLSchema#integer>"
+        ]
+    );
+    // Named graphs stay reachable through GRAPH, and USING still picks the WHERE dataset.
+    update_with_options(&s, "INSERT { ?s :in ?g } WHERE { GRAPH ?g { ?s :p ?o } }", &union).unwrap();
+    update_with_options(&s, "INSERT { ?s :used 1 } USING :g1 WHERE { ?s :p ?o }", &union).unwrap();
+    assert_eq!(select_mem(&s, "SELECT ?s ?g { ?s :in ?g }"), ["?s=:b ?g=:g1"]);
+    assert_eq!(select_mem(&s, "SELECT ?s { ?s :used 1 }"), ["?s=:b"]);
+}
+
+/// The materialized WHERE solutions (only the template variables' columns) and the
+/// instantiated quads count against `max_memory_mb`.
+#[test]
+fn materialization_is_charged_against_max_memory_mb() {
+    let mut ttl = String::new();
+    for i in 0..25_000 {
+        ttl.push_str(&format!(":s{i} :p {i} .\n"));
+    }
+    let s = mem(&ttl);
+    let tight = sq_core::plan::QueryOptions { max_memory_mb: 1, ..options() };
+    // Six in-scope variables (1.2 MB of rows), one of them read by the templates: fits.
+    let wide = "DELETE { ?s :absent 1 } WHERE { ?s :p ?o BIND(1 AS ?a) BIND(2 AS ?b) BIND(3 AS ?c) BIND(4 AS ?d) }";
+    assert_eq!(update_with_options(&s, wide, &tight).unwrap(), report(0, 0));
+    // 25,000 rows of three columns plus 25,000 quads to delete: over budget, nothing written.
+    let r = update_with_options(&s, "DELETE WHERE { ?s ?p ?o }", &tight);
+    assert!(matches!(r, Err(Error::MemoryBudget(1))), "{r:?}");
+    assert_eq!(s.quads().len(), 25_000);
+    let r = update_with_options(&s, "INSERT { ?s :q ?o } WHERE { ?s :p ?o }", &tight);
+    assert!(matches!(r, Err(Error::MemoryBudget(1))), "{r:?}");
+    assert_eq!(s.quads().len(), 25_000);
+    // The default budget has room.
+    assert_eq!(update(&s, "DELETE WHERE { ?s ?p ?o }").unwrap(), report(0, 25_000));
+}
+
 #[test]
 fn load_needs_allow_files_and_a_file_iri() {
     let s = mem("");

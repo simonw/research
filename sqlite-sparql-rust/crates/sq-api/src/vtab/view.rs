@@ -8,10 +8,13 @@
 //! SELECT name FROM people WHERE person__term = '<http://ex/alice>';
 //! ```
 //! Value columns hold the native mapping (§8.4), `__term` columns the N-Triples text and
-//! `__id` columns the `TermId`. Equality constraints on `__term` / `__id` are pushed down as
-//! top-level `FILTER(sameTerm(?v, c))` around the whole query, so the result is exactly the
-//! SQL filter applied to the view's rows (the planner turns a filter into a seed only where
-//! that is equivalent; an unbound or computed value never matches a stored constant).
+//! `__id` columns the term's id in the store (NULL when unbound or not stored; a computed
+//! term that is stored shows its stored id, see `Stream::public_id`). Equality constraints on
+//! `__term` / `__id` are pushed down as top-level `FILTER(sameTerm(?v, c))` around the whole
+//! query, so the result is exactly the SQL filter applied to the view's rows (the planner
+//! turns a filter into a seed only where that is equivalent; an unbound value matches
+//! nothing). Values that can never equal the column (wrong type, a non-canonical spelling, an
+//! id that names no term) give an empty scan, as does a non-TEXT `opts` constraint.
 //! Native-value columns are never pushed down: TEXT `'x'` is ambiguous between `<x>`, `"x"`
 //! and `"x"@en`.
 use std::borrow::Cow;
@@ -28,7 +31,6 @@ use sq_core::codec;
 use sq_core::ir::{Expr, Logical, QueryForm};
 use sq_core::store::Dictionary;
 use sq_core::{Error, Result, Tag, Term, TermId};
-use sq_sqlite::ReadScope;
 
 use super::{Source, Stream, col_used};
 use crate::config::{Key, PanicSite, QuerySettings};
@@ -36,7 +38,7 @@ use crate::error::{IntoSql, sql_error};
 use crate::guard::{guard, guard_drop, guard_eof};
 use crate::query;
 use crate::state::{ConnState, CursorToken};
-use crate::value::{native, parse_term, public_id, write_ntriples};
+use crate::value::{native, parse_term, write_ntriples};
 
 #[repr(C)]
 pub(crate) struct ViewTab {
@@ -158,7 +160,7 @@ unsafe impl<'vtab> VTab<'vtab> for ViewTab {
                 aux.cloned().ok_or_else(|| rusqlite::Error::ModuleError("sparql_view: no connection state".into()))?;
             // Only parsing here: the dictionary is consulted when the view is scanned.
             let (query, overrides) = parse_arguments(args).into_sql()?;
-            let parsed = sq_plan::parse_query(&query, None).into_sql()?;
+            let parsed = crate::nesting::parse_query(&query, None).into_sql()?;
             let vars = select_variables(&parsed).into_sql()?;
             let sql = schema(&vars).into_sql()?;
             let tab = ViewTab {
@@ -233,13 +235,12 @@ impl CreateVTab<'_> for ViewTab {
 
 /// One scan of the view.
 struct Scan {
-    // Drop order: execution, open-cursor count, read scope.
+    // Drop order: execution, then the open-cursor count.
     stream: Stream,
     /// View value column → stream column.
     map: Vec<Option<usize>>,
     opts: Option<String>,
     _token: CursorToken,
-    _scope: ReadScope,
 }
 
 #[repr(C)]
@@ -292,7 +293,15 @@ fn constraint_id(
             }
         }
         Column::Id(_) => {
-            let ValueRef::Integer(v) = value else { return Ok(None) };
+            let v = match value {
+                ValueRef::Integer(v) => v,
+                // SQL compares INTEGER and REAL numerically: an integral REAL names that id.
+                ValueRef::Real(f) => match integral(f) {
+                    Some(v) => v,
+                    None => return Ok(None),
+                },
+                _ => return Ok(None),
+            };
             let id = TermId(v);
             if !id.is_storable() || (v < 0 && !id.is_inline()) {
                 return Ok(None);
@@ -316,28 +325,43 @@ fn constraint_id(
     }
 }
 
+/// The i64 equal to `f`, if any (SQLite compares INTEGER and REAL values exactly).
+fn integral(f: f64) -> Option<i64> {
+    // 2^63 is exactly representable; every integral f64 in [-2^63, 2^63) converts exactly.
+    const LIMIT: f64 = 9_223_372_036_854_775_808.0;
+    (f.fract() == 0.0 && (-LIMIT..LIMIT).contains(&f)).then_some(f as i64)
+}
+
 fn term_ref(t: &Term) -> oxrdf::TermRef<'_> {
     crate::helpers::term_ref(t)
 }
 
 impl ViewCursor {
+    /// Plans the scan and fetches its first batch, as one read entry.
     fn open_scan(&self, idx_str: Option<&str>, args: &Filters<'_>) -> Result<Scan> {
+        self.st.read_call(|| self.start_scan(idx_str, args))
+    }
+
+    fn start_scan(&self, idx_str: Option<&str>, args: &Filters<'_>) -> Result<Scan> {
         let st = &self.st;
         let n = self.vars.len();
         let (used, cols) = parse_idx(idx_str)?;
         let values: Vec<ValueRef<'_>> = args.iter().collect();
         let value = |j: usize| values.get(j).copied().unwrap_or(ValueRef::Null);
-        let entry = st.enter();
-        let scope = st.open_read(&entry)?;
 
         let mut settings = st.settings()?;
         for (k, v) in self.overrides.iter() {
             settings.set(*k, v)?;
         }
         let mut opts_arg = None;
+        let mut empty = false;
         for (j, col) in cols.iter().enumerate() {
             if column(n, *col) == Some(Column::Opts) {
-                let ValueRef::Text(t) = value(j) else { continue };
+                // The column holds the TEXT given here: `opts = NULL` / `opts = 42` is never true.
+                let ValueRef::Text(t) = value(j) else {
+                    empty = true;
+                    continue;
+                };
                 let json =
                     std::str::from_utf8(t).map_err(|_| Error::Invalid("sparql_view: opts is not UTF-8".into()))?;
                 settings.apply_json(json)?;
@@ -354,7 +378,6 @@ impl ViewCursor {
 
         // Pushed-down constraints → sameTerm filters (or an empty scan).
         let mut filters: Vec<Expr> = Vec::new();
-        let mut empty = false;
         for (j, col) in cols.iter().enumerate() {
             let Some(c @ (Column::Term(k) | Column::Id(k))) = column(n, *col) else { continue };
             let Some(slot) = slot_of(&self.vars[k]) else {
@@ -384,7 +407,7 @@ impl ViewCursor {
         decode.sort_unstable();
         decode.dedup();
         let stream = Stream::open(st, source, width, decode)?;
-        Ok(Scan { stream, map, opts: opts_arg, _token: token, _scope: scope })
+        Ok(Scan { stream, map, opts: opts_arg, _token: token })
     }
 }
 
@@ -460,8 +483,11 @@ unsafe impl VTabCursor for ViewCursor {
                     }
                 }
                 Some(Column::Id(k)) => {
-                    let id = scan.map[k].map_or(TermId::UNBOUND, |c| scan.stream.id(c));
-                    ctx.set_result(&public_id(id))
+                    let id = match scan.map[k] {
+                        Some(c) => scan.stream.public_id(st, c).into_sql()?,
+                        None => None,
+                    };
+                    ctx.set_result(&id)
                 }
                 Some(Column::Opts) => ctx.set_result(&scan.opts.as_deref()),
                 None => ctx.set_result(&Null),
@@ -517,5 +543,16 @@ mod tests {
         assert!(select_variables(&ask).is_err());
         assert_eq!(parse_idx(Some("ff:3,5")).unwrap(), (255, vec![3, 5]));
         assert_eq!(parse_idx(Some("1:")).unwrap(), (1, vec![]));
+    }
+
+    #[test]
+    fn integral_reals_name_integers() {
+        assert_eq!(integral(42.0), Some(42));
+        assert_eq!(integral(-7.0), Some(-7));
+        assert_eq!(integral(-9_223_372_036_854_775_808.0), Some(i64::MIN));
+        assert_eq!(integral(9_223_372_036_854_775_808.0), None, "2^63 is outside i64");
+        assert_eq!(integral(4.5), None);
+        assert_eq!(integral(f64::NAN), None);
+        assert_eq!(integral(f64::INFINITY), None);
     }
 }

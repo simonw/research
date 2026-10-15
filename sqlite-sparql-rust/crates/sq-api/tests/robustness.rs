@@ -89,8 +89,27 @@ fn max_memory_mb_bounds_a_query() {
     assert!(e.to_string().contains("memory budget exceeded"), "{e}");
 }
 
+/// Runs the named test of this binary in a child process with `env` set, and requires it to
+/// succeed. For tests whose failure mode is a dead process (a stack overflow), or that need
+/// an environment variable read when a connection registers.
+fn in_child(test: &str, env: &str) {
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture", "--test-threads=1"])
+        .env(env, "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{test} in a child process: {:?}\n{}", out.status, stderr.lines().rev().take(12).collect::<Vec<_>>().join("\n"));
+}
+
+/// Release builds compile the `debug_panic` hook in, but arm it only with this switch.
+const DEBUG_HOOKS: &str = "SPARQLITE_DEBUG_HOOKS";
+
 #[test]
 fn panics_in_every_entry_point_become_sql_errors() {
+    if !cfg!(debug_assertions) && std::env::var_os(DEBUG_HOOKS).is_none() {
+        return in_child("panics_in_every_entry_point_become_sql_errors", DEBUG_HOOKS);
+    }
     let c = loaded();
     let q = "SELECT rowid, n, v0 FROM sparql_rows('SELECT ?s WHERE { ?s <http://ex/age> ?a }')";
     for site in ["scalar", "xbestindex", "xopen", "xfilter", "xnext", "xcolumn", "xrowid"] {
@@ -118,6 +137,104 @@ fn panics_in_every_entry_point_become_sql_errors() {
         assert_eq!(status_i64(&c, "open_cursors"), 0, "{site}");
     }
     assert_eq!(one::<String>(&c, "SELECT sparql_config('debug_panic')"), "off");
+}
+
+#[test]
+fn the_debug_hook_needs_a_debug_build_or_its_switch() {
+    let c = conn();
+    let r = c.query_row("SELECT sparql_config('debug_panic', 'xfilter')", [], |r| r.get::<_, String>(0));
+    if cfg!(debug_assertions) || std::env::var_os(DEBUG_HOOKS).is_some() {
+        assert_eq!(r.unwrap(), "xfilter");
+    } else {
+        let e = r.unwrap_err().to_string();
+        assert!(e.contains("debug_panic is a testing hook"), "{e}");
+        assert!(c.query_row("SELECT sparql_config('debug_panic')", [], |_| Ok(())).is_err());
+        // Nothing panics: every row arrives.
+        assert_eq!(one::<i64>(&c, "SELECT count(*) FROM sparql_rows('ASK {}')"), 1);
+    }
+}
+
+#[test]
+fn deeply_nested_requests_are_refused_by_every_entry_point() {
+    let c = loaded();
+    let query = format!("SELECT * WHERE {{ ?s ?p ?o FILTER({}?o{}) }}", "(".repeat(5000), ")".repeat(5000));
+    let chain = format!("SELECT * WHERE {{ ?s ?p ?o FILTER(?o{} > 0) }}", " + 1".repeat(20_000));
+    for sql in [
+        "SELECT sparql_query(?1)",
+        "SELECT sparql_ask(?1)",
+        "SELECT sparql_count(?1)",
+        "SELECT sparql_value(?1)",
+        "SELECT sparql_explain(?1)",
+        "SELECT sparql_explain(?1, 'algebra')",
+        "SELECT sparql_explain(?1, 'sql')",
+        "SELECT sparql_query_sql(?1)",
+        "SELECT sparql_count_sql(?1)",
+        "SELECT sparql_to_sql(?1)",
+        "SELECT count(*) FROM sparql_rows(?1)",
+    ] {
+        for q in [&query, &chain] {
+            let e = err(&c, sql, [q]);
+            assert!(e.starts_with("sparql: unsupported: the request nests too deeply"), "{sql}: {e}");
+        }
+    }
+    let update = format!("INSERT DATA {{ <http://ex/a> <http://ex/p> {}1{} }}", "( ".repeat(5000), " )".repeat(5000));
+    let e = err(&c, "SELECT sparql_update(?1)", [&update]);
+    assert!(e.contains("nests too deeply"), "{e}");
+    let e = c
+        .execute_batch(&format!("CREATE VIRTUAL TABLE temp.deep USING sparql_view('{query}')"))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("nests too deeply"), "{e}");
+    assert_eq!(one::<i64>(&c, "SELECT sparql_count('SELECT * WHERE { ?s ?p ?o }')"), 13);
+}
+
+/// Requests just inside the nesting limit run on a 2 MiB thread — the default stack of
+/// spawned Rust threads — on both engines; a quarter more is refused. A stack overflow kills
+/// the process, so the requests run in a child process.
+#[test]
+fn requests_inside_the_nesting_limit_fit_a_two_mib_stack() {
+    const CHILD: &str = "SQ_API_NESTING_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        return in_child("requests_inside_the_nesting_limit_fit_a_two_mib_stack", CHILD);
+    }
+    type Shape = (&'static str, fn(usize) -> String, usize);
+    let shapes: [Shape; 10] = [
+        ("parentheses", |d| format!("SELECT * WHERE {{ ?s ?p ?o FILTER({}?o{}) }}", "(".repeat(d), ")".repeat(d)), 190),
+        ("groups", |d| format!("SELECT * WHERE {}?s ?p ?o{}", "{ ".repeat(d), " }".repeat(d)), 80),
+        ("functions", |d| format!("SELECT * WHERE {{ ?s ?p ?o FILTER({}?o{} != 0) }}", "STR(".repeat(d), ")".repeat(d)), 190),
+        ("plus", |d| format!("SELECT * WHERE {{ ?s ?p ?o FILTER(?o{} > 0) }}", " + 1".repeat(d)), 950),
+        ("or", |d| format!("SELECT * WHERE {{ ?s ?p ?o FILTER(?o = 0{}) }}", " || ?o = 1".repeat(d)), 950),
+        ("union", |d| format!("SELECT * WHERE {{ {{ ?s ?p ?o }}{} }}", " UNION { ?s ?p ?o }".repeat(d)), 240),
+        ("optional", |d| format!("SELECT * WHERE {{ ?s ?p ?o{} }}", " OPTIONAL { ?s ?p ?o }".repeat(d)), 240),
+        ("exists", |d| format!("SELECT * WHERE {{ ?s ?p ?o {}{} }}", "FILTER EXISTS { ?s ?p ?o ".repeat(d), "}".repeat(d)), 80),
+        ("subqueries", |d| format!("SELECT * WHERE {}?s ?p ?o{}", "{ SELECT * WHERE { ".repeat(d), " } }".repeat(d)), 34),
+        ("blank nodes", |d| format!("SELECT * WHERE {{ ?a <http://ex/p> {}1{} }}", "[ <http://ex/q> ".repeat(d), " ]".repeat(d)), 190),
+    ];
+    std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(move || {
+            let c = loaded();
+            for (name, build, depth) in shapes {
+                for engine in ["native", "sql"] {
+                    let opts = format!("{{\"engine\":\"{engine}\"}}");
+                    // Executing is what matters (the baseline may refuse SQL that deep).
+                    let r = c.query_row("SELECT count(*) FROM sparql_rows(?1, ?2)", [build(depth), opts], |r| {
+                        r.get::<_, i64>(0)
+                    });
+                    if let Err(e) = r {
+                        assert!(!e.to_string().contains("nests too deeply"), "{name} at {depth} ({engine}): {e}");
+                    }
+                }
+                let e = err(&c, "SELECT sparql_count(?1)", [build(depth * 5 / 4)]);
+                assert!(e.contains("nests too deeply"), "{name} at {}: {e}", depth * 5 / 4);
+            }
+            let update = |d: usize| format!("INSERT DATA {{ <http://ex/a> <http://ex/p> {}1{} }}", "( ".repeat(d), " )".repeat(d));
+            assert!(one_p::<i64, _>(&c, "SELECT sparql_update(?1)", [update(190)]) > 0);
+            assert!(err(&c, "SELECT sparql_update(?1)", [update(240)]).contains("nests too deeply"));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 #[test]

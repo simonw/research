@@ -11,8 +11,10 @@
 //! ```
 //! `xBestIndex` requires a usable `=` constraint on `query` (and takes `opts` when there is
 //! one) and passes `colUsed` to `xFilter` as hex in `idx_str`. `xFilter` prepares a streaming
-//! execution inside the outer statement's read transaction; `xNext` pulls 1024-row batches
-//! and decodes only the columns the statement reads, so `count(*)` decodes nothing.
+//! execution and fetches the first batch as one read entry; later batches read the same
+//! snapshot through the outer statement's read transaction (see `state`). `xNext` pulls
+//! 1024-row batches and decodes only the columns the statement reads, so `count(*)` decodes
+//! nothing.
 //!
 //! ASK gives one row (`v0` = 0/1); CONSTRUCT / DESCRIBE give one row per triple (`v0..v2` =
 //! subject, predicate, object). Queries with more than 16 variables are read through `json`
@@ -22,13 +24,12 @@ use std::cell::RefCell;
 use std::ffi::{CStr, c_int};
 use std::sync::Arc;
 
-use rusqlite::types::Null;
+use rusqlite::types::{Null, ValueRef};
 use rusqlite::vtab::{
     Context, Filters, IndexConstraintOp, IndexInfo, VTab, VTabConfig, VTabConnection, VTabCursor, sqlite3_vtab,
     sqlite3_vtab_cursor,
 };
-use sq_core::Result;
-use sq_sqlite::ReadScope;
+use sq_core::{Error, Result};
 
 use super::{Source, Stream, col_used};
 use crate::config::PanicSite;
@@ -36,7 +37,7 @@ use crate::error::{IntoSql, sql_error};
 use crate::guard::{guard, guard_drop, guard_eof};
 use crate::query::{self, Form};
 use crate::state::{ConnState, CursorToken};
-use crate::value::{native, public_id, write_ntriples};
+use crate::value::{native, write_ntriples};
 
 const SCHEMA: &CStr = c"CREATE TABLE x(n INTEGER, \
     v0,v1,v2,v3,v4,v5,v6,v7,v8,v9,v10,v11,v12,v13,v14,v15, \
@@ -144,7 +145,7 @@ unsafe impl<'vtab> VTab<'vtab> for RowsTab {
 /// One running query.
 struct Scan {
     // Field order is drop order: the execution (and its leased statements) first, then the
-    // open-cursor count, then the read scope.
+    // open-cursor count.
     stream: Stream,
     form: Form,
     /// Names for the `json` column (variables, or subject / predicate / object).
@@ -153,13 +154,15 @@ struct Scan {
     query: String,
     opts: Option<String>,
     _token: CursorToken,
-    _scope: ReadScope,
 }
 
 impl Scan {
+    /// Prepares the query and fetches the first batch, as one read entry.
     fn open(st: &Arc<ConnState>, query: String, opts: Option<String>, used: u64) -> Result<Scan> {
-        let entry = st.enter();
-        let scope = st.open_read(&entry)?;
+        st.read_call(|| Scan::start(st, query, opts, used))
+    }
+
+    fn start(st: &Arc<ConnState>, query: String, opts: Option<String>, used: u64) -> Result<Scan> {
         let mut settings = st.settings()?;
         if let Some(o) = &opts {
             settings.apply_json(o)?;
@@ -185,10 +188,21 @@ impl Scan {
                     || (k < VAR_COLUMNS && (col_used(used, COL_V as usize + k) || col_used(used, COL_T as usize + k)))
             })
             .collect();
-        let vars_json = serde_json::to_string(&vars).map_err(|e| sq_core::Error::internal(e.to_string()))?;
+        let vars_json = serde_json::to_string(&vars).map_err(|e| Error::internal(e.to_string()))?;
         let token = CursorToken::new(st);
         let stream = Stream::open(st, source, width, decode)?;
-        Ok(Scan { stream, form, names, vars_json, query, opts, _token: token, _scope: scope })
+        Ok(Scan { stream, form, names, vars_json, query, opts, _token: token })
+    }
+}
+
+/// A TEXT argument of `xFilter` (NULL → None), reported like the scalar functions' arguments.
+fn text_value<'a>(value: Option<ValueRef<'a>>, what: &str) -> Result<Option<&'a str>> {
+    match value.unwrap_or(ValueRef::Null) {
+        ValueRef::Null => Ok(None),
+        ValueRef::Text(t) => std::str::from_utf8(t)
+            .map(Some)
+            .map_err(|_| Error::Invalid(format!("sparql_rows: the {what} is not valid UTF-8"))),
+        other => Err(Error::Invalid(format!("sparql_rows: the {what} must be TEXT, got {}", other.data_type()))),
     }
 }
 
@@ -220,12 +234,14 @@ unsafe impl VTabCursor for RowsCursor {
             self.st.debug_panic(PanicSite::Filter);
             // A re-filtered cursor (correlated join) ends its previous scan first.
             *self.scan.get_mut() = None;
-            let query: Option<String> = args.get(0)?;
-            let query =
-                query.ok_or_else(|| sql_error(sq_core::Error::Invalid("sparql_rows: the query is NULL".into())))?;
-            let opts: Option<String> = if idx_num & HAS_OPTS != 0 { args.get(1)? } else { None };
+            let mut values = args.iter();
+            let query = text_value(values.next(), "query")
+                .and_then(|q| q.ok_or_else(|| Error::Invalid("sparql_rows: the query is NULL".into())))
+                .into_sql()?
+                .to_string();
+            let opts = if idx_num & HAS_OPTS != 0 { text_value(values.next(), "opts").into_sql()? } else { None };
             let used = idx_str.and_then(|s| u64::from_str_radix(s, 16).ok()).unwrap_or(u64::MAX);
-            *self.scan.get_mut() = Some(Scan::open(&self.st, query, opts, used).into_sql()?);
+            *self.scan.get_mut() = Some(Scan::open(&self.st, query, opts.map(str::to_string), used).into_sql()?);
             Ok(())
         })
     }
@@ -250,7 +266,7 @@ unsafe impl VTabCursor for RowsCursor {
     fn column(&self, ctx: &mut Context, i: c_int) -> rusqlite::Result<()> {
         guard("sparql_rows xColumn", || {
             self.st.debug_panic(PanicSite::Column);
-            let mut scan = self.scan.try_borrow_mut().map_err(|_| sql_error(sq_core::Error::Reentrant))?;
+            let mut scan = self.scan.try_borrow_mut().map_err(|_| sql_error(Error::Reentrant))?;
             let Some(scan) = scan.as_mut() else { return ctx.set_result(&Null) };
             let st = &*self.st;
             match i {
@@ -269,7 +285,7 @@ unsafe impl VTabCursor for RowsCursor {
                     None => ctx.set_result(&Null),
                 },
                 _ if (COL_ID..COL_VARS).contains(&i) => {
-                    ctx.set_result(&public_id(scan.stream.id((i - COL_ID) as usize)))
+                    ctx.set_result(&scan.stream.public_id(st, (i - COL_ID) as usize).into_sql()?)
                 }
                 COL_VARS => ctx.set_result(&scan.vars_json.as_str()),
                 COL_JSON => {

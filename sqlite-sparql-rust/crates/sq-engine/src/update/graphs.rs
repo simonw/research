@@ -86,20 +86,25 @@ impl Updater<'_> {
     }
 
     /// `LOAD`: only `file://` IRIs, and only when local files are allowed. The document is
-    /// read and parsed completely before anything is written, so `SILENT` can drop a bad
-    /// document without leaving part of it behind.
+    /// streamed into the store in batches. `LOAD SILENT` first parses the whole document
+    /// without writing, so that it can drop a bad document without leaving part of it behind;
+    /// a plain `LOAD` that fails part-way fails the request, and the caller's write scope
+    /// undoes the batches already inserted (as for any failed operation).
     pub(super) fn load(&mut self, silent: bool, source: &NamedNode, destination: &GraphName) -> Result<()> {
         let graph = match destination {
             GraphName::NamedNode(g) => Some(g.as_str()),
             GraphName::DefaultGraph => None,
         };
-        let quads = match self.fetch(source).and_then(|(data, format)| {
-            load::parse_document(&data, format, Some(source.as_str()), graph)
-        }) {
-            Ok(quads) => quads,
+        let base = Some(source.as_str());
+        let (path, format) = match self.locate(source) {
+            Ok(found) => found,
             Err(e) => return silenced(silent, Err(e)),
         };
-        self.report.inserted += load::insert_quads(&*self.store, &quads)?.quads_new;
+        if silent && let Err(e) = load::check_file(&path, format, base, graph) {
+            return silenced(true, Err(in_load(source, e)));
+        }
+        let stats = load::load_file(&*self.store, &path, format, base, graph).map_err(|e| in_load(source, e))?;
+        self.report.inserted += stats.quads_new;
         if let GraphName::NamedNode(g) = destination {
             // LOAD INTO GRAPH creates the graph even for an empty document.
             let id = self.store.intern(g.as_ref().into())?;
@@ -108,8 +113,8 @@ impl Updater<'_> {
         Ok(())
     }
 
-    /// Reads a `file://` document and picks its format from the file extension.
-    fn fetch(&self, source: &NamedNode) -> Result<(Vec<u8>, RdfFormat)> {
+    /// The local path of a `file://` document and its format (from the file extension).
+    fn locate(&self, source: &NamedNode) -> Result<(PathBuf, RdfFormat)> {
         let path = file_path(source.as_str()).ok_or_else(|| {
             Error::Unsupported(format!("LOAD {source}: only file:// IRIs can be loaded"))
         })?;
@@ -123,8 +128,16 @@ impl Updater<'_> {
             .and_then(|e| e.to_str())
             .and_then(RdfFormat::from_extension)
             .ok_or_else(|| Error::Invalid(format!("LOAD {source}: unknown RDF format (file extension)")))?;
-        let data = std::fs::read(&path).map_err(|e| Error::Invalid(format!("LOAD {source}: {e}")))?;
-        Ok((data, format))
+        Ok((path, format))
+    }
+}
+
+/// Names the source document in a read or parse error.
+fn in_load(source: &NamedNode, e: Error) -> Error {
+    match e {
+        Error::Parse(m) => Error::Parse(format!("LOAD {source}: {m}")),
+        Error::Invalid(m) => Error::Invalid(format!("LOAD {source}: {m}")),
+        e => e,
     }
 }
 

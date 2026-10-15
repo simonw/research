@@ -4,13 +4,19 @@
 //! **Entry protocol.** Each API entry
 //! 1. re-arms the statement pool if the close hook is not connected (§8.7),
 //! 2. records its nesting depth (savepoint names carry it, rule R3),
-//! 3. opens the right scope — a [`ReadScope`] for readers; for writers the [`WriteScope`]
-//!    *first*, so that its `write_gen` bump takes the write lock straight from "no
-//!    transaction" and `busy_timeout` applies (SQLite skips the busy handler when it upgrades
-//!    a read lock the connection already holds),
+//! 3. opens the right scope — a [`ReadScope`](sq_sqlite::ReadScope) for readers; for writers
+//!    the [`WriteScope`](sq_sqlite::WriteScope) *first*, so that its `write_gen` bump takes
+//!    the write lock straight from "no transaction" and `busy_timeout` applies (SQLite skips
+//!    the busy handler when it upgrades a read lock the connection already holds),
 //! 4. validates the epoch (`StorageShared::validate_epoch`, §4.4: schema cookie, `dict_gen`,
 //!    committed dictionary rows, statistics generation),
 //! 5. does its work and closes its scopes, reporting a failed `RELEASE` / `COMMIT`.
+//!
+//! Virtual-table scans follow it in `xFilter` only: no scope is ever held across a return to
+//! SQLite (a savepoint held between rows would take the connection out of autocommit mode, so
+//! the user's own statements would silently join it). The scan keeps its snapshot anyway:
+//! once `main`'s read transaction has started, SQLite keeps it while any statement of the
+//! connection is still reading, and the host statement itself is one.
 //!
 //! **Re-entrancy (R1).** All mutable state sits in `Cell`s and `RefCell`s that are borrowed
 //! only for O(1) reads and writes, never across a call that steps a statement or returns to
@@ -18,6 +24,7 @@
 //! this crate steps it. A violated rule surfaces as `Error::Reentrant`, never as a deadlock
 //! (there is no `Mutex` anywhere).
 use std::cell::{Cell, RefCell};
+use std::ffi::OsStr;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -25,7 +32,7 @@ use rustc_hash::FxHashMap;
 use sq_core::store::{QuadStore, QuadStoreWriter};
 use sq_core::{Error, Result};
 use sq_expr::CompiledExpr;
-use sq_sqlite::{RawDb, ReadScope, SchemaState, SqliteStore, StorageConfig, StorageShared};
+use sq_sqlite::{RawDb, SchemaState, SqliteStore, StorageConfig, StorageShared};
 
 use crate::config::{ConnConfig, Key, PanicSite, QuerySettings};
 use crate::helpers::{Baselines, HelperCtx};
@@ -82,6 +89,8 @@ pub(crate) struct ConnState {
     helper_spare: RefCell<Option<Box<HelperCtx>>>,
     /// Compiled `sparql_eval` templates.
     templates: RefCell<Templates>,
+    /// The `debug_panic` testing hook can be armed (see [`debug_hooks_enabled`]).
+    debug_hooks: bool,
     /// R7: thread of the outermost active entry (debug builds).
     #[cfg(debug_assertions)]
     entry_thread: Cell<Option<std::thread::ThreadId>>,
@@ -157,6 +166,7 @@ impl ConnState {
             baselines: Rc::new(Baselines::default()),
             helper_spare: RefCell::new(None),
             templates: RefCell::new(FxHashMap::default()),
+            debug_hooks: debug_hooks_enabled(std::env::var_os(DEBUG_HOOKS_ENV).as_deref()),
             #[cfg(debug_assertions)]
             entry_thread: Cell::new(None),
         })
@@ -268,24 +278,28 @@ impl ConnState {
         Ok(value)
     }
 
-    /// A reading entry whose scope outlives the call (virtual-table scans): the scope is
-    /// returned to the caller, which keeps it until the scan ends.
-    pub(crate) fn open_read(&self, entry: &Entry<'_>) -> Result<ReadScope> {
-        let scope = self.store.read_scope(entry.depth())?;
-        self.validate()?;
-        Ok(scope)
-    }
-
     /// A writing entry: refuses while scans are open, auto-initializes the schema when asked
     /// to, then runs `f` in one write scope (all or nothing).
+    ///
+    /// **Inside a statement that writes** (`INSERT INTO t SELECT sparql_update(…)`), SQLite
+    /// refuses every `SAVEPOINT`, so no write scope can open. In autocommit mode the host
+    /// statement's own transaction makes the call atomic instead: if the call fails, so does
+    /// the host statement, and SQLite rolls that whole transaction back (the next entry's
+    /// epoch check sees it). Inside a user transaction a failed statement may keep its partial
+    /// changes, so there — and for the writers whose storage layer opens its own scope: loads,
+    /// analyze, vacuum, schema creation — the refusal becomes an error naming the restriction.
     pub(crate) fn write_call<T>(&self, auto_init: bool, f: impl FnOnce() -> Result<T>) -> Result<T> {
         let entry = self.enter();
         self.refuse_while_reading()?;
         if auto_init && !matches!(self.shared().schema_state()?, SchemaState::Ready { .. }) {
             // Outside the write scope: its schema read must not precede the write lock.
-            self.store.ensure_schema()?;
+            self.store.ensure_schema().map_err(savepoint_refusal)?;
         }
-        let scope = self.store.write_scope(entry.depth())?;
+        if self.host_statement_writes() {
+            self.validate()?;
+            return f().map_err(savepoint_refusal);
+        }
+        let scope = self.store.write_scope(entry.depth()).map_err(savepoint_refusal)?;
         self.validate()?;
         let value = f()?;
         scope.commit()?;
@@ -296,7 +310,16 @@ impl ConnState {
     pub(crate) fn writer_call<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
         let _entry = self.enter();
         self.refuse_while_reading()?;
-        f()
+        f().map_err(savepoint_refusal)
+    }
+
+    /// Whether a statement that writes is running in autocommit mode: some schema is in a
+    /// write transaction although none is open, which only a running writer holds.
+    fn host_statement_writes(&self) -> bool {
+        // SAFETY: `db` is the live connection (constructor contract); a NULL schema name asks
+        // for the highest transaction state over all schemas.
+        let state = unsafe { rusqlite::ffi::sqlite3_txn_state(self.db.as_ptr(), std::ptr::null()) };
+        state == rusqlite::ffi::SQLITE_TXN_WRITE && self.db.autocommit()
     }
 
     fn refuse_while_reading(&self) -> Result<()> {
@@ -316,6 +339,7 @@ impl ConnState {
 
     /// `sparql_config(key)`.
     pub(crate) fn config_get(&self, key: Key) -> Result<String> {
+        self.check_key(key)?;
         let shared = self.shared();
         Ok(match key {
             Key::Reader => shared.reader().as_str().to_string(),
@@ -332,6 +356,7 @@ impl ConnState {
     /// `sparql_config(key, value)`: validates, applies (storage settings take effect at
     /// once) and returns the new value.
     pub(crate) fn config_set(&self, key: Key, value: &str) -> Result<String> {
+        self.check_key(key)?;
         let shared = self.shared();
         match key {
             Key::Reader => shared.set_reader(sq_sqlite::ReaderMode::parse(value.trim())?),
@@ -348,20 +373,35 @@ impl ConnState {
 
     /// The `debug_panic` testing hook: panics at `site` when it is selected.
     pub(crate) fn debug_panic(&self, site: PanicSite) {
+        if !self.debug_hooks {
+            return;
+        }
         let selected = self.config.try_borrow().ok().and_then(|c| c.debug_panic);
         if selected == Some(site) {
             panic!("sparql: debug_panic at {}", site.name());
         }
     }
 
+    /// Refuses the `debug_panic` key where the hook is disabled.
+    fn check_key(&self, key: Key) -> Result<()> {
+        if key == Key::DebugPanic && !self.debug_hooks {
+            return Err(Error::Invalid(format!(
+                "debug_panic is a testing hook: available in debug builds, or when {DEBUG_HOOKS_ENV}=1 is set \
+                 before the extension is loaded"
+            )));
+        }
+        Ok(())
+    }
+
     // ------------------------------------------------------------------ parsed queries
 
-    /// Parses `text` through the connection's LRU (§4.4).
+    /// Parses `text` through the connection's LRU (§4.4), after the nesting check (cached texts
+    /// passed it).
     pub(crate) fn parse_query(&self, text: &str, base: Option<&str>) -> Result<Arc<spargebra::Query>> {
         if let Some(q) = self.parsed.try_borrow_mut().map_err(|_| Error::Reentrant)?.get(text, base) {
             return Ok(q);
         }
-        let q = Arc::new(sq_plan::parse_query(text, base)?);
+        let q = Arc::new(crate::nesting::parse_query(text, base)?);
         self.parsed.try_borrow_mut().map_err(|_| Error::Reentrant)?.insert(text, base, q.clone());
         Ok(q)
     }
@@ -465,6 +505,31 @@ impl ConnState {
     }
 }
 
+/// Environment variable that enables the `debug_panic` hook in release builds (read when the
+/// connection registers). Production builds cannot arm the hook through SQL alone.
+pub(crate) const DEBUG_HOOKS_ENV: &str = "SPARQLITE_DEBUG_HOOKS";
+
+/// The hook exists in debug builds, and in release builds when [`DEBUG_HOOKS_ENV`] is `1`.
+fn debug_hooks_enabled(env: Option<&OsStr>) -> bool {
+    cfg!(debug_assertions) || env.is_some_and(|v| v == "1")
+}
+
+/// SQLite refuses `SAVEPOINT` while a statement that writes runs on the connection; the
+/// storage layer reports that as SQLITE_BUSY "cannot open savepoint - SQL statements in
+/// progress", which reads like lock contention. Named for what it is.
+fn savepoint_refusal(e: Error) -> Error {
+    match &e {
+        Error::Sqlite { code, msg } if code & 0xff == rusqlite::ffi::SQLITE_BUSY && msg.contains("statements in progress") => {
+            Error::Invalid(
+                "this writer cannot run inside a statement that writes (INSERT … SELECT, UPDATE …) here: only \
+                 sparql_update can, and only outside an explicit transaction; call it as its own SELECT statement"
+                    .into(),
+            )
+        }
+        _ => e,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -507,6 +572,17 @@ mod tests {
         drop(token);
         assert!(st.write_call(true, || Ok(())).is_ok());
         assert_eq!(st.counters.get().cursors_opened, 1);
+    }
+
+    #[test]
+    fn debug_hooks_need_a_debug_build_or_the_environment() {
+        assert!(debug_hooks_enabled(Some(OsStr::new("1"))));
+        assert_eq!(debug_hooks_enabled(None), cfg!(debug_assertions));
+        assert_eq!(debug_hooks_enabled(Some(OsStr::new("yes"))), cfg!(debug_assertions));
+        let busy = Error::Sqlite { code: 5, msg: "cannot open savepoint - SQL statements in progress".into() };
+        assert!(matches!(savepoint_refusal(busy), Error::Invalid(m) if m.contains("own SELECT statement")));
+        let locked = Error::Sqlite { code: 5, msg: "database is locked".into() };
+        assert!(matches!(savepoint_refusal(locked), Error::Sqlite { .. }));
     }
 
     #[test]

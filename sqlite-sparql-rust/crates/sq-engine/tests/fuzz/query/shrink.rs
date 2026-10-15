@@ -42,6 +42,7 @@ impl Query {
                         order: Vec::new(),
                         offset: None,
                         limit: None,
+                        values: None,
                     })));
                 }
                 out.extend(s.simplifications().into_iter().map(|s| with_form(Form::Select(s))));
@@ -88,6 +89,12 @@ impl Select {
         if !self.order_exprs.is_empty() {
             out.push(Select { order_exprs: Vec::new(), ..self.clone() });
         }
+        if let Some(table) = &self.values {
+            out.push(Select { values: None, ..self.clone() });
+            for v in values_simplifications(&table.0, &table.1) {
+                out.push(Select { values: Some(Box::new(v)), ..self.clone() });
+            }
+        }
         if let Some(items) = &self.items
             && items.len() > 1
         {
@@ -116,7 +123,11 @@ impl Select {
                 let mut s = self.clone();
                 let (k, _) = s.group_by.as_mut().unwrap().remove(i);
                 if let Some(items) = s.items.as_mut() {
-                    items.retain(|it| *it != Item::Var(k));
+                    // SAMPLE / GROUP_CONCAT of a key that is no longer one depend on row order.
+                    items.retain(|it| match it {
+                        Item::Var(v) => *v != k,
+                        Item::Expr(e, _) => !e.aggregates_key(k),
+                    });
                 }
                 s.order.retain(|(o, _)| *o != k);
                 out.push(s);
@@ -181,34 +192,39 @@ impl El {
             El::Bind(e, v) => e.simplifications().into_iter().map(|e| El::Bind(e, *v)).collect(),
             El::Path(s, p, o) => p.simplifications().into_iter().map(|p| El::Path(s.clone(), p, o.clone())).collect(),
             El::Values(vars, rows) => {
-                let mut v = Vec::new();
-                if rows.len() > 1 {
-                    for i in 0..rows.len() {
-                        let mut r = rows.clone();
-                        r.remove(i);
-                        v.push(El::Values(vars.clone(), r));
-                    }
-                }
-                if vars.len() > 1 {
-                    for i in 0..vars.len() {
-                        let mut vs = vars.clone();
-                        vs.remove(i);
-                        let r = rows
-                            .iter()
-                            .map(|row| {
-                                let mut row = row.clone();
-                                row.remove(i);
-                                row
-                            })
-                            .collect();
-                        v.push(El::Values(vs, r));
-                    }
-                }
-                v
+                values_simplifications(vars, rows).into_iter().map(|(vars, rows)| El::Values(vars, rows)).collect()
             }
             El::Triple(..) => Vec::new(),
         }
     }
+}
+
+/// A VALUES table with one row or one variable fewer.
+fn values_simplifications(vars: &[usize], rows: &[Vec<Option<T>>]) -> Vec<Table> {
+    let mut v = Vec::new();
+    if rows.len() > 1 {
+        for i in 0..rows.len() {
+            let mut r = rows.to_vec();
+            r.remove(i);
+            v.push((vars.to_vec(), r));
+        }
+    }
+    if vars.len() > 1 {
+        for i in 0..vars.len() {
+            let mut vs = vars.to_vec();
+            vs.remove(i);
+            let r = rows
+                .iter()
+                .map(|row| {
+                    let mut row = row.clone();
+                    row.remove(i);
+                    row
+                })
+                .collect();
+            v.push((vs, r));
+        }
+    }
+    v
 }
 
 impl Path {
@@ -249,6 +265,18 @@ impl Path {
 }
 
 impl E {
+    /// Contains a SAMPLE / GROUP_CONCAT of GROUP BY key `k`.
+    fn aggregates_key(&self, k: usize) -> bool {
+        match self {
+            E::Agg(a) => a.key() == Some(k),
+            E::Bin(_, a, b) => a.aggregates_key(k) || b.aggregates_key(k),
+            E::Not(a) | E::Neg(a) => a.aggregates_key(k),
+            E::Call(_, args) => args.iter().any(|a| a.aggregates_key(k)),
+            E::In(a, l, _) => a.aggregates_key(k) || l.iter().any(|x| x.aggregates_key(k)),
+            E::Var(_) | E::Const(_) | E::Bound(_) | E::Exists(..) => false,
+        }
+    }
+
     fn simplifications(&self) -> Vec<E> {
         let mut out = Vec::new();
         match self {

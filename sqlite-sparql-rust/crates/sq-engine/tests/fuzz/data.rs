@@ -14,6 +14,8 @@ pub const PREDICATES: [&str; 4] = ["p0", "p1", "p2", "p3"];
 pub const CLASSES: [&str; 2] = ["C0", "C1"];
 /// Named graphs of the data.
 pub const GRAPHS: [&str; 2] = ["g0", "g1"];
+/// A named graph without quads, registered (as by CREATE GRAPH) in some datasets.
+pub const EMPTY_GRAPH: &str = "g2";
 
 /// Literals in SPARQL / Turtle syntax (prefixes `:` and `xsd:`).
 pub const LITERALS: [&str; 32] = [
@@ -75,6 +77,9 @@ impl fmt::Display for D {
     }
 }
 
+/// The comment line of [`Dataset::trig`] that registers [`EMPTY_GRAPH`].
+const EMPTY_MARK: &str = "#empty";
+
 /// Integers of the "numeric column" of medium datasets (integer range pushdown reads them).
 pub const INTS: [&str; 16] = ["-5", "-3", "0", "1", "2", "3", "4", "5", "7", "10", "12", "15", "20", "25", "30", "100"];
 
@@ -92,6 +97,8 @@ pub struct Dataset {
     pub quads: Vec<Quad>,
     /// Run the statistics collector after loading (changes Auto plans).
     pub analyze: bool,
+    /// Register [`EMPTY_GRAPH`] in the store's graph registry.
+    pub empty_graph: bool,
 }
 
 impl Dataset {
@@ -137,7 +144,7 @@ impl Dataset {
                 quads.push(Quad { graph, s: D::Iri(pick(r, subjects)), p: D::Iri(PREDICATES[3]), o: D::Lit(o) });
             }
         }
-        Dataset { quads, analyze: r.below(3) == 0 }
+        Dataset { quads, analyze: r.below(3) == 0, empty_graph: r.below(4) == 0 }
     }
 
     /// The literals that occur in the data.
@@ -145,12 +152,16 @@ impl Dataset {
         LITERALS.iter().chain(&INTS).copied().filter(|l| self.quads.iter().any(|q| q.o == D::Lit(l))).collect()
     }
 
-    /// TriG text (blank-node labels are shared across graphs: one document, one load).
+    /// TriG text (blank-node labels are shared across graphs: one document, one load). A
+    /// registered empty graph, which TriG cannot express, is noted in a `#empty` comment.
     pub fn trig(&self) -> String {
         let mut out = String::from(
             "@prefix : <http://ex/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\
              @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n",
         );
+        if self.empty_graph {
+            let _ = writeln!(out, "{EMPTY_MARK} :{EMPTY_GRAPH}");
+        }
         for q in &self.quads {
             match q.graph {
                 None => {
@@ -181,7 +192,12 @@ impl Dataset {
             }
         };
         let mut quads = Vec::new();
+        let mut empty_graph = false;
         for line in trig.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('@')) {
+            if line.starts_with(EMPTY_MARK) {
+                empty_graph = true;
+                continue;
+            }
             let (graph, triple) = match line.strip_suffix('}') {
                 Some(body) => {
                     let (g, t) = body.split_once('{').expect("graph block");
@@ -195,15 +211,18 @@ impl Dataset {
             let (p, o) = rest.split_once(' ').expect("predicate");
             quads.push(Quad { graph, s: term(s), p: term(p), o: term(o.trim()) });
         }
-        Dataset { quads, analyze }
+        Dataset { quads, analyze, empty_graph }
     }
 
-    /// Smaller datasets: halves, then each single quad removed.
+    /// Smaller datasets: no statistics, no empty graph, halves, then each single quad removed.
     pub fn simplifications(&self) -> Vec<Dataset> {
         let mut out = Vec::new();
         let n = self.quads.len();
         if self.analyze {
             out.push(Dataset { analyze: false, ..self.clone() });
+        }
+        if self.empty_graph {
+            out.push(Dataset { empty_graph: false, ..self.clone() });
         }
         if n >= 4 {
             out.push(Dataset { quads: self.quads[..n / 2].to_vec(), ..self.clone() });

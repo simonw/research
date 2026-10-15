@@ -68,7 +68,11 @@ pub(super) fn explain(st: &ConnState, ctx: &Context<'_>) -> Result<String> {
         }
     };
     st.read_call(|| match engine_mode {
-        Some(m) => sq_engine::explain(st.quad_store(), text, m, &opts),
+        Some(m) => {
+            // sq_engine parses the text itself.
+            crate::nesting::check(text)?;
+            sq_engine::explain(st.quad_store(), text, m, &opts)
+        }
         None => {
             let sql = translate(st, text, &opts)?;
             if mode == "sqlplan" {
