@@ -17,9 +17,10 @@
 //!
 //! Module map: `state` (ConnState, entries), `config` (§8.5 settings), `lru` (parsed queries),
 //! `nesting` (the recursion budget checked before parsing), `query` (native and baseline
-//! runs, output), `helpers` (baseline helper functions), `functions` (registration and
-//! bodies), `vtab` (`sparql_rows`, `sparql_view`, `sparql_status`), `value` (native mapping,
-//! N-Triples), `guard` (panic containment), `error` (error mapping).
+//! runs, output), `watchdog` (`timeout_ms` inside the baseline's steps), `helpers` (baseline
+//! helper functions), `functions` (registration and bodies), `vtab` (`sparql_rows`,
+//! `sparql_view`, `sparql_status`), `value` (native mapping, N-Triples), `guard` (panic
+//! containment), `error` (error mapping).
 use rusqlite::Connection;
 
 mod config;
@@ -33,6 +34,7 @@ mod query;
 mod state;
 mod value;
 mod vtab;
+mod watchdog;
 
 /// `sparql_version()` text: `sparqlite <crate version> (SQLite <library version>)`.
 pub fn version_string(sqlite_version: &str) -> String {

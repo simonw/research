@@ -173,3 +173,13 @@ translating SPARQL to SQL text or running as an external client.
   an sq-exec bug, and BNODE() on a BindJoin probe side being re-evaluated per seed). Reviewer found
   `union_default_graph` leaking into ADD/COPY/MOVE. W3C mem backend: 636/639 (3 = spargebra parser),
   every UpdateEvaluationTest passes.
+- sq-api (implement -> 2 review/fix rounds): every §8.2 function (per-arity registration, flags: nothing
+  DETERMINISTIC, writers/file access DIRECTONLY), sparql_rows (col_used-driven decoding, streaming 1024-row
+  batches; count(*) decodes nothing), sparql_view (typed columns + __term/__id pushdown as sameTerm),
+  sparql_status + close hook (WAL file disappears after close: no zombie connection), guard() around every
+  vtab method, baseline helper UDFs over sq-expr. Reviewers found: a temp.sparql_view scan holding a SAVEPOINT
+  open between rows (user writes silently swallowed), deeply nested/wide query text overflowing the host
+  stack (catch_unwind cannot catch that) -> a nesting/width cost limiter now refuses such requests, a
+  baseline-engine timeout watchdog thread (sqlite3_interrupt, no progress handler), COLLATE-aware view
+  pushdown. Final: 105 sq-api Rust tests + pytest suite against the real .so; W3C through plain SQL
+  (`--backend sqlite`): 636/639 (3 = spargebra parser).

@@ -19,15 +19,16 @@ What it writes (into tutorial/data/ next to this script, or --out DIR):
   load.sql          (only with --emit-sql) a script for the sqlite3 shell that
                     loads all of the above with readfile().
 
-Three ways to get a database:
+Three ways to get a database (all commands run from the repository root; both
+scripted routes create the same file, tutorial/tutorial.db):
 
 1. Python does everything (needs a Python whose sqlite3 module can load
    extensions; most Linux and Homebrew builds can, macOS's system Python can't):
 
-     python3 tutorial/make_tutorial_data.py --db tutorial.db \\
-         --ext ext/target/release/libsparqlite
+     python3 tutorial/make_tutorial_data.py --db tutorial/tutorial.db \\
+         --ext ext/target/release/libsparqlite.so
 
-2. The sqlite3 shell does the loading (works everywhere the shell does):
+2. The sqlite3 shell does the loading (works wherever the shell can .load):
 
      python3 tutorial/make_tutorial_data.py --emit-sql
      cd tutorial/data
@@ -36,10 +37,16 @@ Three ways to get a database:
      sqlite> .read load.sql
 
    readfile() resolves names against the shell's current directory, which is
-   why load.sql must be run from inside the data directory.
+   why load.sql must be run from inside the data directory (inside the shell,
+   ".cd tutorial/data" changes directory too).
 
 3. By hand, one file at a time, in any sqlite3 session with the extension
    loaded:  SELECT sparql_load(readfile('languages.ttl'));
+
+The extension file is libsparqlite.so on Linux, libsparqlite.dylib on macOS
+and sparqlite.dll (no "lib") on Windows; .load and --ext accept the name with
+or without that suffix.  If Python cannot load extensions, --db still writes
+the data files and load.sql and prints the sqlite3 command to run instead.
 
 Re-running is safe: --db rebuilds the database from scratch, and load.sql
 removes an earlier copy of the tutorial data (SPARQL CLEAR ALL) before loading,
@@ -54,6 +61,10 @@ import csv
 import datetime as dt
 import io
 import os
+import pathlib
+import platform
+import re
+import shlex
 import sqlite3
 import sys
 import tempfile
@@ -61,7 +72,7 @@ import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OUT = os.path.join(SCRIPT_DIR, "data")
-GENERATOR_VERSION = "1"
+GENERATOR_VERSION = "2"
 
 # ---------------------------------------------------------------------------
 # Namespaces
@@ -96,13 +107,15 @@ PREFIXES = [
 # uncertain was left out rather than guessed.
 # ---------------------------------------------------------------------------
 
-# slug -> (name, birthDate, deathDate, Turing Award year).  Dates only where they
-# are well documented; a missing deathDate means "not recorded here", nothing more.
+# slug -> (name, birthDate, deathDate, Turing Award year).  Dates only where the
+# person's English Wikipedia article gives a full date (checked October 2026).  A
+# missing deathDate means "not recorded here", nothing more: some people here have
+# no Wikipedia article to check against.
 PERSONS = {
     "john-backus": ("John Backus", "1924-12-03", "2007-03-17", 1977),
     "grace-hopper": ("Grace Hopper", "1906-12-09", "1992-01-01", None),
     "john-mccarthy": ("John McCarthy", "1927-09-04", "2011-10-24", 1971),
-    "jean-sammet": ("Jean E. Sammet", "1928-03-23", "2017-05-22", None),
+    "jean-sammet": ("Jean E. Sammet", "1928-03-23", "2017-05-20", None),
     "peter-naur": ("Peter Naur", "1928-10-25", "2016-01-03", 2005),
     "alan-perlis": ("Alan Perlis", "1922-04-01", "1990-02-07", 1966),
     "adriaan-van-wijngaarden": ("Adriaan van Wijngaarden", "1916-11-02", "1987-02-07", None),
@@ -112,45 +125,45 @@ PERSONS = {
     "john-kemeny": ("John G. Kemeny", "1926-05-31", "1992-12-26", None),
     "thomas-kurtz": ("Thomas E. Kurtz", "1928-02-22", "2024-11-12", None),
     "kenneth-iverson": ("Kenneth E. Iverson", "1920-12-17", "2004-10-19", 1979),
-    "roger-hui": ("Roger Hui", None, None, None),
+    "roger-hui": ("Roger Hui", "1953-12-29", "2021-10-16", None),
     "peter-landin": ("Peter Landin", "1930-06-05", "2009-06-03", None),
     "niklaus-wirth": ("Niklaus Wirth", "1934-02-15", "2024-01-01", 1984),
-    "tony-hoare": ("Tony Hoare", "1934-01-11", None, 1980),
+    "tony-hoare": ("Tony Hoare", "1934-01-11", "2026-03-05", 1980),
     "martin-richards": ("Martin Richards", "1940-07-21", None, None),
-    "wally-feurzeig": ("Wally Feurzeig", None, None, None),
+    "wally-feurzeig": ("Wally Feurzeig", "1927-06-10", "2013-01-04", None),
     "seymour-papert": ("Seymour Papert", "1928-02-29", "2016-07-31", None),
     "cynthia-solomon": ("Cynthia Solomon", None, None, None),
     "ken-thompson": ("Ken Thompson", "1943-02-04", None, 1983),
-    "dennis-ritchie": ("Dennis Ritchie", "1941-09-09", None, 1983),
-    "charles-moore": ("Charles H. Moore", None, None, None),
+    "dennis-ritchie": ("Dennis Ritchie", "1941-09-09", "2011-10-12", 1983),
+    "charles-moore": ("Charles H. Moore", "1938-09-09", None, None),
     "alan-kay": ("Alan Kay", "1940-05-17", None, 2003),
     "dan-ingalls": ("Dan Ingalls", None, None, None),
-    "adele-goldberg": ("Adele Goldberg", "1945-07-07", None, None),
+    "adele-goldberg": ("Adele Goldberg", "1945-07-22", None, None),
     "alain-colmerauer": ("Alain Colmerauer", "1941-01-24", "2017-05-12", None),
     "robin-milner": ("Robin Milner", "1934-01-13", "2010-03-20", 1991),
-    "donald-chamberlin": ("Donald D. Chamberlin", None, None, None),
-    "raymond-boyce": ("Raymond F. Boyce", None, None, None),
+    "donald-chamberlin": ("Donald D. Chamberlin", "1944-12-21", None, None),
+    "raymond-boyce": ("Raymond F. Boyce", "1946-08-27", "1974-06-18", None),
     "guy-steele": ("Guy L. Steele Jr.", "1954-10-02", None, None),
     "gerald-sussman": ("Gerald Jay Sussman", "1947-02-08", None, None),
     "barbara-liskov": ("Barbara Liskov", "1939-11-07", None, 2008),
-    "john-chambers": ("John Chambers", None, None, None),
+    "john-chambers": ("John Chambers", "1941-04-28", None, None),
     "alfred-aho": ("Alfred Aho", "1941-08-09", None, 2020),
-    "peter-weinberger": ("Peter J. Weinberger", None, None, None),
+    "peter-weinberger": ("Peter J. Weinberger", "1942-08-06", None, None),
     "brian-kernighan": ("Brian Kernighan", "1942-01-30", None, None),
-    "david-farber": ("David J. Farber", None, None, None),
-    "ralph-griswold": ("Ralph E. Griswold", None, None, None),
+    "david-farber": ("David J. Farber", "1934-04-17", "2026-02-07", None),
+    "ralph-griswold": ("Ralph E. Griswold", "1934-05-19", "2006-10-04", None),
     "ivan-polonsky": ("Ivan P. Polonsky", None, None, None),
     "jean-ichbiah": ("Jean Ichbiah", "1940-03-25", "2007-01-26", None),
     "john-warnock": ("John Warnock", "1940-10-06", "2023-08-19", None),
     "charles-geschke": ("Charles Geschke", "1939-09-11", "2021-04-16", None),
     "tom-love": ("Tom Love", None, None, None),
-    "brad-cox": ("Brad Cox", None, None, None),
-    "scott-fahlman": ("Scott Fahlman", None, None, None),
+    "brad-cox": ("Brad Cox", "1944-05-02", "2021-01-02", None),
+    "scott-fahlman": ("Scott Fahlman", "1948-03-21", None, None),
     "richard-gabriel": ("Richard P. Gabriel", None, None, None),
     "kent-pitman": ("Kent Pitman", None, None, None),
-    "cleve-moler": ("Cleve Moler", "1939-08-17", None, None),
+    "cleve-moler": ("Cleve Moler", "1939-08-17", "2026-05-20", None),
     "bjarne-stroustrup": ("Bjarne Stroustrup", "1950-12-30", None, None),
-    "david-turner": ("David Turner", None, None, None),
+    "david-turner": ("David Turner", "1946-01-26", "2023-10-19", None),
     "larry-tesler": ("Larry Tesler", "1945-04-24", "2020-02-16", None),
     "anders-hejlsberg": ("Anders Hejlsberg", "1960-12-02", None, None),
     "bertrand-meyer": ("Bertrand Meyer", "1950-11-21", None, None),
@@ -161,23 +174,23 @@ PERSONS = {
     "randall-smith": ("Randall Smith", None, None, None),
     "larry-wall": ("Larry Wall", "1954-09-27", None, None),
     "leo-geurts": ("Leo Geurts", None, None, None),
-    "lambert-meertens": ("Lambert Meertens", None, None, None),
+    "lambert-meertens": ("Lambert Meertens", "1944-05-10", None, None),
     "steven-pemberton": ("Steven Pemberton", None, None, None),
     "john-ousterhout": ("John Ousterhout", "1954-10-15", None, None),
     "luca-cardelli": ("Luca Cardelli", None, None, None),
-    "greg-nelson": ("Greg Nelson", None, None, None),
+    "greg-nelson": ("Greg Nelson", "1953-03-27", "2015-02-02", None),
     "stephen-wolfram": ("Stephen Wolfram", "1959-08-29", None, None),
-    "simon-peyton-jones": ("Simon Peyton Jones", None, None, None),
+    "simon-peyton-jones": ("Simon Peyton Jones", "1958-01-18", None, None),
     "philip-wadler": ("Philip Wadler", "1956-04-08", None, None),
     "paul-hudak": ("Paul Hudak", "1952-07-15", "2015-04-29", None),
-    "john-hughes": ("John Hughes", None, None, None),
+    "john-hughes": ("John Hughes", "1958-07-15", None, None),
     "guido-van-rossum": ("Guido van Rossum", "1956-01-31", None, None),
-    "roberto-ierusalimschy": ("Roberto Ierusalimschy", None, None, None),
+    "roberto-ierusalimschy": ("Roberto Ierusalimschy", "1960-05-21", None, None),
     "waldemar-celes": ("Waldemar Celes", None, None, None),
     "luiz-henrique-de-figueiredo": ("Luiz Henrique de Figueiredo", None, None, None),
     "ross-ihaka": ("Ross Ihaka", None, None, None),
     "robert-gentleman": ("Robert Gentleman", None, None, None),
-    "arthur-whitney": ("Arthur Whitney", None, None, None),
+    "arthur-whitney": ("Arthur Whitney", "1957-10-20", None, None),
     "yukihiro-matsumoto": ("Yukihiro Matsumoto", "1965-04-14", None, None),
     "james-gosling": ("James Gosling", "1955-05-19", None, None),
     "brendan-eich": ("Brendan Eich", "1961-07-04", None, None),
@@ -186,11 +199,11 @@ PERSONS = {
     "phil-winterbottom": ("Phil Winterbottom", None, None, None),
     "rob-pike": ("Rob Pike", None, None, None),
     "zoltan-somogyi": ("Zoltan Somogyi", None, None, None),
-    "xavier-leroy": ("Xavier Leroy", None, None, None),
-    "walter-bright": ("Walter Bright", None, None, None),
+    "xavier-leroy": ("Xavier Leroy", "1968-03-15", None, None),
+    "walter-bright": ("Walter Bright", "1959-03-10", None, None),
     "andrei-alexandrescu": ("Andrei Alexandrescu", None, None, None),
     "james-strachan": ("James Strachan", None, None, None),
-    "martin-odersky": ("Martin Odersky", None, None, None),
+    "martin-odersky": ("Martin Odersky", "1958-09-05", None, None),
     "don-syme": ("Don Syme", None, None, None),
     "jeffrey-snover": ("Jeffrey Snover", None, None, None),
     "rich-hickey": ("Rich Hickey", None, None, None),
@@ -203,7 +216,7 @@ PERSONS = {
     "andrey-breslav": ("Andrey Breslav", None, None, None),
     "lars-bak": ("Lars Bak", None, None, None),
     "kasper-lund": ("Kasper Lund", None, None, None),
-    "jeff-bezanson": ("Jeff Bezanson", None, None, None),
+    "jeff-bezanson": ("Jeff Bezanson", "1981-12-26", None, None),
     "stefan-karpinski": ("Stefan Karpinski", None, None, None),
     "viral-shah": ("Viral B. Shah", None, None, None),
     "alan-edelman": ("Alan Edelman", None, None, None),
@@ -336,7 +349,6 @@ LICENSES = {
     "PSF-2.0": "Python Software Foundation License 2.0",
     "EPL-1.0": "Eclipse Public License 1.0",
     "Ruby": "Ruby License",
-    "PHP-3.01": "PHP License v3.01",
     "BSL-1.0": "Boost Software License 1.0",
 }
 
@@ -389,11 +401,12 @@ lang("ALGOL58", "ALGOL 58", 1958,
      desc="The first ALGOL, originally called the International Algebraic Language (IAL).",
      designers=["john-backus", "alan-perlis"], influenced_by=["Fortran"],
      paradigms=["Procedural"], alt=["IAL"])
-lang("COBOL", "COBOL", 1959,
+lang("COBOL", "COBOL", 1960,
      desc="Common Business-Oriented Language, designed for business data processing.",
      designers=["jean-sammet"], developers=["codasyl"], influenced_by=["FlowMatic"],
      paradigms=["Procedural"], typing="static", strength="weak",
-     ext=[".cbl", ".cob", ".cpy"], alt=["Common Business-Oriented Language"])
+     ext=[".cbl", ".cob", ".cpy"], alt=["Common Business-Oriented Language"],
+     comment="CODASYL started the design in 1959; the first specification followed in 1960.")
 # ----- 1960s -----
 lang("Lisp", "Lisp", 1960,
      desc="Family of languages built around list processing, where code is data.",
@@ -408,7 +421,7 @@ lang("ALGOL60", "ALGOL 60", 1960,
 lang("SNOBOL", "SNOBOL", 1962,
      desc="String-oriented language with built-in pattern matching, developed at Bell Labs.",
      designers=["david-farber", "ralph-griswold", "ivan-polonsky"], developers=["bell-labs"],
-     paradigms=["Imperative"], typing="dynamic")
+     paradigms=["Imperative"])
 lang("Simula", "Simula", 1962,
      desc="Simulation language that introduced classes, objects and inheritance.",
      designers=["ole-johan-dahl", "kristen-nygaard"], developers=["norwegian-computing-center"],
@@ -461,7 +474,7 @@ lang("B", "B", 1969,
 lang("Pascal", "Pascal", 1970,
      desc="Small structured language designed by Niklaus Wirth, widely used for teaching.",
      designers=["niklaus-wirth"], developers=["eth-zurich"], influenced_by=["ALGOLW", "Simula"],
-     paradigms=["Procedural"], typing="static", strength="strong", ext=[".pas", ".pp"],
+     paradigms=["Procedural"], typing="static", strength="strong", ext=[".pas"],
      comment="Named after the mathematician Blaise Pascal.")
 lang("Forth", "Forth", 1970,
      desc="Stack-based, concatenative language with an interactive interpreter.",
@@ -470,7 +483,7 @@ lang("Forth", "Forth", 1970,
 lang("C", "C", 1972,
      desc="Systems programming language developed at Bell Labs alongside Unix.",
      designers=["dennis-ritchie"], developers=["bell-labs"],
-     influenced_by=["B", "ALGOL68", "PLI", "Fortran"], paradigms=["Procedural"],
+     influenced_by=["B", "BCPL", "CPL", "ALGOL68", "PLI", "Fortran"], paradigms=["Procedural"],
      typing="static", strength="weak", ext=[".c", ".h"], i18n="systems")
 lang("Smalltalk", "Smalltalk", 1972,
      desc="Purely object-oriented language and live programming environment from Xerox PARC.",
@@ -486,11 +499,12 @@ lang("ML", "ML", 1973,
      designers=["robin-milner"], developers=["university-of-edinburgh"], influenced_by=["ISWIM"],
      paradigms=["Functional"], typing="static", strength="strong", inference=True,
      alt=["Meta Language"])
-lang("SQL", "SQL", 1974,
+lang("SQL", "SQL", 1973,
      desc="Declarative language for querying and managing relational databases.",
      designers=["donald-chamberlin", "raymond-boyce"], developers=["ibm"],
      paradigms=["Declarative"], ext=[".sql"], alt=["SEQUEL", "Structured Query Language"],
-     i18n="query", cls="QueryLanguage")
+     i18n="query", cls="QueryLanguage",
+     comment="Work on it began at IBM's San Jose research laboratory in 1973, under the name SEQUEL.")
 lang("Scheme", "Scheme", 1975,
      desc="Minimalist dialect of Lisp with lexical scope and proper tail calls.",
      designers=["guy-steele", "gerald-sussman"], developers=["mit"],
@@ -500,7 +514,7 @@ lang("CLU", "CLU", 1975,
      desc="Language from MIT that introduced abstract data types (clusters) and iterators.",
      designers=["barbara-liskov"], developers=["mit"],
      influenced_by=["ALGOL60", "Lisp", "Simula"], paradigms=["ObjectOriented", "Procedural"],
-     typing="static", strength="strong", comment="The name derives from 'cluster'.")
+     strength="strong", comment="The name derives from 'cluster'.")
 lang("Mesa", "Mesa", 1976,
      desc="Modular systems programming language developed at Xerox PARC.",
      developers=["xerox-parc"], paradigms=["Procedural"])
@@ -532,7 +546,7 @@ lang("Ada", "Ada", 1980,
 lang("PostScript", "PostScript", 1982,
      desc="Page description language and stack-based programming language from Adobe.",
      designers=["john-warnock", "charles-geschke"], developers=["adobe"],
-     paradigms=["Concatenative"], ext=[".ps"])
+     influenced_by=["Mesa", "Lisp"], paradigms=["Concatenative"], ext=[".ps"])
 lang("StandardML", "Standard ML", 1983,
      desc="Standardised dialect of ML with a formal definition.",
      designers=["robin-milner"], influenced_by=["ML"], paradigms=["Functional"],
@@ -574,7 +588,7 @@ lang("ObjectPascal", "Object Pascal", 1986,
 lang("Eiffel", "Eiffel", 1986,
      desc="Object-oriented language built around design by contract.",
      designers=["bertrand-meyer"], influenced_by=["Ada", "Simula"], paradigms=["ClassBased"],
-     typing="static", strength="strong", ext=[".e"], url="https://www.eiffel.org/",
+     typing="static", ext=[".e"], url="https://www.eiffel.org/",
      comment="Named after the engineer Gustave Eiffel.")
 lang("Erlang", "Erlang", 1986,
      desc="Concurrent functional language for fault-tolerant telecom systems, from Ericsson.",
@@ -588,10 +602,10 @@ lang("Self", "Self", 1987,
      paradigms=["PrototypeBased"], typing="dynamic")
 lang("Perl", "Perl", 1987,
      desc="Text-processing and general-purpose scripting language by Larry Wall.",
-     designers=["larry-wall"], influenced_by=["AWK", "BASIC", "C", "CPlusPlus", "Lisp", "Pascal"],
+     designers=["larry-wall"], influenced_by=["AWK", "BASIC", "C", "CPlusPlus", "Lisp"],
      paradigms=["Procedural", "ClassBased", "Functional"], typing="dynamic",
      ext=[".pl", ".pm"], url="https://www.perl.org/", first_release="1987-12-18",
-     comment="Officially not an acronym; later backronymed as 'Practical Extraction and Report Language'.")
+     comment="Officially not an acronym; 'Practical Extraction and Report Language' is a backronym.")
 lang("ABC", "ABC", 1987,
      desc="Teaching language from CWI that inspired Python.",
      designers=["leo-geurts", "lambert-meertens", "steven-pemberton"], developers=["cwi"],
@@ -613,7 +627,7 @@ lang("Modula3", "Modula-3", 1988,
 lang("WolframLanguage", "Wolfram Language", 1988,
      desc="Symbolic language of Mathematica.",
      designers=["stephen-wolfram"], developers=["wolfram-research"],
-     paradigms=["Functional", "ArrayProgramming"], ext=[".nb", ".m", ".wl"],
+     paradigms=["Functional", "ArrayProgramming"], ext=[".wl", ".m"],
      url="https://www.wolfram.com/language/",
      comment="The language of Mathematica, named Wolfram Language in 2013.")
 # ----- 1990s -----
@@ -640,7 +654,7 @@ lang("Python", "Python", 1991,
 lang("Dylan", "Dylan", 1992,
      desc="Multi-paradigm language created at Apple, combining Lisp ideas with an ALGOL-like syntax.",
      developers=["apple"], influenced_by=["Scheme", "CommonLisp"],
-     paradigms=["Functional", "ObjectOriented"], typing="dynamic", strength="strong",
+     paradigms=["Functional", "ObjectOriented"], typing="gradual", strength="strong",
      ext=[".dylan"])
 lang("Lua", "Lua", 1993,
      desc="Lightweight, embeddable scripting language from PUC-Rio in Brazil.",
@@ -653,7 +667,7 @@ lang("R", "R", 1993,
      desc="Language and environment for statistical computing and graphics.",
      designers=["ross-ihaka", "robert-gentleman"], influenced_by=["S", "Scheme", "CommonLisp"],
      paradigms=["Procedural", "Functional", "ObjectOriented", "ArrayProgramming"],
-     typing="dynamic", ext=[".r", ".rds"], url="https://www.r-project.org/",
+     typing="dynamic", ext=[".R", ".r"], url="https://www.r-project.org/",
      comment="Named partly after the first names of its first two authors, Ross Ihaka and Robert Gentleman.")
 lang("K", "K", 1993,
      desc="Terse array language by Arthur Whitney.", designers=["arthur-whitney"],
@@ -671,9 +685,9 @@ lang("Java", "Java", 1995,
      desc="Class-based object-oriented language compiled to bytecode for the Java virtual machine.",
      designers=["james-gosling"], developers=["sun-microsystems", "oracle"],
      influenced_by=["CPlusPlus", "Smalltalk", "ObjectiveC", "Simula", "Mesa", "Modula3",
-                    "Oberon", "Ada", "Eiffel", "CLU", "Lisp", "ObjectPascal", "CSharp"],
+                    "Oberon", "Ada", "Eiffel", "CLU", "Lisp", "ObjectPascal"],
      paradigms=["ClassBased", "Concurrent"], typing="static", strength="strong",
-     ext=[".java", ".class", ".jar"], first_release="1995-05-23", v1="1996-01-23",
+     ext=[".java"], first_release="1995-05-23", v1="1996-01-23",
      alt=["Oak"], i18n="oo", comment="Originally called Oak.")
 lang("JavaScript", "JavaScript", 1995,
      desc="Scripting language of the web, created at Netscape.",
@@ -687,7 +701,7 @@ lang("PHP", "PHP", 1995,
      desc="Server-side scripting language for the web.",
      designers=["rasmus-lerdorf"], influenced_by=["Perl", "C", "CPlusPlus", "Java", "Tcl"],
      paradigms=["Procedural", "ClassBased", "Functional"], typing="dynamic", strength="weak",
-     ext=[".php"], url="https://www.php.net/", licenses=["PHP-3.01"],
+     ext=[".php"], url="https://www.php.net/",
      first_release="1995-06-08", alt=["PHP: Hypertext Preprocessor", "Personal Home Page"],
      comment="Originally 'Personal Home Page'; now the recursive acronym 'PHP: Hypertext Preprocessor'.")
 lang("Racket", "Racket", 1995,
@@ -754,12 +768,12 @@ lang("PowerShell", "PowerShell", 2006,
      desc="Task automation shell and scripting language from Microsoft.",
      designers=["jeffrey-snover"], developers=["microsoft"],
      influenced_by=["CSharp", "Perl", "Python"], paradigms=["Procedural"],
-     ext=[".ps1", ".psm1", ".psd1"])
+     ext=[".ps1", ".psm1"])
 lang("Clojure", "Clojure", 2007,
      desc="Lisp dialect for the JVM built around immutable data structures.",
      designers=["rich-hickey"], influenced_by=["CommonLisp", "Scheme", "Haskell", "Erlang", "Java"],
      paradigms=["Functional", "Concurrent"], typing="dynamic", strength="strong",
-     ext=[".clj", ".cljs", ".cljc", ".edn"], url="https://clojure.org/", licenses=["EPL-1.0"])
+     ext=[".clj", ".cljs", ".cljc"], url="https://clojure.org/", licenses=["EPL-1.0"])
 lang("XQuery", "XQuery", 2007,
      desc="Query and functional programming language for XML, standardised by the W3C.",
      designers=["donald-chamberlin", "jonathan-robie", "daniela-florescu"], developers=["w3c"],
@@ -793,15 +807,19 @@ lang("CoffeeScript", "CoffeeScript", 2009,
      paradigms=["PrototypeBased", "Functional"], typing="dynamic",
      ext=[".coffee"], url="https://coffeescript.org/", licenses=["MIT"])
 # ----- 2010s and later -----
-lang("Rust", "Rust", 2010,
+# Wikipedia's infobox dates Rust from its first public release (0.1, January 2012),
+# not from Mozilla's 2010 announcement.  Swift and Elm, which the infobox also lists,
+# influenced later Rust (if-let, error messages), so they are left out (see validate()).
+lang("Rust", "Rust", 2012,
      desc="Memory-safe systems programming language without a garbage collector.",
      designers=["graydon-hoare"], developers=["mozilla"],
      influenced_by=["CPlusPlus", "OCaml", "Haskell", "Erlang", "StandardML", "Cyclone",
-                    "Scheme", "Ruby", "Limbo", "Swift", "CLU", "CSharp", "Elm"],
+                    "Scheme", "Ruby", "Limbo", "CLU", "CSharp"],
      paradigms=["Functional", "Procedural", "Concurrent"], typing="static",
      strength="strong", inference=True, ext=[".rs"], url="https://www.rust-lang.org/",
      licenses=["MIT", "Apache-2.0"], v1="2015-05-15", i18n="systems",
-     comment="Announced by Mozilla in 2010; Rust 1.0 was released on 15 May 2015.")
+     comment="Announced by Mozilla in 2010; version 0.1 followed in January 2012 and "
+             "Rust 1.0 on 15 May 2015.")
 lang("Kotlin", "Kotlin", 2011,
      desc="Concise JVM language from JetBrains, preferred by Google for Android development.",
      designers=["andrey-breslav"], developers=["jetbrains"],
@@ -819,7 +837,7 @@ lang("Dart", "Dart", 2011,
 lang("Julia", "Julia", 2012,
      desc="High-performance dynamic language for technical computing.",
      designers=["jeff-bezanson", "stefan-karpinski", "viral-shah", "alan-edelman"],
-     influenced_by=["Lisp", "Fortran", "MATLAB", "Python", "R", "Ruby", "Perl", "Lua", "C",
+     influenced_by=["Lisp", "MATLAB", "Python", "R", "Ruby", "Perl", "Lua", "C",
                     "Dylan", "Scheme", "WolframLanguage"],
      paradigms=["ArrayProgramming", "Functional", "Procedural"], typing="dynamic",
      ext=[".jl"], url="https://julialang.org/", licenses=["MIT"], v1="2018-08-08")
@@ -866,12 +884,12 @@ lang("Zig", "Zig", 2016,
      desc="Systems programming language with no hidden control flow, aiming to improve on C.",
      designers=["andrew-kelley"], developers=["zig-software-foundation"],
      influenced_by=["C", "CPlusPlus", "Go", "Rust"], paradigms=["Procedural"],
-     typing="static", strength="strong", ext=[".zig", ".zon"], url="https://ziglang.org/",
+     typing="static", strength="strong", ext=[".zig"], url="https://ziglang.org/",
      licenses=["MIT"], i18n="systems")
 lang("Gleam", "Gleam", 2016,
      desc="Statically typed functional language for the Erlang virtual machine.",
      designers=["louis-pilfold"], influenced_by=["Erlang", "Elixir", "Elm", "Rust"],
-     paradigms=["Functional", "Concurrent"], typing="static", strength="strong",
+     paradigms=["Functional", "Concurrent"], typing="static",
      inference=True, ext=[".gleam"], url="https://gleam.run/", licenses=["Apache-2.0"],
      v1="2024-03-04")
 lang("Carbon", "Carbon", 2022,
@@ -886,12 +904,14 @@ lang("Mojo", "Mojo", 2023,
      comment="Source files may use the extension .🔥 (the fire emoji).")
 
 # ---------------------------------------------------------------------------
-# FICTIONAL survey numbers.  (share of respondents, "loved" %, median salary USD)
-# None = not enough answers to publish a salary.
+# FICTIONAL survey numbers.  Per survey: slug, year, respondents, publication date,
+# margin of error (an xsd:double, written in Turtle's exponent form), and per language
+# (share of respondents, "loved" %, median salary USD); None = too few answers to
+# publish a salary.
 # ---------------------------------------------------------------------------
 
 SURVEYS = [
-    ("survey-2025", 2025, 48213, "2025-07-15", {
+    ("survey-2025", 2025, 48213, "2025-07-15", "4.46E-3", {
         "JavaScript": (0.618, 58.4, 82000), "Python": (0.534, 66.9, 94500),
         "TypeScript": (0.402, 71.2, 98000), "Java": (0.296, 49.8, 91000),
         "CSharp": (0.271, 60.3, 88500), "CPlusPlus": (0.224, 52.6, 97000),
@@ -907,7 +927,7 @@ SURVEYS = [
         "FSharp": (0.009, 66.0, 110500), "Fortran": (0.009, 33.0, 87500),
         "OCaml": (0.008, 68.8, 115000), "COBOL": (0.006, 22.4, 92000),
     }),
-    ("survey-2026", 2026, 51877, "2026-07-14", {
+    ("survey-2026", 2026, 51877, "2026-07-14", "4.30E-3", {
         "JavaScript": (0.609, 56.9, 84500), "Python": (0.561, 67.4, 97000),
         "TypeScript": (0.437, 72.8, 101000), "Java": (0.288, 50.5, 93000),
         "CSharp": (0.266, 61.1, 90500), "CPlusPlus": (0.218, 51.9, 99500),
@@ -926,39 +946,44 @@ SURVEYS = [
     }),
 ]
 
-# FICTIONAL editorial reviews: (language, rating 1-5, reviewer, date, {lang: text})
+# FICTIONAL editorial reviews: (language, rating 1-5, reviewer, xsd:dateTime with the
+# reviewer's UTC offset, {lang: text}).  Mei Tanaka writes from Tokyo, Jonas Berg from
+# Stockholm (+01:00 in winter, +02:00 in summer, and one review stamped in UTC), Priya
+# Natarajan from Bengaluru and Tomás Rivera from Mexico City.
 REVIEWS = [
-    ("Python", 5, "Mei Tanaka", "2026-01-12",
+    ("Python", 5, "Mei Tanaka", "2026-01-12T09:14:00+09:00",
      {"en": "A gentle first language with a huge standard library.",
       "fr": "Un premier langage accessible, avec une immense bibliothèque standard."}),
-    ("Python", 4, "Jonas Berg", "2026-03-02",
+    ("Python", 4, "Jonas Berg", "2026-03-02T16:40:00+01:00",
      {"en": "Still our default choice, although packaging remains confusing."}),
-    ("Rust", 5, "Priya Natarajan", "2026-02-18",
+    ("Rust", 5, "Priya Natarajan", "2026-02-18T11:05:00+05:30",
      {"en": "A steep learning curve, but the compiler is a patient teacher."}),
-    ("Rust", 4, "Tomás Rivera", "2026-05-27",
+    ("Rust", 4, "Tomás Rivera", "2026-05-27T19:22:00-06:00",
      {"en": "Excellent tooling; compile times can test your patience."}),
-    ("Go", 4, "Jonas Berg", "2026-01-30",
+    ("Go", 4, "Jonas Berg", "2026-01-30T07:55:00Z",
      {"en": "Small language, fast builds, boring in the best way."}),
-    ("JavaScript", 3, "Tomás Rivera", "2026-02-05",
+    ("JavaScript", 3, "Tomás Rivera", "2026-02-05T22:47:00-06:00",
      {"en": "Runs everywhere; mind the implicit type conversions."}),
-    ("Haskell", 4, "Priya Natarajan", "2026-03-21",
+    ("Haskell", 4, "Priya Natarajan", "2026-03-21T14:30:00+05:30",
      {"en": "Changes how you think about programs, even if you never ship it."}),
-    ("COBOL", 2, "Mei Tanaka", "2026-04-01",
+    ("COBOL", 2, "Mei Tanaka", "2026-04-01T10:00:00+09:00",
      {"en": "Not glamorous, but it still runs a lot of payroll."}),
-    ("Prolog", 4, "Priya Natarajan", "2026-04-14",
+    ("Prolog", 4, "Priya Natarajan", "2026-04-14T09:45:00+05:30",
      {"en": "Describe the problem and let the search do the work."}),
-    ("Zig", 4, "Tomás Rivera", "2026-06-09",
+    ("Zig", 4, "Tomás Rivera", "2026-06-09T13:10:00-06:00",
      {"en": "A promising alternative to C; still before version 1.0."}),
-    ("SQL", 5, "Mei Tanaka", "2026-06-23",
+    ("SQL", 5, "Mei Tanaka", "2026-06-23T18:20:00+09:00",
      {"en": "Fifty years on, still the language every developer ends up using.",
-      "de": "Auch nach fünfzig Jahren die Sprache, die jeder Entwickler früher oder später benutzt."}),
-    ("PHP", 3, "Jonas Berg", "2026-07-08",
+      "de": "Auch nach fünfzig Jahren noch die Sprache, die jeder Entwickler früher oder später benutzt."}),
+    ("PHP", 3, "Jonas Berg", "2026-07-08T12:00:00+02:00",
      {"en": "Much better than its reputation suggests."}),
-    ("Kotlin", 4, "Mei Tanaka", "2026-08-17",
+    ("Kotlin", 4, "Mei Tanaka", "2026-08-17T07:35:00+09:00",
      {"en": "Java without the ceremony."}),
-    ("Julia", 4, "Priya Natarajan", "2026-09-03",
+    ("Julia", 4, "Priya Natarajan", "2026-09-03T20:15:00+05:30",
      {"en": "Fast numerics without leaving a dynamic language."}),
 ]
+# ex:editorsPick is true for these and false for every other reviewed language, and
+# absent for languages without a review (FILTER(?pick = false) vs FILTER NOT EXISTS).
 EDITORS_PICKS = ["Python", "Rust", "SQL"]
 
 # ---------------------------------------------------------------------------
@@ -966,28 +991,29 @@ EDITORS_PICKS = ["Python", "Rust", "SQL"]
 # ---------------------------------------------------------------------------
 
 # slug, name, ISO country, mid-level salary in USD for job postings (fictional),
-# relative weight for where synthetic people live (rough, not census data).
+# relative weight for where synthetic people live (rough, not census data), and
+# relative weight for where the fictional job postings are (bigger tech hubs get more).
 CITIES = [
-    ("san-francisco", "San Francisco", "US", 160000, 4.5),
-    ("new-york", "New York", "US", 150000, 19.0),
-    ("seattle", "Seattle", "US", 148000, 4.0),
-    ("austin", "Austin", "US", 128000, 2.4),
-    ("toronto", "Toronto", "CA", 98000, 6.0),
-    ("london", "London", "GB", 92000, 10.0),
-    ("dublin", "Dublin", "IE", 86000, 2.0),
-    ("amsterdam", "Amsterdam", "NL", 82000, 2.5),
-    ("berlin", "Berlin", "DE", 80000, 4.5),
-    ("munich", "Munich", "DE", 84000, 2.9),
-    ("zurich", "Zurich", "CH", 125000, 1.4),
-    ("paris", "Paris", "FR", 70000, 11.0),
-    ("stockholm", "Stockholm", "SE", 70000, 2.4),
-    ("madrid", "Madrid", "ES", 50000, 6.5),
-    ("warsaw", "Warsaw", "PL", 48000, 3.0),
-    ("tokyo", "Tokyo", "JP", 68000, 37.0),
-    ("singapore", "Singapore", "SG", 88000, 6.0),
-    ("sydney", "Sydney", "AU", 92000, 5.0),
-    ("bengaluru", "Bengaluru", "IN", 28000, 13.0),
-    ("sao-paulo", "São Paulo", "BR", 34000, 22.0),
+    ("san-francisco", "San Francisco", "US", 160000, 4.5, 9),
+    ("new-york", "New York", "US", 150000, 19.0, 10),
+    ("seattle", "Seattle", "US", 148000, 4.0, 6),
+    ("austin", "Austin", "US", 128000, 2.4, 4),
+    ("toronto", "Toronto", "CA", 98000, 6.0, 5),
+    ("london", "London", "GB", 92000, 10.0, 10),
+    ("dublin", "Dublin", "IE", 86000, 2.0, 3),
+    ("amsterdam", "Amsterdam", "NL", 82000, 2.5, 4),
+    ("berlin", "Berlin", "DE", 80000, 4.5, 7),
+    ("munich", "Munich", "DE", 84000, 2.9, 3),
+    ("zurich", "Zurich", "CH", 125000, 1.4, 2),
+    ("paris", "Paris", "FR", 70000, 11.0, 5),
+    ("stockholm", "Stockholm", "SE", 70000, 2.4, 3),
+    ("madrid", "Madrid", "ES", 50000, 6.5, 3),
+    ("warsaw", "Warsaw", "PL", 48000, 3.0, 4),
+    ("tokyo", "Tokyo", "JP", 68000, 37.0, 6),
+    ("singapore", "Singapore", "SG", 88000, 6.0, 5),
+    ("sydney", "Sydney", "AU", 92000, 5.0, 4),
+    ("bengaluru", "Bengaluru", "IN", 28000, 13.0, 9),
+    ("sao-paulo", "São Paulo", "BR", 34000, 22.0, 4),
 ]
 
 # language label -> (IRI local name or None, posting weight, salary factor, roles)
@@ -1216,16 +1242,69 @@ def validate() -> None:
         raise SystemExit("unused persons: %s" % sorted(set(PERSONS) - used_people))
     if set(ORGS) - used_orgs:
         raise SystemExit("unused organisations: %s" % sorted(set(ORGS) - used_orgs))
-    for _, _, _, _, rows in SURVEYS:
+    for *_, rows in SURVEYS:
         for k in rows:
             if k not in keys:
                 raise SystemExit("survey: unknown language %s" % k)
     for r in REVIEWS:
         if r[0] not in keys:
             raise SystemExit("review: unknown language %s" % r[0])
+        if not re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(Z|[+-]\d\d:\d\d)$", r[3]):
+            raise SystemExit("review: bad xsd:dateTime %s" % r[3])
+    if set(EDITORS_PICKS) - {r[0] for r in REVIEWS}:
+        raise SystemExit("editors' picks must have a review")
     for _, key, *_ in JOB_LANGUAGES:
         if key is not None and key not in keys:
             raise SystemExit("jobs: unknown language %s" % key)
+    validate_chronology()
+
+
+# (language, influence) pairs allowed to break the "an influence is never younger"
+# rule.  Empty on purpose: Wikipedia's "Influenced by" lists also name influences on
+# LATER versions of a language (C# on Java 5, Swift and Elm on post-2012 Rust); those
+# are left out so ex:influencedBy describes original designs and has no cycles.
+INFLUENCE_EXCEPTIONS = set()
+
+
+def validate_chronology() -> None:
+    by_key = {l["key"]: l for l in LANGUAGES}
+    for l in LANGUAGES:
+        for k in l["influenced_by"]:
+            y, iy = l["year"], by_key[k]["year"]
+            if y and iy and iy > y and (l["key"], k) not in INFLUENCE_EXCEPTIONS:
+                raise SystemExit("%s (%d) cannot be influenced by the younger %s (%d)"
+                                 % (l["key"], y, k, iy))
+        if l["first_release"] and l["year"] and int(l["first_release"][:4]) != l["year"]:
+            raise SystemExit("%s: first release date is not in the first-appeared year" % l["key"])
+        if l["v1"] and l["first_release"] and l["v1"] < l["first_release"]:
+            raise SystemExit("%s: version 1.0 before the first release" % l["key"])
+        for p in l["designers"]:
+            born = PERSONS[p][1]
+            if born and l["year"] and int(born[:4]) + 15 > l["year"]:
+                raise SystemExit("%s: designer %s born too late" % (l["key"], p))
+    for slug, (_, born, died, turing) in PERSONS.items():
+        for d in (born, died):
+            if d:
+                dt.date.fromisoformat(d)  # raises on a malformed date
+        if born and died and died <= born:
+            raise SystemExit("%s: died before being born" % slug)
+        if turing and born and turing < int(born[:4]) + 20:
+            raise SystemExit("%s: implausible Turing Award year" % slug)
+    # ex:influencedBy must stay acyclic (property-path lessons rely on it).
+    state = {}
+
+    def visit(k, path):
+        if state.get(k) == 1:
+            raise SystemExit("influence cycle: %s" % " -> ".join(path + [k]))
+        if state.get(k) == 2:
+            return
+        state[k] = 1
+        for i in by_key[k]["influenced_by"]:
+            visit(i, path + [k])
+        state[k] = 2
+
+    for k in by_key:
+        visit(k, [])
 
 
 # ---------------------------------------------------------------------------
@@ -1241,14 +1320,21 @@ def make_languages_ttl() -> tuple[str, int]:
         "\n"
         "REAL-WORLD DATA about %d computer languages, %d people and %d organisations.\n"
         "Facts follow the infoboxes of the English Wikipedia articles (\"First appeared\",\n"
-        "\"Designed by\", \"Developer\", \"Influenced by\", ...). Where a fact was uncertain it\n"
-        "was left out, so a missing value means \"not recorded here\", never \"no\".\n"
+        "\"Designed by\", \"Developer\", \"Influenced by\", ...), checked in October 2026.\n"
+        "Where a fact was uncertain it was left out, so a missing value means \"not\n"
+        "recorded here\", never \"no\". Designer lists are partial for committee designs.\n"
+        "\n"
+        "ex:influencedBy records influences on a language's ORIGINAL design, so the\n"
+        "influencing language never appeared later and the graph has no cycles (the\n"
+        "generator checks both). Wikipedia also lists influences on later versions,\n"
+        "e.g. C# on Java 5; those are deliberately left out.\n"
         "\n"
         "Shape of a language (all optional except rdf:type and rdfs:label):\n"
         "  ex:Python a ex:ProgrammingLanguage ;      # or ex:QueryLanguage\n"
         "      rdfs:label \"Python\"@en ;              # English name, language-tagged\n"
         "      skos:altLabel \"...\" ;                 # other / former names (plain strings)\n"
-        "      schema:description \"...\"@en ;         # some also @fr @de @es @ja\n"
+        "      schema:description \"...\"@en ;         # some also have a short generic phrase\n"
+        "                                            # (not a translation) @fr @de @es @ja\n"
         "      rdfs:comment \"...\"@en ;               # a trivia note, for some languages\n"
         "      ex:firstAppeared 1991 ;               # xsd:integer year\n"
         "      ex:firstReleaseDate \"1991-02-20\"^^xsd:date ;  # only where well documented\n"
@@ -1259,10 +1345,19 @@ def make_languages_ttl() -> tuple[str, int]:
         "      ex:paradigm ex:Functional , ... ;     # classes in a rdfs:subClassOf hierarchy\n"
         "      ex:typing ex:DynamicTyping ; ex:typeStrength ex:StrongTyping ;\n"
         "      ex:typeInference true ;\n"
-        "      ex:fileExtension \".py\" , \".pyi\" ;\n"
+        "      ex:fileExtension \".py\" , \".pyi\" ;     # source code only; case matters\n"
         "      schema:url <https://www.python.org/> ; # homepage, only for some languages\n"
-        "      dcterms:license <http://spdx.org/licenses/PSF-2.0> .  # reference implementation"
-        % (len(LANGUAGES), len(PERSONS), len(ORGS)))
+        "      dcterms:license <http://spdx.org/licenses/PSF-2.0> .  # reference implementation\n"
+        "\n"
+        "Names: languages have rdfs:label \"...\"@en (so match them with \"Python\"@en or\n"
+        "STR()); people and organisations have plain schema:name strings. The only\n"
+        "language-tagged skos:altLabel is ex:ObjectOriented's \"object-orientated\n"
+        "programming\"@en-GB, which LANGMATCHES(LANG(?l), \"en\") matches and LANG(?l) = \"en\"\n"
+        "does not.\n"
+        "\n"
+        "Prefixed names: person:guido-van-rossum, org:psf (\"ex:person/...\" is not a valid\n"
+        "prefixed name, so declare PREFIX person: <%s>)."
+        % (len(LANGUAGES), len(PERSONS), len(ORGS), PERSON))
     w.line()
     w.prefixes(PREFIXES)
 
@@ -1306,12 +1401,15 @@ def make_languages_ttl() -> tuple[str, int]:
          "ex:ComputerLanguage", "xsd:date"),
         ("version1Date", "version 1.0 date", "Release date of version 1.0.",
          "ex:ComputerLanguage", "xsd:date"),
-        ("designer", "designer", "A person who designed the language.",
+        ("designer", "designer",
+         "A person who designed the language. Lists for committee designs are partial.",
          "ex:ComputerLanguage", "ex:Person"),
         ("developer", "developer", "An organisation that developed or maintains the language.",
          "ex:ComputerLanguage", "ex:Organization"),
         ("influencedBy", "influenced by",
-         "The object language influenced the subject language. Traverse it backwards with ^ex:influencedBy.",
+         "The object language influenced the original design of the subject language, so it "
+         "appeared in the same year or earlier; there are no cycles. Traverse it backwards "
+         "with ^ex:influencedBy.",
          "ex:ComputerLanguage", "ex:ComputerLanguage"),
         ("paradigm", "paradigm", "A programming paradigm the language supports (a class below ex:Paradigm).",
          "ex:ComputerLanguage", "rdfs:Class"),
@@ -1321,7 +1419,9 @@ def make_languages_ttl() -> tuple[str, int]:
          "ex:ComputerLanguage", "ex:TypeDiscipline"),
         ("typeInference", "type inference", "true if the compiler infers most types.",
          "ex:ComputerLanguage", "xsd:boolean"),
-        ("fileExtension", "file extension", "A conventional source file name extension, with the dot.",
+        ("fileExtension", "file extension",
+         "A conventional file name extension for source code in the language, with the dot. "
+         "Case matters: R uses both \".R\" and \".r\".",
          "ex:ComputerLanguage", "xsd:string"),
         ("turingAwardYear", "Turing Award year", "Year the person received the ACM Turing Award.",
          "ex:Person", "xsd:integer"),
@@ -1379,8 +1479,8 @@ def make_languages_ttl() -> tuple[str, int]:
         ])
 
     # --- people ---
-    w.comment("=" * 78 + "\nPeople (designers). Dates only where well documented; no deathDate\n"
-              "means only that none is recorded here.\n" + "=" * 78)
+    w.comment("=" * 78 + "\nPeople (designers). Dates only where Wikipedia gives a full date; no\n"
+              "deathDate means only that none is recorded here.\n" + "=" * 78)
     w.line()
     for slug, (name, born, died, turing) in PERSONS.items():
         w.block("person:" + slug, [
@@ -1439,20 +1539,25 @@ def make_survey_trig() -> tuple[str, int]:
         "GRAPH / FROM / FROM NAMED and aggregates. Nothing here is a real survey result.\n"
         "\n"
         "Layout:\n"
-        "  default graph: one description of each named graph (with ex:fictional true)\n"
+        "  default graph: one description of each named graph (with ex:fictional true;\n"
+        "      the surveys also have ex:respondents, dcterms:issued (xsd:date) and\n"
+        "      ex:marginOfError, an xsd:double such as 4.46E-3)\n"
         "  <%ssurvey-2025> and\n"
         "  <%ssurvey-2026>: per language\n"
         "      ex:usageShare      share of respondents using it (xsd:decimal, 0..1)\n"
         "      ex:lovedPercent    %% of its users who want to keep using it (xsd:decimal)\n"
         "      ex:medianSalaryUSD median salary (xsd:integer; missing when too few answered)\n"
-        "  <%seditorial>: reviews as blank nodes, plus ex:editorsPick flags"
+        "  <%seditorial>:\n"
+        "      reviews as blank nodes (ex:rating xsd:integer, dcterms:created xsd:dateTime\n"
+        "      with a UTC offset), and ex:editorsPick true or false (xsd:boolean) for each\n"
+        "      reviewed language; languages without a review have no ex:editorsPick"
         % (GRAPH_NS, GRAPH_NS, GRAPH_NS))
     w.line()
     w.prefixes([p for p in PREFIXES if p[0] not in ("person", "org", "skos")])
 
     w.comment("--- Default graph: metadata about the named graphs ---")
     w.line()
-    for slug, year, respondents, issued, _ in SURVEYS:
+    for slug, year, respondents, issued, margin, _ in SURVEYS:
         w.block(iri(GRAPH_NS + slug), [
             ("a", ["ex:Survey"]),
             ("rdfs:label", [lit("Developer survey %d (fictional)" % year, "en")]),
@@ -1462,6 +1567,7 @@ def make_survey_trig() -> tuple[str, int]:
             ("ex:surveyYear", [str(year)]),
             ("ex:respondents", [str(respondents)]),
             ("dcterms:issued", [date_lit(issued)]),
+            ("ex:marginOfError", [margin]),
         ])
     w.block(iri(GRAPH_NS + "editorial"), [
         ("a", ["ex:EditorialGraph"]),
@@ -1471,7 +1577,7 @@ def make_survey_trig() -> tuple[str, int]:
         ("ex:fictional", ["true"]),
     ])
 
-    for slug, year, _, _, rows in SURVEYS:
+    for slug, year, *_, rows in SURVEYS:
         w.comment("--- FICTIONAL survey %d ---" % year)
         w.line("GRAPH %s {" % iri(GRAPH_NS + slug))
         w.indent = "    "
@@ -1488,19 +1594,26 @@ def make_survey_trig() -> tuple[str, int]:
     w.comment("--- FICTIONAL editorial reviews (blank nodes) ---")
     w.line("GRAPH %s {" % iri(GRAPH_NS + "editorial"))
     w.indent = "    "
-    for key, rating, reviewer, date, texts in REVIEWS:
+    for key, rating, reviewer, created, texts in REVIEWS:
         # Written as an inline blank node: [ ... ] .
         objs = [("a", ["ex:Review"]), ("ex:about", ["ex:" + key]), ("ex:rating", [str(rating)]),
-                ("ex:reviewer", [lit(reviewer)]), ("dcterms:date", [date_lit(date)]),
+                ("ex:reviewer", [lit(reviewer)]),
+                ("dcterms:created", ['"%s"^^xsd:dateTime' % created]),
                 ("schema:reviewBody", [lit(t, tag) for tag, t in texts.items()])]
         w.line("[")
         for i, (p, os_) in enumerate(objs):
             w.triples += len(os_)
-            w.line("    %s %s%s" % (p, " , ".join(os_), " ;" if i < len(objs) - 1 else ""))
+            end = " ;" if i < len(objs) - 1 else ""
+            head = "    %s " % p
+            # one object per line when there are several (the reviews in two languages)
+            for j, o in enumerate(os_):
+                w.line((head if j == 0 else " " * len(head)) + o
+                       + (" ," if j < len(os_) - 1 else end))
         w.line("] .")
         w.line()
-    for key in EDITORS_PICKS:
-        w.block("ex:" + key, [("ex:editorsPick", ["true"])])
+    reviewed = list(dict.fromkeys(r[0] for r in REVIEWS))
+    for key in reviewed:
+        w.block("ex:" + key, [("ex:editorsPick", ["true" if key in EDITORS_PICKS else "false"])])
     w.indent = ""
     w.line("}")
     w.line()
@@ -1520,12 +1633,15 @@ def make_job_rows():
     rng = Rng(JOB_SEED)
     langs = Weighted([j[2] for j in JOB_LANGUAGES])
     levels = Weighted([lv[2] for lv in LEVELS])
+    cities = Weighted([c[5] for c in CITIES])
     rows = []
     for i in range(1, JOB_COUNT + 1):
-        label, key, _, factor, roles = JOB_LANGUAGES[langs.pick(rng)]
+        # The first postings go through the list once, so every language has at least one.
+        lang_idx = i - 1 if i <= len(JOB_LANGUAGES) else langs.pick(rng)
+        label, key, _, factor, roles = JOB_LANGUAGES[lang_idx]
         level, level_factor, _ = LEVELS[levels.pick(rng)]
         role = rng.choice(roles)
-        _, city, country, base, _ = CITIES[rng.below(len(CITIES))]
+        _, city, country, base, _, _ = CITIES[cities.pick(rng)]
         noise = 0.9 + 0.2 * rng.random()
         salary = int(round(base * factor * level_factor * noise / 500.0)) * 500
         remote = 1 if rng.random() < 0.2 else 0
@@ -1604,7 +1720,7 @@ def write_people_nt(path: str, n: int, seed: int) -> int:
 
     city_pick = Weighted([c[4] for c in CITIES])
     # Liked languages: weighted by the (fictional) 2026 usage share, plus a long tail.
-    share = dict(SURVEYS[-1][4])
+    share = dict(SURVEYS[-1][-1])
     lang_keys = [l["key"] for l in LANGUAGES if l["year"] and l["cls"] == "ProgrammingLanguage"]
     like_pick = Weighted([share[k][0] if k in share else 0.002 for k in lang_keys])
 
@@ -1634,8 +1750,11 @@ def write_people_nt(path: str, n: int, seed: int) -> int:
             "#       ex:birthYear 1978 ;          # xsd:integer\n"
             "#       ex:likes ex:Python ;         # 1-2 languages from languages.ttl\n"
             "#       foaf:knows people:p42 .      # 1-5 people; about half live in the same city\n"
+            "#\n"
+            "# foaf:knows is one-directional here: p1 knowing p42 does not mean p42 knows p1\n"
+            "# (use foaf:knows|^foaf:knows for \"friends\"), and it has cycles.\n"
             % (n, seed, n, seed, PEOPLE, CITY, EX, FOAF))
-        for slug, name, cc, _, _ in CITIES:
+        for slug, name, cc, *_ in CITIES:
             c_iri = iri(CITY + slug)
             f.write("%s %s %s .\n%s %s %s .\n%s %s %s .\n" % (
                 c_iri, rdf_type, schema_city, c_iri, label, lit(name), c_iri, country, lit(cc)))
@@ -1695,7 +1814,8 @@ def make_load_sql(with_people: bool) -> str:
         "-- Generated by tutorial/make_tutorial_data.py --emit-sql; re-run the script to change it.",
         "--",
         "-- readfile() and .read resolve file names against the shell's CURRENT DIRECTORY,",
-        "-- so run this from inside the data directory, after loading the extension:",
+        "-- so run this from inside the data directory, after loading the extension.",
+        "-- From the repository root:",
         "--",
         "--   cd tutorial/data",
         "--   sqlite3 ../tutorial.db",
@@ -1707,20 +1827,32 @@ def make_load_sql(with_people: bool) -> str:
         "--   cd tutorial/data && sqlite3 ../tutorial.db \\",
         "--       -cmd '.load ../../ext/target/release/libsparqlite' '.read load.sql'",
         "--",
-        "-- (The extension path depends on where you built or unpacked it; .load accepts",
-        "-- the file name with or without the .so / .dylib / .dll suffix.)",
+        "-- Already in a sqlite3 session started somewhere else? \".cd tutorial/data\"",
+        "-- (relative to where you started it) moves the shell into the data directory.",
         "--",
-        "-- .bail on stops at the first error. Running the script again on the same",
-        "-- database (after a failure, or just to start over) first removes the previous",
-        "-- copy with SPARQL CLEAR ALL, so give the tutorial its own database file.",
+        "-- The extension is libsparqlite.so on Linux, libsparqlite.dylib on macOS and",
+        "-- sparqlite.dll (no \"lib\") on Windows; .load accepts the name with or without",
+        "-- that suffix. If you renamed the file, also give the entry point:",
+        "--   .load ./my-copy-of-sparqlite.so sqlite3_sparqlite_init",
+        "--",
+        "-- .bail on stops at the first error. In an interactive shell bail then stays on",
+        "-- for the rest of the session; type .bail off to turn it off again.",
+        "-- Running the script again on the same database (after a failure, or just to",
+        "-- start over) first removes the previous copy with SPARQL CLEAR ALL, so give the",
+        "-- tutorial its own database file.",
         "",
         ".bail on",
+        "",
+        "-- 8 KiB pages suit the store; this only has an effect while the database file",
+        "-- is still empty (the Python route sets the same page size).",
+        "PRAGMA page_size = 8192;",
         "",
         "-- Stop early, with a readable message, if the extension or the files are missing.",
         "CREATE TEMP TABLE IF NOT EXISTS tutorial_guard(ok INTEGER",
         "  CONSTRAINT \"sparqlite is not loaded - run .load /path/to/libsparqlite first\" CHECK (ok),",
         "  files INTEGER",
-        "  CONSTRAINT \"data files not found - run .read load.sql from inside the tutorial/data directory\" CHECK (files));",
+        "  CONSTRAINT \"data files not found - .cd into the directory that holds load.sql"
+        " (e.g. .cd tutorial/data) and .read load.sql again\" CHECK (files));",
         "INSERT INTO temp.tutorial_guard(ok, files) VALUES (",
         "  (SELECT count(*) > 0 FROM pragma_function_list WHERE name = 'sparql_load'), 1);",
         "INSERT INTO temp.tutorial_guard(ok, files) VALUES (1,\n  %s);" % guard_files,
@@ -1768,6 +1900,9 @@ def make_load_sql(with_people: bool) -> str:
 # Loading through Python's sqlite3 module
 # ---------------------------------------------------------------------------
 
+EXT_SUFFIXES = (".so", ".dylib", ".dll")
+ENTRY_POINT = "sqlite3_sparqlite_init"
+
 
 def nice_path(path: str) -> str:
     """A relative path when that is short and readable, else the absolute one."""
@@ -1776,6 +1911,34 @@ def nice_path(path: str) -> str:
     except ValueError:  # another drive on Windows
         return os.path.abspath(path)
     return rel if not rel.startswith(os.pardir) else os.path.abspath(path)
+
+
+def shell_word(text: str) -> str:
+    return text if re.match(r"^[\w@%+=:,./-]+$", text) else shlex.quote(text)
+
+
+def path_from(path: str, base: str) -> str:
+    """PATH as typed in a shell whose current directory is BASE (relative if short)."""
+    full = os.path.abspath(path)
+    try:
+        rel = os.path.relpath(full, base)
+    except ValueError:
+        return full
+    return rel if rel.split(os.sep).count(os.pardir) <= 2 else full
+
+
+def cli_command(out_dir: str, db_path, ext) -> str:
+    """The one-line sqlite3 command that loads load.sql, using the user's own paths."""
+    db = path_from(db_path, out_dir) if db_path else os.path.join(os.pardir, "tutorial.db")
+    if ext:
+        ext_arg = path_from(ext, out_dir)
+        if not re.match(r"^[\w@%+=:,./\\-]+$", ext_arg):
+            ext_arg = '"%s"' % ext_arg.replace("\\", "\\\\").replace('"', '\\"')
+    else:
+        ext_arg = "/path/to/libsparqlite"
+    return "cd %s && sqlite3 %s -cmd %s %s" % (
+        shell_word(nice_path(out_dir)), shell_word(db), shlex.quote(".load " + ext_arg),
+        shlex.quote(".read load.sql"))
 
 
 def default_extension() -> str | None:
@@ -1790,9 +1953,29 @@ def default_extension() -> str | None:
     return None
 
 
-def is_tutorial_db(path: str) -> bool:
+def resolve_extension(path: str) -> str | None:
+    """The file SQLite would load for PATH (which may lack the suffix), or None."""
+    for candidate in [path] + [path + s for s in EXT_SUFFIXES]:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def can_load_extensions() -> bool:
+    con = sqlite3.connect(":memory:")
     try:
-        con = sqlite3.connect("file:%s?mode=ro" % path, uri=True)
+        con.enable_load_extension(True)
+        return True
+    except (AttributeError, sqlite3.Error):
+        return False
+    finally:
+        con.close()
+
+
+def is_tutorial_db(path: str) -> bool:
+    uri = pathlib.Path(os.path.abspath(path)).as_uri() + "?mode=ro"  # escapes ? # %
+    try:
+        con = sqlite3.connect(uri, uri=True)
         try:
             return con.execute("SELECT count(*) FROM sqlite_master WHERE name = 'tutorial_info'"
                                ).fetchone()[0] == 1
@@ -1802,26 +1985,57 @@ def is_tutorial_db(path: str) -> bool:
         return False
 
 
-def build_database(db_path: str, ext_path: str, out_dir: str, files, force: bool) -> None:
+def db_target_problem(db_path: str, force: bool) -> str | None:
+    """Why --db PATH cannot be (re)built, or None if it can."""
+    parent = os.path.dirname(os.path.abspath(db_path))
+    if not os.path.isdir(parent):
+        return "the directory for --db %s does not exist (create it first)" % db_path
+    if os.path.isdir(db_path):
+        return "--db %s is a directory; give a file name such as %s" % (
+            db_path, os.path.join(db_path, "tutorial.db"))
     if os.path.exists(db_path):
         if os.path.exists(db_path + "-wal") or os.path.exists(db_path + "-journal"):
-            raise SystemExit("error: %s looks open or unfinished (a -wal or -journal file exists); "
-                             "close other connections first" % db_path)
+            return ("%s looks open or unfinished (a -wal or -journal file exists); "
+                    "close other connections first" % db_path)
         if not force and not is_tutorial_db(db_path):
-            raise SystemExit("error: %s exists and was not created by this script; "
-                             "choose another path or pass --force to replace it" % db_path)
+            return ("%s exists and was not created by this script; choose another path "
+                    "or pass --force to replace it" % db_path)
+    return None
 
-    probe = sqlite3.connect(":memory:")
-    if not hasattr(probe, "enable_load_extension"):
-        raise SystemExit(
-            "error: this Python's sqlite3 module cannot load extensions (it was built\n"
-            "without SQLITE_ENABLE_LOAD_EXTENSION; macOS's system Python is one example).\n"
-            "Use the sqlite3 shell instead:\n"
-            "  python3 %s --emit-sql\n"
-            "  cd %s && sqlite3 ../tutorial.db -cmd '.load /path/to/libsparqlite' '.read load.sql'"
-            % (nice_path(__file__), nice_path(out_dir)))
-    probe.close()
 
+def load_failure_message(path: str, err: Exception) -> str:
+    reason = str(err)
+    try:  # ask the dynamic loader directly: SQLite's message names a retried file name
+        import ctypes
+        ctypes.CDLL(os.path.abspath(path))
+    except OSError as e:
+        reason = str(e)
+    except Exception:  # noqa: BLE001 - only used to improve the message
+        pass
+    return ("error: could not load the extension %s\n  %s\n"
+            "It must be a sparqlite build for this machine (%s, %d-bit Python); rebuild it with\n"
+            "  cargo build --release --manifest-path ext/Cargo.toml"
+            % (path, reason, platform.machine() or "unknown", 64 if sys.maxsize > 2 ** 32 else 32))
+
+
+def load_extension(con, path: str) -> None:
+    con.enable_load_extension(True)
+    try:
+        try:
+            con.load_extension(path)
+        except sqlite3.Error as err:
+            if sys.version_info >= (3, 12):  # a renamed file needs the entry point spelled out
+                try:
+                    con.load_extension(path, entrypoint=ENTRY_POINT)
+                    return
+                except sqlite3.Error:
+                    pass
+            raise SystemExit(load_failure_message(path, err))
+    finally:
+        con.enable_load_extension(False)
+
+
+def build_database(db_path: str, ext_path: str, out_dir: str, files) -> None:
     db_dir = os.path.dirname(os.path.abspath(db_path))
     fd, tmp = tempfile.mkstemp(prefix=".tutorial-", suffix=".db", dir=db_dir)
     os.close(fd)
@@ -1829,15 +2043,9 @@ def build_database(db_path: str, ext_path: str, out_dir: str, files, force: bool
     con = sqlite3.connect(tmp, isolation_level=None)
     ok = False
     try:
-        con.enable_load_extension(True)
-        try:
-            con.load_extension(ext_path)
-        except sqlite3.Error as e:
-            raise SystemExit("error: could not load the extension %r: %s\n"
-                             "(build it with: cargo build --release --manifest-path ext/Cargo.toml)"
-                             % (ext_path, e))
-        con.enable_load_extension(False)
-        print("loaded %s" % con.execute("SELECT sparql_version()").fetchone()[0])
+        load_extension(con, ext_path)
+        print("loaded %s from %s" % (con.execute("SELECT sparql_version()").fetchone()[0],
+                                     nice_path(ext_path)))
         con.execute("PRAGMA page_size = 8192")
         con.execute("SELECT sparql_init()")
         con.execute("BEGIN")
@@ -1864,6 +2072,8 @@ def build_database(db_path: str, ext_path: str, out_dir: str, files, force: bool
         con.execute("SELECT sparql_analyze()")
         summary(con)
         ok = True
+    except sqlite3.Error as e:
+        raise SystemExit("error: loading the tutorial data failed: %s" % e)
     finally:
         con.close()
         if not ok and os.path.exists(tmp):
@@ -1907,6 +2117,14 @@ def write_text(path: str, text: str) -> None:
         f.write(text)
 
 
+def read_text(path: str) -> str | None:
+    try:
+        with open(path, encoding="utf-8", newline="") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1922,16 +2140,39 @@ def main(argv=None) -> int:
                     help="also write load.sql, which loads the files from the sqlite3 shell "
                          "(run it from inside the data directory; see the top of load.sql)")
     ap.add_argument("--db", metavar="PATH",
-                    help="create PATH and load everything into it through Python's sqlite3 "
-                         "module (rebuilt from scratch on every run)")
+                    help="create PATH (e.g. tutorial/tutorial.db) and load everything into it "
+                         "through Python's sqlite3 module; rebuilt from scratch on every run")
     ap.add_argument("--ext", metavar="PATH",
-                    help="the sparqlite extension for --db, e.g. ext/target/release/libsparqlite "
-                         "(default: $SPARQLITE_EXT, else ext/target/release/ next to this script)")
+                    help="the sparqlite extension for --db, e.g. ext/target/release/libsparqlite.so "
+                         "(the suffix may be left out; default: $SPARQLITE_EXT, else a build in "
+                         "ext/target/release/ next to this script)")
     ap.add_argument("--force", action="store_true",
                     help="with --db: replace PATH even if this script did not create it")
     args = ap.parse_args(argv)
+
+    # Check everything that can fail before writing anything.
     if args.people < 0:
         ap.error("--people must be >= 0")
+    if args.ext and not args.db:
+        ap.error("--ext only makes sense together with --db")
+    ext_file = None
+    can_load = True
+    if args.db:
+        problem = db_target_problem(args.db, args.force)
+        if problem:
+            ap.error(problem)
+        ext = args.ext or default_extension()
+        if not ext:
+            ap.error("--db needs --ext PATH (no build found in ext/target/release/ and "
+                     "$SPARQLITE_EXT is not set); build it with: "
+                     "cargo build --release --manifest-path ext/Cargo.toml")
+        ext_file = resolve_extension(ext)
+        if not ext_file:
+            ap.error("extension not found: %s (also tried adding %s)" % (ext, ", ".join(EXT_SUFFIXES)))
+        can_load = can_load_extensions()
+    else:
+        found = default_extension()
+        ext_file = resolve_extension(found) if found else None
 
     validate()
     out_dir = os.path.abspath(args.out)
@@ -1963,18 +2204,24 @@ def main(argv=None) -> int:
     elif os.path.exists(people_path):
         print("note: ignoring the existing people.nt (pass --people N to regenerate and load it)")
 
-    if args.emit_sql:
-        write_text(os.path.join(out_dir, "load.sql"), make_load_sql(bool(args.people)))
-        print("wrote load.sql        -- then: cd %s && sqlite3 ../tutorial.db "
-              "-cmd '.load /path/to/libsparqlite' '.read load.sql'" % nice_path(out_dir))
+    load_sql_path = os.path.join(out_dir, "load.sql")
+    load_sql = make_load_sql(bool(args.people))
+    command = cli_command(out_dir, args.db, ext_file)
+    if args.emit_sql or (args.db and not can_load):
+        write_text(load_sql_path, load_sql)
+        print("wrote load.sql        -- then: %s" % command)
+    elif os.path.exists(load_sql_path) and read_text(load_sql_path) != load_sql:
+        print("note: the existing load.sql does not match these files (another --people "
+              "setting or an older version of this script); add --emit-sql to rewrite it")
 
     if args.db:
-        ext = args.ext or default_extension()
-        if not ext:
-            ap.error("--db needs --ext PATH (no build found in ext/target/release/)")
-        build_database(args.db, ext, out_dir, files, args.force)
-    elif args.ext:
-        ap.error("--ext only makes sense together with --db")
+        if not can_load:
+            print("error: this Python's sqlite3 module cannot load extensions (it was built\n"
+                  "without SQLITE_ENABLE_LOAD_EXTENSION; macOS's system Python is one example),\n"
+                  "so %s was not created. The data files and load.sql are ready; load them\n"
+                  "with the sqlite3 shell instead:\n  %s" % (args.db, command), file=sys.stderr)
+            return 1
+        build_database(args.db, ext_file, out_dir, files)
     return 0
 
 

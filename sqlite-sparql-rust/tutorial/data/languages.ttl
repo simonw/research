@@ -3,14 +3,21 @@
 #
 # REAL-WORLD DATA about 94 computer languages, 117 people and 40 organisations.
 # Facts follow the infoboxes of the English Wikipedia articles ("First appeared",
-# "Designed by", "Developer", "Influenced by", ...). Where a fact was uncertain it
-# was left out, so a missing value means "not recorded here", never "no".
+# "Designed by", "Developer", "Influenced by", ...), checked in October 2026.
+# Where a fact was uncertain it was left out, so a missing value means "not
+# recorded here", never "no". Designer lists are partial for committee designs.
+#
+# ex:influencedBy records influences on a language's ORIGINAL design, so the
+# influencing language never appeared later and the graph has no cycles (the
+# generator checks both). Wikipedia also lists influences on later versions,
+# e.g. C# on Java 5; those are deliberately left out.
 #
 # Shape of a language (all optional except rdf:type and rdfs:label):
 #   ex:Python a ex:ProgrammingLanguage ;      # or ex:QueryLanguage
 #       rdfs:label "Python"@en ;              # English name, language-tagged
 #       skos:altLabel "..." ;                 # other / former names (plain strings)
-#       schema:description "..."@en ;         # some also @fr @de @es @ja
+#       schema:description "..."@en ;         # some also have a short generic phrase
+#                                             # (not a translation) @fr @de @es @ja
 #       rdfs:comment "..."@en ;               # a trivia note, for some languages
 #       ex:firstAppeared 1991 ;               # xsd:integer year
 #       ex:firstReleaseDate "1991-02-20"^^xsd:date ;  # only where well documented
@@ -21,9 +28,18 @@
 #       ex:paradigm ex:Functional , ... ;     # classes in a rdfs:subClassOf hierarchy
 #       ex:typing ex:DynamicTyping ; ex:typeStrength ex:StrongTyping ;
 #       ex:typeInference true ;
-#       ex:fileExtension ".py" , ".pyi" ;
+#       ex:fileExtension ".py" , ".pyi" ;     # source code only; case matters
 #       schema:url <https://www.python.org/> ; # homepage, only for some languages
 #       dcterms:license <http://spdx.org/licenses/PSF-2.0> .  # reference implementation
+#
+# Names: languages have rdfs:label "..."@en (so match them with "Python"@en or
+# STR()); people and organisations have plain schema:name strings. The only
+# language-tagged skos:altLabel is ex:ObjectOriented's "object-orientated
+# programming"@en-GB, which LANGMATCHES(LANG(?l), "en") matches and LANG(?l) = "en"
+# does not.
+#
+# Prefixed names: person:guido-van-rossum, org:psf ("ex:person/..." is not a valid
+# prefixed name, so declare PREFIX person: <http://example.org/pl/person/>).
 
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -94,7 +110,7 @@ ex:version1Date
 ex:designer
     a rdf:Property ;
     rdfs:label "designer"@en ;
-    rdfs:comment "A person who designed the language."@en ;
+    rdfs:comment "A person who designed the language. Lists for committee designs are partial."@en ;
     rdfs:domain ex:ComputerLanguage ;
     rdfs:range ex:Person .
 
@@ -108,7 +124,7 @@ ex:developer
 ex:influencedBy
     a rdf:Property ;
     rdfs:label "influenced by"@en ;
-    rdfs:comment "The object language influenced the subject language. Traverse it backwards with ^ex:influencedBy."@en ;
+    rdfs:comment "The object language influenced the original design of the subject language, so it appeared in the same year or earlier; there are no cycles. Traverse it backwards with ^ex:influencedBy."@en ;
     rdfs:domain ex:ComputerLanguage ;
     rdfs:range ex:ComputerLanguage .
 
@@ -143,7 +159,7 @@ ex:typeInference
 ex:fileExtension
     a rdf:Property ;
     rdfs:label "file extension"@en ;
-    rdfs:comment "A conventional source file name extension, with the dot."@en ;
+    rdfs:comment "A conventional file name extension for source code in the language, with the dot. Case matters: R uses both \".R\" and \".r\"."@en ;
     rdfs:domain ex:ComputerLanguage ;
     rdfs:range xsd:string .
 
@@ -321,11 +337,6 @@ ex:WeakTyping
     a dcterms:LicenseDocument ;
     rdfs:label "Ruby License"@en ;
     dcterms:identifier "Ruby" .
-
-<http://spdx.org/licenses/PHP-3.01>
-    a dcterms:LicenseDocument ;
-    rdfs:label "PHP License v3.01"@en ;
-    dcterms:identifier "PHP-3.01" .
 
 <http://spdx.org/licenses/BSL-1.0>
     a dcterms:LicenseDocument ;
@@ -511,8 +522,8 @@ org:plt
     schema:name "PLT Inc." .
 
 # ==============================================================================
-# People (designers). Dates only where well documented; no deathDate
-# means only that none is recorded here.
+# People (designers). Dates only where Wikipedia gives a full date; no
+# deathDate means only that none is recorded here.
 # ==============================================================================
 
 person:john-backus
@@ -539,7 +550,7 @@ person:jean-sammet
     a ex:Person ;
     schema:name "Jean E. Sammet" ;
     schema:birthDate "1928-03-23"^^xsd:date ;
-    schema:deathDate "2017-05-22"^^xsd:date .
+    schema:deathDate "2017-05-20"^^xsd:date .
 
 person:peter-naur
     a ex:Person ;
@@ -602,7 +613,9 @@ person:kenneth-iverson
 
 person:roger-hui
     a ex:Person ;
-    schema:name "Roger Hui" .
+    schema:name "Roger Hui" ;
+    schema:birthDate "1953-12-29"^^xsd:date ;
+    schema:deathDate "2021-10-16"^^xsd:date .
 
 person:peter-landin
     a ex:Person ;
@@ -621,6 +634,7 @@ person:tony-hoare
     a ex:Person ;
     schema:name "Tony Hoare" ;
     schema:birthDate "1934-01-11"^^xsd:date ;
+    schema:deathDate "2026-03-05"^^xsd:date ;
     ex:turingAwardYear 1980 .
 
 person:martin-richards
@@ -630,7 +644,9 @@ person:martin-richards
 
 person:wally-feurzeig
     a ex:Person ;
-    schema:name "Wally Feurzeig" .
+    schema:name "Wally Feurzeig" ;
+    schema:birthDate "1927-06-10"^^xsd:date ;
+    schema:deathDate "2013-01-04"^^xsd:date .
 
 person:seymour-papert
     a ex:Person ;
@@ -652,11 +668,13 @@ person:dennis-ritchie
     a ex:Person ;
     schema:name "Dennis Ritchie" ;
     schema:birthDate "1941-09-09"^^xsd:date ;
+    schema:deathDate "2011-10-12"^^xsd:date ;
     ex:turingAwardYear 1983 .
 
 person:charles-moore
     a ex:Person ;
-    schema:name "Charles H. Moore" .
+    schema:name "Charles H. Moore" ;
+    schema:birthDate "1938-09-09"^^xsd:date .
 
 person:alan-kay
     a ex:Person ;
@@ -671,7 +689,7 @@ person:dan-ingalls
 person:adele-goldberg
     a ex:Person ;
     schema:name "Adele Goldberg" ;
-    schema:birthDate "1945-07-07"^^xsd:date .
+    schema:birthDate "1945-07-22"^^xsd:date .
 
 person:alain-colmerauer
     a ex:Person ;
@@ -688,11 +706,14 @@ person:robin-milner
 
 person:donald-chamberlin
     a ex:Person ;
-    schema:name "Donald D. Chamberlin" .
+    schema:name "Donald D. Chamberlin" ;
+    schema:birthDate "1944-12-21"^^xsd:date .
 
 person:raymond-boyce
     a ex:Person ;
-    schema:name "Raymond F. Boyce" .
+    schema:name "Raymond F. Boyce" ;
+    schema:birthDate "1946-08-27"^^xsd:date ;
+    schema:deathDate "1974-06-18"^^xsd:date .
 
 person:guy-steele
     a ex:Person ;
@@ -712,7 +733,8 @@ person:barbara-liskov
 
 person:john-chambers
     a ex:Person ;
-    schema:name "John Chambers" .
+    schema:name "John Chambers" ;
+    schema:birthDate "1941-04-28"^^xsd:date .
 
 person:alfred-aho
     a ex:Person ;
@@ -722,7 +744,8 @@ person:alfred-aho
 
 person:peter-weinberger
     a ex:Person ;
-    schema:name "Peter J. Weinberger" .
+    schema:name "Peter J. Weinberger" ;
+    schema:birthDate "1942-08-06"^^xsd:date .
 
 person:brian-kernighan
     a ex:Person ;
@@ -731,11 +754,15 @@ person:brian-kernighan
 
 person:david-farber
     a ex:Person ;
-    schema:name "David J. Farber" .
+    schema:name "David J. Farber" ;
+    schema:birthDate "1934-04-17"^^xsd:date ;
+    schema:deathDate "2026-02-07"^^xsd:date .
 
 person:ralph-griswold
     a ex:Person ;
-    schema:name "Ralph E. Griswold" .
+    schema:name "Ralph E. Griswold" ;
+    schema:birthDate "1934-05-19"^^xsd:date ;
+    schema:deathDate "2006-10-04"^^xsd:date .
 
 person:ivan-polonsky
     a ex:Person ;
@@ -765,11 +792,14 @@ person:tom-love
 
 person:brad-cox
     a ex:Person ;
-    schema:name "Brad Cox" .
+    schema:name "Brad Cox" ;
+    schema:birthDate "1944-05-02"^^xsd:date ;
+    schema:deathDate "2021-01-02"^^xsd:date .
 
 person:scott-fahlman
     a ex:Person ;
-    schema:name "Scott Fahlman" .
+    schema:name "Scott Fahlman" ;
+    schema:birthDate "1948-03-21"^^xsd:date .
 
 person:richard-gabriel
     a ex:Person ;
@@ -782,7 +812,8 @@ person:kent-pitman
 person:cleve-moler
     a ex:Person ;
     schema:name "Cleve Moler" ;
-    schema:birthDate "1939-08-17"^^xsd:date .
+    schema:birthDate "1939-08-17"^^xsd:date ;
+    schema:deathDate "2026-05-20"^^xsd:date .
 
 person:bjarne-stroustrup
     a ex:Person ;
@@ -791,7 +822,9 @@ person:bjarne-stroustrup
 
 person:david-turner
     a ex:Person ;
-    schema:name "David Turner" .
+    schema:name "David Turner" ;
+    schema:birthDate "1946-01-26"^^xsd:date ;
+    schema:deathDate "2023-10-19"^^xsd:date .
 
 person:larry-tesler
     a ex:Person ;
@@ -842,7 +875,8 @@ person:leo-geurts
 
 person:lambert-meertens
     a ex:Person ;
-    schema:name "Lambert Meertens" .
+    schema:name "Lambert Meertens" ;
+    schema:birthDate "1944-05-10"^^xsd:date .
 
 person:steven-pemberton
     a ex:Person ;
@@ -859,7 +893,9 @@ person:luca-cardelli
 
 person:greg-nelson
     a ex:Person ;
-    schema:name "Greg Nelson" .
+    schema:name "Greg Nelson" ;
+    schema:birthDate "1953-03-27"^^xsd:date ;
+    schema:deathDate "2015-02-02"^^xsd:date .
 
 person:stephen-wolfram
     a ex:Person ;
@@ -868,7 +904,8 @@ person:stephen-wolfram
 
 person:simon-peyton-jones
     a ex:Person ;
-    schema:name "Simon Peyton Jones" .
+    schema:name "Simon Peyton Jones" ;
+    schema:birthDate "1958-01-18"^^xsd:date .
 
 person:philip-wadler
     a ex:Person ;
@@ -883,7 +920,8 @@ person:paul-hudak
 
 person:john-hughes
     a ex:Person ;
-    schema:name "John Hughes" .
+    schema:name "John Hughes" ;
+    schema:birthDate "1958-07-15"^^xsd:date .
 
 person:guido-van-rossum
     a ex:Person ;
@@ -892,7 +930,8 @@ person:guido-van-rossum
 
 person:roberto-ierusalimschy
     a ex:Person ;
-    schema:name "Roberto Ierusalimschy" .
+    schema:name "Roberto Ierusalimschy" ;
+    schema:birthDate "1960-05-21"^^xsd:date .
 
 person:waldemar-celes
     a ex:Person ;
@@ -912,7 +951,8 @@ person:robert-gentleman
 
 person:arthur-whitney
     a ex:Person ;
-    schema:name "Arthur Whitney" .
+    schema:name "Arthur Whitney" ;
+    schema:birthDate "1957-10-20"^^xsd:date .
 
 person:yukihiro-matsumoto
     a ex:Person ;
@@ -952,11 +992,13 @@ person:zoltan-somogyi
 
 person:xavier-leroy
     a ex:Person ;
-    schema:name "Xavier Leroy" .
+    schema:name "Xavier Leroy" ;
+    schema:birthDate "1968-03-15"^^xsd:date .
 
 person:walter-bright
     a ex:Person ;
-    schema:name "Walter Bright" .
+    schema:name "Walter Bright" ;
+    schema:birthDate "1959-03-10"^^xsd:date .
 
 person:andrei-alexandrescu
     a ex:Person ;
@@ -968,7 +1010,8 @@ person:james-strachan
 
 person:martin-odersky
     a ex:Person ;
-    schema:name "Martin Odersky" .
+    schema:name "Martin Odersky" ;
+    schema:birthDate "1958-09-05"^^xsd:date .
 
 person:don-syme
     a ex:Person ;
@@ -1020,7 +1063,8 @@ person:kasper-lund
 
 person:jeff-bezanson
     a ex:Person ;
-    schema:name "Jeff Bezanson" .
+    schema:name "Jeff Bezanson" ;
+    schema:birthDate "1981-12-26"^^xsd:date .
 
 person:stefan-karpinski
     a ex:Person ;
@@ -1112,13 +1156,14 @@ ex:ALGOL58
     ex:paradigm ex:Procedural ;
     ex:influencedBy ex:Fortran .
 
-# COBOL (1959) -- Jean E. Sammet
+# COBOL (1960) -- Jean E. Sammet
 ex:COBOL
     a ex:ProgrammingLanguage ;
     rdfs:label "COBOL"@en ;
     skos:altLabel "Common Business-Oriented Language" ;
     schema:description "Common Business-Oriented Language, designed for business data processing."@en ;
-    ex:firstAppeared 1959 ;
+    rdfs:comment "CODASYL started the design in 1959; the first specification followed in 1960."@en ;
+    ex:firstAppeared 1960 ;
     ex:designer person:jean-sammet ;
     ex:developer org:codasyl ;
     ex:paradigm ex:Procedural ;
@@ -1160,8 +1205,7 @@ ex:SNOBOL
     ex:firstAppeared 1962 ;
     ex:designer person:david-farber , person:ralph-griswold , person:ivan-polonsky ;
     ex:developer org:bell-labs ;
-    ex:paradigm ex:Imperative ;
-    ex:typing ex:DynamicTyping .
+    ex:paradigm ex:Imperative .
 
 # Simula (1962) -- Ole-Johan Dahl, Kristen Nygaard
 ex:Simula
@@ -1307,7 +1351,7 @@ ex:Pascal
     ex:paradigm ex:Procedural ;
     ex:typing ex:StaticTyping ;
     ex:typeStrength ex:StrongTyping ;
-    ex:fileExtension ".pas" , ".pp" ;
+    ex:fileExtension ".pas" ;
     ex:influencedBy ex:ALGOLW , ex:Simula .
 
 # Forth (1970) -- Charles H. Moore
@@ -1335,7 +1379,7 @@ ex:C
     ex:typing ex:StaticTyping ;
     ex:typeStrength ex:WeakTyping ;
     ex:fileExtension ".c" , ".h" ;
-    ex:influencedBy ex:B , ex:ALGOL68 , ex:PLI , ex:Fortran .
+    ex:influencedBy ex:B , ex:BCPL , ex:CPL , ex:ALGOL68 , ex:PLI , ex:Fortran .
 
 # Smalltalk (1972) -- Alan Kay, Dan Ingalls, Adele Goldberg
 ex:Smalltalk
@@ -1382,7 +1426,7 @@ ex:ML
     ex:typeInference true ;
     ex:influencedBy ex:ISWIM .
 
-# SQL (1974) -- Donald D. Chamberlin, Raymond F. Boyce
+# SQL (1973) -- Donald D. Chamberlin, Raymond F. Boyce
 ex:SQL
     a ex:QueryLanguage ;
     rdfs:label "SQL"@en ;
@@ -1390,7 +1434,8 @@ ex:SQL
     schema:description "Declarative language for querying and managing relational databases."@en ,
                        "langage de requête"@fr , "Abfragesprache"@de , "lenguaje de consulta"@es ,
                        "問い合わせ言語"@ja ;
-    ex:firstAppeared 1974 ;
+    rdfs:comment "Work on it began at IBM's San Jose research laboratory in 1973, under the name SEQUEL."@en ;
+    ex:firstAppeared 1973 ;
     ex:designer person:donald-chamberlin , person:raymond-boyce ;
     ex:developer org:ibm ;
     ex:paradigm ex:Declarative ;
@@ -1420,7 +1465,6 @@ ex:CLU
     ex:designer person:barbara-liskov ;
     ex:developer org:mit ;
     ex:paradigm ex:ObjectOriented , ex:Procedural ;
-    ex:typing ex:StaticTyping ;
     ex:typeStrength ex:StrongTyping ;
     ex:influencedBy ex:ALGOL60 , ex:Lisp , ex:Simula .
 
@@ -1506,7 +1550,8 @@ ex:PostScript
     ex:designer person:john-warnock , person:charles-geschke ;
     ex:developer org:adobe ;
     ex:paradigm ex:Concatenative ;
-    ex:fileExtension ".ps" .
+    ex:fileExtension ".ps" ;
+    ex:influencedBy ex:Mesa , ex:Lisp .
 
 # Standard ML (1983) -- Robin Milner
 ex:StandardML
@@ -1627,7 +1672,6 @@ ex:Eiffel
     ex:designer person:bertrand-meyer ;
     ex:paradigm ex:ClassBased ;
     ex:typing ex:StaticTyping ;
-    ex:typeStrength ex:StrongTyping ;
     ex:fileExtension ".e" ;
     schema:url <https://www.eiffel.org/> ;
     ex:influencedBy ex:Ada , ex:Simula .
@@ -1667,7 +1711,7 @@ ex:Perl
     a ex:ProgrammingLanguage ;
     rdfs:label "Perl"@en ;
     schema:description "Text-processing and general-purpose scripting language by Larry Wall."@en ;
-    rdfs:comment "Officially not an acronym; later backronymed as 'Practical Extraction and Report Language'."@en ;
+    rdfs:comment "Officially not an acronym; 'Practical Extraction and Report Language' is a backronym."@en ;
     ex:firstAppeared 1987 ;
     ex:firstReleaseDate "1987-12-18"^^xsd:date ;
     ex:designer person:larry-wall ;
@@ -1675,7 +1719,7 @@ ex:Perl
     ex:typing ex:DynamicTyping ;
     ex:fileExtension ".pl" , ".pm" ;
     schema:url <https://www.perl.org/> ;
-    ex:influencedBy ex:AWK , ex:BASIC , ex:C , ex:CPlusPlus , ex:Lisp , ex:Pascal .
+    ex:influencedBy ex:AWK , ex:BASIC , ex:C , ex:CPlusPlus , ex:Lisp .
 
 # ABC (1987) -- Leo Geurts, Lambert Meertens, Steven Pemberton
 ex:ABC
@@ -1739,7 +1783,7 @@ ex:WolframLanguage
     ex:designer person:stephen-wolfram ;
     ex:developer org:wolfram-research ;
     ex:paradigm ex:Functional , ex:ArrayProgramming ;
-    ex:fileExtension ".nb" , ".m" , ".wl" ;
+    ex:fileExtension ".wl" , ".m" ;
     schema:url <https://www.wolfram.com/language/> .
 
 # Haskell (1990) -- Simon Peyton Jones, Philip Wadler, Paul Hudak, John Hughes
@@ -1801,7 +1845,7 @@ ex:Dylan
     ex:firstAppeared 1992 ;
     ex:developer org:apple ;
     ex:paradigm ex:Functional , ex:ObjectOriented ;
-    ex:typing ex:DynamicTyping ;
+    ex:typing ex:GradualTyping ;
     ex:typeStrength ex:StrongTyping ;
     ex:fileExtension ".dylan" ;
     ex:influencedBy ex:Scheme , ex:CommonLisp .
@@ -1834,7 +1878,7 @@ ex:R
     ex:designer person:ross-ihaka , person:robert-gentleman ;
     ex:paradigm ex:Procedural , ex:Functional , ex:ObjectOriented , ex:ArrayProgramming ;
     ex:typing ex:DynamicTyping ;
-    ex:fileExtension ".r" , ".rds" ;
+    ex:fileExtension ".R" , ".r" ;
     schema:url <https://www.r-project.org/> ;
     ex:influencedBy ex:S , ex:Scheme , ex:CommonLisp .
 
@@ -1886,10 +1930,10 @@ ex:Java
     ex:paradigm ex:ClassBased , ex:Concurrent ;
     ex:typing ex:StaticTyping ;
     ex:typeStrength ex:StrongTyping ;
-    ex:fileExtension ".java" , ".class" , ".jar" ;
+    ex:fileExtension ".java" ;
     ex:influencedBy ex:CPlusPlus , ex:Smalltalk , ex:ObjectiveC , ex:Simula , ex:Mesa ,
                     ex:Modula3 , ex:Oberon , ex:Ada , ex:Eiffel , ex:CLU , ex:Lisp ,
-                    ex:ObjectPascal , ex:CSharp .
+                    ex:ObjectPascal .
 
 # JavaScript (1995) -- Brendan Eich
 ex:JavaScript
@@ -1923,7 +1967,6 @@ ex:PHP
     ex:typeStrength ex:WeakTyping ;
     ex:fileExtension ".php" ;
     schema:url <https://www.php.net/> ;
-    dcterms:license <http://spdx.org/licenses/PHP-3.01> ;
     ex:influencedBy ex:Perl , ex:C , ex:CPlusPlus , ex:Java , ex:Tcl .
 
 # Racket (1995)
@@ -2097,7 +2140,7 @@ ex:PowerShell
     ex:designer person:jeffrey-snover ;
     ex:developer org:microsoft ;
     ex:paradigm ex:Procedural ;
-    ex:fileExtension ".ps1" , ".psm1" , ".psd1" ;
+    ex:fileExtension ".ps1" , ".psm1" ;
     ex:influencedBy ex:CSharp , ex:Perl , ex:Python .
 
 # Clojure (2007) -- Rich Hickey
@@ -2110,7 +2153,7 @@ ex:Clojure
     ex:paradigm ex:Functional , ex:Concurrent ;
     ex:typing ex:DynamicTyping ;
     ex:typeStrength ex:StrongTyping ;
-    ex:fileExtension ".clj" , ".cljs" , ".cljc" , ".edn" ;
+    ex:fileExtension ".clj" , ".cljs" , ".cljc" ;
     schema:url <https://clojure.org/> ;
     dcterms:license <http://spdx.org/licenses/EPL-1.0> ;
     ex:influencedBy ex:CommonLisp , ex:Scheme , ex:Haskell , ex:Erlang , ex:Java .
@@ -2198,15 +2241,15 @@ ex:CoffeeScript
     dcterms:license <http://spdx.org/licenses/MIT> ;
     ex:influencedBy ex:JavaScript , ex:Python , ex:Ruby , ex:Haskell , ex:Perl .
 
-# Rust (2010) -- Graydon Hoare
+# Rust (2012) -- Graydon Hoare
 ex:Rust
     a ex:ProgrammingLanguage ;
     rdfs:label "Rust"@en ;
     schema:description "Memory-safe systems programming language without a garbage collector."@en ,
                        "langage de programmation système"@fr , "Systemprogrammiersprache"@de ,
                        "lenguaje de programación de sistemas"@es , "システムプログラミング言語"@ja ;
-    rdfs:comment "Announced by Mozilla in 2010; Rust 1.0 was released on 15 May 2015."@en ;
-    ex:firstAppeared 2010 ;
+    rdfs:comment "Announced by Mozilla in 2010; version 0.1 followed in January 2012 and Rust 1.0 on 15 May 2015."@en ;
+    ex:firstAppeared 2012 ;
     ex:version1Date "2015-05-15"^^xsd:date ;
     ex:designer person:graydon-hoare ;
     ex:developer org:mozilla ;
@@ -2218,7 +2261,7 @@ ex:Rust
     schema:url <https://www.rust-lang.org/> ;
     dcterms:license <http://spdx.org/licenses/MIT> , <http://spdx.org/licenses/Apache-2.0> ;
     ex:influencedBy ex:CPlusPlus , ex:OCaml , ex:Haskell , ex:Erlang , ex:StandardML , ex:Cyclone ,
-                    ex:Scheme , ex:Ruby , ex:Limbo , ex:Swift , ex:CLU , ex:CSharp , ex:Elm .
+                    ex:Scheme , ex:Ruby , ex:Limbo , ex:CLU , ex:CSharp .
 
 # Kotlin (2011) -- Andrey Breslav
 ex:Kotlin
@@ -2270,8 +2313,8 @@ ex:Julia
     ex:fileExtension ".jl" ;
     schema:url <https://julialang.org/> ;
     dcterms:license <http://spdx.org/licenses/MIT> ;
-    ex:influencedBy ex:Lisp , ex:Fortran , ex:MATLAB , ex:Python , ex:R , ex:Ruby , ex:Perl ,
-                    ex:Lua , ex:C , ex:Dylan , ex:Scheme , ex:WolframLanguage .
+    ex:influencedBy ex:Lisp , ex:MATLAB , ex:Python , ex:R , ex:Ruby , ex:Perl , ex:Lua , ex:C ,
+                    ex:Dylan , ex:Scheme , ex:WolframLanguage .
 
 # Elixir (2012) -- José Valim
 ex:Elixir
@@ -2401,7 +2444,7 @@ ex:Zig
     ex:paradigm ex:Procedural ;
     ex:typing ex:StaticTyping ;
     ex:typeStrength ex:StrongTyping ;
-    ex:fileExtension ".zig" , ".zon" ;
+    ex:fileExtension ".zig" ;
     schema:url <https://ziglang.org/> ;
     dcterms:license <http://spdx.org/licenses/MIT> ;
     ex:influencedBy ex:C , ex:CPlusPlus , ex:Go , ex:Rust .
@@ -2416,7 +2459,6 @@ ex:Gleam
     ex:designer person:louis-pilfold ;
     ex:paradigm ex:Functional , ex:Concurrent ;
     ex:typing ex:StaticTyping ;
-    ex:typeStrength ex:StrongTyping ;
     ex:typeInference true ;
     ex:fileExtension ".gleam" ;
     schema:url <https://gleam.run/> ;
@@ -2449,4 +2491,4 @@ ex:Mojo
     ex:fileExtension ".mojo" , ".🔥" ;
     ex:influencedBy ex:Python , ex:Swift , ex:Rust .
 
-# 2108 triples.
+# 2127 triples.

@@ -79,6 +79,23 @@ def test_sparql_view(loaded):
     loaded.execute("DROP TABLE people")
 
 
+def test_view_term_pushdown_keeps_the_collation(loaded):
+    loaded.execute("CREATE VIRTUAL TABLE temp.names USING sparql_view('SELECT ?s ?n WHERE { ?s <http://ex/name> ?n }')")
+    for cond in ["s__term = '<HTTP://EX/BOB>' COLLATE NOCASE", "n__term = '\"BOB\"' COLLATE NOCASE"]:
+        # Pushed down (BINARY only) or filtered by SQLite: the same rows either way.
+        assert loaded.execute(f"SELECT n FROM names WHERE {cond}").fetchall() == [("Bob",)], cond
+        assert loaded.execute(f"SELECT n FROM names WHERE +{cond}").fetchall() == [("Bob",)], cond
+    assert loaded.execute("SELECT n FROM names WHERE s__term = '<HTTP://EX/BOB>'").fetchall() == []
+    loaded.execute("DROP TABLE names")
+
+
+def test_a_null_query_gives_no_rows(loaded):
+    assert scalar(loaded, "SELECT count(*) FROM sparql_rows(NULL)") == 0
+    loaded.execute("CREATE TEMP TABLE jobs(q TEXT)")
+    loaded.executemany("INSERT INTO jobs VALUES (?)", [("ASK {}",), (None,), ("SELECT ?n WHERE { ?s <http://ex/name> ?n }",)])
+    assert scalar(loaded, "SELECT count(*) FROM jobs j, sparql_rows(j.q) r") == 5
+
+
 def test_sparql_status(db):
     rows = dict(db.execute("SELECT key, value FROM sparql_status").fetchall())
     assert rows["armed"] == 1

@@ -250,3 +250,34 @@ fn a_temp_view_scan_keeps_autocommit_and_one_snapshot() {
     assert_eq!(one::<i64>(&c, "SELECT count(*) FROM vals"), 3001);
     assert!(c.is_autocommit());
 }
+
+/// Without a savepoint, a request is atomic only through the host statement's transaction:
+/// the host must be the statement that writes. When other statements run, sparql_update
+/// cannot tell, and refuses rather than risk a half-applied request.
+#[test]
+fn an_update_inside_a_writing_statement_needs_the_host_to_be_the_only_running_statement() {
+    let c = loaded();
+    c.execute_batch("CREATE TEMP TABLE r(n); CREATE TEMP TABLE t(x);").unwrap();
+    let update = "INSERT INTO r SELECT sparql_update('INSERT DATA { <http://ex/x> <http://ex/p> 1 }')";
+    // A partly read SELECT beside the writing host.
+    {
+        let mut reader = c.prepare("SELECT n FROM (SELECT 1 AS n UNION ALL SELECT 2)").unwrap();
+        let mut rows = reader.query([]).unwrap();
+        rows.next().unwrap().unwrap();
+        let e = c.execute(update, []).unwrap_err().to_string();
+        assert!(e.contains("another statement of this connection writes"), "{e}");
+    }
+    // A pending writer beside a read-only host.
+    {
+        let mut writer = c.prepare("INSERT INTO t VALUES (1), (2) RETURNING x").unwrap();
+        let mut rows = writer.query([]).unwrap();
+        rows.next().unwrap().unwrap();
+        let e = err(&c, "SELECT sparql_update('INSERT DATA { <http://ex/x> <http://ex/p> 1 }')", []);
+        assert!(e.contains("another statement of this connection writes"), "{e}");
+    }
+    assert_eq!(count(&c), 13);
+    assert_eq!(one::<i64>(&c, "SELECT count(*) FROM t"), 2);
+    // Alone, the writing host carries the request.
+    assert_eq!(c.execute(update, []).unwrap(), 1);
+    assert_eq!(count(&c), 14);
+}

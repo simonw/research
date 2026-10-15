@@ -199,7 +199,7 @@ fn requests_inside_the_nesting_limit_fit_a_two_mib_stack() {
         return in_child("requests_inside_the_nesting_limit_fit_a_two_mib_stack", CHILD);
     }
     type Shape = (&'static str, fn(usize) -> String, usize);
-    let shapes: [Shape; 10] = [
+    let shapes: [Shape; 14] = [
         ("parentheses", |d| format!("SELECT * WHERE {{ ?s ?p ?o FILTER({}?o{}) }}", "(".repeat(d), ")".repeat(d)), 190),
         ("groups", |d| format!("SELECT * WHERE {}?s ?p ?o{}", "{ ".repeat(d), " }".repeat(d)), 80),
         ("functions", |d| format!("SELECT * WHERE {{ ?s ?p ?o FILTER({}?o{} != 0) }}", "STR(".repeat(d), ")".repeat(d)), 190),
@@ -209,7 +209,19 @@ fn requests_inside_the_nesting_limit_fit_a_two_mib_stack() {
         ("optional", |d| format!("SELECT * WHERE {{ ?s ?p ?o{} }}", " OPTIONAL { ?s ?p ?o }".repeat(d)), 240),
         ("exists", |d| format!("SELECT * WHERE {{ ?s ?p ?o {}{} }}", "FILTER EXISTS { ?s ?p ?o ".repeat(d), "}".repeat(d)), 80),
         ("subqueries", |d| format!("SELECT * WHERE {}?s ?p ?o{}", "{ SELECT * WHERE { ".repeat(d), " } }".repeat(d)), 34),
-        ("blank nodes", |d| format!("SELECT * WHERE {{ ?a <http://ex/p> {}1{} }}", "[ <http://ex/q> ".repeat(d), " ]".repeat(d)), 190),
+        ("blank nodes", |d| format!("SELECT * WHERE {{ ?a <http://ex/p> {}1{} }}", "[ <http://ex/q> ".repeat(d), " ]".repeat(d)), 105),
+        // A basic graph pattern is a left-deep join with one level per triple pattern; nested
+        // plain groups are flattened into it. (The patterns add no variable: the 256-variable
+        // limit does not stop them.)
+        ("triples", |d| format!("SELECT * WHERE {{ {} }}", (0..d).map(|i| format!("?s <http://ex/p{i}> <http://ex/o{i}> . ")).collect::<String>()), 240),
+        ("object list", |d| format!("SELECT * WHERE {{ ?s <http://ex/p> {} }}", (0..d).map(|i| format!("<http://ex/o{i}>")).collect::<Vec<_>>().join(", ")), 240),
+        ("groups of triples", |d| {
+            let group = |g: usize| format!("{{ {} }}", (0..d / 4).map(|i| format!("?s <http://ex/p{g}x{i}> 1 . ")).collect::<String>());
+            format!("SELECT * WHERE {{ {} }}", (0..4).map(group).collect::<String>())
+        }, 236),
+        // spargebra binds each DESCRIBE target in a chain of BIND nodes, and lowering recurses
+        // over it before the variable limit applies.
+        ("describe", |d| format!("DESCRIBE {}", (0..d).map(|i| format!("<http://ex/a{i}> ")).collect::<String>()), 480),
     ];
     std::thread::Builder::new()
         .stack_size(2 << 20)
@@ -232,6 +244,11 @@ fn requests_inside_the_nesting_limit_fit_a_two_mib_stack() {
             let update = |d: usize| format!("INSERT DATA {{ <http://ex/a> <http://ex/p> {}1{} }}", "( ".repeat(d), " )".repeat(d));
             assert!(one_p::<i64, _>(&c, "SELECT sparql_update(?1)", [update(190)]) > 0);
             assert!(err(&c, "SELECT sparql_update(?1)", [update(240)]).contains("nests too deeply"));
+            let delete_where = |d: usize| {
+                format!("DELETE WHERE {{ {} }}", (0..d).map(|i| format!("<http://ex/alice> <http://ex/p{i}> ?o . ")).collect::<String>())
+            };
+            assert_eq!(one_p::<i64, _>(&c, "SELECT sparql_update(?1)", [delete_where(240)]), 0);
+            assert!(err(&c, "SELECT sparql_update(?1)", [delete_where(300)]).contains("nests too deeply"));
         })
         .unwrap()
         .join()

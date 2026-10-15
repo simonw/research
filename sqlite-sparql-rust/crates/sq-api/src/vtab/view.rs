@@ -16,7 +16,8 @@
 //! nothing). Values that can never equal the column (wrong type, a non-canonical spelling, an
 //! id that names no term) give an empty scan, as does a non-TEXT `opts` constraint.
 //! Native-value columns are never pushed down: TEXT `'x'` is ambiguous between `<x>`, `"x"`
-//! and `"x"@en`.
+//! and `"x"@en`; nor are `__term` constraints under a collation other than BINARY
+//! (`COLLATE NOCASE`, …), which SQLite then filters itself.
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_int};
@@ -185,7 +186,13 @@ unsafe impl<'vtab> VTab<'vtab> for ViewTab {
                     continue;
                 }
                 match column(n, c.column() as usize) {
-                    Some(Column::Term(_) | Column::Id(_)) => consumed.push((i, c.column())),
+                    // `sameTerm` is the BINARY comparison of the N-Triples text; SQLite filters
+                    // other collations itself.
+                    Some(Column::Term(_)) if info.collation(i).is_ok_and(|c| c.eq_ignore_ascii_case("BINARY")) => {
+                        consumed.push((i, c.column()))
+                    }
+                    // INTEGER comparisons: no collation applies.
+                    Some(Column::Id(_)) => consumed.push((i, c.column())),
                     Some(Column::Opts) if !opts_taken => {
                         opts_taken = true;
                         consumed.push((i, c.column()));

@@ -5,13 +5,18 @@
 # GRAPH / FROM / FROM NAMED and aggregates. Nothing here is a real survey result.
 #
 # Layout:
-#   default graph: one description of each named graph (with ex:fictional true)
+#   default graph: one description of each named graph (with ex:fictional true;
+#       the surveys also have ex:respondents, dcterms:issued (xsd:date) and
+#       ex:marginOfError, an xsd:double such as 4.46E-3)
 #   <http://example.org/graph/survey-2025> and
 #   <http://example.org/graph/survey-2026>: per language
 #       ex:usageShare      share of respondents using it (xsd:decimal, 0..1)
 #       ex:lovedPercent    % of its users who want to keep using it (xsd:decimal)
 #       ex:medianSalaryUSD median salary (xsd:integer; missing when too few answered)
-#   <http://example.org/graph/editorial>: reviews as blank nodes, plus ex:editorsPick flags
+#   <http://example.org/graph/editorial>:
+#       reviews as blank nodes (ex:rating xsd:integer, dcterms:created xsd:dateTime
+#       with a UTC offset), and ex:editorsPick true or false (xsd:boolean) for each
+#       reviewed language; languages without a review have no ex:editorsPick
 
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -29,7 +34,8 @@
     ex:fictional true ;
     ex:surveyYear 2025 ;
     ex:respondents 48213 ;
-    dcterms:issued "2025-07-15"^^xsd:date .
+    dcterms:issued "2025-07-15"^^xsd:date ;
+    ex:marginOfError 4.46E-3 .
 
 <http://example.org/graph/survey-2026>
     a ex:Survey ;
@@ -38,7 +44,8 @@
     ex:fictional true ;
     ex:surveyYear 2026 ;
     ex:respondents 51877 ;
-    dcterms:issued "2026-07-14"^^xsd:date .
+    dcterms:issued "2026-07-14"^^xsd:date ;
+    ex:marginOfError 4.30E-3 .
 
 <http://example.org/graph/editorial>
     a ex:EditorialGraph ;
@@ -344,8 +351,9 @@ GRAPH <http://example.org/graph/editorial> {
         ex:about ex:Python ;
         ex:rating 5 ;
         ex:reviewer "Mei Tanaka" ;
-        dcterms:date "2026-01-12"^^xsd:date ;
-        schema:reviewBody "A gentle first language with a huge standard library."@en , "Un premier langage accessible, avec une immense bibliothèque standard."@fr
+        dcterms:created "2026-01-12T09:14:00+09:00"^^xsd:dateTime ;
+        schema:reviewBody "A gentle first language with a huge standard library."@en ,
+                          "Un premier langage accessible, avec une immense bibliothèque standard."@fr
     ] .
 
     [
@@ -353,7 +361,7 @@ GRAPH <http://example.org/graph/editorial> {
         ex:about ex:Python ;
         ex:rating 4 ;
         ex:reviewer "Jonas Berg" ;
-        dcterms:date "2026-03-02"^^xsd:date ;
+        dcterms:created "2026-03-02T16:40:00+01:00"^^xsd:dateTime ;
         schema:reviewBody "Still our default choice, although packaging remains confusing."@en
     ] .
 
@@ -362,7 +370,7 @@ GRAPH <http://example.org/graph/editorial> {
         ex:about ex:Rust ;
         ex:rating 5 ;
         ex:reviewer "Priya Natarajan" ;
-        dcterms:date "2026-02-18"^^xsd:date ;
+        dcterms:created "2026-02-18T11:05:00+05:30"^^xsd:dateTime ;
         schema:reviewBody "A steep learning curve, but the compiler is a patient teacher."@en
     ] .
 
@@ -371,7 +379,7 @@ GRAPH <http://example.org/graph/editorial> {
         ex:about ex:Rust ;
         ex:rating 4 ;
         ex:reviewer "Tomás Rivera" ;
-        dcterms:date "2026-05-27"^^xsd:date ;
+        dcterms:created "2026-05-27T19:22:00-06:00"^^xsd:dateTime ;
         schema:reviewBody "Excellent tooling; compile times can test your patience."@en
     ] .
 
@@ -380,7 +388,7 @@ GRAPH <http://example.org/graph/editorial> {
         ex:about ex:Go ;
         ex:rating 4 ;
         ex:reviewer "Jonas Berg" ;
-        dcterms:date "2026-01-30"^^xsd:date ;
+        dcterms:created "2026-01-30T07:55:00Z"^^xsd:dateTime ;
         schema:reviewBody "Small language, fast builds, boring in the best way."@en
     ] .
 
@@ -389,7 +397,7 @@ GRAPH <http://example.org/graph/editorial> {
         ex:about ex:JavaScript ;
         ex:rating 3 ;
         ex:reviewer "Tomás Rivera" ;
-        dcterms:date "2026-02-05"^^xsd:date ;
+        dcterms:created "2026-02-05T22:47:00-06:00"^^xsd:dateTime ;
         schema:reviewBody "Runs everywhere; mind the implicit type conversions."@en
     ] .
 
@@ -398,7 +406,7 @@ GRAPH <http://example.org/graph/editorial> {
         ex:about ex:Haskell ;
         ex:rating 4 ;
         ex:reviewer "Priya Natarajan" ;
-        dcterms:date "2026-03-21"^^xsd:date ;
+        dcterms:created "2026-03-21T14:30:00+05:30"^^xsd:dateTime ;
         schema:reviewBody "Changes how you think about programs, even if you never ship it."@en
     ] .
 
@@ -407,7 +415,7 @@ GRAPH <http://example.org/graph/editorial> {
         ex:about ex:COBOL ;
         ex:rating 2 ;
         ex:reviewer "Mei Tanaka" ;
-        dcterms:date "2026-04-01"^^xsd:date ;
+        dcterms:created "2026-04-01T10:00:00+09:00"^^xsd:dateTime ;
         schema:reviewBody "Not glamorous, but it still runs a lot of payroll."@en
     ] .
 
@@ -416,7 +424,7 @@ GRAPH <http://example.org/graph/editorial> {
         ex:about ex:Prolog ;
         ex:rating 4 ;
         ex:reviewer "Priya Natarajan" ;
-        dcterms:date "2026-04-14"^^xsd:date ;
+        dcterms:created "2026-04-14T09:45:00+05:30"^^xsd:dateTime ;
         schema:reviewBody "Describe the problem and let the search do the work."@en
     ] .
 
@@ -425,7 +433,7 @@ GRAPH <http://example.org/graph/editorial> {
         ex:about ex:Zig ;
         ex:rating 4 ;
         ex:reviewer "Tomás Rivera" ;
-        dcterms:date "2026-06-09"^^xsd:date ;
+        dcterms:created "2026-06-09T13:10:00-06:00"^^xsd:dateTime ;
         schema:reviewBody "A promising alternative to C; still before version 1.0."@en
     ] .
 
@@ -434,8 +442,9 @@ GRAPH <http://example.org/graph/editorial> {
         ex:about ex:SQL ;
         ex:rating 5 ;
         ex:reviewer "Mei Tanaka" ;
-        dcterms:date "2026-06-23"^^xsd:date ;
-        schema:reviewBody "Fifty years on, still the language every developer ends up using."@en , "Auch nach fünfzig Jahren die Sprache, die jeder Entwickler früher oder später benutzt."@de
+        dcterms:created "2026-06-23T18:20:00+09:00"^^xsd:dateTime ;
+        schema:reviewBody "Fifty years on, still the language every developer ends up using."@en ,
+                          "Auch nach fünfzig Jahren noch die Sprache, die jeder Entwickler früher oder später benutzt."@de
     ] .
 
     [
@@ -443,7 +452,7 @@ GRAPH <http://example.org/graph/editorial> {
         ex:about ex:PHP ;
         ex:rating 3 ;
         ex:reviewer "Jonas Berg" ;
-        dcterms:date "2026-07-08"^^xsd:date ;
+        dcterms:created "2026-07-08T12:00:00+02:00"^^xsd:dateTime ;
         schema:reviewBody "Much better than its reputation suggests."@en
     ] .
 
@@ -452,7 +461,7 @@ GRAPH <http://example.org/graph/editorial> {
         ex:about ex:Kotlin ;
         ex:rating 4 ;
         ex:reviewer "Mei Tanaka" ;
-        dcterms:date "2026-08-17"^^xsd:date ;
+        dcterms:created "2026-08-17T07:35:00+09:00"^^xsd:dateTime ;
         schema:reviewBody "Java without the ceremony."@en
     ] .
 
@@ -461,7 +470,7 @@ GRAPH <http://example.org/graph/editorial> {
         ex:about ex:Julia ;
         ex:rating 4 ;
         ex:reviewer "Priya Natarajan" ;
-        dcterms:date "2026-09-03"^^xsd:date ;
+        dcterms:created "2026-09-03T20:15:00+05:30"^^xsd:dateTime ;
         schema:reviewBody "Fast numerics without leaving a dynamic language."@en
     ] .
 
@@ -471,9 +480,36 @@ GRAPH <http://example.org/graph/editorial> {
     ex:Rust
         ex:editorsPick true .
 
+    ex:Go
+        ex:editorsPick false .
+
+    ex:JavaScript
+        ex:editorsPick false .
+
+    ex:Haskell
+        ex:editorsPick false .
+
+    ex:COBOL
+        ex:editorsPick false .
+
+    ex:Prolog
+        ex:editorsPick false .
+
+    ex:Zig
+        ex:editorsPick false .
+
     ex:SQL
         ex:editorsPick true .
 
+    ex:PHP
+        ex:editorsPick false .
+
+    ex:Kotlin
+        ex:editorsPick false .
+
+    ex:Julia
+        ex:editorsPick false .
+
 }
 
-# 276 quads.
+# 287 quads.

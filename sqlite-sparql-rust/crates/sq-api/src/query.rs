@@ -14,11 +14,12 @@ use sq_core::store::{Dictionary, QuadCursor, QuadStore};
 use sq_core::{Error, Result, Tag, Term, TermId};
 use sq_exec::{ExecCaches, Execution};
 use sq_results::ResultFormat;
-use sq_sqlite::SqliteStore;
+use sq_sqlite::{RawDb, SqliteStore};
 
 use crate::config::QuerySettings;
 use crate::helpers::{Baselines, HelperCtx};
 use crate::state::ConnState;
+use crate::watchdog::Watchdog;
 
 /// The result shape of a query.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -207,11 +208,16 @@ pub(crate) fn first_value(run: &mut Run) -> Result<Option<Arc<Term>>> {
 
 /// The baseline engine's run: sq-sqlgen's SQL stepped through the store's `sql_rows`
 /// cursor, with the query's [`HelperCtx`] active while the statement steps.
+///
+/// `timeout_ms` is checked before each batch and, since one step can take unbounded time,
+/// enforced during the steps by a [`Watchdog`] (started with the first batch).
 pub(crate) struct BaselineRun {
     baselines: Rc<Baselines>,
     ctx: Rc<RefCell<HelperCtx>>,
     store: SqliteStore,
     cursor: Box<dyn QuadCursor>,
+    db: RawDb,
+    watchdog: Option<Watchdog>,
     form: Form,
     vars: Vec<String>,
     /// Result columns of the SQL (a query projecting nothing has one placeholder column).
@@ -262,6 +268,8 @@ impl BaselineRun {
             ctx: Rc::new(RefCell::new(HelperCtx::new(lowered.temps, base))),
             store: st.store().clone(),
             cursor,
+            db: st.shared().db(),
+            watchdog: None,
             form,
             vars,
             width,
@@ -273,16 +281,29 @@ impl BaselineRun {
     }
 
     /// Steps the statement with this query's helper context active (rule R1: no borrow of
-    /// the context is held while SQLite runs the helpers).
+    /// the context is held while SQLite runs the helpers) and the watchdog armed.
     fn fill(&mut self, out: &mut Vec<TermId>, max_rows: usize) -> Result<usize> {
         if self.done || max_rows == 0 {
             return Ok(0);
         }
-        if self.deadline.is_some_and(|d| Instant::now() >= d) {
-            return Err(Error::Timeout);
+        if let Some(deadline) = self.deadline {
+            if Instant::now() >= deadline {
+                return Err(Error::Timeout);
+            }
+            if self.watchdog.is_none() {
+                self.watchdog = Some(Watchdog::start(self.db, deadline)?);
+            }
         }
         let _active = self.baselines.activate(&self.ctx)?;
-        let n = self.cursor.fill(out, max_rows)?;
+        let armed = self.watchdog.as_ref().map(Watchdog::arm);
+        let stepped = self.cursor.fill(out, max_rows);
+        drop(armed);
+        if self.watchdog.as_ref().is_some_and(Watchdog::fired) {
+            // The deadline passed mid-step: the connection is interrupted, whatever the step
+            // returned.
+            return Err(Error::Timeout);
+        }
+        let n = stepped.map_err(helper_interrupt)?;
         if n == 0 {
             self.done = true;
         }
@@ -310,6 +331,15 @@ impl BaselineRun {
         };
         self.scratch = scratch;
         r
+    }
+}
+
+/// An interrupt that reaches a helper function fails the statement with SQLITE_ERROR and the
+/// helper's message (scalar functions cannot set their result code): still an interrupt.
+fn helper_interrupt(e: Error) -> Error {
+    match e {
+        Error::Sqlite { msg, .. } if msg == Error::Interrupted.to_string() => Error::Interrupted,
+        e => e,
     }
 }
 
@@ -391,5 +421,14 @@ mod tests {
         }
         let e = Form::Ask.check_format(ResultFormat::Turtle).unwrap_err().to_string();
         assert!(e.contains("'turtle' is not a ASK result format"), "{e}");
+    }
+
+    #[test]
+    fn interrupted_helpers_are_interrupts() {
+        let helper = Error::Sqlite { code: 1, msg: Error::Interrupted.to_string() };
+        assert!(matches!(helper_interrupt(helper), Error::Interrupted));
+        let other = Error::Sqlite { code: 1, msg: "sparql: type error".into() };
+        assert!(matches!(helper_interrupt(other), Error::Sqlite { .. }));
+        assert!(matches!(helper_interrupt(Error::Timeout), Error::Timeout));
     }
 }

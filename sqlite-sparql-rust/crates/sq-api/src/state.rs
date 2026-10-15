@@ -22,7 +22,8 @@
 //! only for O(1) reads and writes, never across a call that steps a statement or returns to
 //! SQLite: the baseline engine's generated SQL calls this crate's helper functions while
 //! this crate steps it. A violated rule surfaces as `Error::Reentrant`, never as a deadlock
-//! (there is no `Mutex` anywhere).
+//! (no state of a connection sits behind a `Mutex`; the one lock of the crate, a `timeout_ms`
+//! watchdog's, is never held while a statement steps).
 use std::cell::{Cell, RefCell};
 use std::ffi::OsStr;
 use std::rc::Rc;
@@ -285,9 +286,11 @@ impl ConnState {
     /// refuses every `SAVEPOINT`, so no write scope can open. In autocommit mode the host
     /// statement's own transaction makes the call atomic instead: if the call fails, so does
     /// the host statement, and SQLite rolls that whole transaction back (the next entry's
-    /// epoch check sees it). Inside a user transaction a failed statement may keep its partial
-    /// changes, so there — and for the writers whose storage layer opens its own scope: loads,
-    /// analyze, vacuum, schema creation — the refusal becomes an error naming the restriction.
+    /// epoch check sees it). That needs the writer to be the host statement itself
+    /// ([`ConnState::host_statement_writes`]). Inside a user transaction a failed statement may
+    /// keep its partial changes, so there — and for the writers whose storage layer opens its
+    /// own scope: loads, analyze, vacuum, schema creation — the refusal becomes an error naming
+    /// the restriction.
     pub(crate) fn write_call<T>(&self, auto_init: bool, f: impl FnOnce() -> Result<T>) -> Result<T> {
         let entry = self.enter();
         self.refuse_while_reading()?;
@@ -295,7 +298,7 @@ impl ConnState {
             // Outside the write scope: its schema read must not precede the write lock.
             self.store.ensure_schema().map_err(savepoint_refusal)?;
         }
-        if self.host_statement_writes() {
+        if self.host_statement_writes()? {
             self.validate()?;
             return f().map_err(savepoint_refusal);
         }
@@ -313,13 +316,45 @@ impl ConnState {
         f().map_err(savepoint_refusal)
     }
 
-    /// Whether a statement that writes is running in autocommit mode: some schema is in a
-    /// write transaction although none is open, which only a running writer holds.
-    fn host_statement_writes(&self) -> bool {
+    /// Whether the statement that called us writes, in autocommit mode (see `write_call`).
+    ///
+    /// A statement that writes is running in autocommit mode when some schema is in a write
+    /// transaction although none is open: only a running writer holds one. It is the host
+    /// statement when it is the only statement the connection runs (the host is running). With
+    /// other statements running the writer may be another one — a partly read `INSERT …
+    /// RETURNING` beside `SELECT sparql_update(…)` — whose transaction would commit the first
+    /// operations of a failed request, so the call is refused.
+    fn host_statement_writes(&self) -> Result<bool> {
+        use rusqlite::ffi;
+        let db = self.db.as_ptr();
         // SAFETY: `db` is the live connection (constructor contract); a NULL schema name asks
         // for the highest transaction state over all schemas.
-        let state = unsafe { rusqlite::ffi::sqlite3_txn_state(self.db.as_ptr(), std::ptr::null()) };
-        state == rusqlite::ffi::SQLITE_TXN_WRITE && self.db.autocommit()
+        let state = unsafe { ffi::sqlite3_txn_state(db, std::ptr::null()) };
+        if state != ffi::SQLITE_TXN_WRITE || !self.db.autocommit() {
+            return Ok(false);
+        }
+        let (mut running, mut writers) = (0u32, 0u32);
+        // SAFETY: we run inside a callback of this connection, which holds its mutex, so the
+        // list of its prepared statements cannot change while it is walked.
+        unsafe {
+            let mut stmt = ffi::sqlite3_next_stmt(db, std::ptr::null_mut());
+            while !stmt.is_null() {
+                if ffi::sqlite3_stmt_busy(stmt) != 0 {
+                    running += 1;
+                    writers += u32::from(ffi::sqlite3_stmt_readonly(stmt) == 0);
+                }
+                stmt = ffi::sqlite3_next_stmt(db, stmt);
+            }
+        }
+        if running == 1 && writers == 1 {
+            return Ok(true);
+        }
+        Err(Error::Invalid(
+            "a writer cannot run while another statement of this connection writes (a partly read INSERT / UPDATE \
+             / DELETE … RETURNING, or a statement that writes beside other running statements): finish or reset \
+             those statements, or call it as its own SELECT statement"
+                .into(),
+        ))
     }
 
     fn refuse_while_reading(&self) -> Result<()> {

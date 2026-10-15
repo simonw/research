@@ -4,13 +4,18 @@
 and the inline value codec, which together are the on-disk term encoding. It also defines the
 decoded `Term` type, solution `Batch`es, and the storage traits (`QuadStore`, `QuadCursor`,
 `Dictionary`, `QuadStoreWriter`) that the planner and executor use to read quads. The planner
-statistics and cost constants live here too, along with the logical IR (`ir::Logical`), the
-physical plan (`plan::Op`), and the traits that link the expression evaluator to its hosts
-(`TermResolver`, `ExistsEval`, `SolutionSource`, `TripleSource`). The crate contains no SQL
-and no SQLite code, and it uses `#![forbid(unsafe_code)]`. It exists so that the other
-crates, which were built in parallel, can agree on ids, scans and plans without depending on
-each other. `lib.rs` describes it as frozen: after day 0, changes are additive-only and need
-lead review.
+statistics and cost constants live here too, along with the logical IR (`ir::Logical`) and the
+physical plan (`plan::Op`). `eval_api` holds two pairs of glue traits. `TermResolver` and
+`ExistsEval` link the expression evaluator (sq-expr) to its hosts: sq-exec, sq-oracle and
+sq-api's helper functions. `SolutionSource` and `TripleSource` are the executor's output
+streams, which the result writers (sq-results), sq-engine and the SQL surface (sq-api) consume.
+
+The crate has no SQLite dependency, no FFI and no unsafe code (`#![forbid(unsafe_code)]`). It
+does define the SQL FROM clause and the partial-index WHERE term of each index order
+(`IndexOrder::sql_from`, `IndexOrder::sql_partial_term`). sq-sqlite's SQL cursor templates and
+sq-plan's SqlJoin rendering use these. The crate exists so that the other crates, which were
+built in parallel, can agree on ids, scans and plans without depending on each other. `lib.rs`
+describes it as frozen: after day 0, changes are additive-only and need lead review.
 
 ## Where it fits
 
@@ -25,8 +30,10 @@ lead review.
 
 Every library crate in `crates/` depends on `sq-core`; `ext/` reaches it only through `sq-api`.
 Every dependent in `crates/` except `sq-results` also lists `sq-core` as a dev-dependency with
-`features = ["testing"]` to get `sq_core::testing`. The source is a verbatim copy of SPEC §10
-apart from two doc comments (in `store.rs` and `codec.rs`).
+`features = ["testing"]` to get `sq_core::testing`. The source is identical to SPEC §10 except
+for one doc comment and one plain comment. In `codec.rs`, the source still says
+`sparql_id('_:b1f')`, where the SPEC was corrected to `sparql_term_id`. `store.rs` adds a plain
+comment explaining why `Gspo` is pinned through `sqlite_autoindex_rdf_quad_1`.
 
 ## Key concepts
 
@@ -45,10 +52,16 @@ order, so merge joins, seeks and range bounds must never compare them as `u64`. 
 | 14 | `Temp` | execution-local: `(index << 7) \| (would_be_tag << 4) \| 14`, never stored |
 | 15 | `Error` | only `TermId::ERROR`, the sentinel for an error-valued GROUP BY key; output as unbound |
 
-`TermId::kind()` returns IRI, blank node or literal without any lookup. This also works for
-TEMP ids, because they carry the tag the term would have in the dictionary. Use
-`is_storable()` to decide whether an id may be written to `rdf_quad`: it is true for tags
-1..=11 and false for UNBOUND, TEMP, ERROR and the reserved tags.
+`TermId::kind()` returns `Unbound`, `Iri`, `BNode` or `Literal` without any lookup. This also
+works for TEMP ids, because they carry the tag the term would have in the dictionary. It is
+meaningful only for bound storable ids and TEMP ids, because it reports ERROR and the
+reserved-tag ids as `Literal`. Use `is_storable()` to decide whether an id may be written to
+`rdf_quad`. It is true for tags 1..=11 and false for UNBOUND, TEMP, ERROR and the reserved tags.
+
+Pitfall: `is_bnode()` is also true for a TEMP id whose would-be tag is `BNode`. To detect a
+store blank node, use `id.tag() == Tag::BNode` (or `is_bnode() && is_storable()`), as
+sq-sqlite's dictionary does. Use `is_bnode()` alone only where a TEMP blank node should count
+as a blank node.
 
 **2. Inline only when the lexical form is canonical.** `codec::encode_inline` is a pure
 function of (lexical form, datatype, language). It returns `Some(id)` only when formatting the
@@ -65,9 +78,11 @@ rows, so they keep their own identity and round-trip unchanged. The inline range
 - **SHORTSTR:** up to 7 UTF-8 bytes.
 
 Doubles, floats and every other datatype always go through the dictionary. These rules are
-part of the on-disk format (`codec::ENCODING_VERSION = 1`). sq-sqlite writes this version to
-`rdf_meta` and reports `Error::Schema` for a store whose version differs
-(`sq-sqlite/src/schema.rs`).
+part of the on-disk format (`codec::ENCODING_VERSION = 1`). sq-sqlite writes this version and
+its `schema_version` to `rdf_meta`. `sq-sqlite/src/schema.rs` detects a mismatch in either one
+(`SchemaState::Incompatible`). `sq-sqlite/src/store.rs` and `shared.rs` map that state to
+`Error::Schema`, and `shared.rs` checks again if the version rows are edited after the store is
+opened.
 
 **3. Invariant: sameTerm ⇔ id equality within one execution.** The `id.rs` header states four
 rules:
@@ -95,11 +110,16 @@ table, and user terms start at `codec::FIRST_USER_ROW = 1024`.
 `rdf_quad`: the primary key `Gspo`; the full g-first indexes `Gpso`, `Gpos` and `Gosp`; four
 g-last partial indexes over named graphs only (`WHERE g<>0`): `Spog`, `Psog`, `Posg`, `Ospg`;
 and `Gpox`, a partial index over objects with tag 5 or 8 (`WHERE (o & 15) IN (5,8)`). `Gpox`
-holds the dictionary-typed literals and inline decimals, which are the numeric values that an
-inline-int range scan would miss.
+holds every object that could satisfy a numeric comparison but is not an inline INT. That is
+all dictionary-typed literals, numeric or not (non-canonical numerics, doubles, floats,
+ill-typed forms, unknown datatypes), plus inline decimals. An integer range scan reads `Gpox`
+next to `Gpos`, and the original FILTER, which stays above the scan, decides each of these rows
+(`plan::IntRange`).
 
 `IndexOrder::candidates(bound)` returns the orders whose leading columns are exactly the bound
-ones. It returns g-first orders when `g` is bound and named-only orders when `g` is free.
+ones. It returns g-first orders when `g` is bound and named-only orders when `g` is free. It
+never returns `Gpox`, which the planner reads only as the companion scan of an `IntRange`
+pushdown (sq-plan's validator rejects any other use).
 
 A `ScanSpec` is an order plus a fixed key prefix plus optional `Bound<i64>` limits on the next
 column. A `QuadCursor` returns only the free suffix columns (`width() == 4 - prefix_len`). It
@@ -108,8 +128,9 @@ returns them row-major, in ascending signed order, and each row exactly once. It
 index-nested-loop probes without allocating).
 
 **6. One global slot layout per query.** Every variable gets a `Slot` (`u16`). That includes
-user variables, blank-node variables, generated variables, renamed sub-select variables,
-aggregate outputs and EXISTS patterns. A solution is `[TermId; width]` with `0` meaning
+user variables, blank-node variables, path middles, generated variables, renamed sub-select
+variables, aggregate outputs, and the variables inside EXISTS patterns, which share the global
+layout. A solution is `[TermId; width]` with `0` meaning
 unbound, so operators never remap columns. `Batch` holds 1024 rows (`BATCH_ROWS`), row-major.
 `SlotSet` is a fixed 256-bit set, and queries with more than `SlotSet::MAX_SLOTS = 256` slots
 are rejected as `Error::Unsupported` (`sq-plan/src/lower.rs`).
@@ -129,7 +150,7 @@ memory budget, union default graph, join policy, reorder, base IRI, and probe-co
 | `id` | `TermId`, `Tag`, `Kind` |
 | `codec` | `encode_inline[_literal]`, `decode_inline`, `TermKey`, `term_hash`, `bnode_label`/`parse_bnode_label`, `WELL_KNOWN`, XSD/RDF constants, version constants |
 | `term` | `Term` (`Iri`/`BNode`/`Literal`) and `Literal` with `Arc<str>` fields; `from_oxrdf`, `to_oxrdf`, `to_ntriples` |
-| `store` | `Col`, `IndexOrder`, `ScanSpec`, `QuadCursor`, `Dictionary`, `QuadStore`, `QuadStoreWriter`, `GraphTarget`, `StoreCaps`, `CursorCounters` |
+| `store` | `Col`, `IndexOrder`, `ScanSpec`, `QuadCursor`, `Dictionary`, `QuadStore`, `QuadStoreWriter`, `GraphTarget`, `StoreCaps`, `CursorCounters`, `ReaderKind` |
 | `batch` | `Batch`, `Slot`, `SlotSet`, `BATCH_ROWS`, `merge_compatible` |
 | `stats` | `Stats`/`ScopeStats`/`PredStats`/`CharSet`, `CostConstants` and the three presets |
 | `ir`, `plan` | logical IR, physical plan, `QueryOptions`, `ExecProfile` |
@@ -139,7 +160,16 @@ memory budget, union default graph, join policy, reorder, base IRI, and probe-co
 
 The crate root re-exports `TermId`, `Tag`, `Kind`, `Term`, `Literal`, `Batch`, `Slot`,
 `SlotSet`, `BATCH_ROWS`, `Error`, `Result`, `oxrdf`, `spargebra`, `FxHashMap` and
-`FxHashSet`. The snippets below compile and run against the current source.
+`FxHashSet`.
+
+`Error` covers failures that abort a request. SPARQL expression type errors are not `Error`s.
+Inside sq-expr they are `None`, which leaves the value unbound (or rejects the row in a FILTER),
+and they never abort a query.
+
+The snippets below compile and run against the current source. The second and fourth use
+`sq_core::testing`, which needs the `testing` feature:
+`sq-core = { workspace = true, features = ["testing"] }`, normally under `[dev-dependencies]`.
+The second uses `?`, so it belongs inside a function that returns `sq_core::Result<()>`.
 
 Ids and the codec:
 
@@ -208,18 +238,55 @@ batch.push_extended(&base, &[(1, b)]);                  // copy base, then set s
 
 **Implementing a store.** Implement `QuadStore`, which needs `cursor`, `count`, `dict`,
 `named_graphs`, `stats`, `costs` and `caps`. `sql_rows` and `check_interrupt` have default
-implementations. A writable store also implements `QuadStoreWriter`:
+implementations. The contract points that are easy to miss:
 
-- `intern` rejects blank nodes with `Error::Invalid`; use `fresh_bnode` instead.
-- `insert` and `remove` sort and deduplicate `[g,s,p,o]` in place and reject non-storable ids.
-- Implementations never commit. sq-api wraps every request in a SAVEPOINT.
+- `QuadStore` is object-safe, and executions hold `Rc<dyn QuadStore>`. Cursors must be
+  `'static`, because they own their statement or snapshot.
+- `QuadCursor` requires `width`, `fill`, `seek`, `rebind` and `counters`. `fill` returning 0
+  means exhausted, and a later `seek` or `rebind` restarts the cursor. `rebind` must not
+  allocate per call. `counters()` has no default. It returns
+  `CursorCounters { rows, seeks, fills, reader }`, where `reader` is a `ReaderKind` (`Memory`,
+  `SqlCursor` or `Btree`), the same type `StoreCaps::reader` reports.
+- `named_graphs` returns the registry (`rdf_graph`) union the distinct `g <> 0` values of the
+  quads, sorted.
+- `stats()` returning `None` means never analyzed. Statistics are only hints, and correctness
+  must never depend on them.
+- CPU-bound loops poll `check_interrupt` every 4096 rows. It returns `Err(Interrupted)` after
+  `sqlite3_interrupt`.
 
-`Dictionary::lookup` never inserts, and `Dictionary::decode` returns `Error::Internal` for
-TEMP, UNBOUND and ERROR ids. `testing::BruteStore` (about 80 lines) is the smallest complete
-`QuadStore` implementation. The existing implementations are `sq_memstore::MemStore`
+A writable store also implements `QuadStoreWriter`, which has seven required methods:
+
+- `intern` returns the canonical id and inserts a dictionary row if needed. It rejects blank
+  nodes with `Error::Invalid`, so use `fresh_bnode`, which allocates the next counter id.
+- `insert` and `remove` both sort and deduplicate `[g,s,p,o]` in place. Only `insert` rejects
+  non-storable ids, with `Error::Internal`. It allows `g = 0` for the default graph, registers
+  new named graphs in `rdf_graph`, and returns the number of new quads. `remove` ignores quads
+  it cannot find and returns the number actually removed.
+- `clear(GraphTarget)` deletes quads and returns how many it deleted. `GraphTarget` is
+  `Default`, `Named(g)`, `AllNamed` or `All`. Both existing stores leave the graph registry
+  alone.
+- `create_graph(g)` registers an empty named graph and returns `Ok(false)` if it already
+  existed. `drop_graph(g)` removes a graph from the registry once its quads have been cleared,
+  and returns `Ok(false)` if the graph was absent.
+- Implementations never commit. Normally sq-api wraps each writing request in a SAVEPOINT
+  write scope (`sq_sqlite::WriteScope`). SQLite refuses `SAVEPOINT` inside a statement that
+  writes, such as `INSERT INTO t SELECT sparql_update(...)`. In autocommit mode the call then
+  relies on the host statement's transaction. Inside a user transaction it returns an error.
+
+`Dictionary::lookup` never inserts, and it returns `None` for a term that is not in the store.
+The exception is a well-formed store blank-node label `b<hex>`, which maps straight to its
+counter id (`codec::parse_bnode_label`) without any check that the blank node exists.
+`Dictionary::decode` returns `Error::Internal` for TEMP, UNBOUND and ERROR ids (see the
+sq-memstore caveat under Limitations).
+
+`testing::BruteStore` is the reference implementation of cursor and count semantics: a sorted
+`Vec` plus brute force. It is not a complete store. Its dictionary decodes inline ids only, so it
+does not meet the `Dictionary` contract for blank nodes or dictionary rows, although its doc
+comment claims bnode support. Its `rebind` also allocates. For a complete store, dictionary
+included, read sq-memstore. The existing implementations are `sq_memstore::MemStore`
 (`MEMORY_COSTS`) and `sq_sqlite::SqliteStore`, which returns `BTREE_COSTS` while its
 direct page reader is active and `SQL_CURSOR_COSTS` otherwise. A new store should pass the
-conformance suite, exactly as sq-memstore's tests do:
+conformance suite, exactly as sq-memstore's tests do (`seed` and `store_with` are yours):
 
 ```rust
 use sq_core::testing::{cursor_conformance, random_quads};
@@ -232,7 +299,7 @@ cursor_conformance(&s, &q, seed, 4);      // panics with the failing ScanSpec on
 ## Testing
 
 ```bash
-cd /home/user/research/sqlite-sparql-rust
+# from the sqlite-sparql-rust/ workspace root
 cargo test -p sq-core                                        # 6 unit tests, ~0.04 s once built
 cargo test -p sq-core golden_term_hashes -- --nocapture      # also prints the GOLDEN hash line
 ```
@@ -257,8 +324,11 @@ bounds, `cursor_conformance` checks full drains (fill sizes 1, 3 and 1024), exac
 `count`, forward and backward seeks with 1..=width key columns, and `rebind`.
 
 The suite runs against real stores in `sq-memstore/src/tests.rs` (including after deletes and
-re-inserts), `sq-sqlite/src/tests/conformance.rs` (SQL cursors on in-memory and file
-databases) and `sq-sqlite/src/tests/btree.rs` (the direct page reader at several page sizes).
+re-inserts), `sq-sqlite/src/tests/conformance.rs` and `sq-sqlite/src/tests/btree.rs` (the
+direct page reader at several page sizes). `conformance.rs` tests SQL cursors only on
+`:memory:` databases. Its file-database cases run with the default `ReaderMode::Auto`, so they
+actually exercise the direct B-tree reader. A file test meant to cover SQL cursors would need
+`set_reader(ReaderMode::Sql)`. The module doc of `conformance.rs` says otherwise.
 
 ## Performance numbers
 
@@ -294,9 +364,14 @@ bits.
   floats, and simple literals longer than 7 bytes go through the dictionary and cost a decode.
   Only INT ids follow value order (`int_raw_range`). An integer range scan therefore also has
   to read `Gpox` (dictionary-typed and decimal objects) to be exact.
-- **Unused helpers.** `batch::merge_compatible`, `Batch::push_extended` and
-  `Batch::push_unbound` have no callers outside sq-core. sq-exec uses its own
-  `rows::compatible`, `merge_into` and `push_merged`.
+- **Unused helpers.** `batch::merge_compatible` and `Batch::push_extended` have no callers
+  outside sq-core. For merging, sq-exec uses its own `rows::compatible`, `merge_into` and
+  `push_merged`. It does use `Batch::push_unbound`, for group and COUNT output rows, Slice
+  padding and EXISTS seed batches.
+- **TEMP blank nodes in MemStore.** `sq_memstore::MemStore`'s `Dictionary::decode` tests
+  `is_bnode()`, so it decodes a TEMP blank node as a store label. For example,
+  `TermId::temp(3, Tag::BNode)` decodes as `_:b1a` instead of the `Error::Internal` the
+  contract requires. sq-sqlite's dictionary is correct.
 - **Cost constants not yet calibrated.** They are still the SPEC §10 starting values.
   `stats.rs` says "Calibrated in WP-14", but that pass has not changed them.
 - **Stale doc comments.** Several comments describe the spec rather than the current code:
@@ -324,4 +399,4 @@ bits.
   [sq-exec](../sq-exec/README.md), [sq-oracle](../sq-oracle/README.md).
 - Producers and consumers of the IR and plans: [sq-plan](../sq-plan/README.md),
   [sq-sqlgen](../sq-sqlgen/README.md), [sq-results](../sq-results/README.md),
-  [sq-engine](../sq-engine/README.md), [sq-api](../sq-api/README.md).
+  [sq-engine](../sq-engine/), [sq-api](../sq-api/).

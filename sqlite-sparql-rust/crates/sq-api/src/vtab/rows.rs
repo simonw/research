@@ -235,13 +235,14 @@ unsafe impl VTabCursor for RowsCursor {
             // A re-filtered cursor (correlated join) ends its previous scan first.
             *self.scan.get_mut() = None;
             let mut values = args.iter();
-            let query = text_value(values.next(), "query")
-                .and_then(|q| q.ok_or_else(|| Error::Invalid("sparql_rows: the query is NULL".into())))
-                .into_sql()?
-                .to_string();
+            let query = text_value(values.next(), "query").into_sql()?;
             let opts = if idx_num & HAS_OPTS != 0 { text_value(values.next(), "opts").into_sql()? } else { None };
+            // A NULL query gives no rows, as NULL does for SQLite's own table-valued functions
+            // (`json_each(NULL)`): a correlated `sparql_rows(t.q)` skips rows without a query.
+            let Some(query) = query else { return Ok(()) };
             let used = idx_str.and_then(|s| u64::from_str_radix(s, 16).ok()).unwrap_or(u64::MAX);
-            *self.scan.get_mut() = Some(Scan::open(&self.st, query, opts.map(str::to_string), used).into_sql()?);
+            *self.scan.get_mut() =
+                Some(Scan::open(&self.st, query.to_string(), opts.map(str::to_string), used).into_sql()?);
             Ok(())
         })
     }

@@ -21,23 +21,30 @@ SPARQL-to-SQL translator. All of them therefore agree on SPARQL value semantics.
     |               |                   |                        |
  sq-exec         sq-oracle           sq-api                   sq-sqlgen (dev-dependency: tests)
  (FILTER, BIND,  (reference          (SQL helpers sparql_num, sparql_str, sparql_ebv,
-  LeftJoin        evaluator)          sparql_sortkey, sparql_eval, sparql_sum/avg/min/max/
-  filters, sort,                      sample/group_concat)
+  LeftJoin        evaluator)          sparql_sortkey, sparql_eval, sparql_regex,
+  filters, sort,                      sparql_sum/avg/min/max/sample/group_concat)
   GROUP BY)
 ```
 
 `sq-engine` also lists `sq-expr` in its `Cargo.toml`. Normal dependencies are `sq-core`,
-`oxrdf`, `spargebra` (for the `Function` enum), `oxsdatatypes` (XSD value types), `oxiri`
-(`IRI()`), `regex`, `md-5`/`sha1`/`sha2`, `rand` and `rustc-hash`. `oxrdfio` and `sparesults` are
-dev-dependencies, used only by the W3C-driven test.
+`oxrdf`, `spargebra`, `oxsdatatypes` (XSD value types), `oxiri` (`IRI()`), `regex`,
+`md-5`/`sha1`/`sha2`, `rand` and `rustc-hash`. The code imports the `Function` enum through
+sq-core's re-export (`sq_core::spargebra`), so the direct `spargebra` entry only pins the version.
+The dev-dependencies are `sq-core` with its `testing` feature (the seeded `sq_core::testing::Rng`
+used by the random tests) plus `oxrdfio` and `sparesults`, which only the W3C-driven test uses.
+
+The crate needs Rust 1.88 or later (edition 2024). It uses let-chains (`if let … && let …`),
+which are stable only from 1.88, even though the workspace `Cargo.toml` declares
+`rust-version = "1.85"`. The dev VM builds with rustc 1.97.0.
 
 ## Key concepts
 
 **1. Errors are values, failures are `Err`.** Every evaluation returns
 `sq_core::Result<Option<_>>`. `Ok(None)` means a SPARQL error or an unbound result. `Err` is
 fatal (resolver I/O, interrupt, internal bug). Errors propagate, with the exceptions in SPEC §6.2:
-`||`/`&&` use three-valued logic, `COALESCE` skips errors, `IF` errors only on its condition,
-`BOUND` and `EXISTS` never error, and `IN` errors only when nothing matched and some comparison
+`||`/`&&` use three-valued logic, `COALESCE` skips errors, `IF` is an error when its condition
+errors or when the branch it takes errors (an error in the branch it does not take is ignored, so
+`IF(true, 1, 1/0)` is 1), `BOUND` and `EXISTS` never error, and `IN` errors only when nothing matched and some comparison
 errored. `!=` arrives as `Not(Equal)` and `NOT IN` as `Not(In)`, the way spargebra produces them.
 In a row, both `TermId::UNBOUND` (0) and the group-key sentinel `TermId::ERROR` count as unbound
 (`is_present` is false and `BOUND` returns false).
@@ -49,12 +56,16 @@ literal whose term is *not* canonical. Examples are `xsd:int("05")`, which is `"
 strings, the numeric tower, the date/time and duration types, plus `Other` (an unknown datatype)
 and `IllTyped` (a known XSD type with a bad lexical form or a failed facet, such as
 `"300"^^xsd:byte`). Inline INT/BOOL/DECIMAL/DATETIME/DATE ids decode from the payload with no
-cache and no I/O (`inline_value`). Every other id goes through the `ValueCache` and then
-`TermResolver::term`.
+cache and no I/O (`inline_value`). SHORTSTR ids also decode from the payload, with no I/O, but
+the result is stored in the `ValueCache` because decoding allocates. Dictionary, BNODE and TEMP
+ids go through the `ValueCache` and then `TermResolver::term`.
 
 **3. Interning only when an id is needed.** Intermediate results stay as `Val::V`/`Val::Typed`.
-Only `CompiledExpr::eval`, `id_of_val`/`id_of_value` and `Accumulator::finish` assign ids, so
-FILTER and ORDER BY intermediates never grow the execution's append-only `TempDict`. A computed
+Only `CompiledExpr::eval`, `id_of_val`/`id_of_value` and `Accumulator::finish` assign ids to
+computed values, so FILTER and ORDER BY intermediates do not grow the execution's append-only
+`TempDict`. The exception is `BNODE()` and `BNODE(str)`: they allocate TEMP blank nodes through
+`TermResolver::fresh_bnode` whenever they are evaluated, including inside `ebv`, `eval_val` and
+`sort_key` (so `FILTER(isBlank(BNODE()))` or `ORDER BY BNODE()` add TEMP rows). A computed
 value gets its inline id whenever it is inline-encodable (`inline_id_of_value`), and those paths
 never call the resolver. Otherwise `TermResolver::intern(term, canonical)` is called.
 `canonical = true` returns the dictionary id when the term is stored. Callers need it whenever
@@ -80,7 +91,7 @@ specialised nodes:
 | `InIds` | `?x IN (<a>, <b>, ...)`, all IRI constants | id-set test |
 | `TagIs` | `isIRI` / `isBlank` / `isLiteral` | tag read (`temp_tag` for TEMP ids) |
 | `LangEq` | `LANG(?x) = "c"`, `c` a SHORTSTR or TEMP constant | cached language tag |
-| `LangMatchesConst` | `LANGMATCHES(e, "range")` | no range decode |
+| `LangMatchesConst` | `LANGMATCHES(e, "range")`, `range` a SHORTSTR or TEMP constant | no range decode |
 | `Regex` / `Replace` (const) | constant pattern and flags | compiled once on first use; literal and `^literal` patterns become string ops; a constant replacement is prepared once |
 
 Arithmetic and numeric-comparison subtrees run directly on `Num`, with no `Value` built in
@@ -199,7 +210,14 @@ Value-level helpers (all take `&mut EvalCtx` when they may need to decode):
 Hosts (sq-exec, sq-oracle, sq-api) should call `value_of_val`, `kind_of_val` and `id_of_val`
 instead of matching on `Val` variants. The feature `testing` exports `testing::{TestResolver,
 TestEnv, FnExists, NoExists}`. `TestResolver` follows the store's id discipline: inline ids,
-`WELL_KNOWN` dictionary rows, counter blank nodes, and TEMP ids for everything else.
+`WELL_KNOWN` dictionary rows, counter blank nodes, and TEMP ids for everything else. Inside this
+crate's own tests the module is always available. Another crate's tests (and the second snippet
+above) need the feature turned on, in that crate's `Cargo.toml`:
+
+```toml
+[dev-dependencies]
+sq-expr = { workspace = true, features = ["testing"] }
+```
 
 ## Testing
 

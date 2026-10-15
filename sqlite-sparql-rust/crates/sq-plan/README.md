@@ -7,12 +7,15 @@ orders each join group with a cost-based search, choosing a join operator and an
 path for every step. It also provides `validate()`, which re-derives every invariant the
 executor relies on, and the EXPLAIN printers behind `sparql_explain`. The crate never executes
 a plan and does not link SQLite (`rusqlite` is only a dev-dependency). It reads the store only
-through a few `QuadStore` calls: dictionary lookups, bounded counts, statistics, named graphs,
-cost constants and capabilities. The only SQL it produces is the text of `SqlJoin` statements.
-The crate exists because sparqlite plans SPARQL itself instead of translating it to SQL. Each
-join step becomes a BindJoin, HashJoin, MergeJoin or NestedLoop over the integer-encoded quad
-indexes. SQLite only receives a statement for a left-deep chain of plain pattern lookups, and
-only when the cost model says its VDBE is cheaper.
+through a few `QuadStore` calls: dictionary lookups, dictionary decodes (`decode_one`, for the
+numeric constants of integer range bounds), bounded counts, statistics, named graphs, cost
+constants and capabilities.
+The crate exists because sparqlite plans SPARQL itself instead of translating it to SQL. Join
+steps become BindJoin, HashJoin, MergeJoin or NestedLoop operators over the integer-encoded quad
+indexes. The only SQL text sq-plan generates is a `SqlJoin` for a left-deep chain of plain
+pattern lookups, chosen only when the cost model says SQLite's VDBE is cheaper. On the SQLite
+store, single-pattern scans still run as sq-sqlite's pooled range-scan statements (or through
+its direct B-tree reader), and bounded counts run as `count(*)` statements.
 
 ## Where it fits
 
@@ -51,11 +54,15 @@ only, calls `validate()`.
 | `physical::{scan, range}` | index access paths, integer range (IntRange) scans |
 | `physical::{sqljoin, star, semi, finish}` | SqlJoin rendering, StarMerge post-pass, EXISTS decorrelation, plan ids and canonical flags |
 | `validate`, `explain` | plan checker; EXPLAIN text |
+| `expr` | expression helpers: conjunct splitting, seed constants, EXISTS ids, slot sets |
+| `logical` | `Logical` tree traversal and rebuilding |
 
 **2. Lowering and the slot layout.** Every variable gets a slot in one layout for the whole
-query, EXISTS patterns included. Hidden slots are also allocated for pattern blank nodes (one
-per label per scope) and for spargebra-generated variables such as path middles and aggregate
-outputs (printed as `?_N`). A query that needs more than
+query, EXISTS patterns included. Hidden slots are also allocated for blank nodes (one per label
+per scope). These include the blank nodes spargebra creates as the middles of sequence paths
+(`?a :p/:q ?b` becomes `?a :p _:b1 . _:b1 :q ?b`), which EXPLAIN shows as `_:bN`. Variables
+that spargebra generates (aggregate outputs, `GROUP BY (expr)` keys and the `DESCRIBE <iri>`
+helper) also get hidden slots and print as `?_N`. A query that needs more than
 256 slots (`SlotSet::MAX_SLOTS`) fails with `Error::Unsupported`. A sub-select opens a scope:
 non-projected variables are alpha-renamed to fresh slots. Constants resolve through
 `Dictionary::lookup`; a miss becomes a TEMP id in `LoweredQuery.temps`, which matches nothing
@@ -104,7 +111,8 @@ EXISTS plans are opened in `SeedMode::Substitute` instead.
    Slice and never leave their group. The one exception is an OPTIONAL's own filter conjuncts whose `evars`
    the right side binds certainly: they move into that side. `FILTER(sameTerm(?x, c))`, and
    `?x = c` for an IRI or simple literal `c`, become a seed constant
-   `Join(Values{?x: [c]}, P)`.
+   `Join(Values{?x: [c]}, P)` when `?x` is certainly bound where the conjunct is placed;
+   otherwise they stay a Filter.
 
 In debug builds, `filter::check_barriers` verifies that no conjunct moved into an OPTIONAL or
 MINUS right side. `validate()` cannot see this on a physical plan.
@@ -139,8 +147,11 @@ Each step considers these join operators:
   enforcers can sort an input by the key.
 - **NestedLoop:** used when nothing else is legal.
 
-A quad pattern reads the first `IndexOrder::candidates` order for its bound columns. The
-exception is probes with g, s and p bound (and fully bound probes), which read GPSO. A Scan
+By default (`choose_order`), a quad pattern reads the first `IndexOrder::candidates` order for
+its bound columns, except that probes with g, s and p bound (and fully bound probes) read GPSO.
+When a merge join or an interesting sort order of the DP wants a different output order, the
+planner reads another candidate order that is sorted by that key (`sorted_accesses`). This is
+why the golden count below reads `?a :knows ?b` through Gpos. A Scan
 claims `sorted_by` its first free column when it is read as one stream. An integer range
 filter on an object with a fixed graph and a constant predicate may become
 `Scan { order: Gpos, range: IntRange }`. The scan reads the inline integer range plus the
@@ -186,6 +197,8 @@ correctness).
   there are no statistics, gets a runtime bounded count: `store.count(spec, Some(cap))`. The
   cap is `probe_count_cap` (1,000), with at most `max_probe_counts` (32) counts per query.
   Without statistics the cap is 10,000, and a count that exceeds it is extrapolated 10×.
+  IntRange costing spends the same budget on bounded counts of the `rdf_gpox` numeric
+  exceptions, and assumes 0 exceptions once the budget is spent.
 - **Statistics.** Otherwise the estimate comes from heavy hitters and per-predicate statistics,
   then fixed defaults. Subject stars use characteristic sets. One named graph is estimated as
   an even share of the named-graph scope.
@@ -203,7 +216,10 @@ The whole public surface is re-exported from `src/lib.rs`:
 
 Errors are `sq_core::Error`. The variants are `Syntax` from the parsers, `Unsupported` for more
 than 256 slots, RDF 1.2 triple terms and non-silent SERVICE, and `Internal` from `validate`
-and the debug-build checks in `optimize`. Store errors from lookups and counts pass through.
+and the debug-build checks in `optimize`. An invalid base IRI is also a `Syntax` error.
+`Internal` can also come from planner invariant failures that are checked in every build (for
+example "no legal join operator to replay" in `physical/join.rs`). Store errors from lookups
+and counts pass through.
 
 ```rust
 use sq_core::plan::{JoinPolicy, QueryOptions, QueryPlan};
@@ -224,10 +240,13 @@ fn plan(store: &dyn QuadStore, text: &str, opts: &QueryOptions) -> Result<QueryP
 let opts = QueryOptions { join_policy: JoinPolicy::PreferHash, reorder: false, ..Default::default() };
 ```
 
-`sq-engine` does exactly this (`query.rs`, `explain.rs`), passing `Some(store.dict())` so that
-constants print as full IRIs. Without a dictionary, EXPLAIN prints inline values, TEMP terms,
-blank nodes and sq-core's well-known IRIs, and shows other dictionary ids as `<#id>`. IRIs in
-the rdf, rdfs, xsd and owl namespaces are always abbreviated. For EXPLAIN ANALYZE, pass the
+`sq-engine` follows the same parse → lower → optimize sequence (`query.rs`). Its EXPLAIN
+(`explain.rs`) passes `Some(store.dict())` so that constants print as full IRIs. It never calls
+`validate()` itself and relies on the debug-build check inside `optimize`. Without a
+dictionary, EXPLAIN prints inline values, TEMP terms, blank nodes and sq-core's well-known
+IRIs, and shows other dictionary ids as `<#id>`. IRIs in the rdf, rdfs, xsd and owl namespaces
+are abbreviated (`rdf:type`, `xsd:integer`, ...) whenever the IRI is printed and its local name
+is a simple name (letters, digits, `_` and `-`). For EXPLAIN ANALYZE, pass the
 executor's `ExecProfile` as the second argument; this adds `rows= opens= seeks= ms=` per node.
 
 An UPDATE's WHERE clause is lowered with `lower_pattern`, which also returns the
@@ -241,14 +260,22 @@ let (lowered, var_map) = sq_plan::lower_pattern(pattern, using.as_ref(), None, &
 let plan = sq_plan::optimize(lowered, &store, &opts)?; // form = Select(all in-scope slots)
 ```
 
-`props` and `plan_props` expose the static properties, which is how `tests/w3c.rs` checks its
-invariants on every node:
+`props` and `plan_props` expose the static properties. `tests/w3c.rs` uses them to check the
+subset invariants on every node (`safe_inject ⊆ vars` and `certain ⊆ maybe` on logical and plan
+nodes, plus `maybe ⊆ vars` on logical nodes):
 
 ```rust
 let lp = sq_plan::props(&lowered.root, &lowered.exists);
 assert!(lp.certain.is_subset(&lp.maybe) && lp.safe_inject.is_subset(&lp.vars));
 let pp = sq_plan::plan_props(&plan.root, &plan.exists);
-let seed_ok = pp.accepts_seed(seed); // seed: SlotSet
+assert!(pp.certain.is_subset(&pp.maybe) && pp.safe_inject.is_subset(&pp.vars));
+```
+
+`accepts_seed` tells whether a node may be opened with a given Join-mode seed (the W3C test does
+not call it):
+
+```rust
+let seed_ok = pp.accepts_seed(seed); // seed: SlotSet; true when seed ⊆ safe_hat()
 ```
 
 The golden tests pin plan shapes. This is `COUNT(*)` of a two-hop chain on the 200-person
@@ -272,21 +299,33 @@ constant, including the graph, is a `?N` parameter (`physical/sqljoin.rs`).
 
 ## Testing
 
+**Prerequisites.** The crate needs Rust 1.88 or later: it uses edition-2024 let-chains, which
+the workspace's `rust-version = "1.85"` understates. It was tested with rustc 1.97. The tests
+link the system libsqlite3 through `rusqlite` (the workspace never enables `bundled`), so
+install the SQLite development library (`libsqlite3-dev` on Debian/Ubuntu, or equivalent). The
+SqlJoin `EXPLAIN QUERY PLAN` assertions in `differential.rs` were validated on SQLite 3.45.1;
+another SQLite version may choose a different plan shape.
+
 ```sh
 cargo test -p sq-plan                       # 59 unit tests in src/ + 75 integration tests
 cargo test -p sq-plan --test golden         # one file
 SQ_W3C_DIR=/path/to/rdf-tests/sparql cargo test -p sq-plan --test w3c -- --nocapture
-REVIEW_SEED=3 REVIEW_N=600 cargo test -p sq-plan --test review3_semantics
+REVIEW_SEED=3 REVIEW_N=600 cargo test -p sq-plan --test review3_semantics -- review_physical_plans
 REVIEW_SEED=2 REVIEW_CASES=300 REVIEW_SIZE=150 cargo test -p sq-plan --test review_wp8
 ```
 
 There are no `#[ignore]`d tests. Some tests read environment variables:
-- **`tests/w3c.rs`** reads `SQ_W3C_DIR`: the `sparql` directory of a w3c/rdf-tests checkout,
-  the one that contains `sparql11/`. The default is a scratchpad path from the original
-  development session. When the suite is absent, the test prints a note and **passes without
-  checking anything**.
-- **`tests/review3_semantics.rs`** reads `REVIEW_N` and `REVIEW_SEED` (defaults 250 and 7;
-  the GRAPH ?g test runs 1,500 cases).
+- **`tests/w3c.rs`** reads `SQ_W3C_DIR`: the `sparql` directory of a w3c/rdf-tests checkout.
+  It must contain both `sparql10/` and `sparql11/`. For example, run
+  `git clone https://github.com/w3c/rdf-tests` and point at `rdf-tests/sparql`. The test only checks for
+  `sparql11/` before running, so a directory without `sparql10/` fails its `queries > 900`
+  assertion. The default is a scratchpad path from the original development session. When the
+  suite is absent, the test prints a note and **passes without checking anything**.
+- **`tests/review3_semantics.rs`** reads `REVIEW_N`, the case count of both randomized tests
+  (defaults 250 for `review_physical_plans_match_naive_evaluation` and 1,500 for
+  `graph_var_bodies_match_naive_evaluation`). `REVIEW_SEED` (default 7) only reseeds the
+  first; the GRAPH ?g test always uses a fixed seed. Without a test-name filter, the command
+  above would also cut the GRAPH ?g test to 600 cases.
 - **`tests/review_wp8.rs`** reads `REVIEW_SEED`, `REVIEW_CASES` and `REVIEW_SIZE` (defaults
   11, 150 and 90).
 
@@ -299,7 +338,7 @@ In a dev-profile run on the 4-vCPU dev VM, all 134 tests passed. The slowest fil
 | `planner.rs` | GRAPH push / loop, filter scope, OPTIONAL filters, seeds, TopK / Count / ASK, policies, EXISTS plans and decorrelation, canonical flags, SERVICE |
 | `optimizer.rs` | Merge joins and enforcers, order claims, COUNT fast paths, StarMerge, galloping, IntRange choice, SQL chain placement and the 64-alias cap, `validate()` on corrupted plans |
 | `golden.rs` | EXPLAIN snapshots: star (and its SqlJoin on SQLite), chain, OPTIONAL, TopK, factorized count, IntRange, cycle. Update them deliberately when costs change. |
-| `validate.rs` | Each `validate()` check, exercised by mutating a valid plan |
+| `validate.rs` | The core `validate()` checks (seeds, keys / checks, Extend, Distinct, Active graph, scan order, sortedness, slot ranges, ids), each exercised by mutating a valid plan. The optimizer-specific checks (merge, SortBySlot, IntRange, SqlJoin) are in `optimizer.rs`. |
 | `differential.rs` | 1,000 random queries × 8 option sets × {MemStore, SQLite}, executed by sq-exec against sq-oracle; every SqlJoin is checked with `EXPLAIN QUERY PLAN`; an exhaustive IntRange test |
 | `w3c.rs` | Every W3C `.rq` file: parse, lower, optimize, validate and props invariants. It plans on an empty store (default options) and on the test's data with and without statistics under 6 option sets. |
 | `review*.rs` | Regression tests from adversarial reviews: seeded groups, absent graphs, finite estimates, a naive-evaluator differential of physical plans, planning budget, StarMerge selection, statistics scopes |
@@ -318,11 +357,13 @@ sweep, which comes from the test run above.
     when bind, hash and merge are compared (`physical/join.rs`). A bounded search therefore
     takes at most about 15M or 28M instructions; the `Auto` worst case took 3–10 ms in release
     on the heavily loaded VM.
-  - Planning the 10-pattern 5-clique query under `Auto` costs 2.0× the instructions of
-    `PreferHash` (89.7M against 44.3M); `review_wp8` asserts at most 4× in CPU time.
+  - Planning the 10-pattern 5-clique query under `Auto` costs about 2× the instructions of
+    `PreferHash` (measured before the last fix round); `review_wp8` asserts at most 4× in CPU
+    time.
 - **Plan quality.** When the DP must fall back:
-  - greedy ordering on an 11-pattern star with filters and NOT EXISTS gives an estimated cost
-    of 927K against 805K under the earlier unbounded DP;
+  - in the baseline planner (WP5, before the cost-based optimizer), greedy ordering on an
+    11-pattern star with filters and NOT EXISTS gave an estimated cost of 927K against 805K
+    under the unbounded DP of that time; this has not been re-measured since;
   - a lower DP tier costs 1.11–1.28× the full search's estimate on the 5-clique.
 - **Index choice.** A random (g, s, p) point probe through GPSO takes about 1.4 µs against
   2.1 µs through GSPO.
@@ -331,8 +372,8 @@ sweep, which comes from the test run above.
   StarMerge. Without the count, the StarMerge is slower: 70 ms against 46 ms for 2.4M output
   rows.
 - **Correctness evidence.** `differential.rs` ran 16,000 executions with zero differences
-  from the oracle. They covered about 600 SqlJoins, 7,800 MergeJoins, 2,500 enforcers, 1,600
-  streaming groups, 200 factorized counts and 60 IntRange scans (approximate counts). All
+  from the oracle. The test is deterministic; its tally covers 548 SqlJoins, 7,731 MergeJoins,
+  2,399 enforcers, 1,606 streaming groups, 169 factorized counts and 58 IntRange scans. All
   1,646 forced StarMerge rewrites matched the oracle.
 
 ## Limitations and known gaps
@@ -389,5 +430,5 @@ sweep, which comes from the test run above.
   `CostConstants`), [../sq-exec/README.md](../sq-exec/README.md) (executing plans, the seed
   contract), [../sq-sqlite/README.md](../sq-sqlite/README.md) (cursor costs, `sql_rows`,
   statistics), [../sq-memstore/README.md](../sq-memstore/README.md) and
-  [../sq-oracle/README.md](../sq-oracle/README.md) (test store and reference evaluator),
-  [../sq-engine/README.md](../sq-engine/README.md) (the caller).
+  [../sq-oracle/README.md](../sq-oracle/README.md) (test store and reference evaluator).
+- The caller, `crates/sq-engine` (`src/query.rs`, `src/explain.rs`).

@@ -160,10 +160,27 @@ fn query_argument_is_required() {
     let c = loaded();
     let e = c.prepare("SELECT * FROM sparql_rows").unwrap_err();
     assert!(e.to_string().contains("no query solution"), "{e}");
-    let e = c.prepare("SELECT * FROM sparql_rows(NULL)").unwrap().query_row([], |_| Ok(())).unwrap_err();
-    assert!(e.to_string().contains("the query is NULL"), "{e}");
     let e = c.prepare("SELECT * FROM sparql_rows('SELECT')").unwrap().query_row([], |_| Ok(())).unwrap_err();
     assert!(e.to_string().starts_with("sparql: syntax error"), "{e}");
+    let e = c.prepare("SELECT * FROM sparql_rows(42)").unwrap().query_row([], |_| Ok(())).unwrap_err();
+    assert!(e.to_string().contains("the query must be TEXT"), "{e}");
+    let e = c.prepare("SELECT * FROM sparql_rows(NULL, 42)").unwrap().query_row([], |_| Ok(())).unwrap_err();
+    assert!(e.to_string().contains("the opts must be TEXT"), "{e}");
+}
+
+/// A NULL query is an empty scan, like `json_each(NULL)`: correlated scans skip such rows.
+#[test]
+fn a_null_query_gives_no_rows() {
+    let c = loaded();
+    assert_eq!(one::<i64>(&c, "SELECT count(*) FROM sparql_rows(NULL)"), 0);
+    assert_eq!(one::<i64>(&c, "SELECT count(*) FROM sparql_rows(NULL, '{\"engine\":\"sql\"}')"), 0);
+    c.execute_batch(
+        "CREATE TABLE jobs(q TEXT);
+         INSERT INTO jobs VALUES ('SELECT ?n WHERE { ?s <http://ex/name> ?n }'), (NULL), ('ASK {}');",
+    )
+    .unwrap();
+    assert_eq!(one::<i64>(&c, "SELECT count(*) FROM jobs j, sparql_rows(j.q) r"), 5);
+    assert_eq!(status_i64(&c, "open_cursors"), 0);
 }
 
 #[test]

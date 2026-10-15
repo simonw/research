@@ -111,6 +111,48 @@ def test_timeout(db):
         scalar(db, "SELECT sparql_count(?)", ENDLESS)
 
 
+NEVER = 'SELECT * WHERE { ?a ?p ?b . ?c ?q ?d . ?e ?r ?f FILTER(CONCAT(STR(?b), STR(?d), STR(?f)) = "never") }'
+
+
+@pytest.mark.parametrize(
+    "sql, query",
+    [
+        ("SELECT sparql_count_sql(?)", ENDLESS),
+        ("SELECT sparql_query_sql(?)", NEVER),
+        ("SELECT count(*) FROM sparql_rows(?, '{\"engine\":\"sql\"}')", NEVER),
+    ],
+)
+def test_timeout_bounds_the_baseline_engine_inside_a_step(db, sql, query):
+    # The baseline's SQL can spend unbounded time in one step (no row comes out): a
+    # watchdog interrupts it at the deadline.
+    big(db)
+    scalar(db, "SELECT sparql_config('timeout_ms', 200)")
+    watchdog = threading.Timer(10, db.interrupt)
+    watchdog.start()
+    start = time.monotonic()
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="sparql: query timeout"):
+            db.execute(sql, (query,)).fetchall()
+    finally:
+        watchdog.cancel()
+    assert time.monotonic() - start < 5
+    assert not db.in_transaction
+    # Nothing is left interrupted.
+    scalar(db, "SELECT sparql_config('timeout_ms', 0)")
+    assert scalar(db, "SELECT sparql_count_sql('SELECT * WHERE { ?s ?p ?o }')") == 300
+
+
+def test_a_failed_update_beside_a_pending_writer_leaves_nothing(loaded):
+    loaded.execute("CREATE TEMP TABLE t(x)")
+    pending = loaded.execute("INSERT INTO t VALUES (1), (2) RETURNING x")
+    assert pending.fetchone() is not None
+    with pytest.raises(sqlite3.OperationalError, match="another statement of this connection writes"):
+        scalar(loaded, "SELECT sparql_update('INSERT DATA { <http://ex/new> <http://ex/p> 1 }')")
+    pending.fetchall()
+    assert scalar(loaded, "SELECT count(*) FROM t") == 2
+    assert scalar(loaded, "SELECT sparql_ask('ASK { <http://ex/new> ?p ?o }')") == 0
+
+
 def run_isolated(script, env=None):
     """Runs `script` in a fresh Python process that loads the extension; returns it finished."""
     prologue = textwrap.dedent(f"""
@@ -163,6 +205,11 @@ def test_deeply_nested_requests_do_not_crash_the_host():
             ("SELECT sparql_count(?)", "SELECT * WHERE " + "{ " * 5000 + "?s ?p ?o" + " }" * 5000),
             ("SELECT count(*) FROM sparql_rows(?)", "SELECT * WHERE { ?s ?p ?o FILTER(?o" + " + 1" * 20000 + " > 0) }"),
             ("SELECT sparql_update(?)", "INSERT DATA { <http://ex/a> <http://ex/p> " + "( " * 100000 + "1" + " )" * 100000 + " }"),
+            # Wide requests: one join level per triple pattern, one BIND level per DESCRIBE target.
+            ("SELECT sparql_count(?)", "SELECT * WHERE { " + "".join(f"?s <http://ex/p{i}> <http://ex/o{i}> . " for i in range(3000)) + "}"),
+            ("SELECT count(*) FROM sparql_rows(?)", "SELECT * WHERE { ?s <http://ex/p> " + ", ".join(f"<http://ex/o{i}>" for i in range(3000)) + " }"),
+            ("SELECT sparql_update(?)", "DELETE WHERE { " + "".join(f"<http://ex/a> <http://ex/p{i}> ?o . " for i in range(3000)) + "}"),
+            ("SELECT sparql_count(?)", "DESCRIBE " + " ".join(f"<http://ex/a{i}>" for i in range(8000))),
         ]
         for sql, text in requests:
             try:
