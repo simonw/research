@@ -93,3 +93,78 @@ fn merged_default_graphs_read_each_triple_once_through_indexes() {
     // The closure's recursive step skips the first-copy test (the closure is a set).
     assert_eq!(merged.matches("NOT EXISTS").count(), 1, "{merged}");
 }
+
+/// `BIND(COALESCE(?prev, ?prev, …) AS ?next)` chains, `levels` deep with 10 references each.
+fn bind_chain(levels: usize) -> String {
+    let refs = |v: &str| vec![v; 10].join(", ");
+    let mut body = format!("?s :age ?a BIND(COALESCE({}) AS ?b1) ", refs("?a"));
+    for i in 2..=levels {
+        body.push_str(&format!("BIND(COALESCE({}) AS ?b{i}) ", refs(&format!("?b{}", i - 1))));
+    }
+    format!("SELECT ?s ?b{levels} WHERE {{ {body} }} ORDER BY ?b{levels}")
+}
+
+#[test]
+fn computed_values_appear_once_in_the_statement() {
+    // Every level reads the previous value by column: the statement grows with the query.
+    let (four, eight) = (super::sql(&bind_chain(4)).sql, super::sql(&bind_chain(8)).sql);
+    assert!(eight.len() < 2 * four.len() + 1000, "{} then {} bytes:\n{eight}", four.len(), eight.len());
+    assert_eq!(eight.matches("COALESCE(").count(), 8, "{eight}");
+    assert_eq!(eight.matches(" LIMIT -1)").count(), 8, "one opaque level per BIND read, the ORDER BY's included");
+    // A value only projected stays in the SELECT list.
+    let projected = super::sql("SELECT ?x ?w WHERE { ?x :age ?a BIND(?a + 1 AS ?w) }").sql;
+    assert!(!projected.contains("LIMIT -1"), "{projected}");
+    // Deeper chains stop at SQLite's parser stack instead of growing.
+    assert_eq!(unsupported(&bind_chain(40)), "baseline: query nesting too deep for SQLite's parser");
+}
+
+#[test]
+fn computed_bindings_are_settled_before_joins_and_exposure() {
+    // A join on a computed value compares the column, once.
+    let join = super::sql("SELECT ?s ?o WHERE { ?s :age ?a BIND(?a * 2 AS ?b) ?o :age ?b }").sql;
+    assert_eq!(join.matches("sparql_eval('*'").count(), 1, "{join}");
+    assert!(join.contains("LIMIT -1) AS d"), "{join}");
+    // Sub-selects and UNIONs that compute a value are opaque derived tables.
+    let sub = super::sql("SELECT ?b WHERE { { SELECT (?a * 2 AS ?b) WHERE { ?s :age ?a } } FILTER(?b > 1) }").sql;
+    assert!(sub.contains(" LIMIT -1) AS d"), "{sub}");
+    let union = super::sql("SELECT ?b WHERE { { ?s :age ?a BIND(?a * 2 AS ?b) } UNION { ?s :score ?b } }").sql;
+    assert!(union.contains(" LIMIT -1) AS d"), "{union}");
+    let plain = super::sql("SELECT ?b WHERE { { ?s :age ?b } UNION { ?s :score ?b } }").sql;
+    assert!(!plain.contains("LIMIT -1"), "{plain}");
+    // The OPTIONAL side that computes a value, read by the outer filter.
+    let opt = super::sql("SELECT ?s WHERE { ?s :age ?a OPTIONAL { ?s :knows ?o BIND(STR(?o) AS ?n) } FILTER(?n > 1) }");
+    assert_eq!(opt.sql.matches("sparql_eval('STR'").count(), 1, "{}", opt.sql);
+}
+
+#[test]
+fn in_and_strends_repeat_only_simple_operands() {
+    // `x IN (…)` over a computed x that several terms compare: x is named once.
+    let mut e = "?a".to_owned();
+    for _ in 0..3 {
+        e = format!("(({e} + 1) IN (?a, ?s, 2))");
+    }
+    let sql = super::sql(&format!("SELECT ?s WHERE {{ ?s :age ?a FILTER({e}) }}")).sql;
+    assert_eq!(sql.matches("sparql_eval('+'").count(), 3, "{sql}");
+    assert_eq!(sql.matches("AS v LIMIT -1) AS l").count(), 3, "{sql}");
+    // One term (the id list) needs no name.
+    let ids = super::sql("SELECT ?s WHERE { ?s :name ?n FILTER(LCASE(?n) IN (\"alice\", \"Bob the Builder\")) }").sql;
+    assert!(!ids.contains("LIMIT -1"), "{ids}");
+    // STRENDS reads its argument once.
+    let mut e = "?n".to_owned();
+    for _ in 0..4 {
+        e = format!("STR(STRENDS({e}, \"ce\"))");
+    }
+    let sql = super::sql(&format!("SELECT ?s WHERE {{ ?s :name ?n FILTER(BOUND(?s) && {e} = \"true\") }}")).sql;
+    assert_eq!(sql.matches("t1.o").count(), 1, "{sql}");
+}
+
+#[test]
+fn statements_past_the_size_budget_are_unsupported() {
+    // FROM merges repeat the graph list per pattern: 2000 graphs x 300 patterns is ~8.5 MB.
+    let from: String = (0..2000).map(|i| format!("FROM <http://ex.org/graph{i}> ")).collect();
+    let pats = |n: usize| (0..n).map(|i| format!("?s{i} :knows ?o{i} .")).collect::<Vec<_>>().join(" ");
+    let msg = unsupported(&format!("SELECT * {from} WHERE {{ {} }}", pats(300)));
+    assert_eq!(msg, "baseline: queries whose SQL exceeds 8 MiB");
+    let ok = super::sql(&format!("SELECT * {from} WHERE {{ {} }}", pats(50)));
+    assert!(ok.sql.len() > 1 << 20 && ok.params.len() > 2000);
+}
