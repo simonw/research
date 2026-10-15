@@ -16,7 +16,7 @@ use rustc_hash::FxHashMap;
 use sq_core::codec::{self, FIRST_USER_ROW, WELL_KNOWN};
 use sq_core::{Error, Result, Tag, TermId};
 
-use crate::analyze::LOADED_SINCE_ANALYZE;
+use crate::analyze::GROWTH_SINCE_ANALYZE;
 use crate::dict::row_matches;
 use crate::keys::{KeyLike, KeyView, OwnedKey};
 use crate::raw::{RawDb, RawStmt};
@@ -123,8 +123,10 @@ pub(crate) fn load_with(store: &SqliteStore, src: LoadSource<'_>, opts: &LoadOpt
     report.quads_new = match bulk_insert {
         Some(n) => {
             shared.register_graphs(&quads)?;
+            shared.note_growth(crate::writer::changed_rows(n)?)?;
             n
         }
+        // Counts its own growth.
         None => shared.insert_quads(&mut quads)?,
     };
     drop(quads);
@@ -331,21 +333,18 @@ fn insert_bulk(shared: &StorageShared, quads: &[[TermId; 4]]) -> Result<Option<u
     Ok(Some(n))
 }
 
-/// §2.3 step 6: analyze on the first load, or when loads added more than 25% of
-/// `analyzed_quads` since the last analyze. The running counter (`LOADED_SINCE_ANALYZE`,
-/// reset by analyze) makes the check O(1) however small each load is.
+/// §2.3 step 6: analyze on the first load (nothing, or only an empty store, analyzed yet), or
+/// when the store grew by more than 25% of `analyzed_quads` since the last analyze. The net
+/// growth counter (`GROWTH_SINCE_ANALYZE`: every insert / remove / clear through this crate,
+/// SPARQL updates included; reset by analyze) makes the check O(1) however small each load
+/// is.
 fn should_analyze(shared: &StorageShared, quads_new: u64) -> Result<bool> {
-    if quads_new == 0 {
-        return Ok(false);
-    }
     let analyzed = shared.meta_get("analyzed_quads")?.unwrap_or(0).max(0);
+    let growth = shared.meta_get(GROWTH_SINCE_ANALYZE)?.unwrap_or(0);
     if analyzed == 0 {
-        return Ok(true);
+        return Ok(quads_new > 0 || growth > 0);
     }
-    let quads_new = i64::try_from(quads_new).map_err(|_| Error::internal("load size overflows i64"))?;
-    shared.meta_add(LOADED_SINCE_ANALYZE, quads_new)?;
-    let loaded = shared.meta_get(LOADED_SINCE_ANALYZE)?.unwrap_or(0);
-    Ok(loaded as f64 > REANALYZE_GROWTH * analyzed as f64)
+    Ok(growth as f64 > REANALYZE_GROWTH * analyzed as f64)
 }
 
 /// A load-local term map pre-seeded with the `codec::WELL_KNOWN` IRIs (fixed rows), so every

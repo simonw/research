@@ -29,16 +29,9 @@ pub(crate) const POLL_ROWS: u64 = 4096;
 #[derive(Debug, Default)]
 pub(crate) struct Charge(u64);
 
-impl Charge {
-    pub fn bytes(&self) -> u64 {
-        self.0
-    }
-}
-
 /// Per-execution state shared by every evaluation level.
 pub(crate) struct Shared {
     pub store: Rc<dyn QuadStore>,
-    pub width: usize,
     pub dataset: DatasetSpec,
     /// Named graphs of the dataset, sorted.
     pub named_graphs: Vec<TermId>,
@@ -64,7 +57,6 @@ pub(crate) struct Shared {
 /// Construction parameters of [`Shared`].
 pub(crate) struct SharedInit {
     pub store: Rc<dyn QuadStore>,
-    pub width: usize,
     pub dataset: DatasetSpec,
     pub named_graphs: Vec<TermId>,
     pub terms: Terms,
@@ -84,7 +76,6 @@ impl Shared {
         named_graphs.dedup();
         Shared {
             store: i.store,
-            width: i.width,
             dataset: i.dataset,
             named_graphs,
             terms: RefCell::new(i.terms),

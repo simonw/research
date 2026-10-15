@@ -1,6 +1,7 @@
-//! Logical rewrites run before physical planning (spec §7.3): `GRAPH <c>` resolution, the
-//! GRAPH ?g push-or-loop decision, filter placement and sameTerm seeds. TopK, Count and the
-//! canonical flags are physical decisions (see `physical`).
+//! Logical rewrites run before physical planning (spec §7.3): `GRAPH <c>` resolution, Empty
+//! propagation, the GRAPH ?g push-or-loop decision, filter placement and sameTerm seeds. TopK,
+//! Count and the canonical flags are physical decisions (see `physical`).
+mod empty;
 mod filter;
 mod graph;
 
@@ -19,11 +20,14 @@ pub(crate) struct Rewritten {
 /// check that filter placement moved no conjunct into an OPTIONAL / MINUS right side.
 pub(crate) fn rewrite(root: Logical, mut exists: Vec<Logical>, named: &[TermId]) -> Result<Rewritten> {
     // 1. GRAPH <c>: membership check + Active -> Const(c) (EXISTS patterns included).
-    let mut root = graph::resolve_const_graphs(root, &mut exists, named);
+    let root = graph::resolve_const_graphs(root, &mut exists, named);
     for i in 0..exists.len() {
         let pat = std::mem::replace(&mut exists[i], Logical::Unit);
         exists[i] = graph::resolve_const_graphs(pat, &mut exists, named);
     }
+    // Fold the resulting Empty patterns into their ancestors: afterwards Empty is at most the
+    // whole body or the input of an implicit group, so logical props match the physical plans.
+    let mut root = empty::prune_empty(root, &mut exists);
 
     // 2. GRAPH ?g: push into the patterns or keep for a GraphLoop.
     let snapshot = exists.clone();

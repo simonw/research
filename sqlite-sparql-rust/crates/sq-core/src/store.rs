@@ -75,7 +75,9 @@ impl IndexOrder {
     /// FROM clause used by the SQL cursor (all SQL is schema-qualified `main.`).
     pub const fn sql_from(self) -> &'static str {
         match self {
-            IndexOrder::Gspo => "main.rdf_quad NOT INDEXED",
+            // NOT INDEXED does not pin the PK of a WITHOUT ROWID table on SQLite 3.45 (the planner
+            // still picks a secondary index); naming the PK's automatic index does.
+            IndexOrder::Gspo => "main.rdf_quad INDEXED BY sqlite_autoindex_rdf_quad_1",
             IndexOrder::Gpso => "main.rdf_quad INDEXED BY rdf_gpso",
             IndexOrder::Gpos => "main.rdf_quad INDEXED BY rdf_gpos",
             IndexOrder::Gosp => "main.rdf_quad INDEXED BY rdf_gosp",

@@ -124,16 +124,19 @@ fn analyze_empty_store() {
     assert!(db.store.stats().is_some(), "analyzed (empty) is not 'never analyzed'");
 }
 
-/// §2.3 step 6 bookkeeping: loads add to `loaded_since_analyze`, every analyze resets it.
+/// §2.3 step 6 bookkeeping: loads, updates and clears move `growth_since_analyze` by the
+/// store's net growth; every analyze resets it.
 #[test]
-fn analyze_resets_the_load_counter() {
+fn analyze_resets_the_growth_counter() {
     use crate::{BulkMode, LoadOptions, LoadSource};
+    use sq_core::store::{GraphTarget, QuadStoreWriter};
     let db = Db::mem();
-    let counter = || db.query_i64("SELECT coalesce((SELECT value FROM rdf_meta WHERE key='loaded_since_analyze'), 0)");
+    let counter = || db.query_i64("SELECT coalesce((SELECT value FROM rdf_meta WHERE key='growth_since_analyze'), 0)");
+    let analyzed = || db.query_i64("SELECT value FROM rdf_meta WHERE key='analyzed_quads'");
     let opts = LoadOptions { bulk: BulkMode::Never, ..LoadOptions::new(oxrdfio::RdfFormat::NTriples) };
     let nt = |from: usize, to: usize| -> String { (from..to).map(|i| format!("<http://ex/s{i}> <http://ex/p> <http://ex/o{i}> .\n")).collect() };
     db.store.bulk_load(LoadSource::Bytes(nt(0, 100).as_bytes()), &opts).unwrap();
-    assert_eq!((counter(), db.query_i64("SELECT value FROM rdf_meta WHERE key='analyzed_quads'")), (0, 100));
+    assert_eq!((counter(), analyzed()), (0, 100));
     db.store.bulk_load(LoadSource::Bytes(nt(100, 110).as_bytes()), &opts).unwrap();
     db.store.bulk_load(LoadSource::Bytes(nt(105, 120).as_bytes()), &opts).unwrap();
     assert_eq!(counter(), 20, "new quads only");
@@ -143,5 +146,25 @@ fn analyze_resets_the_load_counter() {
     db.store.bulk_load(LoadSource::Bytes(nt(120, 140).as_bytes()), &opts).unwrap();
     assert_eq!(counter(), 20);
     db.store.bulk_load(LoadSource::Bytes(nt(140, 151).as_bytes()), &opts).unwrap();
-    assert_eq!((counter(), db.query_i64("SELECT value FROM rdf_meta WHERE key='analyzed_quads'")), (0, 151));
+    assert_eq!((counter(), analyzed()), (0, 151));
+
+    // Updates count too: +5 inserted (one already stored), -3 removed (one absent), then a
+    // CLEAR of a named graph holding 2 quads.
+    let p = TermId::from_dict(5000, Tag::Iri);
+    let g = TermId::from_dict(5001, Tag::Iri);
+    let q = |g: TermId, i: i64| [g, TermId::from_dict(6000 + i, Tag::Iri), p, TermId::from_int(i).unwrap()];
+    assert_eq!(db.insert(&[q(TermId::DEFAULT_GRAPH, 0), q(TermId::DEFAULT_GRAPH, 0), q(TermId::DEFAULT_GRAPH, 1)]), 2);
+    assert_eq!(db.insert(&[q(TermId::DEFAULT_GRAPH, 1), q(TermId::DEFAULT_GRAPH, 2), q(g, 3), q(g, 4)]), 3);
+    assert_eq!(counter(), 5);
+    assert_eq!(db.remove(&[q(TermId::DEFAULT_GRAPH, 0), q(TermId::DEFAULT_GRAPH, 1), q(TermId::DEFAULT_GRAPH, 9)]), 2);
+    assert_eq!(counter(), 3);
+    let ws = db.store.write_scope(0).unwrap();
+    assert_eq!(db.store.clear(GraphTarget::Named(g)).unwrap(), 2);
+    ws.commit().unwrap();
+    assert_eq!(counter(), 1);
+    // A rolled-back write leaves the counter alone.
+    let ws = db.store.write_scope(0).unwrap();
+    db.store.insert(&mut vec![q(TermId::DEFAULT_GRAPH, 7)]).unwrap();
+    drop(ws);
+    assert_eq!(counter(), 1);
 }

@@ -348,7 +348,7 @@ impl Fixed {
             Fixed::ClearNamed => "DELETE FROM main.rdf_quad WHERE g<>0",
             Fixed::ClearAll => "DELETE FROM main.rdf_quad",
             Fixed::QuadCountCapped => "SELECT count(*) FROM (SELECT 1 FROM main.rdf_quad LIMIT ?1)",
-            // Upsert: counters that §2.1's defaults do not create (`loaded_since_analyze`).
+            // Upsert: counters that §2.1's defaults do not create (`growth_since_analyze`).
             Fixed::MetaAdd => {
                 "INSERT INTO main.rdf_meta(key, value) VALUES (?1, ?2) \
                  ON CONFLICT(key) DO UPDATE SET value=value+excluded.value"

@@ -180,7 +180,7 @@ impl<'q> Evaluator<'q> {
 
     /// Basic graph pattern: nested loops, one triple pattern at a time, each partial solution
     /// extended by the matching triples of its graph (bound slots act as constants).
-    fn bgp(&mut self, patterns: &[QuadPat], cx: Ctx<'_>) -> Result<Bag> {
+    fn bgp(&self, patterns: &[QuadPat], cx: Ctx<'_>) -> Result<Bag> {
         let mut current = Bag::single(cx.seed);
         let mut triples = Vec::new();
         let mut scratch = Vec::with_capacity(self.width);
@@ -215,7 +215,12 @@ impl<'q> Evaluator<'q> {
 
     /// The graphs a pattern with selector `sel` reads for `row`. `GraphSel::Slot` (a pushed
     /// `GRAPH ?g`) ranges over the named graphs and also binds the slot.
-    fn graphs_of(&self, sel: GraphSel, row: &[TermId], active: ActiveGraph) -> Vec<(Graph<'_>, Option<(Slot, TermId)>)> {
+    fn graphs_of(
+        &self,
+        sel: GraphSel,
+        row: &[TermId],
+        active: ActiveGraph,
+    ) -> Vec<(Graph<'_>, Option<(Slot, TermId)>)> {
         match sel {
             GraphSel::Slot(x) => {
                 let bound = row[x as usize];
@@ -231,7 +236,7 @@ impl<'q> Evaluator<'q> {
     }
 
     /// Property path pattern (§18.4): the (x, y) pairs of the path, bound to its endpoints.
-    fn path(&mut self, g: GraphSel, s: PatTerm, path: &PathPlan, o: PatTerm, cx: Ctx<'_>) -> Result<Bag> {
+    fn path(&self, g: GraphSel, s: PatTerm, path: &PathPlan, o: PatTerm, cx: Ctx<'_>) -> Result<Bag> {
         let end = |t: PatTerm| match t {
             PatTerm::Const(c) => End::Fixed(c),
             PatTerm::Slot(x) if cx.seed[x as usize].is_bound() => End::Fixed(cx.seed[x as usize]),

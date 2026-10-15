@@ -399,10 +399,13 @@ impl std::fmt::Debug for SqlCursor {
 
 /// A cursor over generated read-only SQL whose `width` result columns are TermIds (the
 /// SqlJoin hybrid). NULL columns read as UNBOUND (0). `seek` / `rebind` are unsupported.
+///
+/// A failed step is final: it cannot be repositioned, so every later `fill` reports the
+/// error again (never a silent, truncated end of the results).
 pub struct SqlRowsCursor {
     stmt: Lease,
     width: usize,
-    done: bool,
+    state: State,
     counters: CursorCounters,
 }
 
@@ -415,7 +418,12 @@ impl SqlRowsCursor {
         for (i, p) in params.iter().enumerate() {
             stmt.bind_i64(i as c_int + 1, *p)?;
         }
-        Ok(SqlRowsCursor { stmt, width, done: false, counters: CursorCounters { reader: ReaderKind::SqlCursor, ..Default::default() } })
+        Ok(SqlRowsCursor {
+            stmt,
+            width,
+            state: State::Running,
+            counters: CursorCounters { reader: ReaderKind::SqlCursor, ..Default::default() },
+        })
     }
 }
 
@@ -426,8 +434,13 @@ impl QuadCursor for SqlRowsCursor {
 
     fn fill(&mut self, out: &mut Vec<TermId>, max_rows: usize) -> Result<usize> {
         self.counters.fills += 1;
-        if self.done {
-            return Ok(0);
+        match self.state {
+            State::Done => return Ok(0),
+            State::Failed { interrupted: true } => return Err(Error::Interrupted),
+            State::Failed { interrupted: false } => {
+                return Err(Error::Invalid("sql_rows: fill after a failed step (the results are incomplete)".into()));
+            }
+            State::Fresh | State::Running => {}
         }
         let w = self.width;
         out.reserve(max_rows.min(sq_core::BATCH_ROWS) * w);
@@ -441,11 +454,11 @@ impl QuadCursor for SqlRowsCursor {
                     n += 1;
                 }
                 Ok(false) => {
-                    self.done = true;
+                    self.state = State::Done;
                     break;
                 }
                 Err(e) => {
-                    self.done = true;
+                    self.state = State::Failed { interrupted: matches!(e, Error::Interrupted) };
                     return Err(e);
                 }
             }

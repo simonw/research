@@ -158,7 +158,8 @@ impl GraphReader<'_> {
             .ok_or_else(|| sq_core::Error::internal("sq-oracle: no index order for a graph-first scan"))?;
         let cols = order.cols();
         let k = k as usize;
-        let prefix: Vec<TermId> = cols[..k].iter().map(|c| fixed[*c as usize].expect("prefix column is fixed")).collect();
+        let prefix: Vec<TermId> =
+            cols[..k].iter().map(|c| fixed[*c as usize].expect("prefix column is fixed")).collect();
         let mut cursor = self.store.cursor(&ScanSpec::new(order, &prefix))?;
         let width = cursor.width();
         let mut buf = Vec::new();
@@ -207,14 +208,18 @@ mod tests {
         );
         store.insert(&mut vec![[g1, a, p, b], [g2, a, p, b], [g2, b, p, a], [TermId::DEFAULT_GRAPH, a, p, a]]).unwrap();
         let reader = GraphReader { store: &store };
-        let spec = DatasetSpec { default: DefaultGraph::Graphs(Arc::from(vec![g2, g1])), named: NamedGraphs::Only(Arc::from(vec![])) };
+        let spec = DatasetSpec {
+            default: DefaultGraph::Graphs(Arc::from(vec![g2, g1])),
+            named: NamedGraphs::Only(Arc::from(vec![])),
+        };
         let ds = Dataset::resolve(&spec, &store).unwrap();
         let mut out = Vec::new();
         reader.triples(ds.graph(GraphSel::Default, ActiveGraph::Default), None, Some(p), None, &mut out).unwrap();
         assert_eq!(out.len(), 2, "{out:?}");
         assert!(ds.named().is_empty());
 
-        let all = Dataset::resolve(&DatasetSpec { default: DefaultGraph::UnionAll, named: NamedGraphs::All }, &store).unwrap();
+        let union = DatasetSpec { default: DefaultGraph::UnionAll, named: NamedGraphs::All };
+        let all = Dataset::resolve(&union, &store).unwrap();
         out.clear();
         reader.triples(all.graph(GraphSel::Default, ActiveGraph::Default), Some(a), None, None, &mut out).unwrap();
         assert_eq!(out.len(), 2, "{out:?}");

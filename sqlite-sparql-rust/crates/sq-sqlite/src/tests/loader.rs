@@ -223,9 +223,9 @@ fn assert_same_tables(a: &Db, b: &Db) {
     for sql in [
         "SELECT id, tag, lex, dt, lang, h FROM rdf_term ORDER BY id",
         "SELECT g FROM rdf_graph ORDER BY g",
-        // write_gen / stats_gen / loaded_since_analyze count write scopes, analyze runs and
-        // loads, not content.
-        "SELECT key, value FROM rdf_meta WHERE key NOT IN ('write_gen', 'stats_gen', 'loaded_since_analyze') ORDER BY key",
+        // write_gen / stats_gen / growth_since_analyze count write scopes, analyze runs and
+        // writes, not content.
+        "SELECT key, value FROM rdf_meta WHERE key NOT IN ('write_gen', 'stats_gen', 'growth_since_analyze') ORDER BY key",
         "SELECT * FROM rdf_stat_global ORDER BY scope",
         "SELECT * FROM rdf_stat_pred ORDER BY scope, p",
         "SELECT * FROM rdf_stat_po ORDER BY scope, p, o",

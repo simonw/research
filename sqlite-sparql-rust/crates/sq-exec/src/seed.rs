@@ -25,14 +25,6 @@ pub(crate) struct Seed<'a> {
     pub subst: SlotSet,
 }
 
-impl<'a> Seed<'a> {
-    /// A Join-mode seed (`SeedMode::Join`) of every bound slot of `row`.
-    #[cfg(test)]
-    pub fn join(row: &'a [TermId]) -> Self {
-        Seed { row, subst: SlotSet::EMPTY }
-    }
-}
-
 /// An operator's copy of the seed it was opened with.
 ///
 /// `base` is the full-width row of seeded values (all UNBOUND without a seed): the first image

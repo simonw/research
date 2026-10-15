@@ -42,7 +42,8 @@ fn run(store: &MemStore, query: &str) -> OracleOutput {
     let parsed = sq_plan::parse_query(&text, Some(BASE)).expect("query parses");
     let options = QueryOptions { base_iri: Some(BASE.to_owned()), ..QueryOptions::default() };
     let lowered = sq_plan::lower_query(&parsed, store, &options).expect("query lowers");
-    let opts = OracleOptions { now: Some(oxsdatatypes::DateTime::from_str("2026-10-15T12:00:00Z").unwrap()), rng_seed: Some(1) };
+    let now = oxsdatatypes::DateTime::from_str("2026-10-15T12:00:00Z").unwrap();
+    let opts = OracleOptions { now: Some(now), rng_seed: Some(1) };
     sq_oracle::evaluate_with(&lowered, store, &opts).expect("query evaluates")
 }
 
@@ -146,7 +147,10 @@ fn datasets_from_and_from_named() {
         lines(&["?s=:a ?o=1", "?s=:b ?o=2"])
     );
     assert!(select(data, "SELECT ?s FROM NAMED :g1 { ?s :p ?o }").is_empty());
-    assert_eq!(select(data, "SELECT ?g FROM NAMED :g2 FROM NAMED :nowhere { GRAPH ?g { } }"), lines(&["?g=:g2", "?g=:nowhere"]));
+    assert_eq!(
+        select(data, "SELECT ?g FROM NAMED :g2 FROM NAMED :nowhere { GRAPH ?g { } }"),
+        lines(&["?g=:g2", "?g=:nowhere"])
+    );
 }
 
 #[test]

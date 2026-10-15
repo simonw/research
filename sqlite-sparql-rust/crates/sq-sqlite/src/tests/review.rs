@@ -455,3 +455,223 @@ fn review_busy_commit_does_not_leak_the_write_transaction() {
         "failed commit: transaction left open = {leaked}, quads visible {after} / after a later COMMIT {durable} (before: {before})"
     );
 }
+
+// ---------------------------------------------------------------- second review round
+
+/// §4.4 rollback safety: only rows `<= committed_max_row` may enter the connection caches,
+/// and `committed_max_row` is refreshed only outside a write transaction. When the epoch
+/// check inside a write transaction sees `dict_gen` change (another connection's
+/// `vacuum_terms` deleted the highest rows, so `max(id)` dropped), it flushes the caches but
+/// keeps the OLD, now too high, admission bound. Rows this connection then allocates reuse
+/// the deleted row numbers, are admitted while uncommitted, and survive the rollback: a later
+/// committed term at that row decodes as the rolled-back one, and a lookup of the
+/// rolled-back term returns an id that does not exist.
+#[test]
+fn review_admission_bound_after_foreign_vacuum_inside_a_write_transaction() {
+    let db = Db::file();
+    let other = db.reopen();
+    // 40 committed but unreferenced dictionary rows (1024..=1063), seen by `db`.
+    let ws = db.store.write_scope(0).unwrap();
+    for i in 0..40 {
+        sq_core::store::QuadStoreWriter::intern(&db.store, iri(&format!("http://ex/unused/{i}")).as_ref().into()).unwrap();
+    }
+    ws.commit().unwrap();
+    db.shared().validate_epoch().unwrap();
+    assert_eq!(db.shared().committed_max_row(), codec::FIRST_USER_ROW + 39);
+    // Another connection vacuums them all (dict_gen bump): max(id) drops back to 35.
+    other.shared().validate_epoch().unwrap();
+    assert_eq!(other.store.vacuum_terms().unwrap(), 40);
+
+    // `db`, inside the user's write transaction: BEGIN; a plain-SQL write; then
+    // `SELECT sparql_update('INSERT DATA …')` and a query of its result; then ROLLBACK.
+    db.conn.execute_batch("BEGIN; INSERT INTO rdf_graph(g) VALUES (999985);").unwrap();
+    let doomed = iri("http://ex/rolled-back");
+    let id = {
+        let _r = db.store.read_scope(0).unwrap(); // txn WRITE: no savepoint
+        db.shared().validate_epoch().unwrap(); // sees the dict_gen change, flushes
+        let ws = db.store.write_scope(1).unwrap();
+        let id = sq_core::store::QuadStoreWriter::intern(&db.store, doomed.as_ref().into()).unwrap();
+        ws.commit().unwrap(); // RELEASE of a nested savepoint
+        id
+    };
+    assert_eq!(id.dict_row(), codec::FIRST_USER_ROW, "reuses the vacuumed row number");
+    {
+        let _r = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap(); // still WRITE: no refresh
+        assert_eq!(db.store.decode_one(id).unwrap().to_oxrdf(), doomed.clone().into());
+        assert_eq!(db.store.lookup(doomed.as_ref().into()).unwrap(), Some(id));
+    }
+    db.conn.execute_batch("ROLLBACK").unwrap();
+
+    // The other connection commits a different term at the same row.
+    let real = iri("http://ex/committed-later");
+    let ows = other.store.write_scope(0).unwrap();
+    let other_id = sq_core::store::QuadStoreWriter::intern(&other.store, real.as_ref().into()).unwrap();
+    ows.commit().unwrap();
+    assert_eq!(other_id, id);
+
+    let _r = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    let decoded = db.store.decode_one(id).unwrap().to_oxrdf();
+    let looked_up = db.store.lookup(doomed.as_ref().into()).unwrap();
+    assert!(
+        decoded == real.clone().into() && looked_up.is_none(),
+        "after rollback: decode(row {}) = {decoded} (committed: {real}); lookup(<{}>) = {looked_up:?} (want None)",
+        id.dict_row(),
+        doomed.as_str()
+    );
+}
+
+/// §8.6 WriteScope step 2 / `WriteScope::open`'s own comment: the `write_gen` bump takes the
+/// write lock "directly from no transaction" so that busy_timeout applies (SQLite skips the
+/// busy handler when it upgrades a read lock the connection already holds). But when the
+/// schema state is not cached — a fresh `StorageShared` (first call on a connection), any
+/// rolled-back write scope (`after_rollback` forgets it), every `ensure_schema` — `open`
+/// first runs `schema::detect` INSIDE the savepoint, which takes the read lock; the bump then
+/// upgrades it and fails with SQLITE_BUSY at once while another connection writes, however
+/// long busy_timeout is. Here the other writer holds its lock for 300 ms against a 10 s
+/// busy_timeout: a plain `bulk_load` must wait and succeed.
+#[test]
+fn review_write_scope_honours_busy_timeout_without_a_cached_schema() {
+    use crate::{BulkMode, LoadOptions, LoadSource};
+    let db = Db::file();
+    let path = db.path.as_ref().unwrap().0.clone();
+    db.conn.busy_timeout(Duration::from_secs(10)).unwrap();
+    let opts = LoadOptions { bulk: BulkMode::Never, ..LoadOptions::new(oxrdfio::RdfFormat::NTriples) };
+    let data: &[u8] = b"<http://ex/s> <http://ex/p> \"a literal that needs a row\" .\n";
+    let hold_writer = |ms: u64| {
+        let (tx, rx) = mpsc::channel();
+        let path = path.clone();
+        let t = std::thread::spawn(move || {
+            let c = rusqlite::Connection::open(&path).unwrap();
+            c.execute_batch("BEGIN IMMEDIATE; INSERT OR IGNORE INTO rdf_graph(g) VALUES (777713);").unwrap();
+            tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(ms));
+            c.execute_batch("COMMIT").unwrap();
+        });
+        rx.recv().unwrap();
+        t
+    };
+
+    // Control: schema state cached (as after validate_epoch) -> waits, then succeeds.
+    let warm = store_for(&db.conn);
+    warm.shared().validate_epoch().unwrap();
+    let t = hold_writer(300);
+    let r = warm.bulk_load(LoadSource::Bytes(data), &opts);
+    t.join().unwrap();
+    assert!(r.is_ok(), "control (cached schema state): {r:?}");
+    drop(warm);
+
+    // A fresh store over the same connection (first sparql_load on a pooled connection).
+    let fresh = store_for(&db.conn);
+    let t = hold_writer(300);
+    let started = std::time::Instant::now();
+    let r = fresh.bulk_load(LoadSource::Bytes(data), &opts);
+    let waited = started.elapsed();
+    t.join().unwrap();
+    assert!(r.is_ok(), "bulk_load on a fresh store failed after {waited:?} despite busy_timeout=10s: {r:?}");
+}
+
+/// A read entry (`sparql_query`, `sparql_value`, …) called from a statement that WRITES to
+/// another schema, e.g. `CREATE TEMP TABLE r AS SELECT sparql_query('…')` or
+/// `INSERT INTO temp.cache SELECT sparql_value('…')`: the host statement is an active writer,
+/// but it has not touched `main`, so `txn_state(main) == NONE` and `ReadScope::open` runs
+/// `SAVEPOINT sq_r{d}`, which SQLite refuses while any write statement is active ("cannot open
+/// savepoint - SQL statements in progress", SQLITE_BUSY). The read call fails although it
+/// reads only `main` and needs no savepoint to be correct. Simulated with an
+/// `INSERT … RETURNING` host statement that is mid-execution (still counted as a writer).
+#[test]
+fn review_read_scope_inside_a_statement_writing_another_schema() {
+    let db = Db::mem();
+    db.insert(&random_quads(14, 20, false));
+    db.conn.execute_batch("CREATE TEMP TABLE results(x)").unwrap();
+    let mut host = db.conn.prepare("INSERT INTO temp.results(x) VALUES (1), (2), (3) RETURNING x").unwrap();
+    let mut rows = host.query([]).unwrap();
+    assert!(rows.next().unwrap().is_some());
+    assert_eq!(db.shared().db().txn_state(), rusqlite::ffi::SQLITE_TXN_NONE, "the host has not touched main");
+    let scope = db.store.read_scope(0);
+    let outcome = scope.as_ref().map(|_| ()).map_err(|e| e.to_string());
+    let counted = scope.ok().map(|_s| {
+        db.shared().validate_epoch().unwrap();
+        db.store.count(&ScanSpec::new(IndexOrder::Gspo, &[]), None).unwrap()
+    });
+    drop(rows);
+    drop(host);
+    assert!(counted == Some(20), "read scope inside a writer on temp: {outcome:?}");
+}
+
+/// The same through a real scalar function, the way sq-api calls the store:
+/// `CREATE TEMP TABLE r AS SELECT probe()` where `probe()` opens a read scope on `main`.
+#[test]
+fn review_read_scope_in_create_temp_table_as_select_function() {
+    use rusqlite::functions::FunctionFlags;
+    let db = Db::mem();
+    db.insert(&random_quads(15, 20, false));
+    // SAFETY: only the pointer value is taken here.
+    let handle = unsafe { db.conn.handle() } as usize;
+    db.conn
+        .create_scalar_function("probe", 0, FunctionFlags::SQLITE_UTF8, move |_ctx| {
+            // SAFETY: the function only runs while `db.conn` is open (see below).
+            let store = crate::SqliteStore::new(crate::StorageShared::new(
+                unsafe { RawDb::from_ptr(handle as *mut rusqlite::ffi::sqlite3) },
+                crate::StorageConfig::default(),
+            ));
+            let r = (|| -> sq_core::Result<u64> {
+                let scope = store.read_scope(0)?;
+                store.shared().validate_epoch()?;
+                let n = store.count(&ScanSpec::new(IndexOrder::Gspo, &[]), None)?;
+                scope.close()?;
+                Ok(n)
+            })();
+            r.map(|n| n as i64).map_err(|e| rusqlite::Error::UserFunctionError(e.to_string().into()))
+        })
+        .unwrap();
+    assert_eq!(db.query_i64("SELECT probe()"), 20, "bare call works");
+    let r = db.conn.execute_batch("CREATE TEMP TABLE r AS SELECT probe() AS n");
+    assert!(r.is_ok(), "CREATE TEMP TABLE … AS SELECT probe(): {r:?}");
+}
+
+/// §2.3 step 6: re-analyze when "the store grew by more than 25% since `analyzed_quads`".
+/// The new O(1) counter (`loaded_since_analyze`) only counts quads added by loads, so growth
+/// through `QuadStoreWriter::insert` (every SPARQL `INSERT DATA` / `INSERT … WHERE`) is never
+/// seen: here the store doubles through updates and the next load still keeps the stale
+/// statistics.
+#[test]
+fn review_reanalyze_sees_growth_through_updates() {
+    use crate::{BulkMode, LoadOptions, LoadSource};
+    let db = Db::mem();
+    let opts = LoadOptions { bulk: BulkMode::Never, ..LoadOptions::new(oxrdfio::RdfFormat::NTriples) };
+    let nt: String = (0..1000).map(|i| format!("<http://ex/s{i}> <http://ex/p> <http://ex/o{i}> .\n")).collect();
+    db.store.bulk_load(LoadSource::Bytes(nt.as_bytes()), &opts).unwrap();
+    let analyzed = || db.query_i64("SELECT value FROM rdf_meta WHERE key='analyzed_quads'");
+    assert_eq!(analyzed(), 1000);
+    // +100% through the writer (SPARQL updates).
+    let p = TermId::from_dict(5000, Tag::Iri);
+    let more: Vec<[TermId; 4]> =
+        (0..1000).map(|i| [TermId::DEFAULT_GRAPH, TermId::from_dict(6000 + i, Tag::Iri), p, TermId::from_int(i).unwrap()]).collect();
+    db.insert(&more);
+    db.store.bulk_load(LoadSource::Bytes(b"<http://ex/x> <http://ex/p> <http://ex/y> .\n"), &opts).unwrap();
+    let total = db.query_i64("SELECT count(*) FROM rdf_quad");
+    assert!(
+        analyzed() as f64 * 1.25 >= total as f64,
+        "store grew from {} to {total} quads; the load did not re-analyze",
+        analyzed()
+    );
+}
+
+/// `SqlRowsCursor::fill` after an error returns Ok(0) ("exhausted") on the next call, the
+/// silent end-of-scan that `SqlCursor` was fixed to avoid (it now keeps reporting the error
+/// until repositioned). A consumer that polls again after a recoverable error (or a
+/// SqlJoin probe loop that treats 0 as "no rows") gets a truncated result instead of an error.
+#[test]
+fn review_sql_rows_fill_after_error_is_not_silently_exhausted() {
+    let db = Db::mem();
+    // abs(i64::MIN) raises "integer overflow" at step time, after one good row.
+    let sql = "SELECT abs(x) FROM (SELECT 1 AS x UNION ALL SELECT ?1)";
+    let mut cur = db.store.sql_rows(sql, &[i64::MIN], 1).unwrap();
+    let mut buf = Vec::new();
+    let first = cur.fill(&mut buf, 10);
+    assert!(first.is_err(), "the overflow is reported: {first:?}");
+    let second = cur.fill(&mut buf, 10);
+    assert!(second.is_err(), "fill after a failed step reported {second:?} (silent end of results)");
+}

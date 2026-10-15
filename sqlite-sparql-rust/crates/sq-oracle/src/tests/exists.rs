@@ -103,7 +103,8 @@ fn substituted_path_endpoints_are_constants() {
     fx.add(a, p, a);
     let zz = fx.absent("zz");
     let (x, y) = (fx.var("x"), fx.var("y"));
-    let path = || Logical::Path { g: sq_core::ir::GraphSel::Default, s: v(x), path: PathPlan::ZeroOrMore(Box::new(PathPlan::Pred(p))), o: v(y) };
+    let star = PathPlan::ZeroOrMore(Box::new(PathPlan::Pred(p)));
+    let path = || Logical::Path { g: sq_core::ir::GraphSel::Default, s: v(x), path: star.clone(), o: v(y) };
     // Joined (values_and_path): ?x :p* ?y with both ends free only matches graph nodes.
     assert!(fx.select(&[x, y], join(values(&[x], &[&[zz]]), path())).is_empty());
     // Substituted: the zero-length path matches the constant :zz itself.

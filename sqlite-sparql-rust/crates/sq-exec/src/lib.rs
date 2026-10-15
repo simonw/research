@@ -1,59 +1,32 @@
-//! sq-exec: physical operators (§5.3), paths (§5.5), EXISTS, GraphLoop, CONSTRUCT/DESCRIBE,
-//! and `Execution` (a SolutionSource / TripleSource). Depends only on sq-core + sq-expr.
-#![allow(unused_variables, dead_code)]
-use std::rc::Rc;
-use std::sync::Arc;
+//! sq-exec: the native executor (spec §4.1–§4.3, §5.1–§5.7).
+//!
+//! A pull-based Volcano executor over 1024-row [`sq_core::Batch`]es in one query-wide slot
+//! layout (rows are `[TermId; width]`, 0 = unbound). It runs a [`sq_core::plan::QueryPlan`]
+//! directly against a [`sq_core::store::QuadStore`]: physical operators (§5.3) in [`ops`],
+//! property paths (§5.5), EXISTS by memoized substitution, GraphLoop's graph register,
+//! CONSTRUCT / DESCRIBE (§5.7), the `TermResolver` (§4.3), deadlines, the memory budget and
+//! interrupt polling. Depends only on sq-core and sq-expr.
+//!
+//! [`Execution`] is the entry point: a `SolutionSource` for SELECT / ASK and a
+//! `TripleSource` for CONSTRUCT / DESCRIBE.
+#![forbid(unsafe_code)]
 
-use sq_core::eval_api::{SolutionSource, TripleSource};
-use sq_core::ir::QueryForm;
-use sq_core::plan::{ExecProfile, QueryOptions, QueryPlan};
-use sq_core::store::QuadStore;
-use sq_core::term::Term;
-use sq_core::{Result, TermId};
+mod build;
+mod construct;
+mod ctx;
+mod execution;
+mod exists;
+mod ops;
+mod resolver;
+mod rows;
+mod seed;
+
+#[cfg(test)]
+mod tests;
+
+pub use execution::Execution;
 
 /// Hook for connection-level caches. The store's `Dictionary` already uses the connection
 /// DecodeCache/LookupCache, so the default (empty) value is always valid.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ExecCaches {}
-
-/// Owns the operator tree, the store handle, the ExecCtx, the form and the projection.
-pub struct Execution {
-    _p: (),
-}
-impl Execution {
-    pub fn new(store: Rc<dyn QuadStore>, plan: QueryPlan, opts: &QueryOptions, caches: ExecCaches) -> Result<Self> {
-        todo!()
-    }
-    pub fn form(&self) -> &QueryForm {
-        todo!()
-    }
-    pub fn ask(&mut self) -> Result<bool> {
-        todo!()
-    }
-    /// Solutions (or triples): no decode.
-    pub fn count(&mut self) -> Result<u64> {
-        todo!()
-    }
-    pub fn profile(&self) -> ExecProfile {
-        todo!()
-    }
-}
-impl SolutionSource for Execution {
-    fn variables(&self) -> &[String] {
-        todo!()
-    }
-    fn next_rows(&mut self, out: &mut Vec<TermId>, max_rows: usize) -> Result<usize> {
-        todo!()
-    }
-    fn decode(&mut self, ids: &[TermId], out: &mut Vec<Option<Arc<Term>>>) -> Result<()> {
-        todo!()
-    }
-}
-impl TripleSource for Execution {
-    fn next_triples(&mut self, out: &mut Vec<[TermId; 3]>, max: usize) -> Result<usize> {
-        todo!()
-    }
-    fn decode(&mut self, ids: &[TermId], out: &mut Vec<Option<Arc<Term>>>) -> Result<()> {
-        todo!()
-    }
-}

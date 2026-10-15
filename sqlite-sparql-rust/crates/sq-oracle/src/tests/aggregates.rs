@@ -62,7 +62,10 @@ fn no_keys_over_no_solutions_gives_one_row() {
         (outs[3], agg(AggFunc::GroupConcat { separator: " ".into() }, false, Some(es(o)))),
         (outs[4], agg(AggFunc::Avg, false, Some(es(o)))),
     ];
-    assert_eq!(fx.select(&outs, group(Logical::Empty, &[], aggs.clone())), rows(&[&[&int(0), &int(0), "-", "\"\"", &int(0)]]));
+    assert_eq!(
+        fx.select(&outs, group(Logical::Empty, &[], aggs.clone())),
+        rows(&[&[&int(0), &int(0), "-", "\"\"", &int(0)]])
+    );
     // With a key there is no group at all.
     let k = fx.var("k");
     assert!(fx.select(&outs, group(Logical::Empty, &[k], aggs)).is_empty());

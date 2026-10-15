@@ -106,12 +106,12 @@ impl Planner<'_> {
             } else {
                 Algo::Hash { keys, check, build_is_left: false }
             };
-            Ok(Choice { algo, right, rows, cost })
+            Ok(Choice::new(algo, right, rows, cost))
         };
         let bind = |this: &mut Self| -> Result<Choice> {
             let right = this.open_node(q, Ctx { seeded: s, ..ctx.unseeded() }, mode)?;
             let cost = side.cost + lrows * right.cost;
-            Ok(Choice { algo: Algo::Bind { seed: s, sort_left: lrows > SORT_LEFT_ROWS }, right, rows, cost })
+            Ok(Choice::new(Algo::Bind { seed: s, sort_left: lrows > SORT_LEFT_ROWS }, right, rows, cost))
         };
         Ok(Some(match self.opts.join_policy {
             JoinPolicy::PreferHash => hash(self)?,

@@ -30,10 +30,14 @@ impl<'q> Evaluator<'q> {
             let mut index: FxHashMap<Vec<TermId>, usize> = FxHashMap::default();
             for (i, row) in rows.rows().enumerate() {
                 let key: Vec<TermId> = keys.iter().map(|k| row[*k as usize]).collect();
-                let g = *index.entry(key.clone()).or_insert_with(|| {
-                    groups.push((key, Vec::new()));
-                    groups.len() - 1
-                });
+                let g = match index.get(&key) {
+                    Some(&g) => g,
+                    None => {
+                        index.insert(key.clone(), groups.len());
+                        groups.push((key, Vec::new()));
+                        groups.len() - 1
+                    }
+                };
                 groups[g].1.push(i);
             }
         }

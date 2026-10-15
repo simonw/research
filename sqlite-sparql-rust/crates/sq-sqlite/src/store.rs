@@ -31,15 +31,19 @@ impl SqliteStore {
     /// `sparql_init()`: idempotent §2.1 DDL in one write scope; returns schema_version.
     /// `Error::Schema` if the database holds an incompatible RDF schema.
     pub fn ensure_schema(&self) -> Result<i64> {
-        // Fresh detection (not the cached state, which may predate other connections' DDL);
-        // the cache itself is only reset when DDL actually runs.
+        // Fresh detection (not the cached state, which may predate other connections' DDL),
+        // outside any savepoint. It is cached for the write scope opened next (here or by the
+        // caller, e.g. the loader): a schema read inside that scope's savepoint would make
+        // its first write upgrade a held read lock, which SQLite does without busy_timeout.
         let detected = schema::detect(self.0.db())?;
-        match detected.state {
-            SchemaState::Incompatible(m) => return Err(Error::Schema(m)),
-            SchemaState::Ready { schema_version } if detected.complete => return Ok(schema_version),
-            _ => {}
+        let (state, complete) = (detected.state.clone(), detected.complete);
+        if let SchemaState::Incompatible(m) = state {
+            return Err(Error::Schema(m));
         }
-        self.0.forget_schema();
+        self.0.remember_schema(detected)?;
+        if let (SchemaState::Ready { schema_version }, true) = (&state, complete) {
+            return Ok(*schema_version);
+        }
         let scope = self.write_scope(0)?;
         schema::create(&self.0)?;
         scope.commit()?;

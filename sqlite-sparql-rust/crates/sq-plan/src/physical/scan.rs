@@ -85,7 +85,8 @@ impl Planner<'_> {
     /// Rows and cost of one open of `pat` with `bound` slots bound: one seek, then the rows
     /// with their free columns.
     pub(crate) fn scan_estimate(&mut self, pat: &QuadPat, bound: SlotSet) -> Result<(f64, f64)> {
-        let (_, k) = choose_order(bound_columns(pat, bound));
+        // Every candidate order has the bound columns first (`choose_order`).
+        let k = bound_columns(pat, bound).iter().filter(|b| **b).count();
         let rows = self.card.pattern_rows(pat, bound)?;
         let free = (4 - k) as f64;
         Ok((rows, self.costs.seek_random + rows * (self.costs.scan_row + free * self.costs.scan_col)))

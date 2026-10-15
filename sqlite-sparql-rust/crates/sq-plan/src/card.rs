@@ -250,28 +250,22 @@ impl<'a> Card<'a> {
         dv.max(1.0)
     }
 
-    /// Characteristic sets (§7.4.4): expected rows per left row when quad pattern `next`
-    /// (subject slot, constant predicate) extends the subject star formed by the `joined`
-    /// patterns with the same subject slot, graph and a constant predicate (default graph
-    /// only). None when no characteristic sets apply.
-    pub(crate) fn star_ratio(&self, joined: &[QuadPat], next: &QuadPat) -> Option<f64> {
-        if !matches!((next.s, next.p), (PatTerm::Slot(_), PatTerm::Const(_)))
-            || next.g != GraphSel::Default
-            || self.dataset.default != DefaultGraph::StoreDefault
-        {
-            return None;
-        }
-        let in_star = |p: &&QuadPat| p.s == next.s && p.g == next.g && matches!(p.p, PatTerm::Const(_));
-        if !joined.iter().any(|p| in_star(&p)) {
-            return None;
-        }
-        let sc = &self.stats.as_ref()?.scope[0];
-        if sc.cs.is_empty() {
-            return None;
-        }
-        let before = star_estimate(sc, joined.iter().filter(in_star))?;
-        let after = star_estimate(sc, joined.iter().filter(in_star).chain(std::iter::once(next)))?;
-        (before > 0.0).then(|| after / before)
+    /// Can quad pattern `next` extend a subject star by characteristic sets (§7.4.4)? It needs a
+    /// subject slot and a constant predicate in the default graph of a dataset whose default
+    /// graph is the store's, and stored characteristic sets.
+    pub(crate) fn star_extends(&self, next: &QuadPat) -> bool {
+        matches!((next.s, next.p), (PatTerm::Slot(_), PatTerm::Const(_)))
+            && next.g == GraphSel::Default
+            && self.dataset.default == DefaultGraph::StoreDefault
+            && self.stats.as_ref().is_some_and(|st| !st.scope[0].cs.is_empty())
+    }
+
+    /// Characteristic-set estimate of the subject star made of `star` (quad patterns sharing
+    /// their subject slot, constant predicates; see [`same_star`]). None when a predicate has no
+    /// statistics. Expected rows per left row when pattern q extends star P:
+    /// `star_rows(P ∪ {q}) / star_rows(P)`.
+    pub(crate) fn star_rows<'p>(&self, star: impl Iterator<Item = &'p QuadPat>) -> Option<f64> {
+        star_estimate(&self.stats.as_ref()?.scope[0], star)
     }
 
     /// Estimated rows of a property path pattern (§5.5); `s_bound` / `o_bound` include
@@ -303,6 +297,12 @@ impl<'a> Card<'a> {
             }
         }
     }
+}
+
+/// Does quad pattern `p` belong to the subject star `next` extends (same subject slot and
+/// graph, constant predicate)?
+pub(crate) fn same_star(p: &QuadPat, next: &QuadPat) -> bool {
+    p.s == next.s && p.g == next.g && matches!(p.p, PatTerm::Const(_))
 }
 
 /// Σ_{cs ⊇ P} subjects(cs) × Π_{p∈P} occ(cs,p)/subjects(cs), a constant object scaling its
@@ -467,15 +467,29 @@ mod tests {
         let ds = ds();
         let card = Card::new(&st, &ds, 1, &QueryOptions::default());
         let p = |pred: i64| pat(PatTerm::Slot(0), PatTerm::Const(iri(pred)), PatTerm::Slot(1));
+        // Rows per left row when `next` extends the star `joined` (what the join planner uses).
+        let ratio = |joined: &[QuadPat], next: &QuadPat| -> Option<f64> {
+            assert!(card.star_extends(next));
+            let star: Vec<&QuadPat> = joined.iter().filter(|q| same_star(q, next)).collect();
+            let before = card.star_rows(star.iter().copied())?;
+            let after = card.star_rows(star.iter().copied().chain([next]))?;
+            (!star.is_empty() && before > 0.0).then(|| after / before)
+        };
         // Every subject with :100 also has exactly one :101.
-        assert_eq!(card.star_ratio(&[p(100)], &p(101)), Some(1.0));
+        assert_eq!(ratio(&[p(100)], &p(101)), Some(1.0));
         // No subject has both :100 and :102.
-        assert_eq!(card.star_ratio(&[p(100)], &p(102)), Some(0.0));
+        assert_eq!(ratio(&[p(100)], &p(102)), Some(0.0));
         // A constant object scales by its share of the predicate.
         let typed = pat(PatTerm::Slot(0), PatTerm::Const(iri(100)), PatTerm::Const(iri(201)));
-        let r = card.star_ratio(&[p(101)], &typed).unwrap();
+        let r = ratio(&[p(101)], &typed).unwrap();
         assert!((r - 0.2).abs() < 1e-9, "{r}");
-        assert_eq!(card.star_ratio(&[], &p(101)), None);
+        assert_eq!(ratio(&[], &p(101)), None);
+        // Other subjects, graphs or variable predicates are not part of the star.
+        assert!(!same_star(&pat(PatTerm::Slot(2), PatTerm::Const(iri(100)), PatTerm::Slot(1)), &p(101)));
+        assert!(!same_star(&pat(PatTerm::Slot(0), PatTerm::Slot(3), PatTerm::Slot(1)), &p(101)));
+        let in_named = QuadPat { g: GraphSel::Slot(4), ..p(101) };
+        assert!(!card.star_extends(&in_named));
+        assert!(!same_star(&p(100), &in_named));
     }
 
     #[test]

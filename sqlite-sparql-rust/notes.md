@@ -77,3 +77,14 @@ translating SPARQL to SQL text or running as an external client.
   Q4 0.2, Q5 >300 s timeout (super-linear OPTIONAL), Q6 148, Q7 121, Q8 173, Q9 1951, Q10 3085,
   Q11 195, Q12 201, Q13 421, Q14 150, Q15 0.1, Q16 486, Q17 78. Load: 8.0 s social, 4.3 s bsbm.
   rdflib on 80K triples: 3.9 ms .. 26 s; pyoxigraph 12-1900x faster than rdflib.
+- sq-sqlite (implement -> 2 review/fix rounds; reviewers found real transaction bugs: a write scope
+  dropped after an interrupt left a half-applied update in an open transaction that a later COMMIT
+  would persist; stale cache admission after another connection's vacuum; savepoints failing inside a
+  host statement that writes another schema). Final: 88 tests incl. cursor conformance on memory+file
+  DBs, EXPLAIN QUERY PLAN asserted for 570+ statement shapes. Release numbers on ~1M social triples:
+  bulk load 6.3-7.1 s (incl. 3 full + 5 partial index builds), point probe 0.9 us sorted / 1.3-2.1 us
+  random, 2-column pinned scan 117-131 ns/row, count(*) in VDBE 40-50 ns/row, decode miss ~1.0 us,
+  hit ~100 ns, bare API entry (read txn + epoch check) ~11 us.
+- Found during WP2: `NOT INDEXED` does NOT pin the primary key of a WITHOUT ROWID table on SQLite
+  3.45 — the planner still chose rdf_gpso/rdf_gosp. Fixed in sq-core: GSPO now renders as
+  `INDEXED BY sqlite_autoindex_rdf_quad_1`.

@@ -34,9 +34,11 @@ impl TermResolver for OracleResolver<'_> {
                 .ok_or_else(|| Error::internal(format!("sq-oracle: invalid inline id {}", id.0)));
         }
         match id.tag() {
-            Tag::Temp => {
-                self.temps.get(id).cloned().ok_or_else(|| Error::internal(format!("sq-oracle: unknown TEMP id {}", id.0)))
-            }
+            Tag::Temp => self
+                .temps
+                .get(id)
+                .cloned()
+                .ok_or_else(|| Error::internal(format!("sq-oracle: unknown TEMP id {}", id.0))),
             Tag::BNode => Ok(Arc::new(Term::BNode(codec::bnode_label(id).into()))),
             Tag::Iri | Tag::Str | Tag::Lang | Tag::Typed if id.is_dict() => {
                 if let Some(t) = self.decoded.get(&id) {

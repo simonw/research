@@ -124,13 +124,16 @@ fn inverse_and_negated_property_sets() {
     fx.add(b, r, a);
     let (x, y) = (fx.var("x"), fx.var("y"));
     assert_eq!(fx.select(&[x], path(v(x), inv(pred(p)), c(a))), rows(&[&[":b"]]));
-    // !(:p): every other predicate, one solution per triple.
+    // !(:p): pairs linked by another predicate.
     assert_eq!(fx.bag(&[x, y], path(v(x), PathPlan::Nps(vec![p]), v(y))), bag(&[&[":a", ":b"], &[":b", ":a"]]));
-    // !(^:r) arrives as Inv(Nps([:r])): reverse edges whose predicate is not :r.
-    assert_eq!(
-        fx.bag(&[x, y], path(v(x), inv(PathPlan::Nps(vec![r])), v(y))),
-        bag(&[&[":b", ":a"], &[":b", ":a"]])
-    );
+    // !(^:r) arrives as Inv(Nps([:r])). :a :p :b and :a :q :b give one pair: the NPS is a set.
+    assert_eq!(fx.bag(&[x, y], path(v(x), inv(PathPlan::Nps(vec![r])), v(y))), bag(&[&[":b", ":a"]]));
+    // !(:r|^:r) is Alt(Nps, Inv(Nps)): a union, so a pair found both ways counts twice.
+    let both = alt(PathPlan::Nps(vec![r]), inv(PathPlan::Nps(vec![r])));
+    assert_eq!(fx.bag(&[x, y], path(v(x), both, v(y))), bag(&[&[":a", ":b"], &[":b", ":a"]]));
+    let loops = alt(PathPlan::Nps(vec![r]), inv(PathPlan::Nps(vec![r])));
+    fx.add(b, q, b);
+    assert_eq!(fx.select(&[x], path(v(x), loops, v(x))), rows(&[&[":b"], &[":b"]]));
     assert!(fx.select(&[], path(c(a), PathPlan::Nps(vec![p, q]), c(b))).is_empty());
 }
 

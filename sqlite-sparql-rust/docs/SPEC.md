@@ -471,7 +471,7 @@ Verified plans (`EXPLAIN QUERY PLAN` on SQLite 3.45.1):
 SELECT s,o FROM main.rdf_quad INDEXED BY rdf_gpso WHERE g=?1 AND p=?2 AND s>=?3 ORDER BY g,p,s,o
    -> SEARCH rdf_quad USING COVERING INDEX rdf_gpso (g=? AND p=? AND s>?)
 SELECT o FROM … rdf_gpso WHERE g=?1 AND p=?2 AND (s,o)>=(?3,?4) …  -> (g=? AND p=? AND (s,o)>(?,?))
-SELECT p,o FROM main.rdf_quad NOT INDEXED WHERE g=?1 AND s=?2 AND p>=?3 ORDER BY g,s,p,o -> USING PRIMARY KEY
+SELECT p,o FROM main.rdf_quad INDEXED BY sqlite_autoindex_rdf_quad_1 WHERE g=?1 AND s=?2 AND p>=?3 ORDER BY g,s,p,o -> USING PRIMARY KEY   (NOT INDEXED does not pin the PK of a WITHOUT ROWID table on 3.45; changed during WP2)
 SELECT s,o,g FROM … rdf_psog WHERE p=?1 AND g<>0 AND s>=?2 ORDER BY p,s,o,g -> COVERING INDEX rdf_psog (p=? AND s>?)
 SELECT o,s FROM … rdf_gpox WHERE g=?1 AND p=?2 AND (o & 15) IN (5,8) … -> COVERING INDEX rdf_gpox (g=? AND p=?)
 SELECT count(*) FROM (SELECT 1 FROM … rdf_gpos WHERE g=?1 AND p=?2 AND o=?3 LIMIT ?4)   -- capped count
@@ -2255,7 +2255,7 @@ impl IndexOrder {
     /// FROM clause used by the SQL cursor (all SQL is schema-qualified `main.`).
     pub const fn sql_from(self) -> &'static str {
         match self {
-            IndexOrder::Gspo => "main.rdf_quad NOT INDEXED",
+            IndexOrder::Gspo => "main.rdf_quad INDEXED BY sqlite_autoindex_rdf_quad_1",
             IndexOrder::Gpso => "main.rdf_quad INDEXED BY rdf_gpso",
             IndexOrder::Gpos => "main.rdf_quad INDEXED BY rdf_gpos",
             IndexOrder::Gosp => "main.rdf_quad INDEXED BY rdf_gosp",

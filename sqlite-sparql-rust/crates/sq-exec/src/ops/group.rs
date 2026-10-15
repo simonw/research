@@ -189,7 +189,7 @@ impl Group {
     }
 
     fn next_streaming(&mut self, cx: &mut ExecCtx, out: &mut Batch) -> Result<bool> {
-        let key_slot = self.keys[0] as usize;
+        let key_slot = self.keys[0];
         let sh = Rc::clone(&cx.sh);
         loop {
             if out.is_full() {

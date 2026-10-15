@@ -3,7 +3,8 @@
 //! * `ReadScope`: `SAVEPOINT sq_r{d}` only when `sqlite3_txn_state(db, "main") == NONE` (a bare
 //!   `SELECT f()`), released at the end, so every statement of the call sees one snapshot and
 //!   probes run inside a held read transaction. Inside `xFilter` (outer statement already
-//!   reading) nothing is opened.
+//!   reading) nothing is opened; inside a statement that writes another schema SQLite refuses
+//!   the savepoint and the host statement's transaction holds the snapshot ([`ReadScope`]).
 //! * `WriteScope`: `SAVEPOINT sq_w{d}` then a `write_gen` bump that takes the write lock first.
 //!   `commit()` releases; dropping without commit undoes the scope's changes.
 //!
@@ -121,8 +122,27 @@ struct Savepoint {
     owns_txn: bool,
 }
 
+/// Outcome of [`Savepoint::open`].
+enum Opened {
+    Open(Savepoint),
+    /// Stepping `SAVEPOINT` failed with SQLITE_BUSY: a statement that writes is running on the
+    /// connection (`OP_Savepoint` refuses to begin a savepoint then; it takes no lock, so
+    /// nothing else makes it busy).
+    Refused(Error),
+}
+
+impl Opened {
+    /// The savepoint, or the refusal as an error.
+    fn required(self) -> Result<Savepoint> {
+        match self {
+            Opened::Open(sp) => Ok(sp),
+            Opened::Refused(e) => Err(e),
+        }
+    }
+}
+
 impl Savepoint {
-    fn open(shared: &Rc<StorageShared>, kind: Kind, depth: u32) -> Result<Savepoint> {
+    fn open(shared: &Rc<StorageShared>, kind: Kind, depth: u32) -> Result<Opened> {
         shared.abort.acquire(&shared.pool)?;
         // From here on `Drop` releases the abort statement.
         let sp = Savepoint { shared: shared.clone(), kind, depth, owns_txn: shared.db().autocommit() };
@@ -130,8 +150,13 @@ impl Savepoint {
             Kind::Read => TxnOp::SavepointRead,
             Kind::Write => TxnOp::SavepointWrite,
         };
-        run_txn(shared, op, depth)?;
-        Ok(sp)
+        // Prepared before the step, so that only the step's own failure can be a refusal.
+        let mut st = shared.pool.lease(PoolKey::Txn(op, depth))?;
+        match st.run() {
+            Ok(()) => Ok(Opened::Open(sp)),
+            Err(e @ Error::Sqlite { code, .. }) if code & 0xff == ffi::SQLITE_BUSY => Ok(Opened::Refused(e)),
+            Err(e) => Err(e),
+        }
     }
 
     /// `RELEASE`: keeps the changes (commits when the savepoint owns the transaction).
@@ -185,6 +210,15 @@ impl Drop for Savepoint {
 
 /// RAII read scope. `close()` reports whether the savepoint ended cleanly; dropping the scope
 /// closes it too, ignoring the outcome.
+///
+/// No savepoint is opened inside a transaction that already reads `main`, and none can be
+/// inside a statement that writes another schema (`txn_state(main) == NONE`, e.g. `CREATE
+/// TEMP TABLE r AS SELECT sparql_query(…)` or `INSERT INTO temp.t SELECT sparql_value(…)`):
+/// SQLite refuses `SAVEPOINT` while a writing statement runs (`Opened::Refused`). The
+/// scope's statements then run in the host statement's transaction. This crate does not pin
+/// the snapshot in that case, but SQLite keeps `main`'s read transaction until the writing
+/// host statement ends (a read-only statement never commits while another statement
+/// writes), so the call still sees one snapshot. Without a savepoint, closing does nothing.
 pub struct ReadScope {
     shared: Rc<StorageShared>,
     depth: u32,
@@ -199,9 +233,11 @@ impl ReadScope {
         // Built first: on any error below, `Drop` ends whatever was opened.
         let mut scope = ReadScope { shared: shared.clone(), depth, savepoint: None, closed: false };
         if shared.db().txn_state() == ffi::SQLITE_TXN_NONE {
-            scope.savepoint = Some(Savepoint::open(shared, Kind::Read, depth)?);
-            // Starts the read transaction a moment before the caller's first read would.
-            shared.refresh_abort()?;
+            if let Opened::Open(sp) = Savepoint::open(shared, Kind::Read, depth)? {
+                scope.savepoint = Some(sp);
+                // Starts the read transaction a moment before the caller's first read would.
+                shared.refresh_abort()?;
+            }
         }
         Ok(scope)
     }
@@ -271,15 +307,21 @@ pub struct WriteScope {
 
 impl WriteScope {
     pub(crate) fn open(shared: &Rc<StorageShared>, depth: u32) -> Result<WriteScope> {
+        // Resolved before the savepoint: when the state is not cached, detecting it reads the
+        // schema, and inside the savepoint that read would take the read lock the bump below
+        // then has to upgrade.
+        let present = shared.tables_present()?;
         let depth = shared.enter_scope(depth);
         // Built first: on any error below, `Drop` undoes whatever was opened.
         let mut scope = WriteScope { shared: shared.clone(), depth, savepoint: None, finished: false };
-        scope.savepoint = Some(Savepoint::open(shared, Kind::Write, depth)?);
+        // A refusal (a writing host statement is running) is an error here: a write scope
+        // cannot be undone without its savepoint.
+        scope.savepoint = Some(Savepoint::open(shared, Kind::Write, depth)?.required()?);
         // Take the write lock first, directly from "no transaction": busy_timeout applies
         // here (SQLite skips the busy handler when upgrading a held read lock), not halfway
         // through a load. Before sparql_init there is no rdf_meta yet: the DDL itself takes
         // the lock and `schema::create` refreshes the abort statement afterwards.
-        if shared.tables_present()? {
+        if present {
             let mut st = shared.pool.lease_fixed(Fixed::MetaBump)?;
             st.bind_text(1, "write_gen")?;
             st.run()?;

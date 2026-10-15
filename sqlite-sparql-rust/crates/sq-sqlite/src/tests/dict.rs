@@ -383,3 +383,62 @@ fn quad_values_interop_with_memstore_ids() {
     let vals: Vec<i64> = out.iter().map(|t| t.as_int().unwrap()).collect();
     assert_eq!(vals, [-5, -1, 3]);
 }
+
+/// §4.4 rollback safety when the epoch check inside a write transaction flushes: a schema
+/// change (another connection re-created the store, so row numbers restart; or this
+/// connection's own DDL inside the user's transaction) resets the admission bound to 0, so a
+/// row this transaction allocates at a reused row number is never admitted, and nothing is
+/// stale after the user's `ROLLBACK` (which never reaches `after_rollback`).
+#[test]
+fn flush_inside_a_write_transaction_admits_nothing_until_committed() {
+    let db = Db::file();
+    let other = db.reopen();
+    let (_, ids) = make_terms(&db, 10);
+    db.shared().validate_epoch().unwrap();
+    assert_eq!(db.shared().committed_max_row(), ids.iter().map(|i| i.dict_row()).max().unwrap());
+
+    // Another connection drops and re-creates the store: row numbers restart.
+    other
+        .conn
+        .execute_batch(
+            "DROP TABLE rdf_meta; DROP TABLE rdf_term; DROP TABLE rdf_quad; DROP TABLE rdf_graph; DROP TABLE rdf_stat_global;
+             DROP TABLE rdf_stat_pred; DROP TABLE rdf_stat_po; DROP TABLE rdf_stat_cs;",
+        )
+        .unwrap();
+    other.store.ensure_schema().unwrap();
+
+    db.conn.execute_batch("BEGIN; INSERT INTO rdf_graph(g) VALUES (999985);").unwrap();
+    let doomed = iri("http://ex/rolled-back");
+    {
+        let _r = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap(); // schema cookie changed: flush
+        assert_eq!(db.shared().committed_max_row(), 0, "the old bound covers re-created rows");
+        let ws = db.store.write_scope(1).unwrap();
+        let id = db.store.intern(doomed.as_ref().into()).unwrap();
+        ws.commit().unwrap();
+        assert_eq!(id.dict_row(), FIRST_USER_ROW);
+        assert_eq!(decode_all(&db, &[id])[0].to_oxrdf(), doomed.clone().into());
+        assert_eq!(db.store.lookup(doomed.as_ref().into()).unwrap(), Some(id));
+        assert_eq!(db.shared().decode_cache.borrow().len(), 0);
+        assert_eq!(db.shared().lookup_cache.borrow().len(), 0);
+    }
+    db.conn.execute_batch("ROLLBACK").unwrap();
+    let real = iri("http://ex/committed-later");
+    let real_id = other.store.intern(real.as_ref().into()).unwrap();
+    assert_eq!(real_id.dict_row(), FIRST_USER_ROW);
+    {
+        let _r = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        assert_eq!(decode_all(&db, &[real_id])[0].to_oxrdf(), real.into());
+        assert_eq!(db.store.lookup(doomed.as_ref().into()).unwrap(), None);
+    }
+
+    // This connection's own DDL inside the user's write transaction: same rule; the bound
+    // comes back at the first validation after COMMIT.
+    db.conn.execute_batch("BEGIN; CREATE TABLE unrelated(x);").unwrap();
+    db.shared().validate_epoch().unwrap();
+    assert_eq!(db.shared().committed_max_row(), 0);
+    db.conn.execute_batch("COMMIT").unwrap();
+    db.shared().validate_epoch().unwrap();
+    assert_eq!(db.shared().committed_max_row(), FIRST_USER_ROW);
+}

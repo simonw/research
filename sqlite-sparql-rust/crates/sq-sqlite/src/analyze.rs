@@ -186,9 +186,12 @@ fn scope_stats(shared: &StorageShared, named: bool) -> Result<(ScopeStats, u64)>
     Ok((st, raw_rows))
 }
 
-/// `rdf_meta` counter of quads added by loads since the last analyze (§2.3 step 6). Created
-/// by the first load that needs it, so `sparql_init` writes exactly the §2.1 defaults.
-pub(crate) const LOADED_SINCE_ANALYZE: &str = "loaded_since_analyze";
+/// `rdf_meta` counter of the store's net growth since the last analyze: quads inserted minus
+/// quads removed through this crate (loads, `QuadStoreWriter` updates, clears), for the
+/// §2.3 step 6 re-analysis trigger. Created by the first write that needs it, so
+/// `sparql_init` writes exactly the §2.1 defaults. Plain-SQL writes to `rdf_quad` are not
+/// counted (statistics are hints).
+pub(crate) const GROWTH_SINCE_ANALYZE: &str = "growth_since_analyze";
 
 /// Computes, persists and returns the statistics; bumps `stats_gen`. The caller holds a
 /// write scope. Returns `(stats_gen, stats)`.
@@ -262,7 +265,7 @@ fn persist(shared: &StorageShared, stats: &Stats) -> Result<()> {
     }
     shared.meta_set("analyzed_quads", stats.analyzed_quads as i64)?;
     // A no-op while the counter row does not exist yet (absent = 0).
-    shared.meta_set(LOADED_SINCE_ANALYZE, 0)?;
+    shared.meta_set(GROWTH_SINCE_ANALYZE, 0)?;
     shared.meta_bump("stats_gen")
 }
 

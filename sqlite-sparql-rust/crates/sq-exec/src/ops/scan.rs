@@ -101,17 +101,6 @@ impl Source {
         }
         Ok(self.rows)
     }
-
-    /// Ensures a buffered head row; false when exhausted.
-    fn head(&mut self, max: usize) -> Result<bool> {
-        if self.pos < self.rows {
-            return Ok(true);
-        }
-        if self.done {
-            return Ok(false);
-        }
-        Ok(self.refill(max)? > 0)
-    }
 }
 
 pub(crate) struct Scan {
@@ -291,16 +280,14 @@ impl Scan {
                 DefaultGraph::StoreDefault => Gm::Fixed(TermId::DEFAULT_GRAPH),
                 DefaultGraph::UnionAll => Gm::UnionAll,
                 DefaultGraph::Graphs(gs) => {
-                    let mut gs: Vec<TermId> = gs.iter().copied().filter(|g| g.is_storable()).collect();
-                    gs.sort();
-                    gs.dedup();
-                    match gs.len() {
+                    // Graphs absent from the store (TEMP ids) are empty.
+                    self.graphs.extend(gs.iter().copied().filter(|g| g.is_storable()));
+                    self.graphs.sort();
+                    self.graphs.dedup();
+                    match self.graphs.len() {
                         0 => Gm::Empty,
-                        1 => Gm::Fixed(gs[0]),
-                        _ => {
-                            self.graphs = gs;
-                            Gm::Merge
-                        }
+                        1 => Gm::Fixed(self.graphs[0]),
+                        _ => Gm::Merge,
                     }
                 }
             },
@@ -314,7 +301,7 @@ impl Scan {
                 None => match &sh.dataset.named {
                     NamedGraphs::All => Gm::Named { member: false },
                     NamedGraphs::Only(_) if sh.named_graphs.len() <= PER_GRAPH_MAX => {
-                        self.graphs = sh.named_graphs.iter().copied().filter(|g| g.is_storable()).collect();
+                        self.graphs.extend(sh.named_graphs.iter().copied().filter(|g| g.is_storable()));
                         Gm::PerGraph(gs)
                     }
                     NamedGraphs::Only(_) => Gm::Named { member: true },
@@ -507,7 +494,7 @@ impl Scan {
     }
 
     /// `next` with a row limit (`out.len() + max` rows at most).
-    pub fn next_limited(&mut self, cx: &mut ExecCtx, out: &mut Batch, max: usize) -> Result<bool> {
+    fn read(&mut self, cx: &mut ExecCtx, out: &mut Batch, max: usize) -> Result<bool> {
         let limit = (out.len() + max).min(BATCH_ROWS);
         match self.access {
             Access::Empty => Ok(false),
@@ -526,7 +513,7 @@ impl Scan {
                 let spec = self.range_spec(1);
                 self.position(cx, 0, &spec, self.fw)?;
                 self.access = Access::Range { phase: 1 };
-                self.next_limited(cx, out, limit - out.len())
+                self.read(cx, out, limit - out.len())
             }
             Access::PerGraph { slot } => loop {
                 let active = self.srcs.first().is_some_and(|s| !s.done || s.pos < s.rows);
@@ -553,7 +540,7 @@ impl Scan {
     ) -> Result<Option<TermId>> {
         loop {
             tmp.clear();
-            self.next_limited(cx, tmp, 1)?;
+            self.read(cx, tmp, 1)?;
             if tmp.is_empty() {
                 return Ok(None);
             }
@@ -578,7 +565,11 @@ impl Operator for Scan {
     }
 
     fn next(&mut self, cx: &mut ExecCtx, out: &mut Batch) -> Result<bool> {
-        self.next_limited(cx, out, BATCH_ROWS)
+        self.read(cx, out, BATCH_ROWS)
+    }
+
+    fn next_limited(&mut self, cx: &mut ExecCtx, out: &mut Batch, max: usize) -> Result<bool> {
+        self.read(cx, out, max)
     }
 
     fn fast_count(&mut self, cx: &mut ExecCtx) -> Option<Result<u64>> {

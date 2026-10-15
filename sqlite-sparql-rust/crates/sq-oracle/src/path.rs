@@ -1,4 +1,4 @@
-//! Property path evaluation, transcribed from SPARQL 1.1 §18.4 / §18.6.
+//! Property path evaluation, transcribed from SPARQL 1.1 §18.4 (Property Path Patterns).
 //!
 //! [`PathEval::pairs`] returns the solutions of `Path(X, path, Y)` as a bag of `(x, y)` pairs,
 //! where each endpoint is either a fixed term ([`End::Fixed`]: a constant, or a slot seeded by
@@ -12,7 +12,8 @@
 //! * Zero-length matches: a fixed endpoint matches itself even when it is not a node of the
 //!   graph (`:o :p* ?x` binds `?x = :o`); with both endpoints variables, every node of the
 //!   active graph (`nodes(G)`: subjects and objects) matches itself.
-//! * A negated property set matches every triple whose predicate is outside the set.
+//! * A negated property set matches the (x, y) pairs linked by at least one predicate outside
+//!   the set: a set, because §18.4 defines it with an existential over the triples.
 use rustc_hash::{FxHashMap, FxHashSet};
 use sq_core::ir::PathPlan;
 use sq_core::{Result, TermId};
@@ -61,9 +62,13 @@ impl PathEval<'_> {
                 triples.into_iter().map(|[s, _, o]| (s, o)).collect()
             }
             PathPlan::Nps(excluded) => {
+                // { μ | ∃ triple (x, p, y) in G with p ∉ S }: one pair however many predicates
+                // connect x and y.
                 let mut triples = Vec::new();
                 self.reader.triples(self.graph, from.fixed(), None, to.fixed(), &mut triples)?;
-                triples.into_iter().filter(|[_, p, _]| !excluded.contains(p)).map(|[s, _, o]| (s, o)).collect()
+                dedup_in_order(
+                    triples.into_iter().filter(|[_, p, _]| !excluded.contains(p)).map(|[s, _, o]| (s, o)).collect(),
+                )
             }
             PathPlan::Inv(inner) => self.pairs(inner, to, from)?.into_iter().map(|(x, y)| (y, x)).collect(),
             PathPlan::Seq(first, second) => {
@@ -110,12 +115,13 @@ impl PathEval<'_> {
         })
     }
 
-    /// `path*` (`reflexive`) or `path+` as a set of pairs (§18.6 ZeroOrMorePath/OneOrMorePath).
+    /// `path*` (`reflexive`) or `path+` as a set of pairs (§18.4 ZeroOrMorePath / OneOrMorePath).
     fn closure(&self, path: &PathPlan, from: End, to: End, reflexive: bool) -> Result<Vec<(TermId, TermId)>> {
         let mut out = Vec::new();
+        let mut steps = Steps::default();
         match (from, to) {
             (End::Fixed(x), _) => {
-                for y in self.alp(path, x, reflexive, Dir::Forward)? {
+                for y in self.alp(path, x, reflexive, Dir::Forward, &mut steps)? {
                     if to.admits(y) {
                         out.push((x, y));
                     }
@@ -123,13 +129,13 @@ impl PathEval<'_> {
             }
             // eval(Path(?x, path*, y)) = eval(Path(y, (^path)*, ?x)).
             (End::Free, End::Fixed(y)) => {
-                for x in self.alp(path, y, reflexive, Dir::Backward)? {
+                for x in self.alp(path, y, reflexive, Dir::Backward, &mut steps)? {
                     out.push((x, y));
                 }
             }
             (End::Free, End::Free) => {
                 for t in self.reader.nodes(self.graph)? {
-                    for y in self.alp(path, t, reflexive, Dir::Forward)? {
+                    for y in self.alp(path, t, reflexive, Dir::Forward, &mut steps)? {
                         out.push((t, y));
                     }
                 }
@@ -139,33 +145,40 @@ impl PathEval<'_> {
     }
 
     /// The nodes reachable from `start` by one or more steps of `path` (zero or more when
-    /// `reflexive`), each once, in visit order: the ALP procedure of §18.6 with an explicit
+    /// `reflexive`), each once, in visit order: the ALP procedure of §18.4 with an explicit
     /// stack instead of recursion.
-    fn alp(&self, path: &PathPlan, start: TermId, reflexive: bool, dir: Dir) -> Result<Vec<TermId>> {
+    fn alp(&self, path: &PathPlan, start: TermId, reflexive: bool, dir: Dir, steps: &mut Steps) -> Result<Vec<TermId>> {
         let mut visited: FxHashSet<TermId> = FxHashSet::default();
         let mut order = Vec::new();
-        let mut stack = if reflexive { vec![start] } else { self.step(path, start, dir)? };
-        stack.reverse();
+        let mut stack: Vec<TermId> =
+            if reflexive { vec![start] } else { self.step(path, start, dir, steps)?.iter().rev().copied().collect() };
         while let Some(n) = stack.pop() {
             if !visited.insert(n) {
                 continue;
             }
             order.push(n);
-            let mut next = self.step(path, n, dir)?;
-            next.reverse();
-            stack.extend(next.into_iter().filter(|m| !visited.contains(m)));
+            let next = self.step(path, n, dir, steps)?;
+            stack.extend(next.iter().rev().filter(|m| !visited.contains(m)));
         }
         Ok(order)
     }
 
-    /// eval(n, path): the nodes one `path` step away from `n`.
-    fn step(&self, path: &PathPlan, n: TermId, dir: Dir) -> Result<Vec<TermId>> {
-        Ok(match dir {
-            Dir::Forward => self.pairs(path, End::Fixed(n), End::Free)?.into_iter().map(|(_, y)| y).collect(),
-            Dir::Backward => self.pairs(path, End::Free, End::Fixed(n))?.into_iter().map(|(x, _)| x).collect(),
-        })
+    /// eval(n, path): the nodes one `path` step away from `n`, computed once per node for
+    /// one closure evaluation.
+    fn step<'s>(&self, path: &PathPlan, n: TermId, dir: Dir, steps: &'s mut Steps) -> Result<&'s [TermId]> {
+        if !steps.contains_key(&n) {
+            let next = match dir {
+                Dir::Forward => self.pairs(path, End::Fixed(n), End::Free)?.into_iter().map(|(_, y)| y).collect(),
+                Dir::Backward => self.pairs(path, End::Free, End::Fixed(n))?.into_iter().map(|(x, _)| x).collect(),
+            };
+            steps.insert(n, next);
+        }
+        Ok(&steps[&n])
     }
 }
+
+/// Memoized one-step successors (or predecessors) of nodes during one closure evaluation.
+type Steps = FxHashMap<TermId, Vec<TermId>>;
 
 /// Set semantics: the first occurrence of each pair, in order.
 fn dedup_in_order(pairs: Vec<(TermId, TermId)>) -> Vec<(TermId, TermId)> {

@@ -5,6 +5,7 @@ use sq_core::codec::{self, FIRST_USER_ROW};
 use sq_core::store::GraphTarget;
 use sq_core::{Error, Result, Tag, TermId};
 
+use crate::analyze::GROWTH_SINCE_ANALYZE;
 use crate::keys::KeyView;
 use crate::raw::RawStmt;
 use crate::shared::StorageShared;
@@ -69,6 +70,15 @@ impl StorageShared {
         st.bind_text(1, key)?;
         st.bind_i64(2, delta)?;
         st.run()
+    }
+
+    /// Adds `delta` (quads inserted minus removed) to the re-analysis counter
+    /// (`GROWTH_SINCE_ANALYZE`); one upsert per write call, none for a no-op.
+    pub(crate) fn note_growth(&self, delta: i64) -> Result<()> {
+        if delta == 0 {
+            return Ok(());
+        }
+        self.meta_add(GROWTH_SINCE_ANALYZE, delta)
     }
 
     pub(crate) fn meta_bump(&self, key: &str) -> Result<()> {
@@ -145,6 +155,7 @@ impl StorageShared {
         self.require_ready()?;
         let n = self.apply_quads(Fixed::QuadInsert, quads)?;
         self.register_graphs(quads)?;
+        self.note_growth(changed_rows(n)?)?;
         Ok(n)
     }
 
@@ -155,7 +166,9 @@ impl StorageShared {
         if quads.is_empty() || !self.tables_present()? {
             return Ok(0);
         }
-        self.apply_quads(Fixed::QuadDelete, quads)
+        let n = self.apply_quads(Fixed::QuadDelete, quads)?;
+        self.note_growth(-changed_rows(n)?)?;
+        Ok(n)
     }
 
     /// `QuadStoreWriter::clear` (the registry is left alone, as in MemStore).
@@ -174,7 +187,9 @@ impl StorageShared {
             st.bind_i64(1, g.0)?;
         }
         st.run()?;
-        Ok(self.db().changes() as u64)
+        let n = self.db().changes();
+        self.note_growth(-n)?;
+        Ok(n as u64)
     }
 
     fn graph_flag(&self, which: Fixed, g: TermId) -> Result<bool> {
@@ -258,6 +273,11 @@ pub(crate) fn bind_term_row(
     st.bind_opt_i64(first + 3, dt.map(TermId::raw))?;
     st.bind_opt_text(first + 4, (view.tag == Tag::Lang).then_some(&*view.extra))?;
     st.bind_i64(first + 5, h)
+}
+
+/// A row count as the signed delta of the re-analysis counter.
+pub(crate) fn changed_rows(n: u64) -> Result<i64> {
+    i64::try_from(n).map_err(|_| Error::internal("row count overflows i64"))
 }
 
 /// `g` is the default graph or storable; s, p, o are storable.

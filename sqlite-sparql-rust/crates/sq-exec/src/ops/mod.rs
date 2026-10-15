@@ -14,7 +14,6 @@ pub(crate) mod leaf;
 pub(crate) mod merge_join;
 pub(crate) mod minus;
 pub(crate) mod modifiers;
-pub(crate) mod nested_loop;
 pub(crate) mod path;
 pub(crate) mod scan;
 pub(crate) mod sort;
@@ -34,6 +33,13 @@ pub(crate) trait Operator {
 
     /// Appends rows to `out` until full (`Ok(true)`) or exhausted (`Ok(false)`).
     fn next(&mut self, cx: &mut ExecCtx, out: &mut Batch) -> Result<bool>;
+
+    /// `next` appending at most about `max` rows: a hint (the default ignores it and fills
+    /// `out`). Returns false once exhausted; true does not imply that `out` is full.
+    fn next_limited(&mut self, cx: &mut ExecCtx, out: &mut Batch, max: usize) -> Result<bool> {
+        let _ = max;
+        self.next(cx, out)
+    }
 
     /// COUNT fast path on a freshly opened operator (Scan -> `store.count`, MergeJoin -> sum of
     /// run products, row-preserving operators -> their input's). None = iterate instead.
@@ -71,6 +77,22 @@ impl Operator for Instrumented {
         let before = out.len();
         let start = cx.sh.timing.get().then(std::time::Instant::now);
         let r = self.inner.next(cx, out);
+        let rows = out.len().saturating_sub(before);
+        cx.sh.prof(Some(self.id), |n| {
+            n.rows_out += rows as u64;
+            if let Some(t) = start {
+                n.time_ns += t.elapsed().as_nanos() as u64;
+            }
+        });
+        let more = r?;
+        cx.tick(rows)?;
+        Ok(more)
+    }
+
+    fn next_limited(&mut self, cx: &mut ExecCtx, out: &mut Batch, max: usize) -> Result<bool> {
+        let before = out.len();
+        let start = cx.sh.timing.get().then(std::time::Instant::now);
+        let r = self.inner.next_limited(cx, out, max);
         let rows = out.len().saturating_sub(before);
         cx.sh.prof(Some(self.id), |n| {
             n.rows_out += rows as u64;

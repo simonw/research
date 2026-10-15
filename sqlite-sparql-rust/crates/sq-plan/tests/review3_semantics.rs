@@ -1,9 +1,25 @@
-//! Review round 3 (scratch): differential evaluation. A naive evaluator of the LOWERED logical
-//! IR (SPARQL semantics, EXISTS by substitution) is compared with an evaluator of the PHYSICAL
-//! plan that follows the documented `sq_core::plan` operator semantics and the planner's seed
-//! contract literally. Any difference (or a contract violation noticed while evaluating) is a
-//! planner bug, since both share expression and path evaluation.
-#![allow(dead_code)]
+//! Review round 3: semantic differential check of the physical planner.
+//!
+//! A naive evaluator of the LOWERED logical IR (SPARQL 1.1 semantics: bag joins, OPTIONAL with
+//! its filter on merged rows, MINUS with the domain test, GRAPH per named graph, EXISTS by
+//! substitution with Substitute-mode MINUS leaving substituted slots out of the domain test)
+//! is compared with an evaluator of the PHYSICAL plan that implements each `sq_core::plan::Op`
+//! exactly as documented and the planner's Join-mode seed contract literally (leaves merge the
+//! full seed; Project / Group keep it on their output slots; Slice, TopK, Count, GraphLoop and
+//! GraphNames are opened unseeded; a BindJoin re-opens its right side with its seed list only).
+//! The physical evaluator also reports contract violations it observes (an unbound key or seed
+//! slot, a slot bound differently on both join sides that is neither key nor check, a false
+//! `sorted_by` claim, using the cursor output order of each Scan's index). Both evaluators
+//! share expression and path evaluation, so any difference is a rewrite / planning bug.
+//!
+//! Random queries cover BGPs with constants and blank nodes, `+ * ? ^` paths, OPTIONAL (with
+//! filters, EXISTS and nested OPTIONALs), UNION, MINUS, nested filtered groups, sub-selects
+//! (projection, DISTINCT, ORDER BY + LIMIT, GROUP BY / HAVING / COUNT), GRAPH ?g / GRAPH <c>,
+//! VALUES with UNDEF, BIND, sameTerm / = seeds, [NOT] EXISTS (incl. MINUS inside), dataset
+//! clauses, union default graph, and top-level DISTINCT / ORDER BY + LIMIT / ASK / COUNT, each
+//! under four join policies. `GRAPH <c>` also names graphs outside the dataset (`:g1` under
+//! `FROM NAMED :g0`, `:absent` everywhere), which resolve to Empty and fold into their ancestors.
+
 mod common;
 
 use std::cell::RefCell;
@@ -1047,7 +1063,7 @@ impl Rng {
 const VARS: [&str; 5] = ["?a", "?b", "?c", "?d", "?g"];
 
 fn term(r: &mut Rng, consts: bool) -> String {
-    if std::env::var("REVIEW_BNODES").is_ok() && r.chance(6) {
+    if r.chance(6) {
         return r.pick(&["[]", "_:x", "_:y"]).to_owned();
     }
     if consts && r.chance(4) {
@@ -1067,7 +1083,7 @@ fn expr(r: &mut Rng, depth: u32) -> String {
     match r.next() % if depth > 0 { 11 } else { 7 } {
         0 => format!("{} = {}", v(r), v(r)),
         1 => format!("{} != {}", v(r), v(r)),
-        2 => format!("{} = {}", v(r), r.pick(&[":n0", ":n1", ":g0", ":zz"])),
+        2 => format!("{} = {}", v(r), r.pick(&[":n0", ":n1", ":g0", ":absent"])),
         3 => format!("sameTerm({}, {})", v(r), r.pick(&[":n0", ":n1", ":g1"])),
         4 => format!("!bound({})", v(r)),
         5 => format!("bound({})", v(r)),
@@ -1079,7 +1095,7 @@ fn expr(r: &mut Rng, depth: u32) -> String {
     }
 }
 
-const ALL_VARS: &str = "?a ?b ?c ?d ?g ?e ?n";
+pub const ALL_VARS: &str = "?a ?b ?c ?d ?g ?e ?n";
 
 pub fn gen_group(r: &mut Rng, depth: u32) -> String {
     let mut out = String::new();
@@ -1099,7 +1115,7 @@ pub fn gen_group(r: &mut Rng, depth: u32) -> String {
             7 => format!("{{ SELECT {} {} {{ {} }} }} ", r.pick(&VARS), r.pick(&VARS), gen_group(r, d)),
             8 => format!("{{ SELECT DISTINCT {} {{ {} }} }} ", r.pick(&VARS), gen_group(r, d)),
             9 => format!("{{ SELECT ?a (COUNT(*) AS ?n) {{ {} }} GROUP BY ?a }} ", gen_group(r, d)),
-            10 => format!("GRAPH {} {{ {} }} ", r.pick(&["?g", "?g", ":g0", ":zz"]), gen_group(r, d)),
+            10 => format!("GRAPH {} {{ {} }} ", r.pick(&["?g", "?g", ":g0", ":g0", ":g1", ":absent"]), gen_group(r, d)),
             11 => r.pick(&["VALUES ?a { :n0 :n1 UNDEF } ", "VALUES (?b ?g) { (:n1 UNDEF) (UNDEF :g0) } "]).to_owned(),
             12 => format!("BIND({} AS ?e) ", r.pick(&["?a", "?b", ":n0", "?g"])),
             13 => format!("{{ SELECT (COUNT(*) AS ?n) {{ {} }} }} ", gen_group(r, d)),
@@ -1120,22 +1136,19 @@ pub fn gen_group(r: &mut Rng, depth: u32) -> String {
 }
 
 #[test]
-fn review3_differential_scratch() {
-    let n: usize = std::env::var("REVIEW_N").ok().and_then(|s| s.parse().ok()).unwrap_or(300);
+fn review_physical_plans_match_naive_evaluation() {
+    let n: usize = std::env::var("REVIEW_N").ok().and_then(|s| s.parse().ok()).unwrap_or(250);
     let seed0: u64 = std::env::var("REVIEW_SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(7);
-    let maxd: u64 = std::env::var("REVIEW_DEPTH").ok().and_then(|s| s.parse().ok()).unwrap_or(3);
-    let skip_zz = std::env::var("REVIEW_SKIP_ZZ").is_ok();
     let mut r = Rng(0x9E37_79B9_7F4A_7C15 ^ seed0);
     let mut problems = Vec::new();
     let (mut checked, mut nonempty) = (0, 0);
     for i in 0..n {
         let store_seed = seed0.wrapping_mul(1000) + i as u64;
         let st = small_store(store_seed);
-        let depth = 1 + (r.next() % maxd) as u32;
+        let depth = 1 + (r.next() % 3) as u32;
         let ds = match r.next() % 8 {
-            0 => "FROM :g0 ",
-            1 => "FROM :g0 FROM :g1 FROM NAMED :g1 ",
-            2 => "FROM NAMED :g0 FROM NAMED :zz ",
+            0 => "FROM :g0 FROM NAMED :g0 FROM NAMED :g1 ",
+            1 => "FROM :g0 FROM :g1 FROM NAMED :g0 ",
             _ => "",
         };
         let body = gen_group(&mut r, depth);
@@ -1148,15 +1161,12 @@ fn review3_differential_scratch() {
             5 => format!("SELECT ?a (COUNT(*) AS ?cnt) {ds}{{ {body}}} GROUP BY ?a HAVING(?a != :n1)"),
             _ => format!("SELECT * {ds}{{ {body}}}"),
         };
-        if skip_zz && q.contains(":zz") {
-            continue;
-        }
         let union = r.chance(5);
-        let mut ok_any = false;
+        let mut parsed = false;
         for (name, mut opts) in policies() {
             opts.union_default_graph = union;
             let Some((_, expected)) = reference(&st, &opts, &q) else { break };
-            ok_any = true;
+            parsed = true;
             if name == "auto" && !expected.is_empty() {
                 nonempty += 1;
             }
@@ -1165,7 +1175,7 @@ fn review3_differential_scratch() {
                 Ok((plan, got, v)) => {
                     if got != expected || !v.is_empty() {
                         problems.push(format!(
-                            "[{name} union={union}] store={store_seed} {q}\n   expected {} rows, got {} rows; violations {:?}\n{}",
+                            "[{name} union={union}] store={store_seed} {q}\n   expected {} rows, got {}; violations {:?}\n{}",
                             expected.len(),
                             got.len(),
                             v,
@@ -1175,141 +1185,15 @@ fn review3_differential_scratch() {
                 }
             }
         }
-        if ok_any {
+        if parsed {
             checked += 1;
         }
     }
-    println!("checked {checked} queries ({nonempty} with rows); {} problems", problems.len());
-    if std::env::var("REVIEW_HEADERS").is_ok() {
-        for p in &problems {
-            println!("HDR {}", p.lines().next().unwrap_or(""));
-        }
-    }
-    for p in problems.iter().filter(|p| !p.contains("plan error")).take(6) {
-        println!("{p}\n");
-    }
-    for p in problems.iter().filter(|p| p.contains("plan error")).take(6) {
-        println!("{p}\n");
-    }
-    assert!(problems.is_empty());
-}
-
-#[test]
-fn review3_one() {
-    let Ok(q) = std::env::var("REVIEW_Q") else { return };
-    let seed: u64 = std::env::var("REVIEW_STORE").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let st = small_store(seed);
-    let union = std::env::var("REVIEW_UNION").is_ok();
-    let (lowered, expected) =
-        reference(&st, &QueryOptions { union_default_graph: union, ..Default::default() }, &q).expect("reference");
-    println!("{}", sq_plan::explain_logical_with(&lowered, Some(&st)));
-    println!("expected {:?}", expected);
-    for (name, mut opts) in policies() {
-        opts.union_default_graph = union;
-        let (plan, got, v) = match physical(&st, &q, &opts) {
-            Ok(x) => x,
-            Err(e) => {
-                println!("[{name}] ERR {e}");
-                continue;
-            }
-        };
-        println!("[{name}] got {:?} violations {:?}\n{}", got, v, sq_plan::explain_with(&plan, None, Some(&st)));
-    }
-}
-
-/// Store whose IRIs are interned in lexicographic order (id order == SPARQL IRI order).
-fn ordered_store(seed: u64) -> MemStore {
-    let st = MemStore::new();
-    for n in ["g0", "g1", "n0", "n1", "n2", "n3", "p", "q", "r"] {
-        sq_core::store::QuadStoreWriter::intern(&st, oxrdf::NamedNode::new_unchecked(format!("http://ex/{n}")).as_ref().into())
-            .unwrap();
-    }
-    let src = small_store(seed);
-    let dict = src.dict();
-    let mut quads: Vec<[TermId; 4]> = Vec::new();
-    for q in src.quads() {
-        let mut out = [TermId::UNBOUND; 4];
-        for i in 0..4 {
-            out[i] = if q[i] == TermId::DEFAULT_GRAPH {
-                q[i]
-            } else {
-                let t = dict.decode_one(q[i]).unwrap();
-                sq_core::store::QuadStoreWriter::intern(&st, t.to_oxrdf().as_ref()).unwrap()
-            };
-        }
-        quads.push(out);
-    }
-    sq_core::store::QuadStoreWriter::insert(&st, &mut quads).unwrap();
-    st
-}
-
-/// Dump (data, query, reference rows) as JSON lines for an external pyoxigraph comparison.
-#[test]
-fn review3_dump_for_oxigraph() {
-    let Ok(path) = std::env::var("REVIEW_DUMP") else { return };
-    use std::io::Write;
-    let n: usize = std::env::var("REVIEW_N").ok().and_then(|s| s.parse().ok()).unwrap_or(300);
-    let seed0: u64 = std::env::var("REVIEW_SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(7);
-    let maxd: u64 = std::env::var("REVIEW_DEPTH").ok().and_then(|s| s.parse().ok()).unwrap_or(3);
-    let mut r = Rng(0x1234_5678 ^ seed0);
-    let mut f = std::fs::File::create(&path).unwrap();
-    let js = |s: &str| format!("{s:?}");
-    for i in 0..n {
-        let store_seed = seed0.wrapping_mul(1000) + i as u64;
-        let st = ordered_store(store_seed);
-        let dict = st.dict();
-        let depth = 1 + (r.next() % maxd) as u32;
-        let ds = match r.next() % 8 {
-            0 => "FROM :g0 ",
-            1 => "FROM :g0 FROM :g1 FROM NAMED :g1 ",
-            2 => "FROM NAMED :g0 FROM NAMED :zz ",
-            _ => "",
-        };
-        let body = gen_group(&mut r, depth);
-        let q = match r.next() % 9 {
-            0 => format!("SELECT DISTINCT ?a ?b {ds}{{ {body}}}"),
-            1 => format!("SELECT * {ds}{{ {body}}} ORDER BY {ALL_VARS} LIMIT 3 OFFSET 1"),
-            2 => format!("SELECT DISTINCT ?a {ds}{{ {body}}} ORDER BY ?a LIMIT 2"),
-            3 => format!("ASK {ds}{{ {body}}}"),
-            4 => format!("SELECT (COUNT(*) AS ?cnt) {ds}{{ {body}}}"),
-            5 => format!("SELECT ?a (COUNT(*) AS ?cnt) {ds}{{ {body}}} GROUP BY ?a HAVING(?a != :n1)"),
-            _ => format!("SELECT * {ds}{{ {body}}}"),
-        };
-        let union = ds.is_empty() && r.chance(5);
-        let opts = QueryOptions { union_default_graph: union, ..Default::default() };
-        let Some((lowered, rows)) = reference(&st, &opts, &q) else { continue };
-        let names: Vec<String> = match &lowered.form {
-            QueryForm::Select(slots) => slots.iter().map(|s| lowered.vars.name(*s).to_owned()).collect(),
-            _ => vec![],
-        };
-        let term = |id: TermId| -> String {
-            if !id.is_bound() {
-                return "null".into();
-            }
-            let t = match sq_core::codec::decode_inline(id) {
-                Some(t) => t,
-                None => (*dict.decode_one(id).unwrap()).clone(),
-            };
-            js(&t.to_ntriples())
-        };
-        let rows_js: Vec<String> =
-            rows.iter().map(|r| format!("[{}]", r.iter().map(|t| term(*t)).collect::<Vec<_>>().join(","))).collect();
-        let mut nq = String::new();
-        for q in st.quads() {
-            let tt = |id: TermId| dict.decode_one(id).unwrap().to_ntriples();
-            let g = if q[0] == TermId::DEFAULT_GRAPH { String::new() } else { format!(" {}", tt(q[0])) };
-            nq.push_str(&format!("{} {} {}{} .\n", tt(q[1]), tt(q[2]), tt(q[3]), g));
-        }
-        writeln!(
-            f,
-            "{{\"query\":{},\"data\":{},\"union\":{},\"ask\":{},\"vars\":[{}],\"rows\":[{}]}}",
-            js(&format!("{PREFIXES}{q}")),
-            js(&nq),
-            union,
-            lowered.form == QueryForm::Ask,
-            names.iter().map(|n| js(n)).collect::<Vec<_>>().join(","),
-            rows_js.join(",")
-        )
-        .unwrap();
-    }
+    assert!(checked > n / 2 && nonempty > checked / 10, "generator degenerated: {checked} checked, {nonempty} with rows");
+    assert!(
+        problems.is_empty(),
+        "{} problems in {checked} queries; first ones:\n{}",
+        problems.len(),
+        problems.iter().take(4).cloned().collect::<Vec<_>>().join("\n\n")
+    );
 }

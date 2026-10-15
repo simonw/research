@@ -389,3 +389,95 @@ fn cursor_fill_after_a_failed_rebind_reports_until_repositioned() {
     while cur.fill(&mut out, 64).unwrap() > 0 {}
     assert_eq!(out.len() / 3, quads.len());
 }
+
+/// A read scope inside a host statement that writes another schema (`INSERT INTO temp.t …
+/// RETURNING`, `CREATE TEMP TABLE … AS SELECT f()`): SQLite refuses `SAVEPOINT` there, so the
+/// scope runs without one. The host's transaction still keeps one snapshot of `main` for the
+/// whole call (another connection's commit stays invisible until the host statement ends),
+/// the host statement is unaffected, and a write scope fails cleanly.
+#[test]
+fn read_scope_inside_a_writing_host_statement() {
+    let db = Db::file();
+    db.conn.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(())).unwrap();
+    let other = db.reopen();
+    db.insert(&random_quads(16, 20, false));
+    let all = ScanSpec::new(IndexOrder::Gspo, &[]);
+    db.conn.execute_batch("CREATE TEMP TABLE results(x)").unwrap();
+    {
+        let mut host = db.conn.prepare("INSERT INTO temp.results(x) VALUES (1), (2), (3) RETURNING x").unwrap();
+        let mut rows = host.query([]).unwrap();
+        assert!(rows.next().unwrap().is_some());
+        let d = db.shared().db();
+        assert_eq!(d.txn_state(), ffi::SQLITE_TXN_NONE);
+        {
+            let scope = db.store.read_scope(0).unwrap();
+            assert!(!scope.is_active(), "no savepoint can be opened here");
+            db.shared().validate_epoch().unwrap();
+            assert_eq!(db.store.count(&all, None).unwrap(), 20);
+            assert_eq!(d.txn_state(), ffi::SQLITE_TXN_READ, "main's read transaction outlives our statements");
+            let p = TermId::from_dict(9001, Tag::Iri);
+            let more: Vec<[TermId; 4]> =
+                (0..5).map(|i| [TermId::DEFAULT_GRAPH, TermId::from_dict(9100 + i, Tag::Iri), p, TermId::from_int(i).unwrap()]).collect();
+            assert_eq!(other.insert(&more), 5);
+            assert_eq!(db.store.count(&all, None).unwrap(), 20, "same snapshot");
+            let refused = db.store.write_scope(1).map(|_| ());
+            assert!(matches!(refused, Err(Error::Sqlite { code: ffi::SQLITE_BUSY, .. })), "{refused:?}");
+            scope.close().unwrap();
+        }
+        while rows.next().unwrap().is_some() {}
+    }
+    assert_eq!(db.query_i64("SELECT count(*) FROM temp.results"), 3);
+    let _r = db.store.read_scope(0).unwrap();
+    assert_eq!(db.store.count(&all, None).unwrap(), 25);
+}
+
+/// §8.6 "busy_timeout applies" also on the paths that forget the cached schema state: after
+/// a rolled-back write scope, the next scope resolves the schema before its savepoint, so the
+/// `write_gen` bump takes the write lock from no transaction and waits for another writer.
+#[test]
+fn write_scope_after_a_rollback_waits_for_another_writer() {
+    use std::time::Duration;
+    let db = Db::file();
+    db.conn.busy_timeout(Duration::from_secs(10)).unwrap();
+    let path = db.path.as_ref().unwrap().0.clone();
+    drop(db.store.write_scope(0).unwrap()); // rolled back: schema state forgotten
+    let (tx, rx) = std::sync::mpsc::channel();
+    let t = std::thread::spawn(move || {
+        let c = rusqlite::Connection::open(&path).unwrap();
+        c.execute_batch("BEGIN IMMEDIATE; INSERT OR IGNORE INTO rdf_graph(g) VALUES (777713);").unwrap();
+        tx.send(()).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        c.execute_batch("COMMIT").unwrap();
+    });
+    rx.recv().unwrap();
+    let ws = db.store.write_scope(0);
+    t.join().unwrap();
+    let ws = ws.expect("waits for the other writer");
+    db.store.insert(&mut vec![[TermId::DEFAULT_GRAPH, TermId::from_dict(9000, Tag::Iri), TermId::from_dict(9001, Tag::Iri), TermId::from_int(1).unwrap()]]).unwrap();
+    ws.commit().unwrap();
+    assert_eq!(db.query_i64("SELECT count(*) FROM rdf_quad"), 1);
+}
+
+/// `sql_rows`: a failed step is final; every later `fill` reports an error.
+#[test]
+fn sql_rows_keeps_reporting_a_failed_step() {
+    let db = Db::mem();
+    let mut cur = db.store.sql_rows("SELECT abs(x) FROM (SELECT 1 AS x UNION ALL SELECT ?1)", &[i64::MIN], 1).unwrap();
+    let mut out = Vec::new();
+    assert!(matches!(cur.fill(&mut out, 10), Err(Error::Sqlite { .. })));
+    assert_eq!(out, [TermId(1)], "the row before the failure");
+    for _ in 0..3 {
+        assert!(matches!(cur.fill(&mut out, 10), Err(Error::Invalid(_))));
+    }
+    // An interrupted step reports Interrupted again.
+    let mut cur = db.store.sql_rows("SELECT value FROM generate_series(1, 100000)", &[], 1);
+    if cur.is_err() {
+        // generate_series is not compiled in: use a recursive CTE.
+        cur = db.store.sql_rows("WITH RECURSIVE n(v) AS (SELECT 1 UNION ALL SELECT v+1 FROM n WHERE v<100000) SELECT v FROM n", &[], 1);
+    }
+    let mut cur = cur.unwrap();
+    assert_eq!(cur.fill(&mut out, 1).unwrap(), 1);
+    db.shared().db().interrupt();
+    assert!(matches!(cur.fill(&mut out, 10), Err(Error::Interrupted)));
+    assert!(matches!(cur.fill(&mut out, 10), Err(Error::Interrupted)), "still failed");
+}

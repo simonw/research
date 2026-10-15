@@ -151,7 +151,15 @@ impl StorageShared {
     /// changed; flushes the dictionary caches when `dict_gen` or the schema changed; refreshes
     /// `committed_max_row` only outside a write transaction (rollback safety); marks the
     /// statistics for reload when `stats_gen` changed.
+    ///
+    /// A flush inside a write transaction also resets `committed_max_row` to 0 (admit nothing
+    /// until the next validation outside one): the change that caused it (another
+    /// connection's `vacuum_terms`, a re-created store) may have deleted rows below the old
+    /// bound, and this transaction may reuse those row numbers for terms it can still roll
+    /// back. A user-level `ROLLBACK` never reaches `after_rollback`, so the bound itself must
+    /// be safe.
     pub fn validate_epoch(&self) -> Result<SchemaState> {
+        let writing = self.db.txn_state() == ffi::SQLITE_TXN_WRITE;
         let cookie = {
             let mut st = self.pool.lease_fixed(Fixed::SchemaCookie)?;
             if !st.step()? {
@@ -162,7 +170,7 @@ impl StorageShared {
         let known = self.schema.try_borrow().map_err(|_| Error::Reentrant)?.is_some();
         if !known || self.schema_cookie.get() != Some(cookie) {
             let detected = schema::detect(self.db)?;
-            self.flush_dictionary_caches()?;
+            self.flush_dictionary_epoch(writing)?;
             self.dict_gen.set(None);
             self.invalidate_stats()?;
             *self.schema.try_borrow_mut().map_err(|_| Error::Reentrant)? = Some(detected);
@@ -188,10 +196,9 @@ impl StorageShared {
             return self.schema_state();
         }
         if self.dict_gen.get() != Some(dict_gen) {
-            self.flush_dictionary_caches()?;
+            self.flush_dictionary_epoch(writing)?;
             self.dict_gen.set(Some(dict_gen));
         }
-        let writing = self.db.txn_state() == ffi::SQLITE_TXN_WRITE;
         if !writing {
             self.committed_max_row.set(max_row);
         }
@@ -237,6 +244,19 @@ impl StorageShared {
         }
     }
 
+    /// Installs a freshly detected schema state (`ensure_schema`), so that a write scope
+    /// opened next need not read the schema inside its savepoint. A state equal to the cached
+    /// one keeps its cookie; a different one forgets the cookie, so the next
+    /// `validate_epoch` re-validates it.
+    pub(crate) fn remember_schema(&self, detected: Detected) -> Result<()> {
+        let mut cached = self.schema.try_borrow_mut().map_err(|_| Error::Reentrant)?;
+        if cached.as_ref() != Some(&detected) {
+            *cached = Some(detected);
+            self.schema_cookie.set(None);
+        }
+        Ok(())
+    }
+
     /// Forgets the detected schema (after DDL or a rolled-back write scope).
     pub(crate) fn forget_schema(&self) {
         if let Ok(mut s) = self.schema.try_borrow_mut() {
@@ -268,6 +288,17 @@ impl StorageShared {
     pub(crate) fn flush_dictionary_caches(&self) -> Result<()> {
         self.decode_cache.try_borrow_mut().map_err(|_| Error::Reentrant)?.clear();
         self.lookup_cache.try_borrow_mut().map_err(|_| Error::Reentrant)?.clear();
+        Ok(())
+    }
+
+    /// Flush on a `dict_gen` / schema change seen by `validate_epoch`. Outside a write
+    /// transaction the caller then refreshes `committed_max_row`; inside one it cannot, and
+    /// the old bound may cover deleted, now reusable rows, so nothing is admitted until then.
+    fn flush_dictionary_epoch(&self, writing: bool) -> Result<()> {
+        self.flush_dictionary_caches()?;
+        if writing {
+            self.committed_max_row.set(0);
+        }
         Ok(())
     }
 

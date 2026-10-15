@@ -14,7 +14,7 @@ use sq_core::ir::Logical;
 use sq_core::plan::{Op, Plan};
 use sq_core::Result;
 
-use super::{carried, input_seeds, Ctx, Planner};
+use super::{carried, clamp_est, input_seeds, Ctx, Planner};
 use crate::props::ALL;
 
 /// Estimated rows and cost of one open of a subtree, and which seeded slots its rows carry.
@@ -61,7 +61,7 @@ impl Planner<'_> {
             return Ok((p.est_rows, p.est_cost_ns));
         }
         let b = bound.union(k);
-        Ok(match &p.op {
+        let (rows, cost) = match &p.op {
             Op::Scan(s) => self.scan_estimate(&s.pat, b)?,
             Op::Path { g, s, path, o } => self.path_estimate(*g, *s, path, *o, b),
             Op::Values { slots, rows } => self.values_estimate(slots, rows, b),
@@ -88,7 +88,8 @@ impl Planner<'_> {
                     input_seeds(p, b).into_iter().filter(|(_, s)| !s.is_empty()).map(|(c, _)| c).collect();
                 self.scale_with_inputs(p, &seeded, bound, k)?
             }
-        })
+        };
+        Ok((clamp_est(rows), clamp_est(cost)))
     }
 
     /// `p` re-costed when its `seeded` inputs see `k` more bound slots: rows scale with the

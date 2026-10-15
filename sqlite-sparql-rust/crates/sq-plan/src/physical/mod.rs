@@ -1,8 +1,9 @@
 //! Physical planning (spec §5.4, §7.5): Logical (after rewrites) -> `sq_core::plan::Plan`.
 //!
-//! Correctness-first planner: join groups are ordered greedily (cheapest connected next unit,
-//! cross products last; every unit is tried as the start for small groups) and each step picks
-//! BindJoin / HashJoin / NestedLoop by cost and `JoinPolicy`.
+//! Correctness-first planner: join groups are ordered by dynamic programming over connected
+//! subsets when the search is small, greedily otherwise (cheapest connected next unit, cross
+//! products last; see `join`), and each step picks BindJoin / HashJoin / NestedLoop by cost and
+//! `JoinPolicy`. Estimates are clamped to [`MAX_ESTIMATE`].
 //!
 //! Seed propagation contract (what `validate()` checks and the executor must implement):
 //! a subtree opened with a Join-mode seed S passes S to every input of an inner join (and the
@@ -28,6 +29,7 @@
 //! Deferred to the optimizer package (structured so they slot in as extra join choices /
 //! post-passes): MergeJoin, StarMerge, SortBySlot, SqlJoin rendering, IntRange pushdown,
 //! interesting-order DP and constant calibration.
+mod bits;
 mod estimate;
 mod finish;
 mod join;
@@ -79,8 +81,19 @@ impl Ctx {
     }
 }
 
+/// Upper bound of row and cost estimates. Products of large estimates (cross products of many
+/// patterns) saturate here instead of overflowing to infinity: plans must carry finite
+/// estimates (`validate()`), and the ordering search compares and adds them.
+pub(crate) const MAX_ESTIMATE: f64 = 1e300;
+
+/// `x` as a usable estimate: within [0, MAX_ESTIMATE]; NaN (from inf - inf or 0 * inf of
+/// unclamped intermediates) counts as the maximum.
+pub(crate) fn clamp_est(x: f64) -> f64 {
+    if x.is_nan() { MAX_ESTIMATE } else { x.clamp(0.0, MAX_ESTIMATE) }
+}
+
 pub(crate) fn mk(op: Op, est_rows: f64, est_cost_ns: f64, sorted_by: Option<Slot>) -> Plan {
-    Plan { id: 0, est_rows: est_rows.max(0.0), est_cost_ns: est_cost_ns.max(0.0), sorted_by, op }
+    Plan { id: 0, est_rows: clamp_est(est_rows), est_cost_ns: clamp_est(est_cost_ns), sorted_by, op }
 }
 
 /// The slots of a Join-mode seed `s` that are bound in every output row of `p` when `p` is
