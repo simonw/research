@@ -22,6 +22,7 @@ use crate::SqlQuery;
 use crate::expr::{Ctx, View};
 use crate::graph::{GClass, classify, mentions};
 use crate::helpers::{INT_TAG, aggregate_name};
+use crate::limits;
 use crate::sql::{Block, Col, Item, PLACEHOLDER, Params, and_all, col_name, or_all};
 
 /// `Error::Unsupported("baseline: …")`.
@@ -201,6 +202,7 @@ impl<'q> Translator<'q> {
             QueryForm::Describe(_) => return Err(unsupported("DESCRIBE queries")),
         };
         let (sql, params) = self.params.finish(&sql);
+        if std::env::var_os("SQ_NO_LIMITS").is_none() { limits::check(&sql)?; }
         Ok(SqlQuery { sql, params, columns })
     }
 

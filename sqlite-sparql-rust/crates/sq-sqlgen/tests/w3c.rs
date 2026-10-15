@@ -266,7 +266,7 @@ fn run_test(root: &Path, t: &TestCase, reference_is_wrong: bool) -> Verdict {
         Err(e) => return Verdict::Skipped(format!("load: {e}")),
     };
     let ours = match engine.baseline(&query) {
-        Ok(Baseline::Unsupported(msg)) => return Verdict::Unsupported(msg),
+        Ok(Baseline::Unsupported(msg)) => { if msg.contains("nesting") { eprintln!("DEBUG {}", t.id); } return Verdict::Unsupported(msg) }
         Ok(Baseline::Ran { sql, outcome }) => (sql, outcome),
         Err(e) => return Verdict::Mismatch(format!("baseline failed: {e}")),
     };

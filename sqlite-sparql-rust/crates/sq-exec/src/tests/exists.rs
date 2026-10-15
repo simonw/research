@@ -130,3 +130,89 @@ fn exists_rows_must_agree_with_rebound_substituted_slots() {
         Q::new(&fx.store, 1, filter(values(&[0], vec![vec![a], vec![b]]), exists(0))).exists(vec![ex]).rows(fx.rc());
     assert_eq!(rows, vec![vec![b]]);
 }
+
+/// Reads a SELECT in small chunks, returning the rows and the largest `memory_used` seen
+/// between two chunks.
+fn rows_and_peak_memory(e: &mut Execution) -> (Vec<Vec<TermId>>, u64) {
+    let w = e.variables().len();
+    let (mut out, mut buf, mut peak) = (Vec::new(), Vec::new(), 0);
+    loop {
+        buf.clear();
+        let n = e.next_rows(&mut buf, 100).unwrap();
+        peak = peak.max(e.memory_used());
+        if n == 0 {
+            return (out, peak);
+        }
+        out.extend(buf.chunks(w).map(<[TermId]>::to_vec));
+    }
+}
+
+#[test]
+fn the_memo_is_bounded_and_released() {
+    let fx = Fx::new();
+    let p = fx.iri("p");
+    let n = crate::exists::MEMO_LIMIT as i64 + 5000;
+    let mut quads: Vec<[TermId; 4]> = (0..n).step_by(3).map(|i| [TermId::DEFAULT_GRAPH, int(i), p, int(0)]).collect();
+    fx.store.insert(&mut quads).unwrap();
+    // FILTER EXISTS { ?0 :p ?1 } over n distinct ?0: more answers than the memo holds.
+    let outer = values(&[0], (0..n).map(|i| vec![int(i)]).collect());
+    let mut e = Q::new(&fx.store, 2, filter(outer, exists(0))).exists(vec![scan(v(0), c(p), v(1))]).exec(fx.rc());
+    let (rows, peak) = rows_and_peak_memory(&mut e);
+    assert_eq!(rows.len() as i64, (n + 2) / 3);
+    // Two correlated slots: 80 bytes per entry, at most MEMO_LIMIT entries.
+    assert!(peak > 0 && peak <= crate::exists::MEMO_LIMIT as u64 * 80, "peak {peak}");
+    assert_eq!(e.memory_used(), 0, "the memo is released when the query finishes");
+}
+
+#[test]
+fn the_memo_gives_way_to_operators_under_the_budget() {
+    let fx = Fx::new();
+    let p = fx.iri("p");
+    // A DISTINCT above the filter fills the 1 MB budget up to 16 bytes (43,690 keys of 24
+    // bytes), while every row is a memo miss whose answer the memo tries to keep.
+    let n = 43_690i64;
+    let mut quads: Vec<[TermId; 4]> = (0..n).map(|i| [TermId::DEFAULT_GRAPH, int(i), p, int(0)]).collect();
+    fx.store.insert(&mut quads).unwrap();
+    let f = filter(values(&[0, 2], (0..n).map(|i| vec![int(i), int(1)]).collect()), exists(0));
+    let distinct = plan(Op::Distinct { input: Box::new(f), slots: vec![0, 2] });
+    let mut q = Q::new(&fx.store, 3, distinct).exists(vec![scan(v(0), c(p), v(1))]);
+    q.opts.max_memory_mb = 1;
+    let mut e = q.exec(fx.rc());
+    assert_eq!(collect(&mut e).unwrap().len() as i64, n);
+    assert_eq!(e.memory_used(), 0);
+}
+
+#[test]
+fn pattern_trees_keep_their_cursors_and_release_their_memory_between_evaluations() {
+    let fx = Fx::new();
+    let [p, q] = ["p", "q"].map(|n| fx.iri(n));
+    let subjects: Vec<TermId> = (0..300).map(|i| fx.iri(&format!("s{i}"))).collect();
+    let mut quads = Vec::new();
+    for (i, s) in subjects.iter().enumerate() {
+        quads.push([TermId::DEFAULT_GRAPH, *s, p, int(i as i64 % 7)]);
+    }
+    for i in 0..2000 {
+        quads.push([TermId::DEFAULT_GRAPH, int(i % 5), q, int(i)]);
+    }
+    fx.store.insert(&mut quads).unwrap();
+    let outer = || values(&[0], subjects.iter().map(|s| vec![*s]).collect());
+    // EXISTS { ?0 :p ?1 . ?1 :q ?2 } as a BindJoin, a hash join (the 2000 :q edges hashed per
+    // evaluation) and a merge join over a sort enforcer.
+    let q_of_1 = scan_bound(GraphSel::Default, v(1), c(q), v(2), &[1]);
+    let bj = bind_join(scan(v(0), c(p), v(1)), q_of_1, &[1], JoinKind::Inner);
+    let hj = hash_join(scan(v(1), c(q), v(2)), scan(v(0), c(p), v(1)), &[1], &[], JoinKind::Inner, false);
+    let mj = merge_join(sort_by(scan(v(0), c(p), v(1)), 1), sort_by(scan(v(1), c(q), v(2)), 1), 1, &[], 0);
+    for (name, ex) in [("bind join", bj), ("hash join", hj), ("merge join", mj)] {
+        let ts = Rc::new(TestStore::new(fx.store.clone()));
+        let mut e = Q::new(&fx.store, 3, filter(outer(), exists(0))).exists(vec![ex]).exec(ts.clone());
+        let (rows, peak) = rows_and_peak_memory(&mut e);
+        // ?1 = i % 7 has :q edges for 0..5.
+        let want = (0..300).filter(|i| i % 7 < 5).count();
+        assert_eq!(rows.len(), want, "{name}");
+        // Between evaluations only the memo is held: 300 entries of 64 + 8 x 3 bytes (a
+        // probe's buffered run or the hashed :q edges would be about 10 KB and 96 KB).
+        assert!(peak <= 300 * 88, "{name}: {peak} bytes held between evaluations");
+        assert_eq!(e.memory_used(), 0, "{name}");
+        assert!(ts.cursors.get() <= 2, "{name}: {} cursors for 300 evaluations", ts.cursors.get());
+    }
+}

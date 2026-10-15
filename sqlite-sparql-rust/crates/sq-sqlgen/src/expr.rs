@@ -6,10 +6,12 @@
 //!
 //! Conditions in a [`Ctx::Truth`] context (a FILTER or OPTIONAL condition, through AND / OR)
 //! only need to be true exactly when SPARQL's value is true, so false and error may be
-//! conflated; that admits the cheap forms the spec asks for (`sparql_num` comparisons,
-//! simple-literal equality by id). Under NOT, inside IF / COALESCE and for values
-//! ([`Ctx::Exact`]) the error must survive, and the translation falls back to `sparql_eval`.
+//! conflated; that admits simple-literal equality by id. Under NOT, inside IF / COALESCE and
+//! for values ([`Ctx::Exact`]) the error must survive, and the translation falls back to
+//! `sparql_eval`. Comparisons with an inline numeric constant split on the row's tag (see
+//! `numeric`) and are exact in both contexts.
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::rc::Rc;
 
 use sq_core::ir::{Expr, ExistsId};
@@ -17,7 +19,8 @@ use sq_core::spargebra::algebra::Function;
 use sq_core::{Result, Slot, Tag, TermId};
 
 use crate::helpers::{FALSE_ID, INT_TAG, TRUE_ID, cast_name, function_name};
-use crate::sql::Col;
+use crate::numeric::{Cmp, DEC_TAG, DOTZERO_BIT, NumConst, RealOperand, TEMP_TAG, TYPED_TAG};
+use crate::sql::{Col, and_all, or_all};
 use crate::translate::{Env, Translator, unsupported};
 
 /// How much of a condition's value matters.
@@ -84,36 +87,6 @@ impl<'a> View<'a> {
     }
 }
 
-/// Comparison operators of the `<` family.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum Cmp {
-    Lt,
-    Le,
-    Gt,
-    Ge,
-}
-
-impl Cmp {
-    fn sql(self) -> &'static str {
-        match self {
-            Cmp::Lt => "<",
-            Cmp::Le => "<=",
-            Cmp::Gt => ">",
-            Cmp::Ge => ">=",
-        }
-    }
-
-    /// `c OP x` ⇔ `x mirror(OP) c`.
-    fn mirror(self) -> Cmp {
-        match self {
-            Cmp::Lt => Cmp::Gt,
-            Cmp::Le => Cmp::Ge,
-            Cmp::Gt => Cmp::Lt,
-            Cmp::Ge => Cmp::Le,
-        }
-    }
-}
-
 /// Builtins whose value is always a boolean.
 fn returns_boolean(f: &Function) -> bool {
     matches!(
@@ -143,6 +116,15 @@ fn const_ebv(id: TermId) -> Option<bool> {
 /// The dictionary tag a constant has (or would have, for TEMP ids).
 fn const_tag(id: TermId) -> Tag {
     if id.is_temp() { id.temp_tag() } else { id.tag() }
+}
+
+/// Is `x = c` plain id equality for the constant c in this context (see `equal`)?
+fn id_equality(c: TermId, ctx: Ctx) -> bool {
+    match const_tag(c) {
+        Tag::Iri | Tag::Lang => true,
+        Tag::Str | Tag::ShortStr => ctx == Ctx::Truth,
+        _ => false,
+    }
 }
 
 /// A condition as a BOOL term id.
@@ -190,8 +172,8 @@ impl Translator<'_> {
                 None => "NULL".to_owned(),
                 Some(c) => format!("sparql_ebv({})", c.sql),
             },
-            Expr::Or(a, b) => format!("({} OR {})", self.bool_expr(a, v, ctx)?, self.bool_expr(b, v, ctx)?),
-            Expr::And(a, b) => format!("({} AND {})", self.bool_expr(a, v, ctx)?, self.bool_expr(b, v, ctx)?),
+            Expr::Or(..) => self.chain(e, true, v, ctx)?,
+            Expr::And(..) => self.chain(e, false, v, ctx)?,
             Expr::Not(a) => format!("(NOT {})", self.bool_expr(a, v, Ctx::Exact)?),
             Expr::Equal(a, b) => self.equal(a, b, v, ctx)?,
             Expr::SameTerm(a, b) => {
@@ -199,10 +181,10 @@ impl Translator<'_> {
                 let (a, b) = (self.term_expr(a, v)?, self.term_expr(b, v)?);
                 format!("({} = {})", a.sql, b.sql)
             }
-            Expr::Less(a, b) => self.compare(Cmp::Lt, a, b, v, ctx)?,
-            Expr::LessOrEqual(a, b) => self.compare(Cmp::Le, a, b, v, ctx)?,
-            Expr::Greater(a, b) => self.compare(Cmp::Gt, a, b, v, ctx)?,
-            Expr::GreaterOrEqual(a, b) => self.compare(Cmp::Ge, a, b, v, ctx)?,
+            Expr::Less(a, b) => self.compare(Cmp::Lt, a, b, v)?,
+            Expr::LessOrEqual(a, b) => self.compare(Cmp::Le, a, b, v)?,
+            Expr::Greater(a, b) => self.compare(Cmp::Gt, a, b, v)?,
+            Expr::GreaterOrEqual(a, b) => self.compare(Cmp::Ge, a, b, v)?,
             Expr::In(a, list) => self.in_list(a, list, v, ctx)?,
             Expr::Bound(s) => match v.lookup(*s) {
                 None => "0".to_owned(),
@@ -300,6 +282,25 @@ impl Translator<'_> {
         Ok(format!("EXISTS (SELECT 1{}{})", b.from_sql(), b.where_sql()))
     }
 
+    /// `a || b || …` / `a && b && …`: a whole chain as one balanced SQL disjunction /
+    /// conjunction (SQL's three-valued OR / AND are associative), so long chains neither nest
+    /// parentheses nor deepen the expression tree.
+    fn chain(&mut self, e: &Expr, or: bool, v: &View<'_>, ctx: Ctx) -> Result<String> {
+        fn operands<'e>(e: &'e Expr, or: bool, out: &mut Vec<&'e Expr>) {
+            match (e, or) {
+                (Expr::Or(a, b), true) | (Expr::And(a, b), false) => {
+                    operands(a, or, out);
+                    operands(b, or, out);
+                }
+                _ => out.push(e),
+            }
+        }
+        let mut list = Vec::new();
+        operands(e, or, &mut list);
+        let conds = list.into_iter().map(|x| self.bool_expr(x, v, ctx)).collect::<Result<Vec<_>>>()?;
+        Ok(if or { or_all(&conds) } else { format!("({})", and_all(&conds)) })
+    }
+
     /// `a = b`: the `=` matrix (§6.3) with id fast paths.
     fn equal(&mut self, a: &Expr, b: &Expr, v: &View<'_>, ctx: Ctx) -> Result<String> {
         let (x, c) = if matches!(a, Expr::Const(_)) && !matches!(b, Expr::Const(_)) { (b, a) } else { (a, b) };
@@ -315,19 +316,13 @@ impl Translator<'_> {
                 // A simple literal equals only itself, but errors against unknown datatypes.
                 Tag::Str | Tag::ShortStr if ctx == Ctx::Truth => format!("({xs} = {pc})"),
                 Tag::Str | Tag::ShortStr if xt.simple => format!(
-                    "CASE WHEN {xs} = {pc} THEN 1 WHEN ({xs} & 15) IN ({}, {}) THEN {generic} WHEN {xs} IS NOT NULL \
-                     THEN 0 END",
-                    Tag::Typed as i64,
-                    Tag::Temp as i64
+                    "CASE WHEN {xs} = {pc} THEN 1 WHEN ({xs} & 15) IN ({TYPED_TAG}, {TEMP_TAG}) THEN {generic} \
+                     WHEN {xs} IS NOT NULL THEN 0 END"
                 ),
-                // Integers: same id ⇔ same value among inline ints; other numerics by value.
-                Tag::Int if xt.simple => {
-                    let slow = match ctx {
-                        Ctx::Truth => format!("sparql_num({xs}) = {}", self.params.get(cid.as_int().expect("INT"))),
-                        Ctx::Exact => generic,
-                    };
-                    format!("(({xs} & 15) = {INT_TAG} AND {xs} = {pc} OR ({xs} & 15) <> {INT_TAG} AND {slow})")
-                }
+                Tag::Int | Tag::Decimal if xt.simple => match NumConst::of(*cid) {
+                    Some(n) => self.numeric_in(xs, &[(*cid, n)]),
+                    None => format!("({generic})"),
+                },
                 _ => format!("({generic})"),
             });
         }
@@ -338,19 +333,49 @@ impl Translator<'_> {
             // different id ⇒ false; everything else needs the values.
             return Ok(format!(
                 "CASE WHEN {xs} IS NULL OR {cs} IS NULL THEN NULL \
-                 WHEN {xs} = {cs} AND ({xs} & 15) NOT IN ({typed}, {temp}) THEN 1 \
+                 WHEN {xs} = {cs} AND ({xs} & 15) NOT IN ({TYPED_TAG}, {TEMP_TAG}) THEN 1 \
                  WHEN ({xs} & 15) IN (1, 2) OR ({cs} & 15) IN (1, 2) THEN 0 \
                  ELSE {} = {TRUE_ID} END",
                 eval_sql("=", &[xs, cs]),
-                typed = Tag::Typed as i64,
-                temp = Tag::Temp as i64,
             ));
         }
         Ok(format!("({} = {TRUE_ID})", eval_sql("=", &[xs, cs])))
     }
 
-    /// `<`, `<=`, `>`, `>=` (§6.4) with the inline-int and inline-date fast paths.
-    fn compare(&mut self, op: Cmp, a: &Expr, b: &Expr, v: &View<'_>, ctx: Ctx) -> Result<String> {
+    /// `x = c1 OR … OR x = cn` for inline numeric constants, as one CASE on the row's tag: an
+    /// inline integer or decimal equals a constant iff it has the same value, which is id
+    /// equality among integers and `id | DOTZERO_BIT` equality among decimals; TYPED and TEMP
+    /// rows need sq-expr (promotion, ill-typed values); every other term is unequal (§6.3).
+    /// Exact in both contexts.
+    fn numeric_in(&mut self, x: &str, consts: &[(TermId, NumConst)]) -> String {
+        fn member(x: &str, list: &[String]) -> String {
+            match list {
+                [] => "0".to_owned(),
+                [one] => format!("{x} = {one}"),
+                _ => format!("{x} IN ({})", list.join(", ")),
+            }
+        }
+        let ints: Vec<String> = consts.iter().filter_map(|(_, n)| n.int_id()).map(|id| self.param(id)).collect();
+        let decs: Vec<String> = consts.iter().filter_map(|(_, n)| n.dec_key()).map(|k| self.params.get(k)).collect();
+        let generic: Vec<String> = consts
+            .iter()
+            .map(|(id, _)| {
+                let pc = self.param(*id);
+                format!("{} = {TRUE_ID}", eval_sql("=", &[x, &pc]))
+            })
+            .collect();
+        format!(
+            "CASE WHEN ({x} & 15) = {INT_TAG} THEN {} WHEN ({x} & 15) = {DEC_TAG} THEN {} \
+             WHEN ({x} & 15) IN ({TYPED_TAG}, {TEMP_TAG}) THEN {} WHEN {x} IS NOT NULL THEN 0 END",
+            member(x, &ints),
+            member(&format!("({x} | {DOTZERO_BIT})"), &decs),
+            or_all(&generic),
+        )
+    }
+
+    /// `<`, `<=`, `>`, `>=` (§6.4) with the inline-number and inline-date fast paths. Every
+    /// form is exact (true / false / NULL = error), so the context does not matter.
+    fn compare(&mut self, op: Cmp, a: &Expr, b: &Expr, v: &View<'_>) -> Result<String> {
         let (x, c, op) =
             if matches!(a, Expr::Const(_)) && !matches!(b, Expr::Const(_)) { (b, a, op.mirror()) } else { (a, b, op) };
         let o = op.sql();
@@ -359,30 +384,19 @@ impl Translator<'_> {
         if let Expr::Const(cid) = c {
             let pc = self.param(*cid);
             let generic = format!("{} = {TRUE_ID}", eval_sql(o, &[xs, &pc]));
-            return Ok(match cid.as_int() {
-                // §9: integers compare on the payload; every other numeric through sparql_num.
-                Some(k) if xt.simple => {
-                    let pk = self.params.get(k);
-                    let slow = match ctx {
-                        Ctx::Truth => format!("sparql_num({xs}) {o} {pk}"),
-                        Ctx::Exact => generic,
-                    };
-                    format!("(({xs} & 15) = {INT_TAG} AND ({xs} >> 4) {o} {pk} OR ({xs} & 15) <> {INT_TAG} AND {slow})")
-                }
-                _ if xt.simple && matches!(cid.tag(), Tag::DateTime | Tag::Date) => {
-                    // Same tag and timezone field ⇒ the payload orders like the values.
-                    let mask = self.params.get(cid.raw() & 0xFFFF);
-                    let pk = self.params.get(cid.raw() >> 16);
-                    format!(
-                        "(({xs} & 65535) = {mask} AND ({xs} >> 16) {o} {pk} \
-                         OR ({xs} & 65535) <> {mask} AND {generic})"
-                    )
-                }
-                _ if ctx == Ctx::Truth && cid.tag() == Tag::Decimal => {
-                    format!("(sparql_num({xs}) {o} sparql_num({pc}))")
-                }
-                _ => format!("({generic})"),
-            });
+            if !xt.simple {
+                return Ok(format!("({generic})"));
+            }
+            if let Some(n) = NumConst::of(*cid) {
+                return Ok(self.numeric_compare(op, xs, n, &generic));
+            }
+            if matches!(cid.tag(), Tag::DateTime | Tag::Date) {
+                // Same tag and timezone field ⇒ the payload orders like the values.
+                let mask = self.params.get(cid.raw() & 0xFFFF);
+                let pk = self.params.get(cid.raw() >> 16);
+                return Ok(format!("CASE WHEN ({xs} & 65535) = {mask} THEN ({xs} >> 16) {o} {pk} ELSE {generic} END"));
+            }
+            return Ok(format!("({generic})"));
         }
         let ct = self.term_expr(c, v)?;
         let cs = &ct.sql;
@@ -396,30 +410,61 @@ impl Translator<'_> {
         Ok(format!("({generic})"))
     }
 
-    /// `a IN (…)`: the OR of `=` (an error only if nothing matched and some `=` erred).
+    /// `x OP n` for an inline numeric constant n (§9's inline-int fast path, made exact): the
+    /// INT payload against an integer bound, an inline decimal's `sparql_num` REAL where that
+    /// comparison is exact, `sparql_eval` for TYPED / TEMP terms and the remaining decimals;
+    /// any other term is not numeric, so the comparison is an error (NULL).
+    fn numeric_compare(&mut self, op: Cmp, x: &str, n: NumConst, generic: &str) -> String {
+        let o = op.sql();
+        let bound = self.params.get(n.int_bound(op));
+        let mut sql = format!("CASE WHEN ({x} & 15) = {INT_TAG} THEN ({x} >> 4) {o} {bound}");
+        if let Some(r) = n.real_operand() {
+            let value = match r {
+                RealOperand::Int(k) => self.params.get(k),
+                RealOperand::Ratio { m, pow10 } => {
+                    format!("(CAST({} AS REAL) / {})", self.params.get(m), self.params.get(pow10))
+                }
+            };
+            let lim = r.row_limit();
+            let _ = write!(
+                sql,
+                " WHEN ({x} & 15) = {DEC_TAG} AND ({x} >> 9) BETWEEN -{lim} AND {lim} THEN sparql_num({x}) {o} {value}"
+            );
+        }
+        let _ = write!(sql, " WHEN ({x} & 15) IN ({TYPED_TAG}, {DEC_TAG}, {TEMP_TAG}) THEN {generic} END");
+        sql
+    }
+
+    /// `a IN (…)`: the OR of `=` (an error only if nothing matched and some `=` erred), with
+    /// the id-comparable constants as one SQL `IN` list and the inline numerics as one CASE.
     fn in_list(&mut self, a: &Expr, list: &[Expr], v: &View<'_>, ctx: Ctx) -> Result<String> {
         if list.is_empty() {
             return Ok("0".to_owned());
         }
-        // Constants whose `=` is plain id equality in this context (see `equal`).
-        let by_id: Option<Vec<TermId>> = list
-            .iter()
-            .map(|e| match e {
-                Expr::Const(id) => match const_tag(*id) {
-                    Tag::Iri | Tag::Lang => Some(*id),
-                    Tag::Str | Tag::ShortStr if ctx == Ctx::Truth => Some(*id),
-                    _ => None,
-                },
-                _ => None,
-            })
-            .collect();
-        if let Some(ids) = by_id {
-            let x = self.term_expr(a, v)?;
-            let ids: Vec<String> = ids.into_iter().map(|id| self.param(id)).collect();
-            return Ok(format!("({} IN ({}))", x.sql, ids.join(", ")));
+        let x = self.term_expr(a, v)?;
+        let (mut by_id, mut numeric, mut rest) = (Vec::new(), Vec::new(), Vec::new());
+        for item in list {
+            match item {
+                // Constants whose `=` is plain id equality in this context (see `equal`).
+                Expr::Const(id) if id_equality(*id, ctx) => by_id.push(*id),
+                Expr::Const(id) if x.simple && NumConst::of(*id).is_some() => {
+                    numeric.push((*id, NumConst::of(*id).expect("checked")));
+                }
+                _ => rest.push(item),
+            }
         }
-        let terms = list.iter().map(|item| self.equal(a, item, v, ctx)).collect::<Result<Vec<_>>>()?;
-        Ok(format!("({})", terms.join(" OR ")))
+        let mut terms = Vec::with_capacity(rest.len() + 2);
+        if !by_id.is_empty() {
+            let ids: Vec<String> = by_id.into_iter().map(|id| self.param(id)).collect();
+            terms.push(format!("({} IN ({}))", x.sql, ids.join(", ")));
+        }
+        if !numeric.is_empty() {
+            terms.push(self.numeric_in(&x.sql, &numeric));
+        }
+        for item in rest {
+            terms.push(self.equal(a, item, v, ctx)?);
+        }
+        Ok(or_all(&terms))
     }
 
     /// `+ - * /`; `+ - *` of two inline integers stay in SQL when the result is inline.

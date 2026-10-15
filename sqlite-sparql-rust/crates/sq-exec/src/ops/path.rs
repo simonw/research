@@ -95,9 +95,11 @@ struct PredScans {
     by_s: Scan,
     /// (g, p) -> o, s: the p edges in object order.
     by_o: Scan,
-    /// What the capped counts found out about |edges(p)|, per register value (the graph of
-    /// `GraphSel::Active`; UNBOUND otherwise). The store does not change during an execution,
-    /// so this survives `reset` and `close` (EXISTS patterns are re-opened per outer row).
+    /// The edges are read from the graph on the register (`GraphSel::Active`).
+    on_register: bool,
+    /// What the capped counts found out about |edges(p)|, per register value (UNBOUND for
+    /// the other graph selections). The store does not change during an execution, so this
+    /// survives `reset` and `close` (EXISTS patterns are re-opened per outer row).
     edges: FxHashMap<TermId, EdgeCount>,
 }
 
@@ -127,7 +129,7 @@ impl PredScans {
             return Ok(false);
         }
         let max = if max >= u64::MAX as f64 { u64::MAX - 1 } else { max as u64 };
-        let reg = cx.active_graph().unwrap_or(TermId::UNBOUND);
+        let reg = if self.on_register { cx.active_graph().unwrap_or(TermId::UNBOUND) } else { TermId::UNBOUND };
         match self.edges.get(&reg) {
             Some(EdgeCount::Unknown) => return Ok(false),
             Some(EdgeCount::Exact(n)) => return Ok(*n <= max),
@@ -178,6 +180,7 @@ impl CPath {
                     bwd: Scan::internal(pat(g, pt), b(false, true, true), PW),
                     by_s: Scan::internal(pat(g, pt), IndexOrder::Gpso, PW),
                     by_o: Scan::internal(pat(g, pt), IndexOrder::Gpos, PW),
+                    on_register: g == GraphSel::Active,
                     edges: FxHashMap::default(),
                 }))
             }

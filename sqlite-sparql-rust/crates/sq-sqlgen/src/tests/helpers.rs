@@ -94,7 +94,7 @@ fn generated_sql_only_uses_listed_helpers() {
         "SELECT ?x WHERE { ?x :score ?s FILTER(?s) FILTER(isNumeric(?s) || LANGMATCHES(LANG(?s), \"en\")) }",
     ];
     let sql_builtins =
-        ["COUNT", "COALESCE", "EXISTS", "instr", "substr", "length", "row_number", "min", "VALUES", "IN"];
+        ["COUNT", "COALESCE", "EXISTS", "instr", "substr", "length", "row_number", "min", "VALUES", "IN", "CAST"];
     let keywords = ["AND", "OR", "NOT", "AS", "THEN", "ELSE", "WHEN"];
     for q in queries {
         let text = sql(q).sql;

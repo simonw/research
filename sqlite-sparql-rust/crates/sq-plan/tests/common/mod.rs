@@ -159,16 +159,23 @@ impl Sqlite {
 /// A solution with its terms decoded (None = unbound).
 pub type Solution = Vec<Option<Arc<Term>>>;
 
-/// The solutions of `plan`, executed by sq-exec on `store`, sorted (a multiset).
+/// The solutions of `plan`, executed by sq-exec on `store`, sorted (a multiset). A SELECT
+/// without variables returns no ids, so its solutions are counted from `next_rows`.
 pub fn execute(store: Rc<dyn QuadStore>, plan: QueryPlan, opts: &QueryOptions) -> Result<Vec<Solution>, String> {
     let mut ex = Execution::new(store, plan, opts, ExecCaches::default()).map_err(|e| e.to_string())?;
     let width = ex.variables().len();
-    let mut ids = Vec::new();
-    while ex.next_rows(&mut ids, 1024).map_err(|e| e.to_string())? > 0 {}
+    let (mut ids, mut produced) = (Vec::new(), 0);
+    loop {
+        let n = ex.next_rows(&mut ids, 1024).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        produced += n;
+    }
     let mut terms = Vec::with_capacity(ids.len());
     ex.decode(&ids, &mut terms).map_err(|e| e.to_string())?;
     let mut rows: Vec<Solution> = if width == 0 {
-        vec![Vec::new(); ids.len()]
+        vec![Vec::new(); produced]
     } else {
         terms.chunks(width).map(<[_]>::to_vec).collect()
     };

@@ -122,3 +122,11 @@ translating SPARQL to SQL text or running as an external client.
   detected (EXPLAIN looks for OP_TableLock — no allow-listed API reports the mode) and refused.
   Conformance suite passes at page sizes 4K/8K/16K/64K, with reserved bytes, after VACUUM, and on 600
   rounds of randomly corrupted pages (fall back, never panic).
+- sq-exec (implement -> 2 review/fix rounds; the round-1 reviewer enforced the planner's seed contract
+  and the oracle's §18 path semantics that I appended mid-flight — it caught NPS returning bags and the
+  sequence-middle-as-constant bug; round 2 bounded the EXISTS memo and capped path edge counts):
+  109 tests incl. a 60-seed property test (BindJoin == HashJoin == NestedLoop == MergeJoin+enforcers),
+  28 seeded-subtree equivalence shapes. A scratch W3C sweep through sq-plan + sq-exec on MemStore:
+  528 pass + 8 lenient, same under Auto / PreferBind / PreferHash / no-reorder.
+- Disk: agents' cargo target dirs reached ~20 GB (the allowance filled up once); cleaned and added a
+  one-target-dir + CARGO_INCREMENTAL=0 rule to the pipeline preamble.

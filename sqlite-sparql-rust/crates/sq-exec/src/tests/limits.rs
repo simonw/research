@@ -157,3 +157,27 @@ fn too_many_slots_and_bad_layouts_are_rejected() {
     let r = Q::new(&fx.store, 1, scan(v(0), c(p), v(5))).try_exec(fx.rc());
     assert!(matches!(r, Err(Error::Internal(_))));
 }
+
+/// Probes that visit every build row (no keys, or an unbound key) and match none produce no
+/// rows, so only the visited candidates show the CPU work to the interrupt polling.
+#[test]
+fn probes_without_matches_are_polled() {
+    let fx = Fx::new();
+    let left = || values(&[0], (0..2000).map(|i| vec![int(i)]).collect());
+    let right = || values(&[0, 1], (0..3000).map(|i| vec![int(10_000 + i), int(i)]).collect());
+    let nl = nested(left(), right(), &[0], JoinKind::Inner);
+    let minus = plan(Op::Minus { left: Box::new(left()), right: Box::new(right()), keys: vec![], check: vec![0] });
+    // An unbound probe key visits every build row of a hash join too (none agrees on ?1).
+    let unbound = values(&[1], (0..2000).map(|i| vec![int(-1 - i)]).collect());
+    let hj = hash_join(right(), unbound, &[0], &[1], JoinKind::Inner, false);
+    for (name, p, want) in [("nested loop", nl, 0), ("minus", minus, 2000), ("hash join", hj, 0)] {
+        // 6M compatibility checks: polled about every 4096 (here: every two probe rows).
+        let ts = Rc::new(TestStore::new(fx.store.clone()));
+        ts.interrupt_after.set(Some(10));
+        let mut e = Q::new(&fx.store, 2, p.clone()).exec(ts.clone());
+        assert!(matches!(e.count(), Err(Error::Interrupted)), "{name}");
+        let ts = Rc::new(TestStore::new(fx.store.clone()));
+        assert_eq!(Q::new(&fx.store, 2, p).exec(ts.clone()).count().unwrap(), want, "{name}");
+        assert!(ts.polls.get() >= 1000, "{name}: {} polls", ts.polls.get());
+    }
+}

@@ -104,10 +104,16 @@ impl Shared {
     }
 
     /// Fails once more memory is in use than the budget allows (charges check this
-    /// themselves; [`Shared::record`] leaves it to the next poll).
+    /// themselves; [`Shared::record`] leaves it to the next poll). Caches that are charged
+    /// against the budget (the EXISTS memo) give way first.
     pub fn check_memory(&self) -> Result<()> {
         if self.mem_used.get() > self.mem_limit {
-            return Err(Error::MemoryBudget(self.mem_mb));
+            if let Ok(mut st) = self.exists.try_borrow_mut() {
+                st.clear_memo(self);
+            }
+            if self.mem_used.get() > self.mem_limit {
+                return Err(Error::MemoryBudget(self.mem_mb));
+            }
         }
         Ok(())
     }

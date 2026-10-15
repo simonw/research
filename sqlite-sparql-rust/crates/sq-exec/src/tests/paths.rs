@@ -394,3 +394,40 @@ fn negated_property_sets_are_sets_of_pairs() {
     let gp = plan(Op::Path { g: GraphSel::Slot(1), s: c(a), path: nps(), o: v(0) });
     assert_eq!(Q::new(&fx.store, 2, gp).sorted(fx.rc()), ms(vec![vec![b, g1], vec![b, g2]]));
 }
+
+/// The probe-or-scan choice of a step counts the predicate's edges only up to the break-even
+/// point, once per graph and execution: EXISTS re-evaluations and later steps with as many
+/// starts reuse what was found out.
+#[test]
+fn edge_counts_are_capped_and_remembered() {
+    let fx = Fx::new();
+    let [p, q, h] = ["p", "q", "h"].map(|n| fx.iri(n));
+    let subjects: Vec<TermId> = (0..5).map(|i| fx.iri(&format!("a{i}"))).collect();
+    let mut quads = Vec::new();
+    for (k, a) in subjects.iter().enumerate() {
+        for i in 0..100 {
+            let m = fx.iri(&format!("m{k}_{i}"));
+            quads.push([TermId::DEFAULT_GRAPH, *a, q, m]);
+            quads.push([TermId::DEFAULT_GRAPH, m, p, h]);
+        }
+    }
+    fx.store.insert(&mut quads).unwrap();
+    // FILTER EXISTS { ?0 :q/:p ?1 }: every evaluation steps over :p from 100 middles.
+    let ex = path(v(0), seq(pred(q), pred(p)), v(1));
+    let outer = || values(&[0], subjects.iter().map(|s| vec![*s]).collect());
+    let run = |fx: &Fx| {
+        let ts = Rc::new(TestStore::new(fx.store.clone()));
+        let root = filter(outer(), Expr::Exists(ExistsId(0)));
+        let rows = Q::new(&fx.store, 2, root).exists(vec![ex.clone()]).rows(ts.clone());
+        assert_eq!(rows.len(), 5);
+        (ts.counts.get(), ts.uncapped.get())
+    };
+    // 500 :p edges: below the break-even point of 100 starts (750 with the memory costs), so
+    // the edges are scanned; the exact count is known after one capped count.
+    assert_eq!(run(&fx), (1, 0));
+    // 20,500 :p edges: the capped count stops at the break-even point; probes from then on.
+    let mut more: Vec<[TermId; 4]> =
+        (0..20_000).map(|i| [TermId::DEFAULT_GRAPH, fx.iri(&format!("x{i}")), p, int(i)]).collect();
+    fx.store.insert(&mut more).unwrap();
+    assert_eq!(run(&fx), (1, 0));
+}

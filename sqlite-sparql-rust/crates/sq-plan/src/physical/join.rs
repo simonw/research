@@ -902,17 +902,23 @@ impl<'a> Planner<'a> {
         }
         // Every superset of a subset is numerically larger: ascending order sees final states,
         // and back pointers only point into finished buckets.
+        let (mut z_steps, mut z_states, mut z_choices, mut z_settled, mut z_bsum) = (0usize, 0usize, 0usize, 0usize, 0usize);
         for mask in 1..full {
             let bucket = std::mem::take(&mut best[mask]);
+            z_bsum += bucket.len();
             for i in mask_iter(dp_candidates(adj, seeded, mask)) {
+                z_steps += 1;
                 let next = mask | 1 << i;
                 let rest = g.interest(mask_iter(full & !next));
                 for (idx, state) in bucket.iter().enumerate() {
+                    z_states += 1;
                     for ch in self.join_choices(g, &state.shape, i, None, Mode::Probe, None)? {
+                        z_choices += 1;
                         let shape = joined_shape(&state.shape, &g.units[i].props, Some(i), &ch, &JoinKind::Inner);
                         if self.dominated(g, &best[next], &shape, rest, next == full) {
                             continue;
                         }
+                        z_settled += 1;
                         let from = From::Step { prev: mask, idx, unit: i, algo: ch.algo };
                         let st = self.settle(g, &shape, state.applied.clone(), from, rest, next == full)?;
                         insert(&mut best[next], st);
@@ -920,6 +926,10 @@ impl<'a> Planner<'a> {
                 }
             }
             best[mask] = bucket;
+        }
+        if std::env::var("SQ_DP_STATS").is_ok() {
+            let nonempty = best.iter().filter(|b| !b.is_empty()).count();
+            eprintln!("DP n={n} steps={z_steps} states={z_states} choices={z_choices} settled={z_settled} buckets={nonempty} avg_bucket={:.2}", z_bsum as f64 / nonempty as f64);
         }
         let idx = cheapest(&best[full])?;
         Ok(reconstruct(&best, full, idx))

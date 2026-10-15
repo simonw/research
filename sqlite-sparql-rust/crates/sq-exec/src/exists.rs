@@ -9,8 +9,9 @@
 //!
 //! The memo is a cache, bounded like the resolver's maps ([`MEMO_LIMIT`] entries). Its entries
 //! are charged against the memory budget while they live, but it gives way instead of failing
-//! the query: it is cleared when full or when a new entry would exceed the budget, and an
-//! answer that does not fit even then is not remembered.
+//! the query: it is cleared when full, when a new entry would exceed the budget, and when an
+//! operator's charge would ([`Shared::check_memory`]); an answer that does not fit even in an
+//! empty memo is not remembered.
 //!
 //! The evaluation runs on its own [`ExecCtx`] level (its own `ValueCache`, the register's
 //! current graph) over the shared execution state, so it can run while the outer level's
@@ -78,11 +79,6 @@ impl Memo {
         self.map = FxHashMap::default();
         sh.release(&mut self.charge);
     }
-
-    #[cfg(test)]
-    fn len(&self) -> usize {
-        self.map.len()
-    }
 }
 
 pub(crate) struct ExistsState {
@@ -117,10 +113,9 @@ impl ExistsState {
         self.memo.clear(&cx.sh);
     }
 
-    /// Number of memoized answers.
-    #[cfg(test)]
-    pub fn memo_len(&self) -> usize {
-        self.memo.len()
+    /// Forgets the memoized answers (the budget needs their memory).
+    pub fn clear_memo(&mut self, sh: &Shared) {
+        self.memo.clear(sh);
     }
 }
 

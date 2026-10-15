@@ -195,12 +195,26 @@ impl Block {
     }
 }
 
+/// Operands per flat run of `AND` / `OR`. SQLite parses `a AND b AND …` into a left-deep tree,
+/// and its expression depth is limited (1000), so longer lists are split into parenthesized
+/// runs: the depth then grows with the logarithm of the length.
+const FLAT_RUN: usize = 64;
+
+/// `conds` joined by `op` (` AND ` / ` OR `), as balanced runs of at most [`FLAT_RUN`].
+fn balanced(conds: &[String], op: &str) -> String {
+    if conds.len() <= FLAT_RUN {
+        return conds.join(op);
+    }
+    let runs: Vec<String> = conds.chunks(FLAT_RUN).map(|run| format!("({})", run.join(op))).collect();
+    balanced(&runs, op)
+}
+
 /// Conjunction of SQL conditions (`1` when empty).
 pub(crate) fn and_all(conds: &[String]) -> String {
     match conds.len() {
         0 => "1".to_owned(),
         1 => conds[0].clone(),
-        _ => conds.join(" AND "),
+        _ => balanced(conds, " AND "),
     }
 }
 
@@ -209,6 +223,6 @@ pub(crate) fn or_all(conds: &[String]) -> String {
     match conds.len() {
         0 => "0".to_owned(),
         1 => conds[0].clone(),
-        _ => format!("({})", conds.join(" OR ")),
+        _ => format!("({})", balanced(conds, " OR ")),
     }
 }
