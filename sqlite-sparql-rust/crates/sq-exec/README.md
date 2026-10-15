@@ -82,9 +82,10 @@ cursor. Graph selection works as follows:
 - **BindJoin** re-opens `right` once per distinct seed tuple of each left batch. When
   `sort_left` is set it sorts the batch first, and runs of equal tuples reuse the buffered
   result of the previous probe. It switches to hashing against one unseeded evaluation of
-  `right` in two cases. If `adaptive` is set, it switches once the left side passes both 50,000
-  rows and 8x its estimate. If the join is Inner or Left and `right` mints values (BNODE, RAND,
-  UUID, STRUCUID), it hashes immediately, because one solution must not get several values.
+  `right` in two cases. If `adaptive` is set (and `right` does not rely on sort orders that its
+  seeds provide), it switches once the left side passes both 50,000 rows and 8x its estimate.
+  If the join is Inner or Left and `right` mints values (BNODE, RAND, UUID, STRUUID), it hashes
+  immediately, because one solution must not get several values.
 - **HashJoin** keeps its build side in a flat row arena with `FxHashMap` chain heads. A build
   row whose key is not fully bound goes to a wildcard list that every probe visits. A probe row
   with an unbound key visits every build row. NestedLoop is a HashJoin with no keys.
@@ -112,10 +113,11 @@ Zero-length matches have extra rules:
 
 Paths never cross graphs; for a graph variable the operator loops over the named graphs itself.
 
-**7. Correlated EXISTS** (`exists.rs`). Each `plan.exists[id]` tree is built once. It is opened
-per outer row in Substitute mode with every bound slot it mentions, nested patterns included,
-and `reset` afterwards so its scans can be rebound. It runs on a private batch that already
-holds 1023 placeholder rows, so streaming operators stop after one row. A row only counts if it
+**7. Correlated EXISTS** (`exists.rs`). Each `plan.exists[id]` tree is built once. On a memo
+miss it is opened in Substitute mode with every bound slot of the outer row that it mentions,
+nested patterns included, and `reset` afterwards so its scans can be rebound. It runs on a
+private batch that already holds 1023 placeholder rows, so streaming operators stop after one
+row. A row only counts if it
 agrees with the outer row on the substituted slots. Answers are memoized per (id, active graph,
 correlated values). The memo holds at most 65,536 entries, is charged against the budget, and
 is cleared rather than failing the query when memory is short.
@@ -241,8 +243,9 @@ second is two re-runs on 2026-10-15, while other agents' builds kept the load av
 | sort, INT raw-id fast path / by `-?o` (SortKeys) | 180 / – | 253-274 / 1,900-2,080 |
 | TopK 10 / group by (1000 groups) / distinct | 51 / 81 / 93 | 45-105 / 86-200 / 106-279 |
 
-Probe-heavy shapes on MemStore (BindJoin, about 1.2-1.8 µs per probe in the re-runs) mostly
-measure the range copy MemStore makes on every `rebind`, not the executor.
+Probe-heavy shapes on MemStore (BindJoin: about 1.3 µs per probe in the author's notes, 1.2-1.8
+µs in the re-runs) mostly measure the range copy MemStore makes on every `rebind`, not the
+executor.
 
 ## Where the code differs from docs/SPEC.md
 
