@@ -7,6 +7,7 @@ SCRATCH=${SCRATCH:-/tmp/claude-0/-home-user-research/82148577-c93b-5a93-8757-e7f
 VENV=${VENV:-$SCRATCH/venv}
 W3C=${W3C:-$SCRATCH/w3c/rdf-tests/sparql}
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$SCRATCH/targets/check}
+export CARGO_INCREMENTAL=0
 EXT_TARGET=${EXT_TARGET:-$SCRATCH/targets/ext}
 
 cargo test --workspace --release                                   # native, system libsqlite3 3.45.1
@@ -23,4 +24,5 @@ export SPARQLITE_EXT=$EXT_TARGET/release/libsparqlite
 "$VENV/bin/python" -m pytest py/tests -q
 cargo run --release -p sq-w3c -- --suite "$W3C" --backend sqlite --known-failures tools/sq-w3c/known_failures.txt
 cargo run --release -p sq-w3c -- --suite "$W3C" --backend mem    --known-failures tools/sq-w3c/known_failures.txt
-"$VENV/bin/python" py/diff_oxigraph.py --ext "$SPARQLITE_EXT" --cases 2000 --seed 1
+# Differential testing against the spec-transcribed oracle (sq-oracle) lives in crates/sq-engine/tests/differential.rs;
+# pyoxigraph cross-checks results at scale through the benchmark checksums (py/bench.py).

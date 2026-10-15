@@ -44,10 +44,10 @@ which are stable only from 1.88, even though the workspace `Cargo.toml` declares
 fatal (resolver I/O, interrupt, internal bug). Errors propagate, with the exceptions in SPEC §6.2:
 `||`/`&&` use three-valued logic, `COALESCE` skips errors, `IF` is an error when its condition
 errors or when the branch it takes errors (an error in the branch it does not take is ignored, so
-`IF(true, 1, 1/0)` is 1), `BOUND` and `EXISTS` never error, and `IN` errors only when nothing matched and some comparison
-errored. `!=` arrives as `Not(Equal)` and `NOT IN` as `Not(In)`, the way spargebra produces them.
-In a row, both `TermId::UNBOUND` (0) and the group-key sentinel `TermId::ERROR` count as unbound
-(`is_present` is false and `BOUND` returns false).
+`IF(true, 1, 1/0)` is 1), `BOUND` and `EXISTS` never error, and `IN` errors only when nothing
+matched and some comparison errored. `!=` arrives as `Not(Equal)` and `NOT IN` as `Not(In)`,
+the way spargebra produces them. In a row, both `TermId::UNBOUND` (0) and the group-key sentinel
+`TermId::ERROR` count as unbound (`is_present` is false and `BOUND` returns false).
 
 **2. Lazy values (`value.rs`).** `Val` is `Id(TermId)`, `V(Value)` (a computed value whose term
 is the canonical term of that value) or `Typed { value, datatype, lex }`. `Typed` holds a computed
@@ -222,10 +222,11 @@ sq-expr = { workspace = true, features = ["testing"] }
 ## Testing
 
 ```sh
-cargo test -p sq-expr                    # 97 tests (5 ignored)
+cargo test -p sq-expr                    # 102 tests: 97 run, 5 ignored
+git clone https://github.com/w3c/rdf-tests /path/to/rdf-tests
 SQ_W3C_DIR=/path/to/rdf-tests/sparql cargo test -p sq-expr w3c -- --nocapture
 cargo test --release -p sq-expr bench -- --ignored --nocapture        # micro-benchmarks
-SQ_VALUE_DIFF_OUT=/tmp/x.tsv cargo test -p sq-expr value_diff -- --ignored
+SQ_VALUE_DIFF_N=20000 SQ_VALUE_DIFF_OUT=/tmp/x.tsv cargo test -p sq-expr value_diff -- --ignored
 ```
 
 - Module unit tests cover XSD lexical spaces and facets, the `WELL_KNOWN` row table, decimal
@@ -240,21 +241,31 @@ SQ_VALUE_DIFF_OUT=/tmp/x.tsv cargo test -p sq-expr value_diff -- --ignored
   (`interning.rs`). `review.rs` and `review2.rs` hold adversarial tests from two review rounds;
   some of these check that the fast paths agree with the general path for every id class.
 - `w3c.rs` runs the query-evaluation tests of 16 expression-heavy W3C directories through a small
-  nested-loop reference evaluator. `SQ_W3C_DIR` defaults to the scratchpad checkout, and the test
-  passes silently (skipped) when the suite is missing. The last run gave 291 passes, 8 lenient
-  numeric passes (`"3"` against `"3.0"`), 2 skips (one named-graph test, one query spargebra
-  cannot parse) and 0 failures. The test fails if fewer than 290 tests pass (strict or lenient).
+  nested-loop reference evaluator. Clone https://github.com/w3c/rdf-tests and set
+  `SQ_W3C_DIR=<clone>/sparql`. The built-in default is a scratchpad path that exists only on the
+  original dev VM. Anywhere else the test prints a note to stderr and passes without checking
+  anything, so a green `cargo test -p sq-expr` says nothing about W3C conformance unless
+  `SQ_W3C_DIR` is set. The last run gave 291 passes, 8 lenient numeric passes (`"3"` against
+  `"3.0"`), 2 skips (one named-graph test, one query spargebra cannot parse) and 0 failures. The
+  test fails if fewer than 290 tests pass (strict or lenient).
 - Ignored tools: `bench_hot_paths` (`SQ_BENCH_ROWS`, default 200,000; `SQ_BENCH_ONLY` filters
-  case names), `value_diff` (writes `expression \t result` TSV to `SQ_VALUE_DIFF_OUT`),
+  case names), `value_diff` (writes `expression \t result` TSV to `SQ_VALUE_DIFF_OUT`;
+  `SQ_VALUE_DIFF_N` sets the number of expressions, default 5,000),
   `review_string_function_diff` / `review_date_function_diff` (`SQ_REVIEW_DIFF_OUT`) and
-  `review_probe_expressions` (`SQ_REVIEW_PROBE_IN` → `SQ_REVIEW_PROBE_OUT`).
+  `review_probe_expressions` (`SQ_REVIEW_PROBE_IN` → `SQ_REVIEW_PROBE_OUT`). The two
+  `review_*_diff` tests write the same `SQ_REVIEW_DIFF_OUT` file, so a plain `-- --ignored` run
+  overwrites one result with the other. Run them one at a time by name, for example
+  `SQ_REVIEW_DIFF_OUT=/tmp/dates.tsv cargo test -p sq-expr review_date_function_diff -- --ignored`.
 
 ## Performance
 
 Release micro-benchmarks (`bench_hot_paths`) were run on the project's 4-vCPU dev VM. sq-expr
 does not touch SQLite. The "logged" column comes from quiet runs recorded in `../../notes.md` and
-the crate's author notes. The "range" column covers three runs made while writing this README,
-when other builds were loading the VM (load average about 3), so read it as an upper band.
+the crate's author notes. The "range" column is the spread of three runs made while writing this
+README, while other builds were loading the VM. It is noise, not a bound: later runs, on both a
+quiet and a loaded VM, landed above and below it (for example 38.5-40.6 ns for `?x < 10.5` over
+strings, 283-485 ns for the dynamic REGEX, 130 ns for BNODE, 47.7 ns for COALESCE). Expect up to
+about ±2x between runs on the shared VM, and compare cases only within one run.
 
 | Case (ns/row) | logged | range |
 |---|---|---|
@@ -270,10 +281,12 @@ when other builds were loading the VM (load average about 3), so read it as an u
 | `SUM` over inline ints | 12 | 12-17 |
 | `sort_key` of a dictionary string | | 99-233 |
 
-Value agreement with pyoxigraph: on 20,000 random arithmetic, cast and comparison expressions,
-97.8% matched exactly and 100% matched after excluding documented pyoxigraph divergences (NaN
-comparisons raising errors, ROUND half away from zero, decimal `x*0` and `0/2.5` failing, STR
-canonicalising numerics).
+Value agreement with pyoxigraph, as logged in `../../notes.md`: on 20,000 random arithmetic, cast
+and comparison expressions (`SQ_VALUE_DIFF_N=20000`), 97.8% matched exactly and 100% matched
+after excluding documented pyoxigraph divergences (NaN comparisons raising errors, ROUND half
+away from zero, decimal `x*0` and `0/2.5` failing, STR canonicalising numerics). These figures
+cannot be reproduced from the repository: the `value_diff` test only writes the TSV, and the
+pyoxigraph comparison script is not checked in.
 
 ## Where the code differs from docs/SPEC.md
 
@@ -288,6 +301,10 @@ canonicalising numerics).
   pattern variables, do not split solutions.
 - §6.6 says `BNODE(str)` is "stable within one solution row". The code keys solutions by row
   content plus the lineage rule above, under a 16 MiB bound (see Limitations).
+- §4.3 says pass-through expressions (`BIND(?x AS ?y)`, `COALESCE(?x, …)`, `IF(c, ?x, ?y)`)
+  never intern. In the code, `eval(.., canonical = true)` re-interns a pass-through TEMP id that
+  comes from a slot (`id_of_val`). Only TEMP query constants and TEMP blank nodes pass through
+  unchanged.
 - §1.3 lists sq-exec, sq-oracle and sq-engine as dependents. In the code sq-api is a normal
   dependent and sq-sqlgen is a dev-dependent.
 - The SPEC test table names `py/value_diff.py`. That script is not in the repository; the
@@ -302,8 +319,12 @@ canonicalising numerics).
 - `BNODE(str)`: duplicate solutions of a multiset (`VALUES ?x { 1 1 }`) have identical rows and so
   share their blank nodes.
 - Regex: XPath-only constructs (`\i \I \c \C`, back-references, character-class subtraction,
-  `--` in a class) are errors. The only flags are `i s m x q`. Compiled programs are capped at
-  1 MiB.
+  `--` in a class) are errors. XSD Unicode block escapes (`\p{IsX}` / `\P{IsX}`) are passed to the
+  `regex` crate unchanged, and it drops the `Is` prefix. Most block names, such as
+  `\p{IsBasicLatin}`, are therefore errors. A block name that is also a script name, such as
+  `\p{IsGreek}`, compiles but matches the script rather than the block, so it is silently wrong
+  (Greek Extended U+1F00 matches; Coptic U+03E2 in the Greek block does not). The only flags
+  are `i s m x q`. Compiled programs are capped at 1 MiB.
 - `GROUP_CONCAT` returns a simple literal and becomes unbound if any input is unbound, an error
   or a blank node. MIN and MAX become unbound on any unbound or error input.
 - An unknown custom function, or a cast with the wrong arity, compiles to a node that always
@@ -321,4 +342,4 @@ canonicalising numerics).
 - [notes.md](../../notes.md): review findings and measurements.
 - Sibling crates: [sq-core](../sq-core/README.md) (TermId layout, codec, `eval_api`),
   [sq-exec](../sq-exec/README.md) (the main host), [sq-oracle](../sq-oracle/README.md),
-  [sq-api](../sq-api/README.md) (the SQL helper functions), [sq-sqlgen](../sq-sqlgen/README.md).
+  [sq-api](../sq-api/) (the SQL helper functions), [sq-sqlgen](../sq-sqlgen/README.md).

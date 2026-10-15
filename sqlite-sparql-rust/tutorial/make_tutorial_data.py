@@ -5,10 +5,12 @@ Python 3.8+ standard library only.  Every run writes byte-identical files.
 
 What it writes (into tutorial/data/ next to this script, or --out DIR):
 
-  languages.ttl     REAL facts: ~90 programming languages, their designers and
-                    developer organisations, "influenced by" edges, a paradigm class
-                    hierarchy, typing disciplines, file extensions, some homepages
-                    and licences.  The core graph of the tutorial (default graph).
+  languages.ttl     REAL facts, checked against the English Wikipedia infoboxes:
+                    94 computer languages (91 programming, 3 query languages),
+                    their designers and developer organisations, "influenced by"
+                    edges (acyclic), a paradigm class hierarchy, typing
+                    disciplines, file extensions, some homepages and licences.
+                    The core graph of the tutorial (default graph).
   survey.trig       FICTIONAL: three named graphs -- a made-up developer survey for
                     2025 and 2026 and an "editorial" graph of reviews.  Metadata
                     about the graphs goes in the default graph.
@@ -166,7 +168,7 @@ PERSONS = {
     "david-turner": ("David Turner", "1946-01-26", "2023-10-19", None),
     "larry-tesler": ("Larry Tesler", "1945-04-24", "2020-02-16", None),
     "anders-hejlsberg": ("Anders Hejlsberg", "1960-12-02", None, None),
-    "bertrand-meyer": ("Bertrand Meyer", "1950-11-21", None, None),
+    "bertrand-meyer": ("Bertrand Meyer", None, None, None),
     "joe-armstrong": ("Joe Armstrong", "1950-12-27", "2019-04-20", None),
     "robert-virding": ("Robert Virding", None, None, None),
     "mike-williams": ("Mike Williams", None, None, None),
@@ -2170,6 +2172,12 @@ def main(argv=None) -> int:
         if not ext_file:
             ap.error("extension not found: %s (also tried adding %s)" % (ext, ", ".join(EXT_SUFFIXES)))
         can_load = can_load_extensions()
+        if can_load:  # try it now, so a bad build fails before any file is written
+            probe = sqlite3.connect(":memory:")
+            try:
+                load_extension(probe, ext_file)
+            finally:
+                probe.close()
     else:
         found = default_extension()
         ext_file = resolve_extension(found) if found else None
