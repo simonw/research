@@ -16,7 +16,9 @@ course on a real dataset, and then shows how to mix SPARQL results with ordinary
 A block marked `sql` is typed into the `sqlite3` shell; the block after it shows what the shell
 printed. All outputs were copied from real runs (SQLite 3.45.1 on Linux) and are re-checked by
 [`tutorial/verify_tutorial.py`](tutorial/verify_tutorial.py), which replays the whole tutorial in a
-scratch folder. Timings depend on your machine, so yours will differ.
+scratch folder: `python3 tutorial/verify_tutorial.py --ext ext/target/release/libsparqlite.so`
+(it needs bash, and takes under a minute, most of it for the larger dataset of section 7).
+Timings depend on your machine, so yours will differ.
 
 Contents
 
@@ -192,8 +194,9 @@ the same triples again adds nothing (a store holds each triple once) and returns
 ### 2.2 The first query
 
 A SPARQL `SELECT` query describes a pattern; the answer is every way the pattern matches the
-data. `sparql_query()` runs a query and returns the answer as one piece of text, by default in
-the standard SPARQL JSON results format:
+data. `sparql_query()` runs a query and returns the answer as one piece of text, here in the
+standard SPARQL JSON results format (`'json'` is the default, so the second argument can be left
+out):
 
 ```sql
 SELECT sparql_query('
@@ -202,7 +205,7 @@ SELECT sparql_query('
   WHERE { ?person ex:name ?name ;
                   ex:age  ?age . }
   ORDER BY ?name
-');
+', 'json');
 ```
 
 ```output
@@ -362,10 +365,10 @@ SELECT sparql_term(s) AS s, sparql_term(p) AS p, sparql_term(o) AS o FROM rdf_qu
 └────────────────────────────┴────────────────────────────┴──────────────────────────────────────────────────┘
 ```
 
-The dictionary holds the three IRIs of the example (the predicates and both people) under row
-numbers from 1024 on; rows 1 to 63 hold built-in IRIs such as `rdf:type` and the XML Schema
-datatypes. A term id is the row number times 16 plus a *tag* in the low 4 bits that says what kind
-of term it is (1 = IRI), so row 1024 is id 16385:
+The dictionary holds the five IRIs of the example (both people and the three predicates) under row
+numbers from 1024 on; the rows below 1024 are reserved for built-in IRIs such as `rdf:type` and
+the XML Schema datatypes. A term id is the row number times 16 plus a *tag* in the low 4 bits that
+says what kind of term it is (1 = IRI), so row 1024 is id 16385:
 
 ```sql
 SELECT id AS row, tag, lex, id * 16 + tag AS term_id FROM rdf_term WHERE id >= 1024;
@@ -548,8 +551,9 @@ GRAPH ex:diary-2026 { ex:alice ex:visited ex:rome , ex:paris . }
 └───────────┘
 ```
 
-Each stored row is now a *quad* (graph, subject, predicate, object), which is why the table is
-called `rdf_quad`. SPARQL's `GRAPH` keyword (lesson 5.13) matches the graph name:
+Every stored row is really a *quad* (graph, subject, predicate, object), which is why the table
+is called `rdf_quad`; the default graph is `g = 0`. SPARQL's `GRAPH` keyword (lesson 5.13) matches
+the graph name:
 
 ```sql
 SELECT v0 AS graph, v1 AS place FROM sparql_rows('
@@ -635,7 +639,7 @@ data). Run `python3 tutorial/make_tutorial_data.py --help` for all options.
 | Where | What | Real? |
 |---|---|---|
 | default graph, from `languages.ttl` | 94 computer languages (91 programming languages and the query languages SQL, XQuery and SPARQL), 117 people who designed them, 40 organisations; for each language its label, first year, designers, developers, the languages that influenced it, paradigms, typing discipline, file extensions, and some homepages and licences | **Real**, checked against the English Wikipedia infoboxes. A missing value means "not recorded here", not "none". |
-| default graph, from `languages.ttl` | a small vocabulary: classes such as `ex:ProgrammingLanguage`, a paradigm class hierarchy (`ex:Functional` is a subclass of `ex:Declarative`, ...), and labels in English, French, German, Spanish and Japanese | Real vocabulary, written for this tutorial |
+| default graph, from `languages.ttl` | a small vocabulary: classes such as `ex:ProgrammingLanguage`, a paradigm class hierarchy (`ex:Functional` is a subclass of `ex:Declarative`, ...), and labels in English, French, German, Spanish and Japanese | Written for this tutorial |
 | named graphs `<http://example.org/graph/survey-2025>` and `.../survey-2026`, from `survey.trig` | a developer survey: usage share, "loved" percentage and median salary per language | **Fictional** (made-up numbers) |
 | named graph `<http://example.org/graph/editorial>` | editors' reviews (blank nodes) with ratings, review texts and timestamps | **Fictional** |
 | default graph, from `survey.trig` | one description of each named graph (`ex:fictional true`, survey year, number of respondents, ...) | Fictional, and says so |
@@ -697,8 +701,8 @@ sqlite3 tutorial/tutorial.db
 ```
 
 `--wordwrap on` makes box mode break values longer than 60 characters between words rather than
-in the middle of one. If you leave the shell and come back, repeat these two lines. Some examples change settings; the
-text says when, and how to change them back.
+in the middle of one. If you leave the shell and come back, repeat these two lines. Some examples
+change settings; the text says when, and how to change them back.
 
 ### 4.4 Explore its shape
 
@@ -1091,8 +1095,31 @@ the English word `"Go"@en` are different terms, so `?language = "Go"` is never t
 strips the tag: `STR(?language) = "Go"` works too.
 
 String tests: `STRSTARTS`, `STRENDS`, `CONTAINS`, `REGEX` (regular expressions; the optional third
-argument `"i"` ignores case), plus `STRLEN`, `UCASE` and `LCASE`. Languages whose English
-description mentions Apple, in any capitalisation:
+argument `"i"` ignores case), plus `STRLEN`, `UCASE` and `LCASE`. They work on language-tagged
+strings too. Languages whose name starts with "C" and contains "+" or "#":
+
+```sql
+SELECT v0 AS language FROM sparql_rows('
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language
+  WHERE {
+    ?lang rdfs:label ?language .
+    FILTER (STRSTARTS(?language, "C") && (CONTAINS(?language, "+") || CONTAINS(?language, "#")))
+  }
+  ORDER BY ?language
+');
+```
+
+```output
+┌──────────┐
+│ language │
+├──────────┤
+│ C#       │
+│ C++      │
+└──────────┘
+```
+
+Languages whose English description mentions Apple, in any capitalisation:
 
 ```sql
 SELECT v0 AS language, v1 AS description FROM sparql_rows('
@@ -1109,18 +1136,18 @@ SELECT v0 AS language, v1 AS description FROM sparql_rows('
 ```
 
 ```output
-┌─────────────┬──────────────────────────────────────────────────────────────┐
-│  language   │                         description                          │
-├─────────────┼──────────────────────────────────────────────────────────────┤
-│ Dylan       │ Multi-paradigm language created at Apple, combining Lisp ide │
-│             │ as with an ALGOL-like syntax.                                │
-├─────────────┼──────────────────────────────────────────────────────────────┤
-│ Objective-C │ C with Smalltalk-style messaging; long the main language for │
-│             │  Apple platforms.                                            │
-├─────────────┼──────────────────────────────────────────────────────────────┤
-│ Swift       │ Apple's general-purpose language for its platforms and beyon │
-│             │ d.                                                           │
-└─────────────┴──────────────────────────────────────────────────────────────┘
+┌─────────────┬───────────────────────────────────────────────────────────┐
+│  language   │                        description                        │
+├─────────────┼───────────────────────────────────────────────────────────┤
+│ Dylan       │ Multi-paradigm language created at Apple, combining Lisp  │
+│             │ ideas with an ALGOL-like syntax.                          │
+├─────────────┼───────────────────────────────────────────────────────────┤
+│ Objective-C │ C with Smalltalk-style messaging; long the main language  │
+│             │ for Apple platforms.                                      │
+├─────────────┼───────────────────────────────────────────────────────────┤
+│ Swift       │ Apple's general-purpose language for its platforms and    │
+│             │ beyond.                                                   │
+└─────────────┴───────────────────────────────────────────────────────────┘
 ```
 
 `LANG(?x)` returns a literal's language tag (`""` if it has none). Some things in the dataset
@@ -1148,7 +1175,9 @@ SELECT t0 AS label, v1 AS lang FROM sparql_rows('
 └───────────────────────────────┴──────┘
 ```
 
-(`(LANG(?label) AS ?lang)` computes a new column; lesson 5.9 explains such expressions.) Language
+(`(LANG(?label) AS ?lang)` computes a new column; lesson 5.9 explains such expressions. The shell
+counts characters, not screen columns, so the double-width Japanese text pushes its row out of
+line.) Language
 tags have sub-tags, such as `en-GB` for British English, and the store keeps tags in lower case.
 To ask "is this English?", use `LANGMATCHES(LANG(?x), "en")`, which also accepts `en-gb`; a plain
 `LANG(?x) = "en"` does not. The paradigm `ex:ObjectOriented` has one British alternative label:
@@ -1306,9 +1335,10 @@ SELECT v0 AS language, v1 AS year FROM sparql_rows('
 
 (Lesson 5.6 shows two more direct ways to say "has no ...".)
 
-**Exercise 5.4.** List the people born before 1925 (`schema:birthDate`, an `xsd:date`) with their
-date of death (`schema:deathDate`) where one is recorded. Compare dates with a typed literal such
-as `"1925-01-01"^^xsd:date` (declare `PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>`).
+**Exercise 5.4.** List the people born in 1938, 1939 or 1940 (`schema:birthDate`, an
+`xsd:date`) with their date of death (`schema:deathDate`) where one is recorded. Compare dates
+with typed literals such as `"1938-01-01"^^xsd:date` (declare
+`PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>`).
 
 <details>
 <summary>Solution</summary>
@@ -1322,25 +1352,28 @@ SELECT v0 AS name, v1 AS born, v2 AS died FROM sparql_rows('
     ?person schema:name ?name ;
             schema:birthDate ?born .
     OPTIONAL { ?person schema:deathDate ?died }
-    FILTER (?born < "1925-01-01"^^xsd:date)
+    FILTER (?born >= "1938-01-01"^^xsd:date && ?born < "1941-01-01"^^xsd:date)
   }
   ORDER BY ?born
 ');
 ```
 
 ```output
-┌─────────────────────────┬────────────┬────────────┐
-│          name           │    born    │    died    │
-├─────────────────────────┼────────────┼────────────┤
-│ Grace Hopper            │ 1906-12-09 │ 1992-01-01 │
-│ Adriaan van Wijngaarden │ 1916-11-02 │ 1987-02-07 │
-│ Christopher Strachey    │ 1916-11-16 │ 1975-05-18 │
-│ Kenneth E. Iverson      │ 1920-12-17 │ 2004-10-19 │
-│ Alan Perlis             │ 1922-04-01 │ 1990-02-07 │
-│ John Backus             │ 1924-12-03 │ 2007-03-17 │
-└─────────────────────────┴────────────┴────────────┘
+┌──────────────────┬────────────┬────────────┐
+│       name       │    born    │    died    │
+├──────────────────┼────────────┼────────────┤
+│ Charles H. Moore │ 1938-09-09 │            │
+│ Cleve Moler      │ 1939-08-17 │ 2026-05-20 │
+│ Charles Geschke  │ 1939-09-11 │ 2021-04-16 │
+│ Barbara Liskov   │ 1939-11-07 │            │
+│ Jean Ichbiah     │ 1940-03-25 │ 2007-01-26 │
+│ Alan Kay         │ 1940-05-17 │            │
+│ Martin Richards  │ 1940-07-21 │            │
+│ John Warnock     │ 1940-10-06 │ 2023-08-19 │
+└──────────────────┴────────────┴────────────┘
 ```
 
+An empty `died` cell means that no date of death is recorded in the dataset, nothing more.
 Dates come back as ISO 8601 text, so SQLite's own date functions work on them.
 
 </details>
@@ -1480,34 +1513,8 @@ They agree here because the inner pattern shares the variable `?lang` with the o
 differ when nothing is shared. `MINUS` only removes solutions that share at least one variable
 with the removed pattern, so a pattern without shared variables removes nothing. `NOT EXISTS`
 simply asks "does this pattern match?", which for a pattern without shared variables is the same
-question for every solution:
-
-```sql
-SELECT v0 AS minus_keeps, v1 AS not_exists_keeps FROM sparql_rows('
-  PREFIX ex: <http://example.org/pl/>
-  SELECT
-    (SUM(IF(?m, 1, 0)) AS ?minus)
-    (SUM(IF(?n, 1, 0)) AS ?notexists)
-  WHERE {
-    { SELECT ?lang (true AS ?m) (false AS ?n) WHERE {
-        ?lang a ex:ProgrammingLanguage MINUS { ex:Python ex:designer ?d } } }
-    UNION
-    { SELECT ?lang (false AS ?m) (true AS ?n) WHERE {
-        ?lang a ex:ProgrammingLanguage FILTER NOT EXISTS { ex:Python ex:designer ?d } } }
-  }
-');
-```
-
-```output
-┌─────────────┬──────────────────┐
-│ minus_keeps │ not_exists_keeps │
-├─────────────┼──────────────────┤
-│ 91          │ 0                │
-└─────────────┴──────────────────┘
-```
-
-That query packs both versions into one (with sub-queries from lesson 5.11); it is easier to try
-them one at a time with `sparql_count()`, a SQL function that counts a query's solutions:
+question for every solution. Here are both versions, counted with `sparql_count()`, a SQL function
+that returns the number of solutions of a query:
 
 ```sql
 SELECT
@@ -1576,8 +1583,10 @@ SELECT v0 AS language FROM sparql_rows('
 ### 5.7 DISTINCT, ORDER BY, LIMIT and OFFSET
 
 These work as in SQL. `ORDER BY ?x` sorts ascending, `ORDER BY DESC(?x)` descending; several keys
-are separated by spaces. Unbound values sort first. `LIMIT n` keeps the first n solutions and
-`OFFSET n` skips n, which together page through a result. The five most recent languages:
+are separated by spaces. Unbound values sort first, and strings sort by Unicode code point, so
+upper-case letters come before lower-case ones ("PHP" before "Perl" in lesson 5.2). `LIMIT n`
+keeps the first n solutions and `OFFSET n` skips n, which together page through a result. The
+five most recent languages:
 
 ```sql
 SELECT v0 AS language, v1 AS year FROM sparql_rows('
@@ -1709,11 +1718,12 @@ FROM sparql_rows('
 least three languages:
 
 ```sql
-SELECT v0 AS designer, v1 AS languages, v2 AS names FROM sparql_rows('
+SELECT v0 AS designer, v1 AS languages, v2 AS names, v3 AS one_of_them FROM sparql_rows('
   PREFIX ex:     <http://example.org/pl/>
   PREFIX rdfs:   <http://www.w3.org/2000/01/rdf-schema#>
   PREFIX schema: <https://schema.org/>
   SELECT ?designer (COUNT(?lang) AS ?n) (GROUP_CONCAT(?language; separator=", ") AS ?names)
+         (SAMPLE(?language) AS ?one)
   WHERE {
     ?lang ex:designer ?person ; rdfs:label ?language .
     ?person schema:name ?designer .
@@ -1725,13 +1735,13 @@ SELECT v0 AS designer, v1 AS languages, v2 AS names FROM sparql_rows('
 ```
 
 ```output
-┌──────────────────┬───────────┬──────────────────────────────────────────────────┐
-│     designer     │ languages │                      names                       │
-├──────────────────┼───────────┼──────────────────────────────────────────────────┤
-│ Niklaus Wirth    │ 5         │ ALGOL W, Pascal, Modula-2, Object Pascal, Oberon │
-│ Anders Hejlsberg │ 3         │ Object Pascal, C#, TypeScript                    │
-│ John Backus      │ 3         │ Fortran, ALGOL 58, ALGOL 60                      │
-└──────────────────┴───────────┴──────────────────────────────────────────────────┘
+┌──────────────────┬───────────┬──────────────────────────────────────────────────┬───────────────┐
+│     designer     │ languages │                      names                       │  one_of_them  │
+├──────────────────┼───────────┼──────────────────────────────────────────────────┼───────────────┤
+│ Niklaus Wirth    │ 5         │ ALGOL W, Pascal, Modula-2, Object Pascal, Oberon │ ALGOL W       │
+│ Anders Hejlsberg │ 3         │ Object Pascal, C#, TypeScript                    │ Object Pascal │
+│ John Backus      │ 3         │ Fortran, ALGOL 58, ALGOL 60                      │ Fortran       │
+└──────────────────┴───────────┴──────────────────────────────────────────────────┴───────────────┘
 ```
 
 Without `GROUP BY`, the whole result is one group. `COUNT(DISTINCT ?x)` counts different values.
@@ -1754,6 +1764,11 @@ FROM sparql_rows('
 ```
 
 ```output
+┌───────────┬───────┬─────────────┬─────────────┐
+│ solutions │ edges │ influencers │ respondents │
+├───────────┼───────┼─────────────┼─────────────┤
+│ 277       │ 275   │ 72          │             │
+└───────────┴───────┴─────────────┴─────────────┘
 ```
 
 `COUNT(*)` counts all solutions, and `COUNT(?older)` skips the ones where `?older` is unbound.
@@ -1798,3 +1813,2776 @@ The decades come out as `1950.0`: in SPARQL, dividing two integers gives a decim
 it back into an integer.
 
 </details>
+
+### 5.9 BIND, expressions, IF, COALESCE and datatypes
+
+`BIND (expression AS ?var)` computes a new value inside the pattern, and `(expression AS ?var)` in
+the `SELECT` list does the same for the output. The people with both dates recorded who lived
+longest (`YEAR()` takes the year out of a date):
+
+```sql
+SELECT v0 AS name, v1 AS born, v2 AS died, v3 AS years FROM sparql_rows('
+  PREFIX schema: <https://schema.org/>
+  SELECT ?name ?born ?died ?years
+  WHERE {
+    ?person schema:name ?name ;
+            schema:birthDate ?born ;
+            schema:deathDate ?died .
+    BIND (YEAR(?died) - YEAR(?born) AS ?years)
+  }
+  ORDER BY DESC(?years) ?name
+  LIMIT 5
+');
+```
+
+```output
+┌─────────────────┬────────────┬────────────┬───────┐
+│      name       │    born    │    died    │ years │
+├─────────────────┼────────────┼────────────┼───────┤
+│ Thomas E. Kurtz │ 1928-02-22 │ 2024-11-12 │ 96    │
+│ David J. Farber │ 1934-04-17 │ 2026-02-07 │ 92    │
+│ Tony Hoare      │ 1934-01-11 │ 2026-03-05 │ 92    │
+│ Niklaus Wirth   │ 1934-02-15 │ 2024-01-01 │ 90    │
+│ Jean E. Sammet  │ 1928-03-23 │ 2017-05-20 │ 89    │
+└─────────────────┴────────────┴────────────┴───────┘
+```
+
+(That is the difference between the years, not the exact age.) `IF(condition, then, else)` picks
+one of two values, and `COALESCE(a, b, ...)` returns the first argument that has a value, which
+is how you give an `OPTIONAL` variable a default. `STR()` turns an IRI or literal into a plain
+string, and `STRAFTER(text, prefix)` returns the part after `prefix`:
+
+```sql
+SELECT v0 AS id, v1 AS year, v2 AS era, v3 AS homepage FROM sparql_rows('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX schema: <https://schema.org/>
+  SELECT (STRAFTER(STR(?lang), "/pl/") AS ?id) ?year
+         (IF(?year < 1970, "classic", "modern") AS ?era)
+         (COALESCE(STR(?url), "(none recorded)") AS ?home)
+  WHERE {
+    VALUES ?lang { ex:Lisp ex:Python ex:Gleam }
+    ?lang ex:firstAppeared ?year .
+    OPTIONAL { ?lang schema:url ?url }
+  }
+  ORDER BY ?year
+');
+```
+
+```output
+┌────────┬──────┬─────────┬─────────────────────────┐
+│   id   │ year │   era   │        homepage         │
+├────────┼──────┼─────────┼─────────────────────────┤
+│ Lisp   │ 1960 │ classic │ (none recorded)         │
+│ Python │ 1991 │ modern  │ https://www.python.org/ │
+│ Gleam  │ 2016 │ modern  │ https://gleam.run/      │
+└────────┴──────┴─────────┴─────────────────────────┘
+```
+
+(`VALUES` lists the starting values for `?lang`; it is the subject of lesson 5.10.) SPARQL has
+many more functions; a sample of the string and numeric ones:
+
+```sql
+SELECT v0 AS concat, v1 AS ucase, v2 AS substr, v3 AS replace,
+       v4 AS round, v5 AS abs, v6 AS division
+FROM sparql_rows('
+  SELECT (CONCAT("Py", "thon") AS ?a) (UCASE("go") AS ?b) (SUBSTR("JavaScript", 5) AS ?c)
+         (REPLACE("JavaScript", "Script", "") AS ?d) (ROUND(2.5) AS ?e) (ABS(-3) AS ?f)
+         (7 / 2 AS ?g)
+  WHERE {}
+');
+```
+
+```output
+┌────────┬───────┬────────┬─────────┬───────┬─────┬──────────┐
+│ concat │ ucase │ substr │ replace │ round │ abs │ division │
+├────────┼───────┼────────┼─────────┼───────┼─────┼──────────┤
+│ Python │ GO    │ Script │ Java    │ 3.0   │ 3   │ 3.5      │
+└────────┴───────┴────────┴─────────┴───────┴─────┴──────────┘
+```
+
+Every literal has a **datatype**, and functions and comparisons respect it. `DATATYPE(?x)` returns
+it; a cast such as `xsd:integer(?x)` converts a value and fails (leaves the variable unbound) when
+it cannot:
+
+```sql
+SELECT t0 AS term, v1 AS datatype, v2 AS as_integer FROM sparql_rows('
+  PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+  SELECT ?value (DATATYPE(?value) AS ?type) (xsd:integer(?value) AS ?int)
+  WHERE {
+    VALUES ?value { 42 4.2 "17" "seventeen" "2026-10-15"^^xsd:date "x"@en }
+  }
+');
+```
+
+```output
+┌───────────────────────────────────────────────────────┬───────────────────────────────────────────────────────┬────────────┐
+│                         term                          │                       datatype                        │ as_integer │
+├───────────────────────────────────────────────────────┼───────────────────────────────────────────────────────┼────────────┤
+│ "42"^^<http://www.w3.org/2001/XMLSchema#integer>      │ http://www.w3.org/2001/XMLSchema#integer              │ 42         │
+│ "4.2"^^<http://www.w3.org/2001/XMLSchema#decimal>     │ http://www.w3.org/2001/XMLSchema#decimal              │ 4          │
+│ "17"                                                  │ http://www.w3.org/2001/XMLSchema#string               │ 17         │
+│ "seventeen"                                           │ http://www.w3.org/2001/XMLSchema#string               │            │
+│ "2026-10-15"^^<http://www.w3.org/2001/XMLSchema#date> │ http://www.w3.org/2001/XMLSchema#date                 │            │
+│ "x"@en                                                │ http://www.w3.org/1999/02/22-rdf-syntax-ns#langString │            │
+└───────────────────────────────────────────────────────┴───────────────────────────────────────────────────────┴────────────┘
+```
+
+Notes: `4.2` cast to an integer is `4`; a simple string like `"17"` has the datatype
+`xsd:string`; a language-tagged string has `rdf:langString`. Other casts: `xsd:decimal()`,
+`xsd:double()`, `xsd:string()`, `xsd:boolean()`, `xsd:date()`, `xsd:dateTime()`. `STRDT("17",
+xsd:integer)` builds a typed literal from a string and `STRLANG("chat", "fr")` a tagged one. And
+`xsd:integer(FLOOR(?year / 10) * 10)` gives the decades of exercise 5.8 as integers.
+
+**Exercise 5.9.** For each Turing Award winner with a recorded birth date, show the year of the
+award and the difference between that year and the year of birth, youngest first.
+
+<details>
+<summary>Solution</summary>
+
+```sql
+SELECT v0 AS name, v1 AS award, v2 AS age FROM sparql_rows('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX schema: <https://schema.org/>
+  SELECT ?name ?award (?award - YEAR(?born) AS ?age)
+  WHERE {
+    ?person schema:name ?name ;
+            ex:turingAwardYear ?award ;
+            schema:birthDate ?born .
+  }
+  ORDER BY ?age ?name
+');
+```
+
+```output
+┌────────────────────┬───────┬─────┐
+│        name        │ award │ age │
+├────────────────────┼───────┼─────┤
+│ Ken Thompson       │ 1983  │ 40  │
+│ Dennis Ritchie     │ 1983  │ 42  │
+│ Alan Perlis        │ 1966  │ 44  │
+│ John McCarthy      │ 1971  │ 44  │
+│ Tony Hoare         │ 1980  │ 46  │
+│ Niklaus Wirth      │ 1984  │ 50  │
+│ John Backus        │ 1977  │ 53  │
+│ Robin Milner       │ 1991  │ 57  │
+│ Kenneth E. Iverson │ 1979  │ 59  │
+│ Alan Kay           │ 2003  │ 63  │
+│ Barbara Liskov     │ 2008  │ 69  │
+│ Ole-Johan Dahl     │ 2001  │ 70  │
+│ Kristen Nygaard    │ 2001  │ 75  │
+│ Peter Naur         │ 2005  │ 77  │
+│ Alfred Aho         │ 2020  │ 79  │
+└────────────────────┴───────┴─────┘
+```
+
+</details>
+
+### 5.10 VALUES
+
+`VALUES` supplies a small table of values inline, like a SQL `VALUES` list joined into the query.
+With one variable the values go in braces; with several, each row goes in parentheses (`UNDEF`
+leaves a cell unbound):
+
+```sql
+SELECT v0 AS language, v1 AS nickname, v2 AS year FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language ?nickname ?year
+  WHERE {
+    VALUES (?lang ?nickname) {
+      (ex:Python  "batteries included")
+      (ex:Rust    "fearless concurrency")
+      (ex:Haskell UNDEF)
+    }
+    ?lang rdfs:label ?language ;
+          ex:firstAppeared ?year .
+  }
+  ORDER BY ?year
+');
+```
+
+```output
+┌──────────┬──────────────────────┬──────┐
+│ language │       nickname       │ year │
+├──────────┼──────────────────────┼──────┤
+│ Haskell  │                      │ 1990 │
+│ Python   │ batteries included   │ 1991 │
+│ Rust     │ fearless concurrency │ 2012 │
+└──────────┴──────────────────────┴──────┘
+```
+
+`VALUES` is the natural way to pass a list of things into a query, for example a list of ids
+built by your application.
+
+**Exercise 5.10.** Using `VALUES`, list the designers (by name) of C, Pascal and Smalltalk,
+together with the language.
+
+<details>
+<summary>Solution</summary>
+
+```sql
+SELECT v0 AS language, v1 AS designer FROM sparql_rows('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX rdfs:   <http://www.w3.org/2000/01/rdf-schema#>
+  PREFIX schema: <https://schema.org/>
+  SELECT ?language ?designer
+  WHERE {
+    VALUES ?lang { ex:C ex:Pascal ex:Smalltalk }
+    ?lang rdfs:label ?language ;
+          ex:designer ?person .
+    ?person schema:name ?designer .
+  }
+  ORDER BY ?language ?designer
+');
+```
+
+```output
+┌───────────┬────────────────┐
+│ language  │    designer    │
+├───────────┼────────────────┤
+│ C         │ Dennis Ritchie │
+│ Pascal    │ Niklaus Wirth  │
+│ Smalltalk │ Adele Goldberg │
+│ Smalltalk │ Alan Kay       │
+│ Smalltalk │ Dan Ingalls    │
+└───────────┴────────────────┘
+```
+
+</details>
+
+### 5.11 Sub-queries
+
+A complete `SELECT` can be nested inside `{ }` and its results joined with the rest of the
+pattern, like a derived table in SQL. Only the variables the inner `SELECT` projects are visible
+outside. A classic use is "the row with the minimum per group": first compute each paradigm's
+earliest year, then find the languages of that paradigm and year:
+
+```sql
+SELECT v0 AS paradigm, v1 AS earliest_language, v2 AS year FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?paradigm ?language ?first
+  WHERE {
+    {
+      SELECT ?p (MIN(?year) AS ?first)
+      WHERE { ?l ex:paradigm ?p ; ex:firstAppeared ?year }
+      GROUP BY ?p
+    }
+    ?lang ex:paradigm ?p ;
+          ex:firstAppeared ?first ;
+          rdfs:label ?language .
+    ?p rdfs:label ?paradigm .
+    FILTER (LANG(?paradigm) = "en")
+  }
+  ORDER BY ?first ?paradigm
+');
+```
+
+```output
+┌─────────────────────────────────────────┬───────────────────┬──────┐
+│                paradigm                 │ earliest_language │ year │
+├─────────────────────────────────────────┼───────────────────┼──────┤
+│ imperative programming                  │ FLOW-MATIC        │ 1955 │
+│ array programming                       │ Fortran           │ 1957 │
+│ procedural programming                  │ Fortran           │ 1957 │
+│ functional programming                  │ Lisp              │ 1960 │
+│ class-based programming                 │ Simula            │ 1962 │
+│ concatenative (stack-based) programming │ Forth             │ 1970 │
+│ logic programming                       │ Prolog            │ 1972 │
+│ declarative programming                 │ SQL               │ 1973 │
+│ object-oriented programming             │ CLU               │ 1975 │
+│ concurrent programming                  │ Ada               │ 1980 │
+│ purely functional programming           │ Miranda           │ 1985 │
+│ prototype-based programming             │ Self              │ 1987 │
+└─────────────────────────────────────────┴───────────────────┴──────┘
+```
+
+The inner query runs first, conceptually; its `ORDER BY` / `LIMIT` apply to it alone, so
+sub-queries are also how you join against "the top 3 of something".
+
+**Exercise 5.11.** Which language has the most file extensions (`ex:fileExtension`), and how many?
+Use a sub-query that counts per language, sorted, with `LIMIT 1`.
+
+<details>
+<summary>Solution</summary>
+
+```sql
+SELECT v0 AS language, v1 AS extensions FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language ?n
+  WHERE {
+    {
+      SELECT ?lang (COUNT(?ext) AS ?n)
+      WHERE { ?lang ex:fileExtension ?ext }
+      GROUP BY ?lang
+      ORDER BY DESC(?n)
+      LIMIT 1
+    }
+    ?lang rdfs:label ?language .
+  }
+');
+```
+
+```output
+┌──────────┬────────────┐
+│ language │ extensions │
+├──────────┼────────────┤
+│ C++      │ 6          │
+└──────────┴────────────┘
+```
+
+With `LIMIT 1`, a tie for first place would show only one of the winners; comparing with
+`MAX` in a second sub-query avoids that.
+
+</details>
+
+### 5.12 Property paths
+
+So far each pattern followed exactly one arrow. A **property path** describes a route through
+the graph in one pattern:
+
+| Path | Meaning |
+|---|---|
+| `p1/p2` | follow `p1`, then `p2` |
+| `p1\|p2` | follow `p1` or `p2` |
+| `^p` | follow `p` backwards |
+| `p*` | follow `p` zero or more times |
+| `p+` | follow `p` one or more times |
+| `p?` | follow `p` zero times or once |
+
+`/` saves intermediate variables. The names of everyone behind Java, as designer or developer,
+in one pattern:
+
+```sql
+SELECT v0 AS name FROM sparql_rows('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX schema: <https://schema.org/>
+  SELECT ?name
+  WHERE { ex:Java (ex:designer|ex:developer)/schema:name ?name }
+  ORDER BY ?name
+');
+```
+
+```output
+┌──────────────────┐
+│       name       │
+├──────────────────┤
+│ James Gosling    │
+│ Oracle           │
+│ Sun Microsystems │
+└──────────────────┘
+```
+
+`ex:influencedBy` points from a language to an older one. `^ex:influencedBy` walks the other way,
+from a language to the languages it influenced:
+
+```sql
+SELECT v0 AS influenced_by_c FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language
+  WHERE { ex:C ^ex:influencedBy/rdfs:label ?language }
+  ORDER BY ?language
+');
+```
+
+```output
+┌─────────────────┐
+│ influenced_by_c │
+├─────────────────┤
+│ AWK             │
+│ C++             │
+│ Cyclone         │
+│ D               │
+│ Go              │
+│ Julia           │
+│ Limbo           │
+│ Objective-C     │
+│ PHP             │
+│ Perl            │
+│ Python          │
+│ Zig             │
+└─────────────────┘
+```
+
+`+` follows the arrow one or more times, which gives the transitive closure:
+`ex:Rust ex:influencedBy+ ?x` finds the languages that influenced Rust, the languages that
+influenced those, and so on back to the 1950s. Counted for every language, this ranks the most
+influential ones by the number of languages that descend from them:
+
+```sql
+SELECT v0 AS language, v1 AS influenced FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language (COUNT(DISTINCT ?descendant) AS ?n)
+  WHERE {
+    ?descendant ex:influencedBy+ ?ancestor .
+    ?ancestor rdfs:label ?language .
+  }
+  GROUP BY ?language
+  ORDER BY DESC(?n) ?language
+  LIMIT 5
+');
+```
+
+```output
+┌──────────┬────────────┐
+│ language │ influenced │
+├──────────┼────────────┤
+│ Fortran  │ 74         │
+│ ALGOL 58 │ 73         │
+│ ALGOL 60 │ 72         │
+│ Lisp     │ 54         │
+│ Simula   │ 47         │
+└──────────┴────────────┘
+```
+
+Fortran comes first: ALGOL 58 was influenced by it, and almost everything since descends from
+ALGOL. Paths also answer yes/no questions about reachability:
+
+```sql
+SELECT v0 AS direct, v1 AS indirect FROM sparql_rows('
+  PREFIX ex: <http://example.org/pl/>
+  SELECT
+    (EXISTS { ex:Rust ex:influencedBy  ex:ALGOL60 } AS ?d)
+    (EXISTS { ex:Rust ex:influencedBy+ ex:ALGOL60 } AS ?i)
+  WHERE {}
+');
+```
+
+```output
+┌────────┬──────────┐
+│ direct │ indirect │
+├────────┼──────────┤
+│ 0      │ 1        │
+└────────┴──────────┘
+```
+
+`?` follows the arrow at most once, so a pattern with `?` also matches the starting point
+itself. Rust and the languages that directly influenced it:
+
+```sql
+SELECT count(*) AS direct, (SELECT count(*) FROM sparql_rows('
+  PREFIX ex: <http://example.org/pl/>
+  SELECT ?x WHERE { ex:Rust ex:influencedBy? ?x }')) AS rust_and_direct
+FROM sparql_rows('
+  PREFIX ex: <http://example.org/pl/>
+  SELECT ?x WHERE { ex:Rust ex:influencedBy ?x }');
+```
+
+```output
+┌────────┬─────────────────┐
+│ direct │ rust_and_direct │
+├────────┼─────────────────┤
+│ 11     │ 12              │
+└────────┴─────────────────┘
+```
+
+`*` is the same as `+` but also includes the starting point itself (zero steps). The classic use
+is a class hierarchy. The paradigms form one: `ex:PurelyFunctional` is a subclass of
+`ex:Functional`, which is a subclass of `ex:Declarative`, which is a subclass of `ex:Paradigm`:
+
+```sql
+SELECT v0 AS class FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?class WHERE { ex:PurelyFunctional rdfs:subClassOf* ?class }
+');
+```
+
+```output
+┌────────────────────────────────────────┐
+│                 class                  │
+├────────────────────────────────────────┤
+│ http://example.org/pl/PurelyFunctional │
+│ http://example.org/pl/Functional       │
+│ http://example.org/pl/Declarative      │
+│ http://example.org/pl/Paradigm         │
+└────────────────────────────────────────┘
+```
+
+So "languages with a declarative paradigm" should include the functional, purely functional and
+logic languages too. `ex:paradigm/rdfs:subClassOf*` follows a language's paradigm and then any
+number of steps up the hierarchy:
+
+```sql
+SELECT v0 AS directly_declarative, v1 AS declarative_or_below FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT
+    (COUNT(DISTINCT ?direct) AS ?d)
+    (COUNT(DISTINCT ?any) AS ?a)
+  WHERE {
+    { ?direct ex:paradigm ex:Declarative }
+    UNION
+    { ?any ex:paradigm/rdfs:subClassOf* ex:Declarative }
+  }
+');
+```
+
+```output
+┌──────────────────────┬──────────────────────┐
+│ directly_declarative │ declarative_or_below │
+├──────────────────────┼──────────────────────┤
+│ 3                    │ 48                   │
+└──────────────────────┴──────────────────────┘
+```
+
+The same idea, `a/rdfs:subClassOf*`, finds instances of a class and of all its subclasses: `?x
+a/rdfs:subClassOf* ex:ComputerLanguage` matches all 94 languages, programming and query languages
+alike.
+
+**Exercise 5.12.** How many languages in the dataset were influenced, directly or indirectly, by
+Lisp? And which of them appeared before 1970?
+
+<details>
+<summary>Solution</summary>
+
+```sql
+SELECT sparql_count('
+  PREFIX ex: <http://example.org/pl/>
+  SELECT DISTINCT ?lang WHERE { ?lang ex:influencedBy+ ex:Lisp }
+') AS influenced_by_lisp;
+```
+
+```output
+┌────────────────────┐
+│ influenced_by_lisp │
+├────────────────────┤
+│ 54                 │
+└────────────────────┘
+```
+
+```sql
+SELECT v0 AS language, v1 AS year FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT DISTINCT ?language ?year
+  WHERE {
+    ?lang ex:influencedBy+ ex:Lisp ;
+          ex:firstAppeared ?year ;
+          rdfs:label ?language .
+    FILTER (?year < 1970)
+  }
+  ORDER BY ?year
+');
+```
+
+```output
+┌──────────┬──────┐
+│ language │ year │
+├──────────┼──────┤
+│ ISWIM    │ 1966 │
+│ Logo     │ 1967 │
+└──────────┴──────┘
+```
+
+</details>
+
+### 5.13 Named graphs: GRAPH, FROM and FROM NAMED
+
+Everything so far matched the **default graph**. The fictional surveys and reviews live in named
+graphs, and a pattern only looks into them inside `GRAPH`. `GRAPH <iri> { ... }` matches inside
+one graph; `GRAPH ?g { ... }` matches in every named graph and binds `?g` to the graph's name.
+Patterns outside `GRAPH` still match the default graph, so you can mix the two. The top languages
+of the (fictional) 2026 survey, with their names from the default graph:
+
+```sql
+SELECT v0 AS language, v1 AS usage_share, v2 AS loved_percent FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language ?share ?loved
+  WHERE {
+    GRAPH <http://example.org/graph/survey-2026> {
+      ?lang ex:usageShare ?share ;
+            ex:lovedPercent ?loved .
+    }
+    ?lang rdfs:label ?language .
+  }
+  ORDER BY DESC(?share)
+  LIMIT 5
+');
+```
+
+```output
+┌────────────┬─────────────┬───────────────┐
+│  language  │ usage_share │ loved_percent │
+├────────────┼─────────────┼───────────────┤
+│ JavaScript │ 0.609       │ 56.9          │
+│ Python     │ 0.561       │ 67.4          │
+│ TypeScript │ 0.437       │ 72.8          │
+│ Java       │ 0.288       │ 50.5          │
+│ C#         │ 0.266       │ 61.1          │
+└────────────┴─────────────┴───────────────┘
+```
+
+The default graph also describes each survey graph (its year and number of respondents), so a
+`GRAPH ?g` pattern can be joined with facts *about* `?g`:
+
+```sql
+SELECT v0 AS year, v1 AS respondents, v2 AS rust_share FROM sparql_rows('
+  PREFIX ex: <http://example.org/pl/>
+  SELECT ?year ?respondents ?share
+  WHERE {
+    ?g ex:surveyYear ?year ;
+       ex:respondents ?respondents .
+    GRAPH ?g { ex:Rust ex:usageShare ?share }
+  }
+  ORDER BY ?year
+');
+```
+
+```output
+┌──────┬─────────────┬────────────┐
+│ year │ respondents │ rust_share │
+├──────┼─────────────┼────────────┤
+│ 2025 │ 48213       │ 0.127      │
+│ 2026 │ 51877       │ 0.145      │
+└──────┴─────────────┴────────────┘
+```
+
+The editorial graph holds reviews as blank nodes. Average rating per language:
+
+```sql
+SELECT v0 AS language, v1 AS reviews, v2 AS average_rating FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language (COUNT(?review) AS ?n) (AVG(?rating) AS ?avg)
+  WHERE {
+    GRAPH <http://example.org/graph/editorial> {
+      ?review a ex:Review ;
+              ex:about ?lang ;
+              ex:rating ?rating .
+    }
+    ?lang rdfs:label ?language .
+  }
+  GROUP BY ?language
+  ORDER BY DESC(?avg) ?language
+  LIMIT 5
+');
+```
+
+```output
+┌──────────┬─────────┬────────────────┐
+│ language │ reviews │ average_rating │
+├──────────┼─────────┼────────────────┤
+│ SQL      │ 1       │ 5.0            │
+│ Python   │ 2       │ 4.5            │
+│ Rust     │ 2       │ 4.5            │
+│ Go       │ 1       │ 4.0            │
+│ Haskell  │ 1       │ 4.0            │
+└──────────┴─────────┴────────────────┘
+```
+
+**FROM and FROM NAMED** change the dataset a query runs against. `FROM <g>` makes graph `<g>`
+the query's default graph (several `FROM`s are merged), so the patterns outside `GRAPH` no longer
+see the store's own default graph; there are no labels in the survey graph, hence the IRIs:
+
+```sql
+SELECT v0 AS language, v1 AS usage_share FROM sparql_rows('
+  PREFIX ex: <http://example.org/pl/>
+  SELECT ?lang ?share
+  FROM <http://example.org/graph/survey-2026>
+  WHERE { ?lang ex:usageShare ?share }
+  ORDER BY DESC(?share)
+  LIMIT 3
+');
+```
+
+```output
+┌──────────────────────────────────┬─────────────┐
+│             language             │ usage_share │
+├──────────────────────────────────┼─────────────┤
+│ http://example.org/pl/JavaScript │ 0.609       │
+│ http://example.org/pl/Python     │ 0.561       │
+│ http://example.org/pl/TypeScript │ 0.437       │
+└──────────────────────────────────┴─────────────┘
+```
+
+`FROM NAMED <g>` limits which named graphs `GRAPH ?g` can see:
+
+```sql
+SELECT v0 AS graph, v1 AS quads FROM sparql_rows('
+  SELECT ?g (COUNT(*) AS ?n)
+  FROM NAMED <http://example.org/graph/survey-2025>
+  WHERE { GRAPH ?g { ?s ?p ?o } }
+  GROUP BY ?g
+');
+```
+
+```output
+┌──────────────────────────────────────┬───────┐
+│                graph                 │ quads │
+├──────────────────────────────────────┼───────┤
+│ http://example.org/graph/survey-2025 │ 84    │
+└──────────────────────────────────────┴───────┘
+```
+
+**The union default graph.** Some applications want every pattern to see all data, whatever
+graph it is in. The setting `union_default_graph` makes the default graph of every query the
+union of the store's default graph and all named graphs. Set it for one call in the options of
+`sparql_rows` (a JSON object, the second argument), or for the connection with
+`sparql_config()`:
+
+```sql
+SELECT
+  (SELECT v0 FROM sparql_rows('
+     SELECT (COUNT(*) AS ?n) WHERE { ?s <http://example.org/pl/usageShare> ?o }'))
+    AS normal,
+  (SELECT v0 FROM sparql_rows('
+     SELECT (COUNT(*) AS ?n) WHERE { ?s <http://example.org/pl/usageShare> ?o }',
+     '{"union_default_graph": 1}'))
+    AS with_union;
+```
+
+```output
+┌────────┬────────────┐
+│ normal │ with_union │
+├────────┼────────────┤
+│ 0      │ 57         │
+└────────┴────────────┘
+```
+
+```sql
+SELECT sparql_config('union_default_graph', 1);
+SELECT sparql_value('SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }') AS triples_seen;
+SELECT sparql_config('union_default_graph', 0);
+```
+
+```output
+┌─────────────────────────────────────────┐
+│ sparql_config('union_default_graph', 1) │
+├─────────────────────────────────────────┤
+│ 1                                       │
+└─────────────────────────────────────────┘
+┌──────────────┐
+│ triples_seen │
+├──────────────┤
+│ 2413         │
+└──────────────┘
+┌─────────────────────────────────────────┐
+│ sparql_config('union_default_graph', 0) │
+├─────────────────────────────────────────┤
+│ 0                                       │
+└─────────────────────────────────────────┘
+```
+
+Remember to switch it back, as the last line does: the setting stays for the rest of the session.
+
+**Exercise 5.13.** Which languages have a lower usage share in the 2026 survey than in 2025?
+Show both shares.
+
+<details>
+<summary>Solution</summary>
+
+```sql
+SELECT v0 AS language, v1 AS share_2025, v2 AS share_2026 FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language ?s25 ?s26
+  WHERE {
+    GRAPH <http://example.org/graph/survey-2025> { ?lang ex:usageShare ?s25 }
+    GRAPH <http://example.org/graph/survey-2026> { ?lang ex:usageShare ?s26 }
+    ?lang rdfs:label ?language .
+    FILTER (?s26 < ?s25)
+  }
+  ORDER BY ?language
+');
+```
+
+```output
+┌────────────┬────────────┬────────────┐
+│  language  │ share_2025 │ share_2026 │
+├────────────┼────────────┼────────────┤
+│ C          │ 0.193      │ 0.187      │
+│ C#         │ 0.271      │ 0.266      │
+│ C++        │ 0.224      │ 0.218      │
+│ Clojure    │ 0.011      │ 0.01       │
+│ Dart       │ 0.061      │ 0.057      │
+│ Erlang     │ 0.01       │ 0.009      │
+│ Fortran    │ 0.009      │ 0.008      │
+│ Haskell    │ 0.019      │ 0.018      │
+│ Java       │ 0.296      │ 0.288      │
+│ JavaScript │ 0.618      │ 0.609      │
+│ Kotlin     │ 0.096      │ 0.094      │
+│ PHP        │ 0.181      │ 0.169      │
+│ Perl       │ 0.024      │ 0.021      │
+│ R          │ 0.044      │ 0.041      │
+│ Ruby       │ 0.058      │ 0.053      │
+│ Scala      │ 0.027      │ 0.024      │
+│ Swift      │ 0.052      │ 0.049      │
+└────────────┴────────────┴────────────┘
+```
+
+</details>
+
+### 5.14 ASK, CONSTRUCT and DESCRIBE
+
+Besides `SELECT` there are three other query forms.
+
+**ASK** answers yes or no: is there at least one solution? From SQL, `sparql_ask()` returns 1 or
+0, while `sparql_query()` returns the standard JSON form:
+
+```sql
+.mode list
+SELECT sparql_ask('PREFIX ex: <http://example.org/pl/>
+                   ASK { ex:Rust ex:influencedBy+ ex:ALGOL60 }');
+SELECT sparql_query('PREFIX ex: <http://example.org/pl/>
+                     ASK { ex:Rust ex:influencedBy ex:Python }');
+```
+
+```output
+1
+{"head":{},"boolean":false}
+```
+
+**CONSTRUCT** builds new triples from a template, filled in once per solution. The result is a
+graph, not a table, so `sparql_query()` returns it in an RDF format: N-Triples (one triple per
+line) by default, or Turtle, or N-Quads:
+
+```sql
+SELECT sparql_query('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX schema: <https://schema.org/>
+  CONSTRUCT { ?person ex:designed ?lang }
+  WHERE {
+    ?lang ex:designer ?person .
+    ?person schema:name "Niklaus Wirth" .
+  }
+');
+```
+
+```output
+<http://example.org/pl/person/niklaus-wirth> <http://example.org/pl/designed> <http://example.org/pl/ALGOLW> .
+<http://example.org/pl/person/niklaus-wirth> <http://example.org/pl/designed> <http://example.org/pl/Pascal> .
+<http://example.org/pl/person/niklaus-wirth> <http://example.org/pl/designed> <http://example.org/pl/Modula2> .
+<http://example.org/pl/person/niklaus-wirth> <http://example.org/pl/designed> <http://example.org/pl/ObjectPascal> .
+<http://example.org/pl/person/niklaus-wirth> <http://example.org/pl/designed> <http://example.org/pl/Oberon> .
+```
+
+```sql
+SELECT sparql_query('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX schema: <https://schema.org/>
+  CONSTRUCT { ?person ex:designed ?lang }
+  WHERE {
+    ?lang ex:designer ?person .
+    ?person schema:name "Niklaus Wirth" .
+  }
+', 'turtle');
+```
+
+```output
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+<http://example.org/pl/person/niklaus-wirth> <http://example.org/pl/designed> <http://example.org/pl/ALGOLW> , <http://example.org/pl/Pascal> , <http://example.org/pl/Modula2> , <http://example.org/pl/ObjectPascal> , <http://example.org/pl/Oberon> .
+```
+
+(The Turtle writer declares the `rdf:`, `rdfs:` and `xsd:` prefixes and writes other IRIs in
+full.) CONSTRUCT is how you reshape or export data: the output of one store can be loaded into
+another with `sparql_load()`.
+
+**DESCRIBE** returns "what the store knows about" a resource; in sparqlite, that is all triples
+with the resource as subject:
+
+```sql
+SELECT sparql_query('DESCRIBE <http://example.org/pl/person/andrew-kelley>', 'turtle');
+.mode box --wordwrap on
+```
+
+```output
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+<http://example.org/pl/person/andrew-kelley> a <http://example.org/pl/Person> ;
+	<https://schema.org/name> "Andrew Kelley" .
+```
+
+Through `sparql_rows`, CONSTRUCT and DESCRIBE give one row per triple, with the subject,
+predicate and object in `v0`, `v1` and `v2`; an ASK query gives one row whose `v0` is 1 or 0:
+
+```sql
+SELECT v0 AS subject, v1 AS predicate, v2 AS object FROM sparql_rows('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX schema: <https://schema.org/>
+  CONSTRUCT { ?person ex:designed ?lang }
+  WHERE { ?lang ex:designer ?person . ?person schema:name "Anders Hejlsberg" . }
+');
+```
+
+```output
+┌───────────────────────────────────────────────┬────────────────────────────────┬────────────────────────────────────┐
+│                    subject                    │           predicate            │               object               │
+├───────────────────────────────────────────────┼────────────────────────────────┼────────────────────────────────────┤
+│ http://example.org/pl/person/anders-hejlsberg │ http://example.org/pl/designed │ http://example.org/pl/ObjectPascal │
+│ http://example.org/pl/person/anders-hejlsberg │ http://example.org/pl/designed │ http://example.org/pl/CSharp       │
+│ http://example.org/pl/person/anders-hejlsberg │ http://example.org/pl/designed │ http://example.org/pl/TypeScript   │
+└───────────────────────────────────────────────┴────────────────────────────────┴────────────────────────────────────┘
+```
+
+**Exercise 5.14.** Write a CONSTRUCT query that produces, for every language that Smalltalk
+influenced directly, a triple `<that language> ex:inspiredBy ex:Smalltalk`, and print it as
+N-Triples. How many triples are there? (Use `sparql_rows` and `count(*)`.)
+
+<details>
+<summary>Solution</summary>
+
+```sql
+.mode list
+SELECT sparql_query('
+  PREFIX ex: <http://example.org/pl/>
+  CONSTRUCT { ?lang ex:inspiredBy ex:Smalltalk }
+  WHERE { ?lang ex:influencedBy ex:Smalltalk }
+');
+.mode box --wordwrap on
+SELECT count(*) AS triples FROM sparql_rows('
+  PREFIX ex: <http://example.org/pl/>
+  CONSTRUCT { ?lang ex:inspiredBy ex:Smalltalk }
+  WHERE { ?lang ex:influencedBy ex:Smalltalk }
+');
+```
+
+```output
+<http://example.org/pl/ObjectiveC> <http://example.org/pl/inspiredBy> <http://example.org/pl/Smalltalk> .
+<http://example.org/pl/ObjectPascal> <http://example.org/pl/inspiredBy> <http://example.org/pl/Smalltalk> .
+<http://example.org/pl/Erlang> <http://example.org/pl/inspiredBy> <http://example.org/pl/Smalltalk> .
+<http://example.org/pl/Self> <http://example.org/pl/inspiredBy> <http://example.org/pl/Smalltalk> .
+<http://example.org/pl/Ruby> <http://example.org/pl/inspiredBy> <http://example.org/pl/Smalltalk> .
+<http://example.org/pl/Java> <http://example.org/pl/inspiredBy> <http://example.org/pl/Smalltalk> .
+<http://example.org/pl/Groovy> <http://example.org/pl/inspiredBy> <http://example.org/pl/Smalltalk> .
+<http://example.org/pl/Scala> <http://example.org/pl/inspiredBy> <http://example.org/pl/Smalltalk> .
+<http://example.org/pl/Dart> <http://example.org/pl/inspiredBy> <http://example.org/pl/Smalltalk> .
+<http://example.org/pl/Raku> <http://example.org/pl/inspiredBy> <http://example.org/pl/Smalltalk> .
+
+┌─────────┐
+│ triples │
+├─────────┤
+│ 10      │
+└─────────┘
+```
+
+</details>
+
+### 5.15 SPARQL Update
+
+SPARQL Update changes the data. From SQL, run it with `sparql_update()`, which returns the number
+of triples inserted plus the number deleted. Because this lesson changes the tutorial database,
+it starts a SQLite transaction first and undoes everything at the end with `ROLLBACK` (more about
+that in 5.16). Start it now:
+
+```sql
+BEGIN;
+```
+
+**INSERT DATA** adds triples, written as in Turtle (but with SPARQL's `PREFIX`):
+
+```sql
+SELECT sparql_update('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  INSERT DATA {
+    ex:Toylang a ex:ProgrammingLanguage ;
+               rdfs:label "Toylang"@en ;
+               ex:firstAppeared 2026 ;
+               ex:influencedBy ex:Python , ex:SPARQL .
+  }
+') AS changed;
+```
+
+```output
+┌─────────┐
+│ changed │
+├─────────┤
+│ 5       │
+└─────────┘
+```
+
+**DELETE DATA** removes exactly the triples given:
+
+```sql
+SELECT sparql_update('
+  PREFIX ex: <http://example.org/pl/>
+  DELETE DATA { ex:Toylang ex:influencedBy ex:SPARQL }
+') AS changed;
+```
+
+```output
+┌─────────┐
+│ changed │
+├─────────┤
+│ 1       │
+└─────────┘
+```
+
+**INSERT ... WHERE** and **DELETE ... WHERE** compute the triples from a pattern, like SQL's
+`INSERT ... SELECT`. Mark the languages from before 1960 as pioneers:
+
+```sql
+SELECT sparql_update('
+  PREFIX ex: <http://example.org/pl/>
+  INSERT { ?lang a ex:Pioneer }
+  WHERE  { ?lang ex:firstAppeared ?year . FILTER (?year < 1960) }
+') AS changed;
+```
+
+```output
+┌─────────┐
+│ changed │
+├─────────┤
+│ 3       │
+└─────────┘
+```
+
+`DELETE { ... } INSERT { ... } WHERE { ... }` does both in one step, which is how you modify
+values. The `WHERE` part is evaluated first, then all deletions, then all insertions. Rename
+Toylang:
+
+```sql
+SELECT sparql_update('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  DELETE { ?lang rdfs:label ?old }
+  INSERT { ?lang rdfs:label "Toy Language"@en }
+  WHERE  { ?lang rdfs:label ?old . FILTER (STR(?old) = "Toylang") }
+') AS changed;
+SELECT v0 AS pioneers_and_toys FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?name WHERE {
+    { ?lang a ex:Pioneer } UNION { ?lang ex:influencedBy ex:Python ; ex:firstAppeared 2026 }
+    ?lang rdfs:label ?name .
+  }
+  ORDER BY ?name
+');
+```
+
+```output
+┌─────────┐
+│ changed │
+├─────────┤
+│ 2       │
+└─────────┘
+┌───────────────────┐
+│ pioneers_and_toys │
+├───────────────────┤
+│ ALGOL 58          │
+│ FLOW-MATIC        │
+│ Fortran           │
+│ Toy Language      │
+└───────────────────┘
+```
+
+`DELETE WHERE { pattern }` is the short form when the triples to delete are exactly those that
+match. Named graphs are managed as a whole with `CREATE GRAPH`, `CLEAR GRAPH` (remove its triples,
+keep the graph), `DROP GRAPH` (remove the graph) and `CLEAR ALL` / `DROP ALL`. The table
+`rdf_graph` lists the named graphs:
+
+```sql
+SELECT sparql_update('CREATE GRAPH <http://example.org/graph/scratch>') AS created;
+SELECT sparql_term(g) AS named_graph FROM rdf_graph;
+```
+
+```output
+┌─────────┐
+│ created │
+├─────────┤
+│ 0       │
+└─────────┘
+┌────────────────────────────────────────┐
+│              named_graph               │
+├────────────────────────────────────────┤
+│ <http://example.org/graph/survey-2025> │
+│ <http://example.org/graph/survey-2026> │
+│ <http://example.org/graph/editorial>   │
+│ <http://example.org/graph/scratch>     │
+└────────────────────────────────────────┘
+```
+
+Creating a graph changes no triples, hence the 0. Add a triple to it, empty it with `CLEAR`, and
+remove it with `DROP`:
+
+```sql
+SELECT sparql_update('
+  INSERT DATA { GRAPH <http://example.org/graph/scratch> {
+    <http://example.org/pl/Toylang> <http://example.org/pl/note> "just testing" } }
+') AS inserted;
+SELECT sparql_update('CLEAR GRAPH <http://example.org/graph/scratch>') AS cleared;
+SELECT count(*) AS named_graphs FROM rdf_graph;
+SELECT sparql_update('DROP GRAPH <http://example.org/graph/scratch>') AS dropped;
+SELECT count(*) AS named_graphs FROM rdf_graph;
+```
+
+```output
+┌──────────┐
+│ inserted │
+├──────────┤
+│ 1        │
+└──────────┘
+┌─────────┐
+│ cleared │
+├─────────┤
+│ 1       │
+└─────────┘
+┌──────────────┐
+│ named_graphs │
+├──────────────┤
+│ 4            │
+└──────────────┘
+┌─────────┐
+│ dropped │
+├─────────┤
+│ 0       │
+└─────────┘
+┌──────────────┐
+│ named_graphs │
+├──────────────┤
+│ 3            │
+└──────────────┘
+```
+
+Operating on a graph that does not exist is an error, unless you add `SILENT`:
+
+```sql
+SELECT sparql_update('DROP GRAPH <http://example.org/graph/nothing-here>');
+SELECT sparql_update('DROP SILENT GRAPH <http://example.org/graph/nothing-here>') AS changed;
+```
+
+```output
+Runtime error: sparql: invalid argument: graph <http://example.org/graph/nothing-here> does not exist
+┌─────────┐
+│ changed │
+├─────────┤
+│ 0       │
+└─────────┘
+```
+
+Several operations can go in one request, separated by `;`. Now undo the whole lesson:
+
+```sql
+ROLLBACK;
+SELECT sparql_ask('ASK { <http://example.org/pl/Toylang> ?p ?o }') AS toylang_exists;
+```
+
+```output
+┌────────────────┐
+│ toylang_exists │
+├────────────────┤
+│ 0              │
+└────────────────┘
+```
+
+**Exercise 5.15.** Inside a transaction, delete all reviews written by "Jonas Berg" from the
+editorial graph (each review is a blank node with several triples), check how many reviews are
+left, and roll back.
+
+<details>
+<summary>Solution</summary>
+
+```sql
+BEGIN;
+SELECT sparql_update('
+  PREFIX ex: <http://example.org/pl/>
+  DELETE WHERE {
+    GRAPH <http://example.org/graph/editorial> { ?review ex:reviewer "Jonas Berg" ; ?p ?o }
+  }
+') AS triples_deleted;
+SELECT sparql_count('
+  PREFIX ex: <http://example.org/pl/>
+  SELECT ?r WHERE { GRAPH <http://example.org/graph/editorial> { ?r a ex:Review } }
+') AS reviews_left;
+ROLLBACK;
+```
+
+```output
+┌─────────────────┐
+│ triples_deleted │
+├─────────────────┤
+│ 18              │
+└─────────────────┘
+┌──────────────┐
+│ reviews_left │
+├──────────────┤
+│ 11           │
+└──────────────┘
+```
+
+`DELETE WHERE` deletes every triple of each matching review, because `?p ?o` matches them all.
+
+</details>
+
+### 5.16 Updates and SQLite transactions
+
+sparqlite's data lives in ordinary SQLite tables, so SQLite's transactions cover it:
+
+- Each `sparql_update()` (and `sparql_load()`) call is **atomic**: if it fails half-way, nothing
+  it did remains. Internally each call runs in its own savepoint.
+- Inside `BEGIN ... COMMIT`, several calls, and ordinary SQL statements, form one transaction.
+  `ROLLBACK` undoes all of them, as the previous lesson showed; `COMMIT` makes them permanent.
+- Queries see the transaction's own uncommitted changes; other connections see them only after
+  `COMMIT`.
+- While a write transaction is open, other connections cannot write to the database file (the
+  usual SQLite rule). Set `PRAGMA busy_timeout = 5000;` on connections that should wait for a lock
+  instead of failing at once.
+
+One restriction is specific to sparqlite: a statement cannot change the RDF data while it is
+still reading from `sparql_rows` (see [Troubleshooting](#83-troubleshooting)). Collect the
+results first, then write.
+
+---
+
+## 6. Using sparqlite from SQL
+
+The course mostly used `sparql_rows`. This section goes through the whole SQL interface, still
+in the tutorial-database session. [Section 8.1](#81-sql-functions-and-virtual-tables) lists every
+function with its signature.
+
+### 6.1 The pieces at a glance
+
+| You want | Use |
+|---|---|
+| query results as rows to use in SQL | `sparql_rows(query [, options])`, a table-valued function |
+| a SELECT query as a permanent, typed table | `CREATE VIRTUAL TABLE ... USING sparql_view(query, ...)` |
+| results as one text document (JSON, XML, CSV, TSV, N-Triples, Turtle) | `sparql_query(query [, format])` |
+| one value, a yes/no, or a count | `sparql_value`, `sparql_ask`, `sparql_count` |
+| to change data | `sparql_load`, `sparql_load_file`, `sparql_update` |
+| to see how a query runs | `sparql_explain(query [, mode])` |
+| settings and counters | `sparql_config(key [, value])`, the `sparql_status` table |
+| maintenance | `sparql_init`, `sparql_analyze`, `sparql_check`, `sparql_vacuum_terms` |
+| term ids and terms | `sparql_term`, `sparql_term_id`, `sparql_term_value`, `sparql_term_kind`, `sparql_term_lex`, `sparql_term_lang`, `sparql_term_datatype` |
+| the SPARQL-to-SQL translator (for comparison) | `sparql_query_sql`, `sparql_count_sql`, `sparql_to_sql` |
+
+### 6.2 sparql_rows and the SQL type of each value
+
+`sparql_rows(query)` returns one row per solution (one row per triple for CONSTRUCT and
+DESCRIBE, a single row for ASK) with the columns described in [2.2](#22-the-first-query): `n`,
+`v0`-`v15`, `t0`-`t15`, `id0`-`id15`, `vars` and `json`. It also has two hidden columns, `query`
+and `opts`, which are what the arguments set: `sparql_rows('...')` is SQLite shorthand for
+`SELECT ... FROM sparql_rows WHERE query = '...'`.
+
+The `v` columns convert each RDF term to the closest SQL value. Here is every kind of term,
+with its N-Triples form (`t0`), the value (`v0`) and SQLite's `typeof()` of it:
+
+```sql
+SELECT t0 AS term, v0 AS value, typeof(v0) AS sql_type FROM sparql_rows('
+  PREFIX ex:  <http://example.org/pl/>
+  PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+  SELECT ?x WHERE {
+    { VALUES ?x { ex:Go "Go" "Go"@en 42 4.2 4.2e1 true
+                  "2026-10-15"^^xsd:date "2026-10-15T12:30:00Z"^^xsd:dateTime
+                  "99999999999999999999"^^xsd:integer UNDEF } }
+    UNION
+    { GRAPH <http://example.org/graph/editorial> { ?x ex:about ex:Go } }
+  }
+');
+```
+
+```output
+┌────────────────────────────────────────────────────────────┬──────────────────────────┬──────────┐
+│                            term                            │          value           │ sql_type │
+├────────────────────────────────────────────────────────────┼──────────────────────────┼──────────┤
+│ <http://example.org/pl/Go>                                 │ http://example.org/pl/Go │ text     │
+├────────────────────────────────────────────────────────────┼──────────────────────────┼──────────┤
+│ "Go"                                                       │ Go                       │ text     │
+├────────────────────────────────────────────────────────────┼──────────────────────────┼──────────┤
+│ "Go"@en                                                    │ Go                       │ text     │
+├────────────────────────────────────────────────────────────┼──────────────────────────┼──────────┤
+│ "42"^^<http://www.w3.org/2001/XMLSchema#integer>           │ 42                       │ integer  │
+├────────────────────────────────────────────────────────────┼──────────────────────────┼──────────┤
+│ "4.2"^^<http://www.w3.org/2001/XMLSchema#decimal>          │ 4.2                      │ real     │
+├────────────────────────────────────────────────────────────┼──────────────────────────┼──────────┤
+│ "4.2e1"^^<http://www.w3.org/2001/XMLSchema#double>         │ 42.0                     │ real     │
+├────────────────────────────────────────────────────────────┼──────────────────────────┼──────────┤
+│ "true"^^<http://www.w3.org/2001/XMLSchema#boolean>         │ 1                        │ integer  │
+├────────────────────────────────────────────────────────────┼──────────────────────────┼──────────┤
+│ "2026-10-15"^^<http://www.w3.org/2001/XMLSchema#date>      │ 2026-10-15               │ text     │
+├────────────────────────────────────────────────────────────┼──────────────────────────┼──────────┤
+│ "2026-10-15T12:30:00Z"^^<http://www.w3.org/2001/XMLSchema# │ 2026-10-15T12:30:00Z     │ text     │
+│ dateTime>                                                  │                          │          │
+├────────────────────────────────────────────────────────────┼──────────────────────────┼──────────┤
+│ "99999999999999999999"^^<http://www.w3.org/2001/XMLSchema# │ 99999999999999999999     │ text     │
+│ integer>                                                   │                          │          │
+├────────────────────────────────────────────────────────────┼──────────────────────────┼──────────┤
+│                                                            │                          │ null     │
+├────────────────────────────────────────────────────────────┼──────────────────────────┼──────────┤
+│ _:b5                                                       │ _:b5                     │ text     │
+└────────────────────────────────────────────────────────────┴──────────────────────────┴──────────┘
+```
+
+| RDF term | SQL value |
+|---|---|
+| IRI | TEXT, without the angle brackets |
+| blank node | TEXT `_:label` |
+| string, language-tagged string | TEXT (the tag is only in `t*`) |
+| `xsd:integer` and its sub-types | INTEGER; TEXT if it does not fit in 64 bits |
+| `xsd:decimal`, `xsd:double`, `xsd:float` | REAL |
+| `xsd:boolean` | INTEGER 1 or 0 |
+| dates and times | TEXT in ISO 8601 form, which SQLite's date functions understand |
+| any other datatype | TEXT, the lexical form |
+| unbound | NULL |
+
+Use `t*` when the difference between `"Go"` and `"Go"@en`, or between `42` and `"42"`, matters.
+The `id*` columns hold the term ids of 2.4; they are cheap to read (no decoding) and are a good
+key for joins between two `sparql_rows` calls on the same database.
+
+The optional second argument is a JSON object with settings for this one call: `engine`,
+`timeout_ms`, `max_memory_mb`, `union_default_graph`, `join_policy`, `reorder`, `probe_counts`
+and `probe_cap` (see 6.10), for example `sparql_rows(query, '{"timeout_ms": 500}')`.
+
+`sparql_rows` reads its results lazily, a batch at a time, and only converts the columns the SQL
+statement actually uses: `SELECT count(*) FROM sparql_rows(...)` converts nothing.
+
+### 6.3 Results as text: sparql_query
+
+`sparql_query(query, format)` returns the whole result as one text value in a standard format:
+`json` (the default), `xml`, `csv` or `tsv` for SELECT and ASK queries; `ntriples` (the default),
+`nquads` or `turtle` for CONSTRUCT and DESCRIBE. Switch to list mode for long text:
+
+```sql
+.mode list
+SELECT sparql_query('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?name ?year
+  WHERE { VALUES ?lang { ex:Go ex:Rust } ?lang rdfs:label ?name ; ex:firstAppeared ?year }
+  ORDER BY ?year
+', 'csv');
+```
+
+```output
+name,year
+Go,2009
+Rust,2012
+```
+
+CSV gives plain values; TSV writes RDF terms, so the language tags and datatypes survive (numbers
+are written in their short form):
+
+```sql
+SELECT sparql_query('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?name ?year
+  WHERE { VALUES ?lang { ex:Go ex:Rust } ?lang rdfs:label ?name ; ex:firstAppeared ?year }
+  ORDER BY ?year
+', 'tsv');
+```
+
+```output
+?name	?year
+"Go"@en	2009
+"Rust"@en	2012
+```
+
+```sql
+SELECT sparql_query('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?name ?year
+  WHERE { VALUES ?lang { ex:Go ex:Rust } ?lang rdfs:label ?name ; ex:firstAppeared ?year }
+  ORDER BY ?year
+', 'xml');
+```
+
+```output
+<?xml version="1.0"?><sparql xmlns="http://www.w3.org/2005/sparql-results#"><head><variable name="name"/><variable name="year"/></head><results><result><binding name="name"><literal xml:lang="en">Go</literal></binding><binding name="year"><literal datatype="http://www.w3.org/2001/XMLSchema#integer">2009</literal></binding></result><result><binding name="name"><literal xml:lang="en">Rust</literal></binding><binding name="year"><literal datatype="http://www.w3.org/2001/XMLSchema#integer">2012</literal></binding></result></results></sparql>
+```
+
+These are the formats a SPARQL endpoint returns, so `sparql_query()` is the function to use when
+you build one: pass the query through and send the text back.
+
+### 6.4 Single values: sparql_value, sparql_ask and sparql_count
+
+- `sparql_value(query)` returns the first variable of the first solution, converted like the `v`
+  columns, or NULL if there is none. For an ASK query it returns 1 or 0.
+- `sparql_ask(query)` returns 1 if the query has any solution, else 0.
+- `sparql_count(query)` returns the number of solutions (triples for CONSTRUCT). It runs the
+  query completely but converts nothing, so it is the fastest way to count.
+
+```sql
+.mode box --wordwrap on
+SELECT
+  sparql_value('PREFIX ex: <http://example.org/pl/>
+                SELECT ?year WHERE { ex:Rust ex:firstAppeared ?year }') AS rust_year,
+  sparql_value('PREFIX ex: <http://example.org/pl/>
+                SELECT ?year WHERE { ex:Rust ex:lastAppeared ?year }') AS no_value,
+  sparql_ask('PREFIX ex: <http://example.org/pl/>
+              ASK { ex:Rust ex:influencedBy ex:Haskell }') AS haskell_influenced_rust,
+  sparql_count('PREFIX ex: <http://example.org/pl/>
+                SELECT ?lang WHERE { ?lang ex:typing ex:StaticTyping }') AS statically_typed;
+```
+
+```output
+┌───────────┬──────────┬─────────────────────────┬──────────────────┐
+│ rust_year │ no_value │ haskell_influenced_rust │ statically_typed │
+├───────────┼──────────┼─────────────────────────┼──────────────────┤
+│ 2012      │          │ 1                       │ 39               │
+└───────────┴──────────┴─────────────────────────┴──────────────────┘
+```
+
+They are ordinary scalar functions, so they work where SQL allows an expression, for example in
+`WHERE`, `CASE` or `UPDATE ... SET` (views and triggers stored in the database are a special
+case, see 6.9).
+
+### 6.5 Terms and ids
+
+Section 2.4 introduced term ids. The helpers, all taking an id:
+
+| Function | Returns |
+|---|---|
+| `sparql_term(id)` | the term in N-Triples syntax |
+| `sparql_term_value(id)` | the SQL value, as in the `v` columns |
+| `sparql_term_kind(id)` | `iri`, `literal` or `bnode` |
+| `sparql_term_lex(id)` | the IRI, the blank node label, or a literal's text |
+| `sparql_term_lang(id)` | a literal's language tag, else NULL |
+| `sparql_term_datatype(id)` | a literal's datatype IRI, else NULL |
+| `sparql_term_id(text)` | the reverse: the id of a term written in N-Triples syntax, or NULL if the store does not contain it |
+
+```sql
+SELECT id0 AS id,
+       sparql_term(id0) AS term,
+       sparql_term_kind(id0) AS kind,
+       sparql_term_lex(id0) AS lex,
+       sparql_term_lang(id0) AS lang
+FROM sparql_rows('SELECT ?label WHERE { <http://example.org/pl/Lua> ?p ?label .
+                                        FILTER (isLiteral(?label) && LANG(?label) != "") }
+                         ORDER BY ?label');
+```
+
+```output
+┌───────┬──────────────────────────────────────────────────────────────┬─────────┬─────────────────────────────────────────────────────────────┬──────┐
+│  id   │                             term                             │  kind   │                             lex                             │ lang │
+├───────┼──────────────────────────────────────────────────────────────┼─────────┼─────────────────────────────────────────────────────────────┼──────┤
+│ 27764 │ "'Lua' means 'moon' in Portuguese."@en                       │ literal │ 'Lua' means 'moon' in Portuguese.                           │ en   │
+├───────┼──────────────────────────────────────────────────────────────┼─────────┼─────────────────────────────────────────────────────────────┼──────┤
+│ 27748 │ "Lightweight, embeddable scripting language from PUC-Rio in  │ literal │ Lightweight, embeddable scripting language from PUC-Rio in  │ en   │
+│       │ Brazil."@en                                                  │         │ Brazil.                                                     │      │
+├───────┼──────────────────────────────────────────────────────────────┼─────────┼─────────────────────────────────────────────────────────────┼──────┤
+│ 27732 │ "Lua"@en                                                     │ literal │ Lua                                                         │ en   │
+└───────┴──────────────────────────────────────────────────────────────┴─────────┴─────────────────────────────────────────────────────────────┴──────┘
+```
+
+`sparql_term_id()` only looks terms up and never adds them; it returns NULL for an IRI that is not
+in the store. Values with inline ids (numbers, dates, short strings) always have an id:
+
+```sql
+SELECT sparql_term_id('<http://example.org/pl/Rust>') AS rust,
+       sparql_term_id('<http://example.org/pl/NoSuchLanguage>') AS missing,
+       sparql_term_id('2012') AS the_number_2012;
+```
+
+```output
+┌───────┬─────────┬─────────────────┐
+│ rust  │ missing │ the_number_2012 │
+├───────┼─────────┼─────────────────┤
+│ 29441 │         │ 32198           │
+└───────┴─────────┴─────────────────┘
+```
+
+### 6.6 Loading data: sparql_load and sparql_load_file
+
+`sparql_load(data, format, base, graph)` parses RDF text (or a BLOB) and returns the number of new
+triples or quads. Only `data` is required:
+
+- `format`: `turtle`/`ttl` (the default), `ntriples`/`nt`, `nquads`/`nq`, `trig`,
+  `rdfxml`/`xml`, `n3` or `jsonld`.
+- `base`: the base IRI for relative IRIs such as `<alice>` in the data.
+- `graph`: an IRI; the triples go into that named graph instead of the default graph (for
+  triple formats).
+
+All of it happens in one transaction step: a parse error part-way leaves the store unchanged.
+`readfile()`, which the sqlite3 shell provides, reads a file into a BLOB, so
+`SELECT sparql_load(readfile('my-data.ttl'))` loads a file from the shell.
+
+`sparql_load_file(path, format, base, graph)` reads the file itself, guesses the format from the
+extension (`.ttl`, `.nt`, `.nq`, `.trig`, `.rdf`, `.xml`, `.owl`, `.n3`, `.jsonld`, `.json`) and
+uses the file's `file://` URL as the base. Because a function that reads arbitrary files is a
+risk when the SQL comes from someone else, it is switched off until you allow it on the
+connection; the same setting governs SPARQL's `LOAD <file:...>`:
+
+```sql
+SELECT sparql_load_file('tutorial/data/languages.ttl');
+```
+
+```output
+Runtime error: sparql: invalid argument: sparql_load_file is disabled; enable it with sparql_config('allow_files', 1)
+```
+
+```sql
+SELECT sparql_config('allow_files', 1) AS allow_files;
+BEGIN;
+SELECT sparql_load_file('tutorial/data/languages.ttl', NULL, NULL,
+                        'http://example.org/graph/copy') AS new_quads;
+SELECT count(*) AS named_graphs FROM rdf_graph;
+ROLLBACK;
+SELECT sparql_config('allow_files', 0) AS allow_files;
+```
+
+```output
+┌─────────────┐
+│ allow_files │
+├─────────────┤
+│ 1           │
+└─────────────┘
+┌───────────┐
+│ new_quads │
+├───────────┤
+│ 2126      │
+└───────────┘
+┌──────────────┐
+│ named_graphs │
+├──────────────┤
+│ 4            │
+└──────────────┘
+┌─────────────┐
+│ allow_files │
+├─────────────┤
+│ 0           │
+└─────────────┘
+```
+
+Relative paths are relative to the current directory of the process, here the shell's.
+`sparql_config('allow_files', ...)` can only be called from top-level SQL, not from a view or a
+trigger, and it cannot be set per call.
+
+### 6.7 sparql_view: a SPARQL query as a table
+
+`sparql_rows` needs the query every time and names its columns `v0`, `v1`, .... A **`sparql_view`**
+virtual table stores a SELECT query once and names the columns after its variables:
+
+```sql
+CREATE VIRTUAL TABLE temp.languages USING sparql_view('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX rdfs:   <http://www.w3.org/2000/01/rdf-schema#>
+  PREFIX schema: <https://schema.org/>
+  SELECT ?lang ?name ?year ?homepage
+  WHERE {
+    ?lang a/rdfs:subClassOf* ex:ComputerLanguage ;
+          rdfs:label ?name .
+    OPTIONAL { ?lang ex:firstAppeared ?year }
+    OPTIONAL { ?lang schema:url ?homepage }
+  }
+');
+SELECT name, year, homepage FROM languages WHERE year >= 2015 ORDER BY year, name;
+```
+
+```output
+┌────────┬──────┬────────────────────────────────────────────────┐
+│  name  │ year │                    homepage                    │
+├────────┼──────┼────────────────────────────────────────────────┤
+│ Raku   │ 2015 │ https://raku.org/                              │
+│ Gleam  │ 2016 │ https://gleam.run/                             │
+│ Zig    │ 2016 │ https://ziglang.org/                           │
+│ Carbon │ 2022 │ https://github.com/carbon-language/carbon-lang │
+│ Mojo   │ 2023 │                                                │
+└────────┴──────┴────────────────────────────────────────────────┘
+```
+
+Every query against the table runs the SPARQL query (there is no stored copy), so the table is
+always current. Besides the value columns there are hidden ones, which `SELECT *` does not show:
+for each variable `x`, `x__term` (the N-Triples text, like `t*`) and `x__id` (the term id), and
+`opts`:
+
+```sql
+SELECT name, hidden FROM pragma_table_xinfo('languages');
+```
+
+```output
+┌────────────────┬────────┐
+│      name      │ hidden │
+├────────────────┼────────┤
+│ lang           │ 0      │
+│ name           │ 0      │
+│ year           │ 0      │
+│ homepage       │ 0      │
+│ lang__term     │ 1      │
+│ name__term     │ 1      │
+│ year__term     │ 1      │
+│ homepage__term │ 1      │
+│ lang__id       │ 1      │
+│ name__id       │ 1      │
+│ year__id       │ 1      │
+│ homepage__id   │ 1      │
+│ opts           │ 1      │
+└────────────────┴────────┘
+```
+
+**Pushdown.** An equality test on an `__term` or `__id` column is handed to the SPARQL engine,
+which then starts from that one term instead of producing every row and letting SQLite filter
+them. Both of these return Rust, but the first one asks the engine for Rust only, while the
+second makes it produce all 94 languages:
+
+```sql
+SELECT name, year FROM languages WHERE lang__term = '<http://example.org/pl/Rust>';
+SELECT name, year FROM languages WHERE name = 'Rust';
+```
+
+```output
+┌──────┬──────┐
+│ name │ year │
+├──────┼──────┤
+│ Rust │ 2012 │
+└──────┴──────┘
+┌──────┬──────┐
+│ name │ year │
+├──────┼──────┤
+│ Rust │ 2012 │
+└──────┴──────┘
+```
+
+The `__id` columns work the same way with term ids, which suits joins with values that came from
+another sparqlite query or from `sparql_term_id()`:
+
+```sql
+SELECT name, lang__id FROM languages WHERE lang__id = sparql_term_id('<http://example.org/pl/Go>');
+```
+
+```output
+┌──────┬──────────┐
+│ name │ lang__id │
+├──────┼──────────┤
+│ Go   │ 29297    │
+└──────┴──────────┘
+```
+
+Only `=` on `__term` and `__id` columns is pushed down; value columns never are, because a
+value such as `'Rust'` could stand for several different terms. `__term` must be the exact
+N-Triples spelling.
+
+Settings for the view go after the query as `key=value` arguments, with the same keys as the
+`sparql_rows` options, e.g. `USING sparql_view('SELECT ...', timeout_ms=2000, engine=native)`.
+The query must be a SELECT, and two variables must not differ only in case.
+
+`temp.` puts the table in the temporary schema: it disappears when the connection closes. Without
+`temp.` the definition is stored in the database file (see 6.9).
+
+### 6.8 Joining SPARQL results with SQL tables
+
+Since `sparql_rows` and `sparql_view` are tables, they join with ordinary tables. `job_postings`
+(fictional, see 4.2) stores the language as an IRI in `language_iri`, which is exactly the value
+of the view's `lang` column:
+
+```sql
+SELECT j.language, count(*) AS postings, l.year AS first_appeared
+FROM job_postings AS j
+JOIN languages AS l ON l.lang = j.language_iri
+GROUP BY j.language
+ORDER BY postings DESC, j.language
+LIMIT 5;
+```
+
+```output
+┌────────────┬──────────┬────────────────┐
+│  language  │ postings │ first_appeared │
+├────────────┼──────────┼────────────────┤
+│ Python     │ 37       │ 1991           │
+│ TypeScript │ 33       │ 2012           │
+│ Java       │ 27       │ 1995           │
+│ JavaScript │ 27       │ 1995           │
+│ C++        │ 22       │ 1985           │
+└────────────┴──────────┴────────────────┘
+```
+
+A `LEFT JOIN` finds postings whose language is not in the graph:
+
+```sql
+SELECT j.language, count(*) AS postings
+FROM job_postings AS j
+LEFT JOIN languages AS l ON l.lang = j.language_iri
+WHERE l.lang IS NULL
+GROUP BY j.language;
+```
+
+```output
+┌──────────┬──────────┐
+│ language │ postings │
+├──────────┼──────────┤
+│ ABAP     │ 3        │
+└──────────┴──────────┘
+```
+
+The average advertised salary per paradigm combines a SPARQL path with an SQL aggregate. A
+posting counts once for each paradigm of its language (Python is procedural, functional and
+class-based), so the counts add up to more than 300:
+
+```sql
+SELECT p.v1 AS paradigm,
+       count(*) AS postings,
+       CAST(round(avg(j.salary_usd)) AS INTEGER) AS avg_salary_usd
+FROM job_postings AS j
+JOIN sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?lang ?paradigm
+  WHERE {
+    ?lang ex:paradigm ?p .
+    ?p rdfs:label ?paradigm .
+    FILTER (LANG(?paradigm) = "en")
+  }
+') AS p ON p.v0 = j.language_iri
+GROUP BY paradigm
+ORDER BY avg_salary_usd DESC;
+```
+
+```output
+┌───────────────────────────────┬──────────┬────────────────┐
+│           paradigm            │ postings │ avg_salary_usd │
+├───────────────────────────────┼──────────┼────────────────┤
+│ purely functional programming │ 4        │ 119750         │
+│ array programming             │ 13       │ 114731         │
+│ object-oriented programming   │ 47       │ 114426         │
+│ concurrent programming        │ 56       │ 106902         │
+│ class-based programming       │ 155      │ 106342         │
+│ functional programming        │ 207      │ 105249         │
+│ prototype-based programming   │ 32       │ 101266         │
+│ procedural programming        │ 157      │ 100366         │
+│ declarative programming       │ 8        │ 80875          │
+└───────────────────────────────┴──────────┴────────────────┘
+```
+
+SPARQL results work in common table expressions and with window functions like any other rows.
+The three best-paid languages within each typing discipline:
+
+```sql
+WITH typing AS (
+  SELECT v0 AS lang, v1 AS typing FROM sparql_rows('
+    PREFIX ex:   <http://example.org/pl/>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    SELECT ?lang ?typing WHERE { ?lang ex:typing ?t . ?t rdfs:label ?typing }')
+),
+per_language AS (
+  SELECT t.typing, j.language, count(*) AS postings, avg(j.salary_usd) AS avg_salary
+  FROM job_postings AS j JOIN typing AS t ON t.lang = j.language_iri
+  GROUP BY t.typing, j.language
+),
+ranked AS (
+  SELECT *, rank() OVER (PARTITION BY typing ORDER BY avg_salary DESC) AS rank
+  FROM per_language
+)
+SELECT typing, rank, language, postings, CAST(round(avg_salary) AS INTEGER) AS avg_salary_usd
+FROM ranked WHERE rank <= 3
+ORDER BY typing, rank;
+```
+
+```output
+┌────────────────┬──────┬────────────┬──────────┬────────────────┐
+│     typing     │ rank │  language  │ postings │ avg_salary_usd │
+├────────────────┼──────┼────────────┼──────────┼────────────────┤
+│ dynamic typing │ 1    │ Julia      │ 2        │ 175000         │
+│ dynamic typing │ 2    │ Erlang     │ 2        │ 150000         │
+│ dynamic typing │ 3    │ Lua        │ 5        │ 123400         │
+│ gradual typing │ 1    │ TypeScript │ 33       │ 110788         │
+│ static typing  │ 1    │ OCaml      │ 4        │ 125750         │
+│ static typing  │ 2    │ F#         │ 3        │ 124833         │
+│ static typing  │ 3    │ Zig        │ 2        │ 124750         │
+└────────────────┴──────┴────────────┴──────────┴────────────────┘
+```
+
+In these joins SQLite reads the SPARQL results once and looks up the matching postings through
+the index on `job_postings.language_iri`. `EXPLAIN QUERY PLAN` shows the order it chose; the
+`SCAN ... VIRTUAL TABLE` line should be the outer loop, otherwise SQLite may run the SPARQL query
+again for every row of the other table. If it is not, copy the SPARQL results into a temporary
+table first.
+
+You can also build the SPARQL text with SQL, for example from a table of queries
+(`FROM my_queries AS q, sparql_rows(q.text)`) or with `printf()`. If any part comes from user
+input, check it first: it is code, exactly like SQL built from strings.
+
+### 6.9 Saving queries as views
+
+A SQL view over `sparql_rows` saves a query under a name. `CREATE TEMP VIEW` lasts until the
+connection closes; `CREATE VIEW` stores it in the database file:
+
+```sql
+CREATE VIEW language_years AS
+SELECT v0 AS language, v1 AS year FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?name ?year WHERE { ?lang ex:firstAppeared ?year ; rdfs:label ?name }
+');
+SELECT year / 10 * 10 AS decade, count(*) AS languages
+FROM language_years GROUP BY decade ORDER BY decade;
+```
+
+```output
+┌────────┬───────────┐
+│ decade │ languages │
+├────────┼───────────┤
+│ 1950   │ 3         │
+│ 1960   │ 15        │
+│ 1970   │ 14        │
+│ 1980   │ 18        │
+│ 1990   │ 15        │
+│ 2000   │ 13        │
+│ 2010   │ 13        │
+│ 2020   │ 2         │
+└────────┴───────────┘
+```
+
+Things to know about stored (non-`temp`) views and `sparql_view` tables:
+
+- Any connection that uses them must load the extension first. Without it, only the objects that
+  need it fail (`no such table: main.sparql_rows`, `no such module: sparql_view`); the rest of the
+  database works normally.
+- SQLite does not let views and triggers stored in the database call functions that are not
+  marked as safe for that, unless the connection trusts its schema. The sqlite3 shell used here
+  starts with `PRAGMA trusted_schema` off, so a stored view that calls `sparql_query()`,
+  `sparql_value()` or `sparql_count()` fails with `unsafe use of sparql_value()`; `sparql_rows`
+  is marked safe and always works. Use `sparql_rows` in stored views, a `TEMP` view, or
+  `PRAGMA trusted_schema = ON` if you trust the database file.
+- Functions that change data (`sparql_load`, `sparql_update`, `sparql_init`, ...) and
+  `sparql_config` with two arguments are never allowed in stored views or triggers (`unsafe use
+  of sparql_update()`). Temporary views and triggers are created by the connection itself, and
+  SQLite allows them there.
+
+```sql
+DROP VIEW language_years;
+```
+
+### 6.10 Settings: sparql_config and sparql_status
+
+`sparql_config(key)` returns a setting and `sparql_config(key, value)` changes it for this
+connection (it is not stored in the database). The `sparql_status` table shows all of them,
+together with counters:
+
+```sql
+SELECT key, value FROM sparql_status WHERE key LIKE 'config.%';
+```
+
+```output
+┌────────────────────────────┬────────┐
+│            key             │ value  │
+├────────────────────────────┼────────┤
+│ config.engine              │ native │
+│ config.timeout_ms          │ 0      │
+│ config.max_memory_mb       │ 1024   │
+│ config.union_default_graph │ 0      │
+│ config.decode_cache_mb     │ 64     │
+│ config.join_policy         │ auto   │
+│ config.reorder             │ 1      │
+│ config.probe_counts        │ 32     │
+│ config.probe_cap           │ 1000   │
+│ config.allow_files         │ 0      │
+│ config.reader              │ auto   │
+│ config.page_cache_mb       │ 128    │
+└────────────────────────────┴────────┘
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `engine` | `native` | `native` runs sparqlite's engine; `sql` translates the query to one SQL statement instead (see 6.12) |
+| `timeout_ms` | `0` | stop a query after this many milliseconds; 0 = never |
+| `max_memory_mb` | `1024` | memory budget for one query's intermediate results (hash tables, sorts) |
+| `union_default_graph` | `0` | 1 = the default graph is the union of all graphs (lesson 5.13) |
+| `join_policy` | `auto` | steer the planner: `hash`, `bind` or `merge` prefer that kind of join (section 7.3); `nosql` is `auto` without handing chains of joins to SQLite as one SQL statement |
+| `reorder` | `1` | 0 = join the patterns in the order written instead of choosing an order |
+| `probe_counts`, `probe_cap` | `32`, `1000` | how much the planner may count in the indexes while planning |
+| `decode_cache_mb` | `64` | cache of decoded terms |
+| `allow_files` | `0` | 1 = allow `sparql_load_file` and `LOAD <file:...>` |
+| `reader` | `auto` | how query scans read the indexes: `auto`, `btree` or `sql` (section 7.4) |
+| `page_cache_mb` | `128` | page cache of the direct B-tree reader |
+
+The keys of the first seven rows can also be set for one call: in the `sparql_rows` options
+and as `sparql_view` arguments. The other rows of `sparql_status` count work done by this connection
+(`rows_emitted`, `terms_decoded`, cache hits, ...) and describe the last change:
+
+```sql
+SELECT key, value FROM sparql_status
+WHERE key IN ('version', 'sqlite_version', 'schema_state', 'open_cursors', 'last_op');
+```
+
+```output
+┌────────────────┬──────────────────────────┐
+│      key       │          value           │
+├────────────────┼──────────────────────────┤
+│ version        │ 0.1.0                    │
+│ sqlite_version │ 3.45.1                   │
+│ schema_state   │ ready (schema_version 1) │
+│ open_cursors   │ 0                        │
+│ last_op        │ load                     │
+└────────────────┴──────────────────────────┘
+```
+
+### 6.11 Maintenance: sparql_analyze, sparql_check and sparql_vacuum_terms
+
+- `sparql_analyze()` recomputes the statistics that the query planner uses to choose join orders
+  and returns a summary as JSON. Loads run it automatically when the store has grown by more than
+  25% since the last analysis; run it yourself after many small updates. (It is separate from
+  SQLite's own `ANALYZE`, which helps SQLite plan SQL statements, including those of the SQL
+  translator in 6.12.)
+- `sparql_check()` verifies the store's internal consistency and returns `ok: ...` or a list of
+  problems.
+- `sparql_vacuum_terms()` deletes dictionary entries that no triple uses any more, for example
+  after deleting data, and returns how many it removed. Deleting triples never removes terms by
+  itself.
+
+<!-- verify: ignore-timing -->
+```sql
+.mode list
+SELECT sparql_analyze();
+SELECT sparql_check();
+.mode box --wordwrap on
+```
+
+```output
+{"analyzed_quads":2413,"default_graph":{"characteristic_sets":87,"heavy_hitters":1,"objects":1173,"predicates":31,"subjects":299,"triples":2146},"ms":25,"named_graphs":{"characteristic_sets":5,"heavy_hitters":0,"objects":206,"predicates":10,"subjects":46,"triples":267}}
+ok: 963 terms, 2413 quads, 3 named graphs
+```
+
+To see `sparql_vacuum_terms` at work, delete the 67 `rdfs:comment` notes (long, unique strings,
+so each has a dictionary entry) inside a transaction, vacuum, check, and roll back:
+
+```sql
+BEGIN;
+SELECT sparql_update('
+  DELETE WHERE { ?s <http://www.w3.org/2000/01/rdf-schema#comment> ?comment }
+') AS deleted;
+SELECT sparql_vacuum_terms() AS terms_removed;
+SELECT sparql_check() AS check_result;
+ROLLBACK;
+```
+
+```output
+┌─────────┐
+│ deleted │
+├─────────┤
+│ 67      │
+└─────────┘
+┌───────────────┐
+│ terms_removed │
+├───────────────┤
+│ 67            │
+└───────────────┘
+┌───────────────────────────────────────────┐
+│               check_result                │
+├───────────────────────────────────────────┤
+│ ok: 896 terms, 2346 quads, 3 named graphs │
+└───────────────────────────────────────────┘
+```
+
+### 6.12 The SQL translator: sparql_query_sql, sparql_count_sql and sparql_to_sql
+
+sparqlite contains a second, simpler way to run a query: translate the whole SPARQL query into
+one SQL statement over `rdf_quad` and let SQLite run it. It exists as a baseline, to compare
+against the native engine and to show what SPARQL means in SQL terms. `sparql_to_sql()` shows the
+statement:
+
+```sql
+.mode list
+SELECT sparql_to_sql('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX schema: <https://schema.org/>
+  SELECT ?name WHERE { ?lang ex:designer ?person . ?person schema:name ?name }
+');
+```
+
+```output
+SELECT t2.o AS v2 FROM main.rdf_quad AS t1, main.rdf_quad AS t2 WHERE t1.g = 0 AND t1.p = ?1 AND t2.g = 0 AND t1.o = t2.s AND t2.p = ?2
+```
+
+Each triple pattern becomes one copy of `rdf_quad` (`t1`, `t2`), a shared variable becomes a
+join condition, and constants become parameters (`?1`, `?2`). `sparql_explain(query, 'sql')` shows
+the same text with the parameters' values. `sparql_query_sql()` and `sparql_count_sql()` are
+`sparql_query()` and `sparql_count()` with the translator, and the setting `engine = sql` (for
+the connection or in the options of one call) makes every other function use it:
+
+```sql
+.mode box --wordwrap on
+SELECT
+  sparql_count('PREFIX ex: <http://example.org/pl/>
+                SELECT * WHERE { ?a ex:influencedBy ?b . ?b ex:influencedBy ?c }') AS native,
+  sparql_count_sql('PREFIX ex: <http://example.org/pl/>
+                SELECT * WHERE { ?a ex:influencedBy ?b . ?b ex:influencedBy ?c }') AS translated;
+```
+
+```output
+┌────────┬────────────┐
+│ native │ translated │
+├────────┼────────────┤
+│ 1024   │ 1024       │
+└────────┴────────────┘
+```
+
+The translator does not support CONSTRUCT and DESCRIBE.
+
+### 6.13 Timeouts, interrupts and memory limits
+
+A query that runs too long can be stopped three ways:
+
+- **`timeout_ms`**: a time limit per query, for the connection or for one call. This cross
+  product of every triple with every other triple, twice, would run for hours:
+
+  ```sql
+  SELECT count(*) FROM sparql_rows('SELECT * WHERE { ?a ?p ?b . ?c ?q ?d . ?e ?r ?f }',
+                                   '{"timeout_ms": 200}');
+  ```
+
+  ```output
+  Runtime error: sparql: query timeout
+  ```
+
+  For `sparql_rows` and `sparql_view`, the time counts from the start of the scan, including the
+  time your SQL spends between rows.
+- **Interrupts.** Ctrl-C in the sqlite3 shell, and `sqlite3_interrupt()` (Python:
+  `connection.interrupt()`) from another thread, stop a running query. The functions report
+  `sparql: interrupted`; a `sparql_rows` or `sparql_view` scan stops with SQLite's own
+  `interrupted` error.
+- **`max_memory_mb`** caps the memory a single query may use for intermediate results. When it is
+  exceeded the query stops with an error instead of exhausting the machine:
+
+  ```sql
+  SELECT sparql_config('max_memory_mb', 1);
+  SELECT sparql_count('SELECT DISTINCT ?a ?c WHERE { ?a ?p ?b . ?c ?q ?d }');
+  SELECT sparql_config('max_memory_mb', 1024);
+  ```
+
+  ```output
+  ┌───────────────────────────────────┐
+  │ sparql_config('max_memory_mb', 1) │
+  ├───────────────────────────────────┤
+  │ 1                                 │
+  └───────────────────────────────────┘
+  Runtime error: sparql: memory budget exceeded (1 MB)
+  ┌──────────────────────────────────────┐
+  │ sparql_config('max_memory_mb', 1024) │
+  ├──────────────────────────────────────┤
+  │ 1024                                 │
+  └──────────────────────────────────────┘
+  ```
+
+### 6.14 Errors
+
+All errors from sparqlite are ordinary SQL errors whose message starts with `sparql:` and says
+what went wrong. In the shell they appear as `Runtime error: ...`; in Python as
+`sqlite3.OperationalError`. A mistake in the query text gives the position:
+
+```sql
+SELECT sparql_query('SELECT ?x WHERE { ?x ?p }');
+```
+
+```output
+Runtime error: sparql: syntax error: error at 1:26: expected one of LATERAL, SERVICE, [_]
+```
+
+A mistake in RDF data gives the line and column:
+
+```sql
+SELECT sparql_load('<http://example.org/a> <http://example.org/b> "unterminated .');
+```
+
+```output
+Runtime error: sparql: RDF parse error: Parser error at line 1 between columns 47 and 62: Unexpected end of file
+```
+
+The kinds of message: `syntax error` (query text), `RDF parse error` (data), `invalid argument`
+(a wrong format name, setting or argument), `query timeout`, `interrupted`, `memory budget
+exceeded`, `RDF store schema missing or incompatible`, `cannot modify the RDF store while a
+sparql_rows cursor is open`, and `SQLite error N: ...` for a problem reported by SQLite itself,
+such as `database is locked`. Section 8.3 explains the common ones.
+
+Finally, drop the view table from 6.7 (it would disappear anyway when the shell exits):
+
+```sql
+DROP TABLE temp.languages;
+```
+
+---
+
+## 7. Performance
+
+The tutorial database is too small for performance to matter. This section builds a bigger one
+and shows how to measure queries, read query plans, and which settings matter. All numbers below
+come from one run on a shared 4-core Linux virtual machine; they vary by several tens of percent
+from run to run there, and your machine will give different ones. Compare numbers measured on
+the same machine with each other, not with these.
+
+### 7.1 A larger dataset
+
+`--people N` adds a synthetic social network of N people (about 8.4 triples each): names, birth
+years, a city, one or two liked languages, and `foaf:knows` links to one to five others. Nobody in
+it is real. 100,000 people make about 840,000 triples and an 88 MB `people.nt` file. Build it into
+a separate database:
+
+<!-- verify: setup -->
+<!-- verify: ignore-timing -->
+```sh
+python3 tutorial/make_tutorial_data.py --people 100000 --db tutorial/people.db --ext ext/target/release/libsparqlite
+```
+
+```output
+wrote languages.ttl         2126 triples (94 languages, 117 people, 40 organisations)
+wrote survey.trig            287 quads   (FICTIONAL; 3 named graphs + their metadata)
+wrote job_postings.csv       300 rows    (FICTIONAL), and job_postings.sql
+wrote people.nt           836188 triples (SYNTHETIC; 100000 people, 3.5s)
+note: the existing load.sql does not match these files (another --people setting or an older version of this script); add --emit-sql to rewrite it
+loaded sparqlite 0.1.0 (SQLite 3.45.1) from ext/target/release/libsparqlite.so
+  languages.ttl          2126 new quads  (0.02s)
+  survey.trig             287 new quads  (0.00s)
+  people.nt            836188 new quads  (7.09s)
+summary: 838601 quads, 104506 dictionary terms, 3 named graphs, 94 languages, 300 job postings
+wrote tutorial/people.db
+```
+
+(The note about `load.sql` only means that the checked-in `load.sql` does not load `people.nt`;
+add `--emit-sql` if you want a version that does.) The load of `people.nt` ran in *bulk mode*:
+when one load adds at least 100,000 triples and grows the store by more than 30%, sparqlite drops
+its indexes, inserts in sorted order and rebuilds them, which is much faster than updating eight
+indexes row by row. Load large data in one call, or in a few large ones.
+
+Open it in a new shell, with the timer on:
+
+<!-- verify: session tutorial/people.db -->
+```sh
+sqlite3 tutorial/people.db
+```
+
+```sql
+.load ext/target/release/libsparqlite
+.mode box --wordwrap on
+SELECT count(*) AS quads FROM rdf_quad;
+SELECT page_count * page_size / 1000000 AS megabytes FROM pragma_page_count, pragma_page_size;
+.timer on
+```
+
+```output
+┌────────┐
+│ quads  │
+├────────┤
+│ 838601 │
+└────────┘
+┌───────────┐
+│ megabytes │
+├───────────┤
+│ 61        │
+└───────────┘
+```
+
+The store takes about 73 bytes per triple, all indexes included.
+
+### 7.2 Timing queries
+
+With `.timer on` the shell prints `Run Time: real ... user ... sys ...` after each statement.
+`real` is the elapsed time in seconds. Some typical queries:
+
+<!-- verify: ignore-timing -->
+```sql
+SELECT v0 AS language, v1 AS fans FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?name (COUNT(*) AS ?fans)
+  WHERE { ?person ex:likes ?lang . ?lang rdfs:label ?name }
+  GROUP BY ?name
+  ORDER BY DESC(?fans)
+  LIMIT 5
+');
+```
+
+```output
+┌────────────┬───────┐
+│  language  │ fans  │
+├────────────┼───────┤
+│ JavaScript │ 22155 │
+│ Python     │ 20413 │
+│ TypeScript │ 15975 │
+│ Java       │ 10709 │
+│ C#         │ 9969  │
+└────────────┴───────┘
+Run Time: real 0.023 user 0.015308 sys 0.000000
+```
+
+<!-- verify: ignore-timing -->
+```sql
+SELECT v0 AS friend, v1 AS born FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT ?name ?year
+  WHERE {
+    <http://example.org/people/p42> foaf:knows ?friend .
+    ?friend foaf:name ?name ; ex:birthYear ?year .
+  }
+  ORDER BY ?name
+');
+```
+
+```output
+┌────────────────┬──────┐
+│     friend     │ born │
+├────────────────┼──────┤
+│ Ben Williams   │ 1979 │
+│ Dmitri Nielsen │ 1995 │
+│ Hana Le        │ 1988 │
+│ James Ivanova  │ 1969 │
+│ Rosa O'Brien   │ 1993 │
+└────────────────┴──────┘
+Run Time: real 0.001 user 0.000639 sys 0.000000
+```
+
+<!-- verify: ignore-timing -->
+```sql
+SELECT sparql_count('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT DISTINCT ?person WHERE { ?person foaf:knows/ex:likes ex:Rust }
+') AS people_with_a_friend_who_likes_rust;
+```
+
+```output
+┌─────────────────────────────────────┐
+│ people_with_a_friend_who_likes_rust │
+├─────────────────────────────────────┤
+│ 14398                               │
+└─────────────────────────────────────┘
+Run Time: real 0.015 user 0.009763 sys 0.000768
+```
+
+Turning ids into values costs time, and sparqlite only does it for the columns you read.
+Counting 100,000 solutions is cheap; reading all their names takes a few times longer; and
+counting distinct names inside SPARQL works on ids and is cheapest of all:
+
+<!-- verify: ignore-timing -->
+```sql
+SELECT count(*) AS solutions FROM sparql_rows('
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT ?person ?name WHERE { ?person a foaf:Person ; foaf:name ?name }');
+SELECT count(DISTINCT v1) AS distinct_names FROM sparql_rows('
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT ?person ?name WHERE { ?person a foaf:Person ; foaf:name ?name }');
+SELECT sparql_count('
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT DISTINCT ?name WHERE { ?person a foaf:Person ; foaf:name ?name }') AS distinct_names;
+```
+
+```output
+┌───────────┐
+│ solutions │
+├───────────┤
+│ 100000    │
+└───────────┘
+Run Time: real 0.025 user 0.013159 sys 0.004282
+┌────────────────┐
+│ distinct_names │
+├────────────────┤
+│ 3600           │
+└────────────────┘
+Run Time: real 0.070 user 0.069120 sys 0.000000
+┌────────────────┐
+│ distinct_names │
+├────────────────┤
+│ 3600           │
+└────────────────┘
+Run Time: real 0.013 user 0.012777 sys 0.000000
+```
+
+So: aggregate and filter in SPARQL where you can, select only the variables you need, and read
+`id*` columns instead of values when you only need to compare or join.
+
+### 7.3 Reading a query plan
+
+`sparql_explain(query)` shows the plan the engine chose, without running the query. Take
+"pairs of people where one knows someone who knows the other, and both live in the same city":
+
+```sql
+.timer off
+.mode list
+SELECT sparql_explain('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT ?a ?c
+  WHERE {
+    ?a foaf:knows ?b .
+    ?b foaf:knows ?c .
+    ?a ex:livesIn ?city .
+    ?c ex:livesIn ?city .
+  }
+');
+```
+
+```output
+#0 Project [?a ?c]                                  est=4.5e4 cost=104.7ms
+#1  MergeJoin key=?city gallop=10 check=[?c]        est=4.5e4 cost=104.7ms
+#2   SortBySlot ?city                               est=9.0e5 cost=103.0ms
+#3    MergeJoin key=?b gallop=10                    est=9.0e5 cost=46.1ms
+#4     SortBySlot ?b                                est=3.0e5 cost=32.3ms
+#5      MergeJoin key=?a gallop=10                  est=3.0e5 cost=14.8ms
+#6       Scan Gpso ?a <http://xmlns.com/foaf/0.1/knows> ?b (sorted ?a) est=3.0e5 cost=10.2ms
+#7       Scan Gpso ?a <http://example.org/pl/livesIn> ?city (sorted ?a) est=1.0e5 cost=3.4ms
+#8     Scan Gpso ?b <http://xmlns.com/foaf/0.1/knows> ?c (sorted ?b) est=3.0e5 cost=10.2ms
+#9   Scan Gpos ?c <http://example.org/pl/livesIn> ?city (sorted ?city) est=1.0e5 cost=3.4ms
+```
+
+How to read it:
+
+- Each line is an operator; the operators indented below it are its inputs. Read from the
+  innermost lines outwards: data flows upwards.
+- `Scan Gpso ?a <...knows> ?b` reads one triple pattern from one of the store's indexes. The
+  index name gives the column order: `Gpso` is graph, predicate, subject, object, so with the
+  predicate fixed it returns the triples sorted by subject (`sorted ?a`).
+- Joins: `MergeJoin key=?x` merges two inputs that are both sorted by `?x`; `HashJoin keys=[...]`
+  builds a hash table from one input; `BindJoin seed=[?x]` looks up the right side once for each
+  row of the left side, with `?x` filled in (like an index nested-loop join). `SortBySlot`
+  re-sorts rows for a following merge join.
+- Other operators: `Project` (the `SELECT` list), `Distinct`, `Group` (`GROUP BY`), `TopK`
+  (`ORDER BY` with `LIMIT`), `Extend` (`BIND` and expressions), `Filter`, `Union`, `LeftJoin`
+  (`OPTIONAL`), `SqlJoin` (a chain of index lookups handed to SQLite as one SQL statement), and
+  more.
+- `est` is the planner's estimate of the number of rows (`9.0e5` is 900,000) and `cost` its
+  estimate of the time.
+
+This plan has a problem. The top join `MergeJoin key=?city ... check=[?c]` joins on the city
+alone and checks `?c` afterwards. About 900,000 rows come from below, and each city has thousands
+of inhabitants, so the merge compares each row with thousands of others. The estimate (`cost=104.7ms`)
+misses that, and the query takes about a minute. Turn the timer back on and try it, if you have
+the patience:
+
+```sql
+.timer on
+```
+
+<!-- verify: skip -->
+```sql
+SELECT count(*) FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT ?a ?c WHERE { ?a foaf:knows ?b . ?b foaf:knows ?c .
+                       ?a ex:livesIn ?city . ?c ex:livesIn ?city . }
+');
+```
+
+```output
+292595
+Run Time: real 54.876 user 54.030233 sys 0.054477
+```
+
+(That block is not re-run by the tutorial checker, because it takes a minute.) When a plan
+goes wrong you can steer the planner. `join_policy` forces a join algorithm, here for one call
+through the options of `sparql_rows`:
+
+<!-- verify: ignore-timing -->
+```sql
+.mode box --wordwrap on
+SELECT count(*) AS pairs FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT ?a ?c WHERE { ?a foaf:knows ?b . ?b foaf:knows ?c .
+                       ?a ex:livesIn ?city . ?c ex:livesIn ?city . }
+', '{"join_policy": "hash"}');
+```
+
+```output
+┌────────┐
+│ pairs  │
+├────────┤
+│ 292595 │
+└────────┘
+Run Time: real 0.446 user 0.401438 sys 0.030050
+```
+
+From about a minute to well under a second. Other options are `"join_policy": "bind"` (1.8
+seconds here) and `"engine": "sql"`, the SQL translator of 6.12 (2.5 seconds here).
+
+`sparql_explain(query, 'analyze')` runs the query and adds what actually happened to each line:
+`rows` produced, `opens` (how often the operator was started), `seeks` (index lookups) and `ms`
+(time spent in it, including its inputs). The last line gives the totals. `explain` uses the
+connection's settings, so set the policy with `sparql_config` this time:
+
+<!-- verify: ignore-timing -->
+```sql
+.timer off
+.mode list
+SELECT sparql_config('join_policy', 'hash');
+SELECT sparql_explain('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT ?a ?c WHERE { ?a foaf:knows ?b . ?b foaf:knows ?c .
+                       ?a ex:livesIn ?city . ?c ex:livesIn ?city . }
+', 'analyze');
+SELECT sparql_config('join_policy', 'auto');
+```
+
+```output
+hash
+#0 Project [?a ?c]                                  est=4.5e4 cost=336.7ms rows=292595 opens=1 seeks=0 ms=598.727
+#1  HashJoin keys=[?c ?city] build=right            est=4.5e4 cost=336.7ms rows=292595 opens=1 seeks=0 ms=594.154
+#2   Scan Gpso ?c <http://example.org/pl/livesIn> ?city (sorted ?c) est=1.0e5 cost=3.4ms rows=100000 opens=1 seeks=1 ms=4.086
+#3   HashJoin keys=[?b] build=right                 est=9.0e5 cost=200.4ms rows=903660 opens=1 seeks=0 ms=369.214
+#4    Scan Gpso ?b <http://xmlns.com/foaf/0.1/knows> ?c (sorted ?b) est=3.0e5 cost=10.2ms rows=299630 opens=1 seeks=1 ms=16.480
+#5    HashJoin keys=[?a] build=right                est=3.0e5 cost=75.7ms rows=299630 opens=1 seeks=0 ms=107.848
+#6     Scan Gpso ?a <http://example.org/pl/livesIn> ?city (sorted ?a) est=1.0e5 cost=3.4ms rows=100000 opens=1 seeks=1 ms=5.027
+#7     Scan Gpso ?a <http://xmlns.com/foaf/0.1/knows> ?b (sorted ?a) est=3.0e5 cost=10.2ms rows=299630 opens=1 seeks=1 ms=29.389
+-- 292595 rows; planning 0.090 ms, execution 606.397 ms; decode hits 0, misses 0
+
+auto
+```
+
+Comparing `est` with `rows` shows where the planner's estimates are off; here the final result
+has 292,595 rows against an estimate of 45,000. The other modes of `sparql_explain` are
+`algebra` (the query as parsed, in SPARQL algebra), `logical` (after sparqlite's rewrites),
+`sql` and `sqlplan` (the translator's SQL and SQLite's plan for it).
+
+### 7.4 The B-tree reader
+
+sparqlite's engine reads the index rows of `rdf_quad` in one of two ways. The plain way prepares
+SQL statements and steps through them. The faster way decodes SQLite's B-tree pages from the
+database file directly, which skips SQLite's statement machinery for large scans. The setting
+`reader` chooses: `auto` (the default) uses the direct reader whenever it can, `sql` never uses
+it, and `btree` currently behaves like `auto`.
+
+The direct reader is used only when it is safe:
+
+- the database is a file in one of the rollback-journal modes (the default `DELETE`, or
+  `TRUNCATE`, `PERSIST`, ...), not in WAL mode; in-memory and temporary databases always use SQL;
+- the connection does not hold a write transaction of its own (inside your `BEGIN ... COMMIT`,
+  after a write, scans go through SQL);
+- the connection does not use SQLite's shared-cache mode.
+
+Otherwise sparqlite falls back to SQL statements, with identical results. The `btree_*` rows of
+`sparql_status` show what happened. A scan-heavy query (how many friend-of-a-friend paths are
+there?) with each reader:
+
+<!-- verify: ignore-timing -->
+```sql
+.mode box --wordwrap on
+.timer on
+SELECT sparql_value('PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT (COUNT(*) AS ?n) WHERE { ?a foaf:knows ?b . ?b foaf:knows ?c }');
+SELECT sparql_config('reader', 'sql');
+SELECT sparql_value('PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT (COUNT(*) AS ?n) WHERE { ?a foaf:knows ?b . ?b foaf:knows ?c }');
+SELECT sparql_config('reader', 'auto');
+.timer off
+```
+
+```output
+┌─────────────────────────────────────────────────────────┐
+│ sparql_value('PREFIX foaf: <http://xmlns.com/foaf/0.1/> │
+├─────────────────────────────────────────────────────────┤
+│ 903660                                                  │
+└─────────────────────────────────────────────────────────┘
+Run Time: real 0.030 user 0.030117 sys 0.000000
+┌────────────────────────────────┐
+│ sparql_config('reader', 'sql') │
+├────────────────────────────────┤
+│ sql                            │
+└────────────────────────────────┘
+Run Time: real 0.000 user 0.000055 sys 0.000000
+┌─────────────────────────────────────────────────────────┐
+│ sparql_value('PREFIX foaf: <http://xmlns.com/foaf/0.1/> │
+├─────────────────────────────────────────────────────────┤
+│ 903660                                                  │
+└─────────────────────────────────────────────────────────┘
+Run Time: real 0.087 user 0.087013 sys 0.000000
+┌─────────────────────────────────┐
+│ sparql_config('reader', 'auto') │
+├─────────────────────────────────┤
+│ auto                            │
+└─────────────────────────────────┘
+Run Time: real 0.000 user 0.000049 sys 0.000000
+```
+
+In the run shown, the direct reader took 30 ms and the SQL statements 87 ms; over several runs
+for this tutorial it was two to three times faster on such scans. For queries that mostly look up
+a few rows the difference is small. Check that it is in use:
+
+```sql
+SELECT key, value FROM sparql_status
+WHERE key IN ('reader', 'btree_fallbacks', 'btree_last_fallback');
+SELECT (SELECT value FROM sparql_status WHERE key = 'btree_pages_read') > 0 AS btree_reader_used;
+```
+
+```output
+┌─────────────────────┬───────┐
+│         key         │ value │
+├─────────────────────┼───────┤
+│ reader              │ auto  │
+│ btree_fallbacks     │ 0     │
+│ btree_last_fallback │ none  │
+└─────────────────────┴───────┘
+┌───────────────────┐
+│ btree_reader_used │
+├───────────────────┤
+│ 1                 │
+└───────────────────┘
+```
+
+In WAL mode it is not used, and `btree_last_fallback` says why:
+
+```sql
+PRAGMA journal_mode = WAL;
+SELECT sparql_count('SELECT * WHERE { ?s ?p ?o }') AS triples;
+SELECT value AS btree_last_fallback FROM sparql_status WHERE key = 'btree_last_fallback';
+PRAGMA journal_mode = DELETE;
+```
+
+```output
+┌──────────────┐
+│ journal_mode │
+├──────────────┤
+│ wal          │
+└──────────────┘
+┌─────────┐
+│ triples │
+├─────────┤
+│ 838334  │
+└─────────┘
+┌───────────────────────────────────────────┐
+│            btree_last_fallback            │
+├───────────────────────────────────────────┤
+│ precondition: the database is in WAL mode │
+└───────────────────────────────────────────┘
+┌──────────────┐
+│ journal_mode │
+├──────────────┤
+│ delete       │
+└──────────────┘
+```
+
+WAL has its own advantages (readers and a writer do not block each other), so choose by
+workload: WAL for many concurrent writers and readers, the default journal mode for read-mostly
+analysis.
+
+### 7.5 Statistics: sparql_analyze
+
+The planner chooses join orders from statistics that `sparql_analyze()` collects: the number of
+triples per predicate with their distinct subjects and objects, *characteristic sets* (which
+combinations of predicates subjects have, e.g. "has a name, a birth year and a city"), and
+*heavy hitters* (very common predicate-object pairs, such as `rdf:type foaf:Person`). Loads run it
+automatically after the store has grown by more than 25%; after many small updates, run it
+yourself. It took a fraction of a second here:
+
+<!-- verify: ignore-timing -->
+```sql
+.mode list
+SELECT sparql_analyze();
+```
+
+```output
+{"analyzed_quads":838601,"default_graph":{"characteristic_sets":89,"heavy_hitters":112,"objects":95982,"predicates":37,"subjects":100319,"triples":838334},"ms":622,"named_graphs":{"characteristic_sets":5,"heavy_hitters":0,"objects":206,"predicates":10,"subjects":46,"triples":267}}
+```
+
+### 7.6 SQLite settings
+
+- **Page size.** 8 KiB pages suit the store (`make_tutorial_data.py` uses them). `PRAGMA
+  page_size = 8192;` only takes effect before the first table is created, so run it before
+  `sparql_init()` or the first load in a new database file (or run `VACUUM` afterwards to
+  rebuild the file with the new size).
+- **Page caches.** `PRAGMA cache_size` sets SQLite's own page cache (by default about 2 MB); it
+  matters for the `sql` reader, the SQL translator and writes. The direct B-tree reader has its
+  own cache, `sparql_config('page_cache_mb', ...)` (128 MB by default). In the runs for this
+  tutorial, raising `cache_size` to 256 MB made no measurable difference, because the 60 MB
+  database was already in the operating system's file cache.
+- **Journal mode.** See 7.4.
+- **Transactions.** Many small `sparql_update` or `sparql_load` calls are much faster inside one
+  `BEGIN ... COMMIT` than each in its own transaction, as with any SQLite writes.
+- **Statistics.** sparqlite's planner uses `sparql_analyze`; SQLite's `ANALYZE` helps the SQL
+  translator (`engine = sql`).
+
+---
+
+## 8. Reference and troubleshooting
+
+### 8.1 SQL functions and virtual tables
+
+Arguments in brackets are optional. "Writer" functions change the database; they, and the
+two-argument `sparql_config`, can only be called from top-level SQL statements (and from TEMP
+views and triggers), never from views or triggers stored in the database.
+
+| Function | Returns |
+|---|---|
+| `sparql_version()` | TEXT: `sparqlite <version> (SQLite <version>)` |
+| `sparql_init()` | INTEGER: the storage schema version; creates the `rdf_*` tables if needed. Writer. |
+| `sparql_load(data [, format [, base [, graph]]])` | INTEGER: new triples/quads. `data` is TEXT or BLOB; `format` is `turtle` (default) / `ttl`, `ntriples` / `nt`, `nquads` / `nq`, `trig`, `rdfxml` / `xml`, `n3` or `jsonld`; `graph` is a target graph IRI. Writer. |
+| `sparql_load_file(path [, format [, base [, graph]]])` | INTEGER: new triples/quads; format from the file extension, base = the file's `file://` URL. Needs `sparql_config('allow_files', 1)`. Writer. |
+| `sparql_update(update)` | INTEGER: triples inserted + triples deleted. `LOAD <file:...>` needs `allow_files`. Writer. |
+| `sparql_query(query [, format])` | TEXT: SELECT/ASK as `json` (default), `xml`, `csv` or `tsv`; CONSTRUCT/DESCRIBE as `ntriples` (default), `nquads` or `turtle` |
+| `sparql_ask(query)` | INTEGER 1/0 |
+| `sparql_count(query)` | INTEGER: number of solutions (or triples), without converting any value |
+| `sparql_value(query)` | the first variable of the first solution as a SQL value, or NULL; 1/0 for ASK |
+| `sparql_explain(query [, mode])` | TEXT: `plan` (default), `analyze` (runs the query), `algebra`, `logical`, `sql`, `sqlplan` |
+| `sparql_analyze()` | TEXT: JSON summary of the new statistics. Writer. |
+| `sparql_check()` | TEXT: `ok: ...` or the problems found |
+| `sparql_vacuum_terms()` | INTEGER: unused dictionary entries deleted. Writer. |
+| `sparql_config(key)` | TEXT: the current value of a setting (table in [6.10](#610-settings-sparql_config-and-sparql_status)) |
+| `sparql_config(key, value)` | TEXT: the new value. Top-level SQL only. |
+| `sparql_query_sql(query [, format])`, `sparql_count_sql(query)`, `sparql_to_sql(query)` | as `sparql_query` / `sparql_count` but with the SQL translator; the translated SQL |
+| `sparql_term(id)` | TEXT: the term in N-Triples syntax, or NULL |
+| `sparql_term_value(id)` | the term as a SQL value |
+| `sparql_term_id(ntriples)` | INTEGER id of an existing term, or NULL |
+| `sparql_term_kind(id)` | TEXT: `iri`, `literal` or `bnode` |
+| `sparql_term_lex(id)`, `sparql_term_lang(id)`, `sparql_term_datatype(id)` | TEXT: lexical form / IRI / label; language tag; datatype IRI |
+
+The functions `sparql_num`, `sparql_str`, `sparql_ebv`, `sparql_sortkey`, `sparql_regex`,
+`sparql_eval` and the aggregates `sparql_sum`, `sparql_avg`, `sparql_min`, `sparql_max`,
+`sparql_sample` and `sparql_group_concat` also exist. They are helpers that the SQL translator's
+generated SQL calls; they are not meant to be called directly.
+
+| Virtual table | Columns |
+|---|---|
+| `sparql_rows(query [, options])` | `n`, `v0`-`v15` (values), `t0`-`t15` (N-Triples), `id0`-`id15` (term ids), `vars` (JSON array), `json` (the solution as SPARQL JSON); hidden `query`, `opts`. `options` is a JSON object of per-call settings. |
+| `CREATE VIRTUAL TABLE name USING sparql_view(query [, key=value ...])` | one column per variable of the SELECT query; hidden `<var>__term`, `<var>__id` and `opts`. `=` on `__term` / `__id` is pushed into the query. |
+| `sparql_status` | `key`, `value`: settings (`config.*`), versions, schema state, caches, counters |
+
+Storage tables (read them, do not write them with plain SQL): `rdf_quad(g, s, p, o)` (one row
+per quad; `g = 0` is the default graph), `rdf_term(id, tag, lex, dt, lang, h)` (the dictionary),
+`rdf_graph(g)` (the named graphs), `rdf_meta` (schema version and counters) and the statistics
+tables `rdf_stat_*`.
+
+### 8.2 SPARQL support
+
+sparqlite implements SPARQL 1.1 Query and Update: all four query forms, property paths,
+aggregates, sub-queries, `VALUES`, `BIND`, `MINUS`, `EXISTS`, named graphs with `FROM` /
+`FROM NAMED`, the SPARQL 1.1 functions, and the update operations `INSERT` / `DELETE` (`DATA`,
+`WHERE` and the combined form), `LOAD`, `CLEAR`, `DROP`, `CREATE`, `ADD`, `MOVE` and `COPY`. Of the
+639 W3C SPARQL 1.1 test cases that its test runner executes, 636 pass; the other three are
+handled differently by the SPARQL parser it uses. Not supported: `SERVICE` (federated queries),
+and `LOAD` from the web (`LOAD` reads only `file:` IRIs, and only with `allow_files`). Very deeply
+nested queries (dozens of nested sub-queries, for example) are refused with a "nests too deeply"
+error rather than risking the host program's stack.
+
+### 8.3 Troubleshooting
+
+**`.load` fails.**
+
+- `Error: ext/target/release/libsparqlite.so: cannot open shared object file: No such file or
+  directory`: the path is wrong (run the shell from the project folder, or give the full path) or
+  the extension is not built yet (section 1.2).
+- `undefined symbol: sqlite3_mycopy_init` (or similar): the file was renamed, so the shell
+  derived the wrong entry point name; add it: `.load ./mycopy.so sqlite3_sparqlite_init`.
+- `SQLite version mismatch: 3031001 < 3034001`: the SQLite library is older than 3.34.1.
+- On macOS, Apple's `/usr/bin/sqlite3` has no `.load` command at all; use Homebrew's sqlite3
+  (section 1.1).
+- An error that mentions the file format or architecture (`wrong ELF class`, `incompatible
+  architecture`): the extension was built for another kind of machine or for a 32-bit/64-bit
+  host that does not match; build it on, and for, the machine that loads it.
+- Python: `AttributeError: ... has no attribute 'enable_load_extension'` means that Python's
+  `sqlite3` module was built without extension support; use another Python build, or the
+  sqlite3 shell.
+
+**`no such function: sparql_query`** (or any other `sparql_` name): the extension is not
+loaded on this connection. Each connection, including each new shell session and each
+connection in a pool, must load it:
+
+<!-- verify: session -->
+```sh
+sqlite3
+```
+
+```sql
+SELECT sparql_version();
+```
+
+```output
+Parse error: no such function: sparql_version
+  SELECT sparql_version();
+         ^--- error here
+```
+
+```sql
+.load ext/target/release/libsparqlite
+.mode list
+SELECT sparql_version();
+```
+
+```output
+sparqlite 0.1.0 (SQLite 3.45.1)
+```
+
+**`RDF store schema missing or incompatible: the RDF store is not initialized`**: the database
+has no `rdf_*` tables yet. Loads and updates create them automatically and queries on such a
+database simply find nothing, but `sparql_analyze`, `sparql_check` and `sparql_vacuum_terms`
+need an existing store. Run `SELECT sparql_init();`. The same message with another reason means
+the tables were created by an incompatible version of sparqlite.
+
+```sql
+SELECT sparql_count('SELECT * WHERE { ?s ?p ?o }') AS empty;
+SELECT sparql_check();
+SELECT sparql_init();
+SELECT sparql_check();
+```
+
+```output
+0
+Runtime error: sparql: RDF store schema missing or incompatible: the RDF store is not initialized (run sparql_init())
+1
+ok: 35 terms, 0 quads, 0 named graphs
+```
+
+**My query returns nothing.** The usual suspects, in order:
+
+1. The data is in a named graph and the pattern is not inside `GRAPH` (lesson 5.13), or the
+   reverse.
+2. A string literal without its language tag: `"Go"` does not match `"Go"@en` (lesson 5.3).
+   Compare `STR(?label) = "Go"`.
+3. A typo in an IRI or prefix. IRIs are compared exactly; `<http://example.org/pl/python>` is not
+   `<http://example.org/pl/Python>`, and `schema:` is `https://`, not `http://`. Start with a
+   pattern that matches and add one triple pattern at a time.
+4. A number compared with a string: `FILTER (?year = "1991")` compares an integer with a string
+   and is never true; write `?year = 1991`.
+
+**`cannot modify the RDF store while a sparql_rows cursor is open`**: one SQL statement both reads
+from `sparql_rows` and changes the RDF data with a writer function. Run the query first (store its
+results in a temporary table if needed), then the update:
+
+```sql
+SELECT sparql_load('<http://example.org/a> <http://example.org/p> "1" .', 'nt') AS loaded;
+SELECT sparql_update('INSERT DATA { <http://example.org/b> <http://example.org/p> "2" }')
+FROM sparql_rows('SELECT ?s WHERE { ?s ?p ?o }');
+```
+
+```output
+1
+Runtime error: sparql: cannot modify the RDF store while a sparql_rows cursor is open
+```
+
+**`this writer cannot run inside a statement that writes`**: a writer function was called from an
+`INSERT ... SELECT`, `UPDATE` or similar. Only `sparql_update` may do that, and only outside an
+explicit transaction; call the others as their own `SELECT` statements:
+
+```sql
+CREATE TEMP TABLE results(n INTEGER);
+INSERT INTO results SELECT sparql_load('<http://example.org/c> <http://example.org/p> "3" .', 'nt');
+INSERT INTO results SELECT sparql_update('INSERT DATA { <http://example.org/d> <http://example.org/p> "4" }');
+SELECT n FROM results;
+```
+
+```output
+Runtime error: sparql: invalid argument: this writer cannot run inside a statement that writes (INSERT … SELECT, UPDATE …) here: only sparql_update can, and only outside an explicit transaction; call it as its own SELECT statement
+1
+```
+
+**`unsafe use of sparql_update()`** (or another function): the function was used in a view,
+trigger or other schema object stored in the database. Writers are never allowed there; query
+functions such as `sparql_value()` are allowed only with `PRAGMA trusted_schema = ON`; `sparql_rows`
+always works. See [6.9](#69-saving-queries-as-views). TEMP views and triggers are not affected.
+
+```sql
+CREATE TABLE log(x);
+CREATE TRIGGER log_update AFTER INSERT ON log BEGIN
+  SELECT sparql_update('INSERT DATA { <http://example.org/e> <http://example.org/p> "5" }');
+END;
+INSERT INTO log VALUES (1);
+```
+
+```output
+Parse error: unsafe use of sparql_update()
+```
+
+**`no query solution`**: `sparql_rows` was used without a query (`SELECT * FROM sparql_rows`), or in
+a join where SQLite cannot work out the query text before scanning it.
+
+**`sparql: SQLite error 5: database is locked`**: another connection holds a write lock. Set
+`PRAGMA busy_timeout = 5000;` (milliseconds) so that the connection waits, and keep write
+transactions short.
+
+**`query timeout`**, **`interrupted`**, **`memory budget exceeded`**: see
+[6.13](#613-timeouts-interrupts-and-memory-limits).
+
+**Queries are slower than expected on a WAL database**: the direct B-tree reader is not used in
+WAL mode (section 7.4); `SELECT value FROM sparql_status WHERE key = 'btree_last_fallback'` says
+why it was last skipped. Also check the plan (section 7.3) and whether `sparql_analyze()` has run
+since the data changed a lot.
+
+---
+
+That is the end of the tutorial. To go further: [docs/SPEC.md](docs/SPEC.md) describes the design
+in depth, and the README of each crate in `crates/` explains one part of the implementation.

@@ -192,3 +192,15 @@ translating SPARQL to SQL text or running as an external client.
   person against live Wikipedia infoboxes (fixing e.g. COBOL 1960, SQL 1973, Rust 2012 per infobox) and
   added validation that an influencer is never younger than what it influenced and that influencedBy is
   acyclic. I spot-checked the three 2026 death dates it added against Wikipedia myself.
+
+### Integration verification (lead)
+- `scripts/check.sh` (release, all crates, --no-fail-fast): 921 Rust tests passed, 4 failed — all four were
+  LOW-severity reviewer findings pinned as failing tests that never got a fix round (W3C comparator ORDER BY
+  tie handling x2, CSV column realignment, B-tree stale page cache after a rejected snapshot); a small
+  fix workflow is handling them. Also fixed myself: XML results containing characters XML 1.0 cannot
+  represent (e.g. U+0001) are now refused with a clear error instead of producing a broken document.
+- Release cdylib: 6.6 MB, cargo-tree gate (no bundled SQLite) and API allow-list grep gate pass.
+- pytest against the real .so in Python 3.13 / SQLite 3.45.1: 39 passed.
+- W3C through plain SQL (`sq-w3c --backend sqlite`, the full stack via sparql_load/sparql_query/
+  sparql_update): 636 of 639 runnable tests (99.53%; 627 exact + 9 numeric-lenient) in 2.2 s; the 3 failures
+  are spargebra parser divergences; 299 skipped by design (syntax-only, entailment, protocol, SERVICE).

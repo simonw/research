@@ -36,8 +36,8 @@ How tutorial.md is read
     <!-- verify: skip -->           do not run the next block (illustrative, or
                                    needs something the checker cannot provide).
     <!-- verify: ignore-timing -->  compare the next output ignoring durations:
-                                   "Run Time:" lines, "(0.01s)", "12 ms",
-                                   "time=1.2ms", "\"ms\":4" and the like.
+                                   "Run Time:" lines, "(0.01s)", "3.5s",
+                                   "12 ms", "ms=1.2", "\"ms\":4" and the like.
     <!-- verify: mask REGEX -->     replace REGEX matches by <masked> on both
                                    sides before comparing (may be repeated).
 
@@ -82,6 +82,7 @@ TIMING = [
     (re.compile(r"\b(time|ms|elapsed)=\s*\d+(\.\d+)?\s*(ns|us|µs|ms|s)?"), r"\1=<t>"),
     (re.compile(r"\(\d+(\.\d+)?\s*(ns|us|µs|ms|s)\)"), "(<t>)"),
     (re.compile(r"\b\d+(\.\d+)?\s*(ns|us|µs|ms)\b"), "<t>"),
+    (re.compile(r"\b\d+\.\d+s\b"), "<t>"),
 ]
 RULES = re.compile(r"[─━═-]{2,}")
 SPACES = re.compile(r"[ \t]+")
@@ -101,8 +102,9 @@ def platform_ext_name() -> str:
 
 
 class Block:
-    def __init__(self, info, text, start, end, body_start, directives):
+    def __init__(self, info, text, start, end, body_start, directives, indent=0):
         self.info = info            # first word of the info string ("sql", "output", ...)
+        self.indent = indent        # indentation of the fence (inside a list item)
         self.text = text            # content, without the fences
         self.start = start          # 0-based line index of the opening fence
         self.end = end              # 0-based line index of the closing fence
@@ -156,7 +158,7 @@ class Doc:
                     j += 1
                 else:
                     raise SystemExit("%s:%d: unclosed code fence" % (self.path, i + 1))
-                blk = Block(info, "\n".join(body), i, j, i + 1, pending)
+                blk = Block(info, "\n".join(body), i, j, i + 1, pending, indent)
                 pending = []
                 if info == "output":
                     prev = self.items[-1][1] if self.items and self.items[-1][0] == "block" else None
@@ -174,9 +176,7 @@ class Doc:
                 last_block_end = j
                 i = j + 1
                 continue
-            if lines[i].strip() and not lines[i].lstrip().startswith("<!--"):
-                pass  # prose
-            i += 1
+            i += 1  # prose
         if pending:
             raise SystemExit("%s: a verify directive at the end applies to no block" % self.path)
 
@@ -429,6 +429,8 @@ def main(argv=None) -> int:
             words = [d[0] for d in blk.directives]
             if "skip" in words:
                 skipped.append(blk)
+                if args.verbose:
+                    print("  skip  line %-5d %s" % (blk.line, blk.info))
                 continue
             if blk.info == "sql":
                 if session is None:
@@ -471,11 +473,12 @@ def main(argv=None) -> int:
     if args.update and updates:
         lines = doc.lines
         for blk, actual in sorted(updates, key=lambda u: u[0].start, reverse=True):
-            new = actual.split("\n") if actual else []
+            pad = " " * (blk.output.indent if blk.output else blk.indent)
+            new = [(pad + ln) if ln else ln for ln in actual.split("\n")] if actual else []
             if blk.output:
                 lines[blk.output.body_start:blk.output.end] = new
             elif actual:
-                lines[blk.end + 1:blk.end + 1] = ["", "```output"] + new + ["```"]
+                lines[blk.end + 1:blk.end + 1] = ["", pad + "```output"] + new + [pad + "```"]
         with open(args.tutorial, "w", encoding="utf-8", newline="\n") as f:
             f.write("\n".join(lines))
         print("updated %d output block(s) in %s; review the diff" % (len(updates), args.tutorial))
@@ -486,7 +489,7 @@ def main(argv=None) -> int:
               verified, counts["sql"], counts["sql-silent"], counts["setup"], counts["python"]))
     print("skipped %d blocks marked skip; %d other blocks are illustrative (%s)" % (
         len(skipped), len(illustrative),
-        ", ".join("%s: %d" % (k, sum(1 for b in illustrative if b.info == k))
+        ", ".join("%s: %d" % (k, sum(1 for b in illustrative if (b.info or "(none)") == k))
                   for k in sorted({b.info or "(none)" for b in illustrative}))))
     print("%d failure(s) in %.1fs" % (len(failures), time.monotonic() - t_start))
     if not args.keep and not args.work:

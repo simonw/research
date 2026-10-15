@@ -244,8 +244,8 @@ impl BtreeReader {
 
     /// Full validation: the mode, all four preconditions (precondition 1 including the
     /// private-cache check), the database header, and the root pages. Returns the current
-    /// snapshot. When the file or the data version changed, it re-reads
-    /// the header and flushes the page cache.
+    /// snapshot. When the file or the data version changed, it releases the page cache (also
+    /// when the new pair is then rejected) and re-reads the header.
     pub fn snapshot(&self) -> Result<Snapshot, Fallback> {
         self.enabled()?;
         self.transaction_ok()?;
@@ -263,12 +263,12 @@ impl BtreeReader {
                 return Err(why);
             }
         }
+        self.release_superseded()?;
         match self.validate(file, version) {
             Ok(snap) => {
                 let mut st = self.state.try_borrow_mut().map_err(|_| REENTRANT)?;
-                if st.current.is_some() {
-                    self.count(|c| c.cache_flushes += 1);
-                }
+                // Already empty (`release_superseded`, and `page` caches nothing while
+                // `current` is `None`); kept so the new snapshot never starts with stale pages.
                 st.cache.clear();
                 st.current = Some(snap);
                 st.rejected = None;
@@ -282,6 +282,25 @@ impl BtreeReader {
                 Err(why)
             }
         }
+    }
+
+    /// Drops the snapshot the page cache belongs to and releases its pages, when the
+    /// (file, data version) pair changed. This happens before the new pair is validated,
+    /// whatever the verdict: once the pair changed, no cursor can read the cached pages again
+    /// (`page` serves only `current`, and `check` fails for every cursor of the old version,
+    /// data versions only move forward). A rejected pair (e.g. the database switched to WAL)
+    /// can stay current indefinitely, and the cache would otherwise keep up to
+    /// `page_cache_mb` of dead pages alive until a valid snapshot came back.
+    ///
+    /// The cache is replaced rather than cleared, so the slot table and the page map sized
+    /// for the old working set are freed too (a new `ClockCache` allocates nothing).
+    fn release_superseded(&self) -> Result<(), Fallback> {
+        let mut st = self.state.try_borrow_mut().map_err(|_| REENTRANT)?;
+        if st.current.take().is_some() {
+            self.count(|c| c.cache_flushes += 1);
+        }
+        st.cache = ClockCache::new(budget_bytes(self.page_cache_mb.get()));
+        Ok(())
     }
 
     /// Precondition 1 and the header checks for a new (file, data version) pair.
