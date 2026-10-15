@@ -1,0 +1,131 @@
+//! Root pages of the nine quad b-trees, read from `sqlite_schema`, with each index's on-disk
+//! layout verified before the reader trusts it.
+//!
+//! The PK b-tree of the WITHOUT ROWID table holds records `(g, s, p, o)`. A secondary index
+//! of a WITHOUT ROWID table stores its own columns followed by the primary-key columns it does
+//! not already contain. Each of our indexes names all four columns, so every b-tree record is
+//! exactly the 4 columns in index order (checked on SQLite 3.45.1; `pragma_index_xinfo` then
+//! lists exactly 4 key columns and no auxiliary column). This module checks precisely that, plus
+//! the partial-index predicates. A b-tree whose definition differs (another column order, DESC
+//! columns, a different or missing WHERE clause) is not read directly: its scans stay on the
+//! SQL path.
+use sq_core::Result;
+use sq_core::store::IndexOrder;
+
+use crate::raw::{RawDb, RawStmt};
+use crate::schema::PK_INDEX;
+use crate::template::COL_NAMES;
+
+/// Root page of each order (`IndexOrder::ALL` positions); 0 = not readable directly.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub(crate) struct Roots([u32; 9]);
+
+const fn slot(order: IndexOrder) -> usize {
+    match order {
+        IndexOrder::Gspo => 0,
+        IndexOrder::Gpso => 1,
+        IndexOrder::Gpos => 2,
+        IndexOrder::Gosp => 3,
+        IndexOrder::Spog => 4,
+        IndexOrder::Psog => 5,
+        IndexOrder::Posg => 6,
+        IndexOrder::Ospg => 7,
+        IndexOrder::Gpox => 8,
+    }
+}
+
+/// `sqlite_schema` name of an order's b-tree: the table itself for the primary key.
+const fn schema_name(order: IndexOrder) -> &'static str {
+    match order {
+        IndexOrder::Gspo => "rdf_quad",
+        IndexOrder::Gpso => "rdf_gpso",
+        IndexOrder::Gpos => "rdf_gpos",
+        IndexOrder::Gosp => "rdf_gosp",
+        IndexOrder::Spog => "rdf_spog",
+        IndexOrder::Psog => "rdf_psog",
+        IndexOrder::Posg => "rdf_posg",
+        IndexOrder::Ospg => "rdf_ospg",
+        IndexOrder::Gpox => "rdf_gpox",
+    }
+}
+
+impl Roots {
+    /// Root page of `order`; 0 when it must be read through SQL.
+    pub fn get(&self, order: IndexOrder) -> u32 {
+        self.0[slot(order)]
+    }
+
+    /// At least one order is readable directly.
+    pub fn any(&self) -> bool {
+        self.0.iter().any(|r| *r != 0)
+    }
+}
+
+/// One `sqlite_schema` row of `rdf_quad` or one of its indexes.
+struct SchemaRow {
+    kind: String,
+    name: String,
+    root: i64,
+    sql: Option<String>,
+}
+
+/// Reads and verifies the root pages (one-shot statements; runs only when the schema cookie
+/// changed). SQL errors are returned as errors; a layout the reader cannot use yields 0 roots.
+pub(crate) fn load(db: RawDb) -> Result<Roots> {
+    let mut rows = Vec::new();
+    let mut st = RawStmt::prepare(
+        db,
+        "SELECT type, name, rootpage, sql FROM main.sqlite_schema WHERE tbl_name = 'rdf_quad'",
+        false,
+    )?;
+    while st.step()? {
+        rows.push(SchemaRow {
+            kind: st.col_str(0)?.to_string(),
+            name: st.col_str(1)?.to_string(),
+            root: st.col_i64(2),
+            sql: st.col_opt_str(3)?.map(str::to_string),
+        });
+    }
+    drop(st);
+    let mut roots = Roots::default();
+    for order in IndexOrder::ALL {
+        roots.0[slot(order)] = verify(db, order, &rows)?.unwrap_or(0);
+    }
+    Ok(roots)
+}
+
+/// The root page of `order` if its b-tree has exactly the expected layout.
+fn verify(db: RawDb, order: IndexOrder, rows: &[SchemaRow]) -> Result<Option<u32>> {
+    let (kind, name) = if order == IndexOrder::Gspo { ("table", "rdf_quad") } else { ("index", schema_name(order)) };
+    let Some(row) = rows.iter().find(|r| r.kind == kind && r.name == name) else { return Ok(None) };
+    let Some(root) = u32::try_from(row.root).ok().filter(|r| *r >= 2) else { return Ok(None) };
+    // Exactly the 4 order columns, ascending, all of them key columns (no auxiliary columns:
+    // a rowid table's PK index would add the rowid, a table with more columns would add them).
+    let index = if order == IndexOrder::Gspo { PK_INDEX } else { name };
+    let mut st =
+        RawStmt::prepare(db, "SELECT name, desc, key FROM pragma_index_xinfo(?1, 'main') ORDER BY seqno", false)?;
+    st.bind_text(1, index)?;
+    let mut cols = Vec::with_capacity(4);
+    while st.step()? {
+        cols.push((st.col_opt_str(0)?.unwrap_or("").to_string(), st.col_i64(1), st.col_i64(2)));
+    }
+    drop(st);
+    let expected = order.cols().map(|c| COL_NAMES[c as usize]);
+    let layout_ok = cols.len() == expected.len()
+        && cols.iter().zip(expected).all(|((n, desc, key), want)| n == want && *desc == 0 && *key == 1);
+    if !layout_ok {
+        return Ok(None);
+    }
+    // Partial indexes must have exactly our predicate (as stored by CREATE INDEX), full ones none.
+    let mut st = RawStmt::prepare(db, "SELECT partial FROM pragma_index_list('rdf_quad', 'main') WHERE name = ?1", false)?;
+    st.bind_text(1, index)?;
+    let partial = if st.step()? { st.col_i64(0) != 0 } else { return Ok(None) };
+    drop(st);
+    let term = order.sql_partial_term();
+    let predicate_ok = if term.is_empty() {
+        !partial
+    } else {
+        partial && row.sql.as_deref().is_some_and(|sql| sql.trim_end().ends_with(&format!(") WHERE {term}")))
+    };
+    Ok(predicate_ok.then_some(root))
+}

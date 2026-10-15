@@ -105,7 +105,9 @@ impl Construct {
             for (k, term) in t.iter().enumerate() {
                 ids[k] = match *term {
                     TemplateTerm::Const(id) => id,
-                    TemplateTerm::Slot(s) => row.get(s as usize).copied().filter(|v| *v != TermId::ERROR).unwrap_or_default(),
+                    TemplateTerm::Slot(s) => {
+                        row.get(s as usize).copied().filter(|v| *v != TermId::ERROR).unwrap_or_default()
+                    }
                     TemplateTerm::BNode(n) => {
                         let slot = &mut self.bnodes[n as usize];
                         if slot.0 != self.generation {

@@ -8,8 +8,7 @@ use std::sync::Arc;
 
 use sq_core::eval_api::{SolutionSource, TempDict, TripleSource};
 use sq_core::ir::{
-    DatasetSpec, DefaultGraph, Expr, GraphSel, NamedGraphs, OrderKey, PatTerm, QuadPat, QueryForm, VarOrigin,
-    VarTable,
+    DatasetSpec, DefaultGraph, Expr, GraphSel, NamedGraphs, OrderKey, PatTerm, QuadPat, QueryForm, VarOrigin, VarTable,
 };
 use sq_core::plan::{JoinKind, Op, Plan, QueryOptions, QueryPlan, ScanOp};
 use sq_core::stats::{CostConstants, Stats};
@@ -54,7 +53,10 @@ impl Fx {
     }
 
     pub fn typed(&self, lex: &str, dt: &str) -> TermId {
-        let t = oxrdf::Literal::new_typed_literal(lex, oxrdf::NamedNode::new_unchecked(format!("{}{dt}", sq_core::codec::XSD)));
+        let t = oxrdf::Literal::new_typed_literal(
+            lex,
+            oxrdf::NamedNode::new_unchecked(format!("{}{dt}", sq_core::codec::XSD)),
+        );
         self.store.intern(t.as_ref().into()).unwrap()
     }
 

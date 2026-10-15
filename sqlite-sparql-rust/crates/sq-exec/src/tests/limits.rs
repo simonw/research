@@ -3,7 +3,8 @@ use super::*;
 
 fn big(fx: &Fx, n: i64) -> TermId {
     let p = fx.iri("p");
-    let mut quads: Vec<[TermId; 4]> = (0..n).map(|i| [TermId::DEFAULT_GRAPH, fx.iri(&format!("s{i}")), p, int(i)]).collect();
+    let mut quads: Vec<[TermId; 4]> =
+        (0..n).map(|i| [TermId::DEFAULT_GRAPH, fx.iri(&format!("s{i}")), p, int(i)]).collect();
     fx.store.insert(&mut quads).unwrap();
     p
 }

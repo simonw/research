@@ -73,3 +73,37 @@ fn review_nested_sequence_with_constant_endpoints() {
     assert_eq!(ask("ASK { :zz :p?/(:q?/:r?) :zz }"), OracleOutput::Boolean(false), "top-level");
     assert_eq!(ask("ASK { :zz (:p?/(:q?/:r?))|:never :zz }"), OracleOutput::Boolean(false), "nested in |");
 }
+
+/// End to end, W3C `dawg-optional-filter-005-not-simplified` (the SPARQL 1.1 reading of
+/// `OPTIONAL { { P FILTER F } }`, see `review_optional_filter_005_preferred_reading` in the unit
+/// tests). It fails today, upstream of the oracle: spargebra 0.4.7's GroupGraphPatternSub folds
+/// `Join(Z, Filter(F, P))` into `Filter(F, P)` while parsing and OptionalGraphPattern then turns
+/// that into `LeftJoin(_, P, F)`, so sq-plan cannot tell the two forms apart. Ignored so the
+/// suite stays green; run with `--ignored` to see the deviation.
+#[test]
+#[ignore = "upstream: spargebra applies the §18.2.2.8 simplification step during parsing"]
+fn review_optional_filter_005_not_simplified_end_to_end() {
+    let store = MemStore::new();
+    let title = iri(&store, "title");
+    let price = iri(&store, "price");
+    let mut quads = Vec::new();
+    for (n, t, p) in [(1, "TITLE 1", Some(10)), (2, "TITLE 2", Some(20)), (3, "TITLE 3", None)] {
+        let book = iri(&store, &format!("book{n}"));
+        let lit = store.intern(oxrdf::LiteralRef::new_simple_literal(t).into()).unwrap();
+        quads.push([TermId::DEFAULT_GRAPH, book, title, lit]);
+        if let Some(p) = p {
+            quads.push([TermId::DEFAULT_GRAPH, book, price, TermId::from_int(p).unwrap()]);
+        }
+    }
+    store.insert(&mut quads).unwrap();
+    let query = "SELECT ?y ?price { ?book :title ?y OPTIONAL { { ?book :price ?price FILTER(?y = \"TITLE 2\") } } }";
+    let text = format!("PREFIX : <{BASE}>\n{query}");
+    let parsed = sq_plan::parse_query(&text, Some(BASE)).expect("query parses");
+    let lowered = sq_plan::lower_query(&parsed, &store, &QueryOptions::default()).expect("query lowers");
+    let OracleOutput::Solutions { rows, .. } = sq_oracle::evaluate(&lowered, &store).expect("query evaluates") else {
+        panic!("solutions expected")
+    };
+    let prices: Vec<_> = rows.iter().filter_map(|r| r[1].clone()).collect();
+    assert_eq!(rows.len(), 3);
+    assert!(prices.is_empty(), "no ?price may be bound under the preferred reading, got {prices:?}");
+}

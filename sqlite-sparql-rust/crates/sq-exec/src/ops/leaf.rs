@@ -102,9 +102,8 @@ impl Operator for Values {
             }
             let r = &self.rows[self.pos];
             self.pos += 1;
-            let compatible = self.slots.iter().zip(r).all(|(s, v)| {
-                !v.is_bound() || self.seed.value(*s).is_none_or(|sv| sv == *v)
-            });
+            let compatible =
+                self.slots.iter().zip(r).all(|(s, v)| !v.is_bound() || self.seed.value(*s).is_none_or(|sv| sv == *v));
             if compatible {
                 out.push_row(self.seed.base());
                 let i = out.len() - 1;
@@ -218,11 +217,7 @@ impl Operator for SqlJoin {
             }
             for i in 0..n {
                 let vals = &self.buf[i * w..(i + 1) * w];
-                let ok = self
-                    .out_slots
-                    .iter()
-                    .zip(vals)
-                    .all(|(s, v)| self.seed.value(*s).is_none_or(|sv| sv == *v));
+                let ok = self.out_slots.iter().zip(vals).all(|(s, v)| self.seed.value(*s).is_none_or(|sv| sv == *v));
                 if ok {
                     out.push_row(self.seed.base());
                     let r = out.len() - 1;

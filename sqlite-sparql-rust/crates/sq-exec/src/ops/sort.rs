@@ -141,8 +141,9 @@ impl Sort {
             }
             Some(slots) if (0..n).all(|i| all_int(rows.row(i), slots)) => {
                 let k = slots.len();
-                let flat: Vec<i64> =
-                    (0..n).flat_map(|i| slots.iter().map(move |(s, d)| directed_int(rows.row(i)[*s as usize], *d))).collect();
+                let flat: Vec<i64> = (0..n)
+                    .flat_map(|i| slots.iter().map(move |(s, d)| directed_int(rows.row(i)[*s as usize], *d)))
+                    .collect();
                 let mut perm: Vec<u32> = (0..n as u32).collect();
                 perm.sort_unstable_by(|a, b| {
                     let (x, y) = (*a as usize * k, *b as usize * k);
@@ -406,7 +407,7 @@ impl TopK {
     }
 
     /// Leaves INT mode: computes the SortKeys of every retained row and re-heapifies.
-    fn to_key_mode(&mut self, cx: &mut ExecCtx) -> Result<()> {
+    fn leave_int_mode(&mut self, cx: &mut ExecCtx) -> Result<()> {
         self.int_mode = false;
         for e in 0..self.heap.len() {
             let mut ks = Vec::with_capacity(self.keys.len());
@@ -424,7 +425,7 @@ impl TopK {
         if let (Some(slots), true) = (&self.slots, self.int_mode)
             && !all_int(self.inb.row(r), slots)
         {
-            self.to_key_mode(cx)?;
+            self.leave_int_mode(cx)?;
         }
         if !self.int_mode {
             self.tmp.clear();

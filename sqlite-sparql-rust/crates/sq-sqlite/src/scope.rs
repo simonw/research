@@ -232,12 +232,12 @@ impl ReadScope {
         let depth = shared.enter_scope(depth);
         // Built first: on any error below, `Drop` ends whatever was opened.
         let mut scope = ReadScope { shared: shared.clone(), depth, savepoint: None, closed: false };
-        if shared.db().txn_state() == ffi::SQLITE_TXN_NONE {
-            if let Opened::Open(sp) = Savepoint::open(shared, Kind::Read, depth)? {
-                scope.savepoint = Some(sp);
-                // Starts the read transaction a moment before the caller's first read would.
-                shared.refresh_abort()?;
-            }
+        if shared.db().txn_state() == ffi::SQLITE_TXN_NONE
+            && let Opened::Open(sp) = Savepoint::open(shared, Kind::Read, depth)?
+        {
+            scope.savepoint = Some(sp);
+            // Starts the read transaction a moment before the caller's first read would.
+            shared.refresh_abort()?;
         }
         Ok(scope)
     }

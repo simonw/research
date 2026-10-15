@@ -8,7 +8,9 @@
 //!   sequence is a join on a fresh middle variable followed by a projection, an alternative is
 //!   a union. Both keep duplicates. The middle of a sequence is a *variable*: each operand is
 //!   evaluated with it free, so its zero-length matches range over `nodes(G)` and never fix it
-//!   to an endpoint constant that is not a node (`:zz (:p?/:q?) ?y` has no solution).
+//!   to an endpoint constant that is not a node (`:zz (:p?/:q?) ?y` has no solution). Naive by
+//!   design: the operand away from the fixed endpoint is evaluated whole (once per pattern),
+//!   not probed with the other operand's middle values.
 //! * `path?`, `path*` and `path+` produce sets. `*` and `+` use the ALP procedure: a
 //!   depth-first walk with a visited set, which terminates on cycles.
 //! * Zero-length matches: a fixed endpoint matches itself even when it is not a node of the
@@ -53,7 +55,7 @@ enum Dir {
     Backward,
 }
 
-/// Which endpoint a [`Side`]-indexed operand is keyed on.
+/// The endpoint an [`Index`] is keyed on.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Side {
     Start,
@@ -65,7 +67,7 @@ enum Side {
 type Index = FxHashMap<TermId, Vec<TermId>>;
 
 /// A sequence operand evaluated once: (operand, its endpoints, the endpoint it is keyed on).
-/// The operand is identified by address; it is borrowed for the evaluator's lifetime.
+/// The operand is identified by address, which is stable: it is borrowed for `'a`.
 type OperandKey = (*const PathPlan, End, End, Side);
 
 /// Evaluates one property path pattern over one graph of the dataset.

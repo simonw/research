@@ -62,7 +62,9 @@ fn graph() -> G {
     let [a, b, cc, d, e, m1, m2, z, p, name, r, s] =
         ["a", "b", "c", "d", "e", "m1", "m2", "z", "p", "name", "r", "s"].map(|n| fx.iri(n));
     let lit = fx.lit("A");
-    for (x, y, w) in [(a, p, b), (b, p, cc), (cc, p, a), (d, p, e), (a, name, lit), (a, r, m1), (a, r, m2), (m1, s, z), (m2, s, z)] {
+    for (x, y, w) in
+        [(a, p, b), (b, p, cc), (cc, p, a), (d, p, e), (a, name, lit), (a, r, m1), (a, r, m2), (m1, s, z), (m2, s, z)]
+    {
         fx.add(x, y, w);
     }
     G { fx, a, b, c: cc, d, e, z, p, name, r, s, lit }
@@ -70,7 +72,8 @@ fn graph() -> G {
 
 impl G {
     fn col(&self, p: Plan, slot: usize, width: usize) -> Vec<TermId> {
-        let mut v: Vec<TermId> = Q::new(&self.fx.store, width, p).rows(self.fx.rc()).into_iter().map(|r| r[slot]).collect();
+        let mut v: Vec<TermId> =
+            Q::new(&self.fx.store, width, p).rows(self.fx.rc()).into_iter().map(|r| r[slot]).collect();
         v.sort();
         v
     }
@@ -197,7 +200,15 @@ fn both_endpoints_free_and_same_variable() {
     }
     let rows = Q::new(&fx.store, 2, path(v(0), star(pred(p)), v(1))).sorted(fx.rc());
     let want = ms(vec![
-        vec![a, a], vec![a, b], vec![b, b], vec![b, a], vec![cc, cc], vec![cc, d], vec![d, d], vec![x, x], vec![lit, lit],
+        vec![a, a],
+        vec![a, b],
+        vec![b, b],
+        vec![b, a],
+        vec![cc, cc],
+        vec![cc, d],
+        vec![d, d],
+        vec![x, x],
+        vec![lit, lit],
     ]);
     assert_eq!(rows, want, "every node of the graph matches itself");
     let rows = Q::new(&fx.store, 1, path(v(0), star(pred(p)), v(0))).sorted(fx.rc());

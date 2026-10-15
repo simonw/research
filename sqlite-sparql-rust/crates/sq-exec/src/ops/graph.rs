@@ -8,7 +8,7 @@ use sq_core::{Batch, Result, Slot, TermId};
 
 use super::{BoxOp, Operator};
 use crate::ctx::ExecCtx;
-use crate::rows::retain_from;
+use crate::rows::Pull;
 use crate::seed::{Seed, SeedBuf};
 
 pub(crate) struct GraphLoop {
@@ -19,11 +19,12 @@ pub(crate) struct GraphLoop {
     pos: usize,
     end: usize,
     opened: bool,
+    pull: Pull,
 }
 
 impl GraphLoop {
     pub fn new(slot: Slot, input: BoxOp, width: usize) -> Self {
-        GraphLoop { slot, input, seed: SeedBuf::new(width), pos: 0, end: 0, opened: false }
+        GraphLoop { slot, input, seed: SeedBuf::new(width), pos: 0, end: 0, opened: false, pull: Pull::new(width) }
     }
 
     fn graph(cx: &ExecCtx, i: usize) -> TermId {
@@ -60,12 +61,13 @@ impl Operator for GraphLoop {
                 if !self.opened {
                     // Never seeded with Join-mode values; the substitution reaches the input.
                     self.input.open(cx, self.seed.subst_only())?;
+                    self.pull.reset();
                     self.opened = true;
                 }
                 let start = out.len();
-                let more = self.input.next(cx, out)?;
                 let slot = self.slot as usize;
-                retain_from(out, start, |r| Ok(!r[slot].is_bound() || r[slot] == g))?;
+                let more =
+                    self.pull.pump(cx, self.input.as_mut(), out, |_, r| Ok(!r[slot].is_bound() || r[slot] == g))?;
                 for i in start..out.len() {
                     out.row_mut(i)[slot] = g;
                 }

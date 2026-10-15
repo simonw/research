@@ -56,12 +56,18 @@ enum Access {
     /// One cursor (`srcs[0]`).
     Single,
     /// `srcs[0]` over the INT range on GPOS, then the numeric exceptions on GPOX.
-    Range { phase: u8 },
+    Range {
+        phase: u8,
+    },
     /// One g-first cursor per FROM NAMED graph, scanned one after another; the graph slot is
     /// bound in the output image.
-    PerGraph { slot: Slot },
+    PerGraph {
+        slot: Slot,
+    },
     /// `srcs[..n]` merged in suffix order with an adjacent dedupe.
-    Merge { n: usize },
+    Merge {
+        n: usize,
+    },
 }
 
 /// Value of a pattern position at open time.
@@ -291,9 +297,9 @@ impl Scan {
                     }
                 }
             },
-            GraphSel::Active => Gm::Fixed(
-                cx.active_graph().ok_or_else(|| Error::internal("GraphSel::Active outside of a GraphLoop"))?,
-            ),
+            GraphSel::Active => {
+                Gm::Fixed(cx.active_graph().ok_or_else(|| Error::internal("GraphSel::Active outside of a GraphLoop"))?)
+            }
             GraphSel::Const(g) => Gm::Fixed(g),
             GraphSel::Slot(gs) => match self.seed.value(gs) {
                 Some(v) if sh.is_named_graph(v) => Gm::Fixed(v),

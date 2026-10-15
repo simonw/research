@@ -6,7 +6,7 @@ use sq_core::{BATCH_ROWS, Batch, Result, Slot, TermId};
 
 use super::{BoxOp, Operator};
 use crate::ctx::{Charge, ExecCtx};
-use crate::rows::{Pull, retain_from};
+use crate::rows::Pull;
 use crate::seed::{Seed, SeedBuf};
 
 /// Keeps `slots`, resets every other slot to UNBOUND (inside an EXISTS pattern the substituted
@@ -204,9 +204,10 @@ impl Operator for Reduced {
     }
 }
 
-/// OFFSET / LIMIT with early stop: once the limit is reached the input is no longer pulled.
-/// When the remaining limit is smaller than the free space of the output batch, the input
-/// fills a private batch holding only that many free rows, so streaming inputs stop early.
+/// OFFSET / LIMIT with early stop: once the limit is reached the input is closed and no
+/// longer pulled. The input fills a private batch that is padded so that only
+/// min(offset + limit left, 1024) rows are free: streaming inputs stop early under small
+/// limits, and skipped rows never reach the output batch.
 pub(crate) struct Slice {
     input: BoxOp,
     offset: u64,
@@ -215,7 +216,10 @@ pub(crate) struct Slice {
     left: u64,
     done: bool,
     seed: SeedBuf,
-    scratch: Batch,
+    buf: Batch,
+    /// Next unread row of `buf`.
+    pos: usize,
+    more: bool,
 }
 
 impl Slice {
@@ -228,32 +232,16 @@ impl Slice {
             left: limit.unwrap_or(u64::MAX),
             done: true,
             seed: SeedBuf::new(width),
-            scratch: Batch::new(width),
+            buf: Batch::new(width),
+            pos: 0,
+            more: false,
         }
     }
 
-    /// Takes the rows the input appended from `start` on: drops the offset, cuts at the limit.
-    fn take(&mut self, out: &mut Batch, start: usize) -> Result<()> {
-        let skip = &mut self.skip;
-        if *skip > 0 {
-            retain_from(out, start, |_| {
-                if *skip > 0 {
-                    *skip -= 1;
-                    Ok(false)
-                } else {
-                    Ok(true)
-                }
-            })?;
-        }
-        let got = (out.len() - start) as u64;
-        if got >= self.left {
-            out.truncate(start + self.left as usize);
-            self.left = 0;
-            self.done = true;
-        } else {
-            self.left -= got;
-        }
-        Ok(())
+    fn finish(&mut self, cx: &mut ExecCtx) -> Result<bool> {
+        self.done = true;
+        self.input.close(cx);
+        Ok(false)
     }
 }
 
@@ -263,6 +251,9 @@ impl Operator for Slice {
         self.skip = self.offset;
         self.left = self.limit.unwrap_or(u64::MAX);
         self.done = self.left == 0;
+        self.buf.clear();
+        self.pos = 0;
+        self.more = true;
         if self.done {
             return Ok(());
         }
@@ -275,40 +266,36 @@ impl Operator for Slice {
             if self.done {
                 return Ok(false);
             }
+            let unread = self.buf.len() - self.pos;
+            let skipped = (self.skip.min(unread as u64)) as usize;
+            self.pos += skipped;
+            self.skip -= skipped as u64;
+            while self.pos < self.buf.len() {
+                if self.left == 0 {
+                    return self.finish(cx);
+                }
+                if out.is_full() {
+                    return Ok(true);
+                }
+                out.push_row(self.buf.row(self.pos));
+                self.pos += 1;
+                self.left -= 1;
+            }
+            if self.left == 0 || !self.more {
+                return self.finish(cx);
+            }
             if out.is_full() {
                 return Ok(true);
             }
-            let free = (BATCH_ROWS - out.len()) as u64;
-            let want = self.left.saturating_add(self.skip);
-            let more = if want < free && self.scratch.width() == out.width() {
-                // Leave only `want` free rows so that streaming inputs stop early.
-                // The padding rows are never read; only their number matters.
-                let pad = BATCH_ROWS - want as usize;
-                self.scratch.truncate(pad);
-                while self.scratch.len() < pad {
-                    self.scratch.push_unbound();
-                }
-                let more = self.input.next(cx, &mut self.scratch)?;
-                let start = out.len();
-                for i in pad..self.scratch.len() {
-                    out.push_row(self.scratch.row(i));
-                }
-                self.take(out, start)?;
-                more
-            } else {
-                let start = out.len();
-                let more = self.input.next(cx, out)?;
-                self.take(out, start)?;
-                more
-            };
-            if !more {
-                self.done = true;
-                return Ok(false);
+            // Pad so that only the rows still usable are free; the padding is never read.
+            let want = self.skip.saturating_add(self.left).min(BATCH_ROWS as u64) as usize;
+            let pad = BATCH_ROWS - want;
+            self.buf.truncate(pad);
+            while self.buf.len() < pad {
+                self.buf.push_unbound();
             }
-            if self.done {
-                self.input.close(cx);
-                return Ok(false);
-            }
+            self.pos = pad;
+            self.more = self.input.next(cx, &mut self.buf)?;
         }
     }
 

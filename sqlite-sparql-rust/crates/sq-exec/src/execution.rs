@@ -72,17 +72,27 @@ impl Root {
     }
 }
 
-impl Solutions for Root {
-    fn next_solution(&mut self, cx: &mut ExecCtx) -> Result<Option<&[TermId]>> {
+impl Root {
+    /// Ensures unread rows in `batch[pos..]`; false when the root is exhausted.
+    fn fill(&mut self, cx: &mut ExecCtx) -> Result<bool> {
         self.open(cx)?;
         while self.pos >= self.batch.len() {
             if !self.more {
                 self.finish(cx);
-                return Ok(None);
+                return Ok(false);
             }
             self.batch.clear();
             self.pos = 0;
             self.more = self.op.next(cx, &mut self.batch)?;
+        }
+        Ok(true)
+    }
+}
+
+impl Solutions for Root {
+    fn next_solution(&mut self, cx: &mut ExecCtx) -> Result<Option<&[TermId]>> {
+        if !self.fill(cx)? {
+            return Ok(None);
         }
         let i = self.pos;
         self.pos += 1;
@@ -92,7 +102,7 @@ impl Solutions for Root {
 
 enum Triples {
     Construct(Construct),
-    Describe(Describe),
+    Describe(Box<Describe>),
 }
 
 /// Owns the operator tree, the store handle (in the execution context), the form and the
@@ -117,7 +127,7 @@ fn max_id(p: &Plan) -> u32 {
 impl Execution {
     pub fn new(store: Rc<dyn QuadStore>, plan: QueryPlan, opts: &QueryOptions, caches: ExecCaches) -> Result<Self> {
         // The store's dictionary already applies the connection-level caches.
-        let ExecCaches {} = caches;
+        let _ = caches;
         let width = plan.width();
         if width > SlotSet::MAX_SLOTS {
             return Err(Error::Unsupported(format!("query needs {width} variables (at most {})", SlotSet::MAX_SLOTS)));
@@ -159,7 +169,7 @@ impl Execution {
         };
         let triples = match &plan.form {
             QueryForm::Construct(t) => Some(Triples::Construct(Construct::new(t.clone()))),
-            QueryForm::Describe(s) => Some(Triples::Describe(Describe::new(s.clone()))),
+            QueryForm::Describe(s) => Some(Triples::Describe(Box::new(Describe::new(s.clone())))),
             _ => None,
         };
         let exists = ExistsState::new(exists_ops, &plan.exists, width);
@@ -294,13 +304,20 @@ impl SolutionSource for Execution {
         match self.form {
             QueryForm::Select(_) => self.timed(|me| {
                 let mut n = 0;
-                while n < max_rows {
-                    let Some(row) = me.root.next_solution(&mut me.cx)? else { break };
-                    out.extend(me.proj.iter().map(|s| {
-                        let v = row[*s as usize];
-                        if v == TermId::ERROR { TermId::UNBOUND } else { v }
-                    }));
-                    n += 1;
+                while n < max_rows && me.root.fill(&mut me.cx)? {
+                    let root = &mut me.root;
+                    let take = (root.batch.len() - root.pos).min(max_rows - n);
+                    out.reserve(take * me.proj.len());
+                    for i in root.pos..root.pos + take {
+                        let row = root.batch.row(i);
+                        // ERROR (an erroring GROUP BY key) is never a result value.
+                        out.extend(me.proj.iter().map(|s| match row[*s as usize] {
+                            TermId::ERROR => TermId::UNBOUND,
+                            v => v,
+                        }));
+                    }
+                    root.pos += take;
+                    n += take;
                 }
                 Ok(n)
             }),

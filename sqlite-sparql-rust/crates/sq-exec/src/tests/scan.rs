@@ -7,7 +7,8 @@ use sq_core::plan::IntRange;
 /// :a :knows :b, :b :knows :c, :c :knows :a, :d :knows :d, :a :name "Alice".
 fn social() -> (Fx, [TermId; 6]) {
     let fx = Fx::new();
-    let (a, b, cc, d, knows, name) = (fx.iri("a"), fx.iri("b"), fx.iri("c"), fx.iri("d"), fx.iri("knows"), fx.iri("name"));
+    let (a, b, cc, d, knows, name) =
+        (fx.iri("a"), fx.iri("b"), fx.iri("c"), fx.iri("d"), fx.iri("knows"), fx.iri("name"));
     fx.add(a, knows, b);
     fx.add(b, knows, cc);
     fx.add(cc, knows, a);

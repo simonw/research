@@ -163,7 +163,8 @@ fn bind_join_reuses_runs_of_equal_seed_tuples() {
     }
     // Adjacent duplicates reuse the run even without sorting.
     let rows = vec![vec![p1], vec![p1], vec![p1], vec![p2]];
-    let mut e = Q::new(&t.fx.store, 3, bind_join(values(&[0], rows), t.right_seeded(), &[0], JoinKind::Inner)).exec(t.fx.rc());
+    let mut e =
+        Q::new(&t.fx.store, 3, bind_join(values(&[0], rows), t.right_seeded(), &[0], JoinKind::Inner)).exec(t.fx.rc());
     assert_eq!(collect(&mut e).unwrap().len(), 4);
     assert_eq!(e.profile().nodes[2].opens, 2);
 }
@@ -193,7 +194,14 @@ fn bind_join_adaptive_switch_to_hash() {
             sort_left: false,
             adaptive: false,
         });
-        plan(Op::BindJoin { left: Box::new(left), right: Box::new(right), seed: vec![1], kind, sort_left: false, adaptive })
+        plan(Op::BindJoin {
+            left: Box::new(left),
+            right: Box::new(right),
+            seed: vec![1],
+            kind,
+            sort_left: false,
+            adaptive,
+        })
     };
     for kind in [JoinKind::Inner, left(None), JoinKind::Semi, JoinKind::Anti] {
         let mut e = Q::new(&fx.store, 3, mk(true, kind.clone())).exec(fx.rc());
@@ -232,7 +240,8 @@ fn merge_join_many_to_many_check_and_factorized_count() {
     assert_eq!(mj, hj);
     // Factorized count: no row is produced.
     let count = |input: Plan| plan(Op::Count { input: Box::new(input), out: 2 });
-    let mut e = Q::new(&fx.store, 3, count(merge_join(l(), r(), 0, &[], 6))).form(QueryForm::Select(vec![2])).exec(fx.rc());
+    let mut e =
+        Q::new(&fx.store, 3, count(merge_join(l(), r(), 0, &[], 6))).form(QueryForm::Select(vec![2])).exec(fx.rc());
     assert_eq!(collect(&mut e).unwrap(), vec![vec![int(expected as i64)]]);
     assert_eq!(e.profile().nodes[1].rows_out, expected, "fast_count reports the count, not rows");
     // Execution::count on the join itself.
@@ -242,7 +251,9 @@ fn merge_join_many_to_many_check_and_factorized_count() {
     let checked = Q::new(&fx.store, 3, merge_join(l(), r_same(), 0, &[1], 6)).sorted(fx.rc());
     let hashed = Q::new(&fx.store, 3, hash_join(r_same(), l(), &[0], &[1], JoinKind::Inner, false)).sorted(fx.rc());
     assert_eq!(checked, hashed);
-    let mut e = Q::new(&fx.store, 3, count(merge_join(l(), r_same(), 0, &[1], 6))).form(QueryForm::Select(vec![2])).exec(fx.rc());
+    let mut e = Q::new(&fx.store, 3, count(merge_join(l(), r_same(), 0, &[1], 6)))
+        .form(QueryForm::Select(vec![2]))
+        .exec(fx.rc());
     assert_eq!(collect(&mut e).unwrap(), vec![vec![int(checked.len() as i64)]]);
 }
 
@@ -261,18 +272,30 @@ fn merge_join_gallops_with_seeks() {
     }
     fx.store.insert(&mut quads).unwrap();
     // The sparse side on the left: the dense right side gallops.
-    let mut e = Q::new(&fx.store, 3, merge_join(scan(v(0), c(q), v(2)), scan(v(0), c(p), v(1)), 0, &[], 6)).exec(fx.rc());
+    let mut e =
+        Q::new(&fx.store, 3, merge_join(scan(v(0), c(q), v(2)), scan(v(0), c(p), v(1)), 0, &[], 6)).exec(fx.rc());
     let rows = collect(&mut e).unwrap();
     assert_eq!(rows.len(), 5);
     let seeks = e.profile().nodes[2].seeks;
     assert!(seeks > 1, "the right scan was re-positioned by galloping ({seeks})");
     // gallop = 0 disables seeking.
-    let mut e = Q::new(&fx.store, 3, merge_join(scan(v(0), c(q), v(2)), scan(v(0), c(p), v(1)), 0, &[], 0)).exec(fx.rc());
+    let mut e =
+        Q::new(&fx.store, 3, merge_join(scan(v(0), c(q), v(2)), scan(v(0), c(p), v(1)), 0, &[], 0)).exec(fx.rc());
     assert_eq!(collect(&mut e).unwrap(), rows);
     assert_eq!(e.profile().nodes[2].seeks, 1, "only the initial positioning");
     // Galloping over a SortBySlot enforcer (binary search in its buffer).
-    let mut e = Q::new(&fx.store, 3, merge_join(scan(v(0), c(q), v(2)), sort_by(scan_order(GraphSel::Default, v(0), c(p), v(1), IndexOrder::Gpos), 0), 0, &[], 6))
-        .exec(fx.rc());
+    let mut e = Q::new(
+        &fx.store,
+        3,
+        merge_join(
+            scan(v(0), c(q), v(2)),
+            sort_by(scan_order(GraphSel::Default, v(0), c(p), v(1), IndexOrder::Gpos), 0),
+            0,
+            &[],
+            6,
+        ),
+    )
+    .exec(fx.rc());
     assert_eq!(ms(collect(&mut e).unwrap()), ms(rows));
 }
 
@@ -313,10 +336,15 @@ fn star_merge_intersects_sorted_inputs() {
     let mut e = Q::new(&fx.store, 4, plan(Op::StarMerge { key: 0, inputs: inputs(), check: vec![] })).exec(fx.rc());
     assert_eq!(e.count().unwrap(), 2);
     // Two inputs, compared with a hash join.
-    let two = plan(Op::StarMerge { key: 0, inputs: vec![scan(v(0), c(a), v(1)), scan(v(0), c(b), v(2))], check: vec![] });
+    let two =
+        plan(Op::StarMerge { key: 0, inputs: vec![scan(v(0), c(a), v(1)), scan(v(0), c(b), v(2))], check: vec![] });
     let got = Q::new(&fx.store, 3, two).sorted(fx.rc());
-    let hj = Q::new(&fx.store, 3, hash_join(scan(v(0), c(b), v(2)), scan(v(0), c(a), v(1)), &[0], &[], JoinKind::Inner, false))
-        .sorted(fx.rc());
+    let hj = Q::new(
+        &fx.store,
+        3,
+        hash_join(scan(v(0), c(b), v(2)), scan(v(0), c(a), v(1)), &[0], &[], JoinKind::Inner, false),
+    )
+    .sorted(fx.rc());
     assert_eq!(got, hj);
     assert_eq!(got.len(), 10);
 }
@@ -357,7 +385,8 @@ fn union_concatenates_with_bag_semantics() {
         scan_bound(GraphSel::Default, v(0), c(t.name), v(1), &[0]),
         scan_bound(GraphSel::Default, v(0), c(t.age), v(2), &[0]),
     ]);
-    let got = Q::new(&t.fx.store, 3, bind_join(values(&[0], vec![vec![p1]]), right, &[0], JoinKind::Inner)).sorted(t.fx.rc());
+    let got =
+        Q::new(&t.fx.store, 3, bind_join(values(&[0], vec![vec![p1]]), right, &[0], JoinKind::Inner)).sorted(t.fx.rc());
     assert_eq!(got, ms(vec![vec![p1, t.names[0], u()], vec![p1, u(), int(30)]]));
 }
 

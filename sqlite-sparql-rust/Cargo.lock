@@ -667,7 +667,19 @@ dependencies = [
 name = "sq-sqlgen"
 version = "0.1.0"
 dependencies = [
+ "oxrdf",
+ "oxrdfio",
+ "oxsdatatypes",
+ "oxttl",
+ "rand",
+ "rusqlite",
+ "spareval",
+ "spargebra",
  "sq-core",
+ "sq-expr",
+ "sq-memstore",
+ "sq-plan",
+ "sq-sqlite",
 ]
 
 [[package]]

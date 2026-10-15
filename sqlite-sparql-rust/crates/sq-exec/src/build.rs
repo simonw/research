@@ -30,7 +30,9 @@ impl Builder<'_> {
         let mut slots = SlotSet::EMPTY;
         crate::exists::collect(p, &mut slots, &mut Vec::new());
         match slots.iter().find(|s| *s as usize >= self.width) {
-            Some(s) => Err(Error::internal(format!("plan #{}: slot {s} outside the row layout of width {}", p.id, self.width))),
+            Some(s) => {
+                Err(Error::internal(format!("plan #{}: slot {s} outside the row layout of width {}", p.id, self.width)))
+            }
             None => Ok(()),
         }
     }
@@ -101,7 +103,11 @@ impl Builder<'_> {
                 let compiled = aggs
                     .iter()
                     .map(|(slot, spec)| {
-                        Ok(Agg { slot: *slot, spec: spec.clone(), arg: spec.arg.as_ref().map(|e| self.expr(e)).transpose()? })
+                        Ok(Agg {
+                            slot: *slot,
+                            spec: spec.clone(),
+                            arg: spec.arg.as_ref().map(|e| self.expr(e)).transpose()?,
+                        })
                     })
                     .collect::<Result<Vec<_>>>()?;
                 Box::new(Group::new(self.group_input(input, keys)?, keys.clone(), compiled, *streaming, w))
@@ -130,7 +136,14 @@ impl Builder<'_> {
     fn group_input(&self, input: &Plan, keys: &[Slot]) -> Result<BoxOp> {
         match &input.op {
             Op::Extend { input: inner, slot, expr, canonical } if keys.contains(slot) => {
-                let op = Extend::new(self.group_input(inner, keys)?, *slot, self.expr(expr)?, *canonical, TermId::ERROR, self.width);
+                let op = Extend::new(
+                    self.group_input(inner, keys)?,
+                    *slot,
+                    self.expr(expr)?,
+                    *canonical,
+                    TermId::ERROR,
+                    self.width,
+                );
                 Ok(Box::new(Instrumented { id: input.id, inner: Box::new(op) }))
             }
             _ => self.build(input),

@@ -5,6 +5,12 @@
 //! it is empty: `SELECT (COUNT(*) AS ?c) {}` over no solutions gives one row with 0. With keys
 //! and no input there are no groups. Each aggregate is computed by sq-expr's accumulators;
 //! an aggregate whose value is an error leaves its slot unbound but the group row is kept.
+//!
+//! `GROUP BY (expr)` arrives as an `Extend` binding a key slot, which leaves the slot unbound
+//! when `expr` is an error. An error key and an unbound key therefore share a group, as
+//! §18.5.1 requires: Group compares ListEval results, and ListEval gives `(error)` both for an
+//! expression whose evaluation is an error and for an unbound one ("the evaluation of an
+//! unbound expression is an error"). A separate group for errors would deviate from it.
 use rustc_hash::FxHashMap;
 use sq_core::ir::{AggFunc, AggSpec, Logical, VarOrigin};
 use sq_core::{Result, Slot, TermId};

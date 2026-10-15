@@ -104,8 +104,9 @@ fn graph_names() {
     shown.sort();
     assert_eq!(shown, vec![format!("<{EX}absent>"), format!("<{EX}g2>")]);
     // Seeded: only a matching named graph.
-    let rows = Q::new(&fx.store, 1, bind_join(values(&[0], vec![vec![g2], vec![fx.iri("x")]]), names, &[0], JoinKind::Inner))
-        .rows(fx.rc());
+    let rows =
+        Q::new(&fx.store, 1, bind_join(values(&[0], vec![vec![g2], vec![fx.iri("x")]]), names, &[0], JoinKind::Inner))
+            .rows(fx.rc());
     assert_eq!(rows, vec![vec![g2]]);
     let mut e = Q::new(&fx.store, 1, plan(Op::GraphNames { slot: 0 })).exec(fx.rc());
     assert_eq!(e.count().unwrap(), 2);

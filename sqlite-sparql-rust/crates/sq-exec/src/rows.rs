@@ -68,38 +68,6 @@ impl Rows {
     }
 }
 
-/// Keeps the rows of `out` from index `start` on for which `keep` returns true (earlier rows
-/// are untouched). The first error stops the evaluation and is returned.
-pub(crate) fn retain_from(
-    out: &mut Batch,
-    start: usize,
-    mut keep: impl FnMut(&[TermId]) -> Result<bool>,
-) -> Result<()> {
-    if start >= out.len() {
-        return Ok(());
-    }
-    let mut i = 0usize;
-    let mut err = None;
-    out.retain(|row| {
-        let idx = i;
-        i += 1;
-        if idx < start {
-            return true;
-        }
-        if err.is_some() {
-            return false;
-        }
-        match keep(row) {
-            Ok(k) => k,
-            Err(e) => {
-                err = Some(e);
-                false
-            }
-        }
-    });
-    err.map_or(Ok(()), Err)
-}
-
 /// SPARQL compatibility on `check`: every slot bound on both sides holds the same id.
 #[inline]
 pub(crate) fn compatible(a: &[TermId], b: &[TermId], check: &[Slot]) -> bool {
@@ -187,11 +155,7 @@ impl Pull {
 
 /// Pulls `op` into `b` (cleared first) until `b` is full or `op` is exhausted.
 /// Returns false once `op` is exhausted (the batch may still hold its last rows).
-pub(crate) fn refill(
-    op: &mut dyn crate::ops::Operator,
-    cx: &mut crate::ctx::ExecCtx,
-    b: &mut Batch,
-) -> Result<bool> {
+pub(crate) fn refill(op: &mut dyn crate::ops::Operator, cx: &mut crate::ctx::ExecCtx, b: &mut Batch) -> Result<bool> {
     b.clear();
     op.next(cx, b)
 }
@@ -202,19 +166,6 @@ mod tests {
 
     fn t(v: i64) -> TermId {
         TermId::from_int(v).unwrap()
-    }
-
-    #[test]
-    fn retain_from_keeps_prefix_and_reports_errors() {
-        let mut b = Batch::new(1);
-        for v in 0..6 {
-            b.push_row(&[t(v)]);
-        }
-        retain_from(&mut b, 2, |r| Ok(r[0].as_int().unwrap() % 2 == 1)).unwrap();
-        let got: Vec<i64> = (0..b.len()).map(|i| b.get(i, 0).as_int().unwrap()).collect();
-        assert_eq!(got, [0, 1, 3, 5]);
-        let e = retain_from(&mut b, 0, |_| Err(sq_core::Error::Timeout));
-        assert!(matches!(e, Err(sq_core::Error::Timeout)));
     }
 
     #[test]

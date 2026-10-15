@@ -11,7 +11,10 @@
 //!   decode paths (§4.3);
 //! * `scope` — [`ReadScope`] / [`WriteScope`] savepoint scopes (§8.6);
 //! * `writer`, `loader`, `analyze`, `maint` — `QuadStoreWriter`, the §2.3 bulk loader, §2.4
-//!   statistics, `vacuum_terms` / `check` / `explain_query_plan`.
+//!   statistics, `vacuum_terms` / `check` / `explain_query_plan`;
+//! * `btree` — the phase-2 direct B-tree reader (§13): [`BtreeCursor`] reads the covering
+//!   index pages of `rdf_quad` itself when the database is a rollback-journal file and a read
+//!   transaction is held, and falls back to a `SqlCursor` transparently otherwise.
 //!
 //! All state lives in one [`StorageShared`] per connection; [`SqliteStore`] is the cheap,
 //! clonable `QuadStore` / `QuadStoreWriter` / `Dictionary` handle over it. The connection is
@@ -24,6 +27,7 @@
 //! (see the `scope` module).
 
 mod analyze;
+mod btree;
 mod cache;
 mod cursor;
 mod dict;
@@ -39,6 +43,7 @@ mod store;
 mod template;
 mod writer;
 
+pub use btree::{BtreeCounters, BtreeCursor, DEFAULT_PAGE_CACHE_MB, ReaderMode};
 pub use cursor::{SqlCursor, SqlRowsCursor};
 pub use loader::{BulkMode, LoadOptions, LoadReport, LoadSource};
 pub use pool::PoolCounters;

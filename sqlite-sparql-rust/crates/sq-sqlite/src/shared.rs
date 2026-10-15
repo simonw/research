@@ -10,6 +10,7 @@ use sq_core::stats::Stats;
 use sq_core::term::Term;
 use sq_core::{Error, Result, Tag, TermId};
 
+use crate::btree::{BtreeCounters, BtreeReader, ReaderMode};
 use crate::cache::ClockCache;
 use crate::keys::OwnedKey;
 use crate::pool::{PoolCounters, StmtPool};
@@ -79,6 +80,8 @@ pub struct StorageShared {
     db: RawDb,
     cfg: RefCell<StorageConfig>,
     pub(crate) pool: Rc<StmtPool>,
+    /// Phase-2 direct B-tree reader state (§13): mode, page cache, root pages.
+    pub(crate) btree: Rc<BtreeReader>,
     pub(crate) decode_cache: RefCell<ClockCache<Arc<Term>>>,
     /// term hash -> (exact key, id).
     pub(crate) lookup_cache: RefCell<ClockCache<(OwnedKey, TermId)>>,
@@ -110,6 +113,7 @@ impl StorageShared {
             db,
             cfg: RefCell::new(cfg),
             pool: StmtPool::new(db),
+            btree: Rc::new(BtreeReader::new(db)),
             decode_cache: RefCell::new(ClockCache::new(decode_budget)),
             lookup_cache: RefCell::new(ClockCache::new(lookup_budget)),
             schema_cookie: Cell::new(None),
@@ -143,6 +147,44 @@ impl StorageShared {
         self.lookup_cache.try_borrow_mut().map_err(|_| Error::Reentrant)?.set_budget(cfg.lookup_cache_entries);
         *self.cfg.try_borrow_mut().map_err(|_| Error::Reentrant)? = cfg;
         Ok(())
+    }
+
+    // ------------------------------------------------------------------ B-tree reader (§13)
+
+    /// `sparql_config('reader', 'auto' | 'sql' | 'btree')`: the reader `SqliteStore::cursor`
+    /// uses for new cursors. `sql` is the kill switch; open cursors are not affected.
+    pub fn set_reader(&self, mode: ReaderMode) {
+        self.btree.set_mode(mode);
+    }
+
+    pub fn reader(&self) -> ReaderMode {
+        self.btree.mode()
+    }
+
+    /// `sparql_config('page_cache_mb', …)`: page-cache budget of the B-tree reader (default
+    /// 128 MB).
+    pub fn set_page_cache_mb(&self, mb: u64) -> Result<()> {
+        self.btree.set_page_cache_mb(mb)
+    }
+
+    pub fn page_cache_mb(&self) -> u64 {
+        self.btree.page_cache_mb()
+    }
+
+    /// Drops the B-tree reader's cached pages (cold-cache measurements).
+    pub fn clear_page_cache(&self) -> Result<()> {
+        self.btree.clear_page_cache()
+    }
+
+    pub fn btree_counters(&self) -> BtreeCounters {
+        self.btree.counters()
+    }
+
+    /// Whether new cursors would read b-tree pages directly right now: the mode allows it,
+    /// the §13 preconditions hold (a rollback-journal file database, a read transaction and
+    /// no write transaction) and the quad b-trees have the expected layout.
+    pub fn btree_active(&self) -> bool {
+        self.btree.mode() != ReaderMode::Sql && self.btree.snapshot().is_ok_and(|s| s.roots.any())
     }
 
     // ------------------------------------------------------------------ epoch (§4.4)
@@ -423,7 +465,7 @@ impl StorageShared {
         let pc = self.pool.counters();
         let dc = self.counters.get();
         let opt = |v: Option<i64>| v.map_or_else(|| "unknown".to_string(), |v| v.to_string());
-        vec![
+        let mut rows = vec![
             ("schema_state".into(), schema),
             ("dict_gen".into(), opt(self.dict_gen.get())),
             ("stats_gen".into(), opt(stats_gen)),
@@ -443,6 +485,8 @@ impl StorageShared {
             ("pool_prepared".into(), pc.prepared.to_string()),
             ("pool_reused".into(), pc.reused.to_string()),
             ("armed".into(), (self.pool.is_armed() as u8).to_string()),
-        ]
+        ];
+        rows.extend(self.btree.status());
+        rows
     }
 }

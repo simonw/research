@@ -101,3 +101,11 @@ translating SPARQL to SQL text or running as an external client.
 - Tightened vs spec: the GRAPH ?g push rule (spec's `?g ∈ certain(P')` test accepts 3 non-equivalent
   cases: VALUES ?g inside the graph, UNIONs mixing graph-reading and non-reading branches, OPTIONAL
   whose left side does not read the graph).
+- sq-oracle (naive §18 transcription; implement -> 2 review/fix rounds): W3C oracle backend
+  542/545 (99.45%), the 3 failures are spargebra parser divergences. A reviewer caught that sequence
+  paths treated the middle node as a constant (`:zz (:p?/:q?) ?y` matched through zero-length steps).
+  The oracle author also showed two places where our own spec was wrong w.r.t. SPARQL 1.1 §18:
+  (1) an erroring GROUP BY key and an unbound key form ONE group (ListEval((unbound)) = (error));
+  (2) the middle of a path sequence is a join variable. pyoxigraph/spareval are not authoritative on
+  paths either: they drop zero-length matches for constants absent from the graph and use set
+  semantics for `|` and `/` where §18.4 keeps bags.

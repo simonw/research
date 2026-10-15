@@ -30,9 +30,12 @@ impl Operator for Filter {
 
     fn next(&mut self, cx: &mut ExecCtx, out: &mut Batch) -> Result<bool> {
         let expr = &self.expr;
-        self.pull.pump(cx, self.input.as_mut(), out, |cx, row| {
-            Ok(cx.with_eval(|ecx| expr.ebv(row, ecx))? == Some(true))
-        })
+        self.pull.pump(
+            cx,
+            self.input.as_mut(),
+            out,
+            |cx, row| Ok(cx.with_eval(|ecx| expr.ebv(row, ecx))? == Some(true)),
+        )
     }
 
     fn close(&mut self, cx: &mut ExecCtx) {

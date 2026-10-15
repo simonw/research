@@ -61,7 +61,8 @@ fn substitution_reaches_filters_and_optionals() {
     let rows = Q::new(&fx.store, 3, filter(subjects(), exists(0))).exists(vec![ex]).rows(fx.rc());
     assert_eq!(rows, vec![vec![a, u(), u()], vec![b, u(), u()], vec![cc, u(), u()], vec![d, u(), u()]]);
     // EXISTS { ?1 :p ?2 . ?2 :q ?0 }: only d (b p c, c q d).
-    let ex = bind_join(scan(v(1), c(p), v(2)), scan_bound(GraphSel::Default, v(2), c(q), v(0), &[2]), &[2], JoinKind::Inner);
+    let ex =
+        bind_join(scan(v(1), c(p), v(2)), scan_bound(GraphSel::Default, v(2), c(q), v(0), &[2]), &[2], JoinKind::Inner);
     let rows = Q::new(&fx.store, 3, filter(subjects(), exists(0))).exists(vec![ex]).rows(fx.rc());
     assert_eq!(rows, vec![vec![d, u(), u()]]);
 }
@@ -125,6 +126,7 @@ fn exists_rows_must_agree_with_rebound_substituted_slots() {
     let (fx, [a, b, ..]) = data();
     // EXISTS { BIND(:b AS ?0) }: the pattern rebinds the substituted ?0; only ?0 = :b agrees.
     let ex = extend(plan(Op::Unit), 0, cv(b));
-    let rows = Q::new(&fx.store, 1, filter(values(&[0], vec![vec![a], vec![b]]), exists(0))).exists(vec![ex]).rows(fx.rc());
+    let rows =
+        Q::new(&fx.store, 1, filter(values(&[0], vec![vec![a], vec![b]]), exists(0))).exists(vec![ex]).rows(fx.rc());
     assert_eq!(rows, vec![vec![b]]);
 }

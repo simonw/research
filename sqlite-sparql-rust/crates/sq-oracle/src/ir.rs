@@ -28,7 +28,7 @@ pub(crate) fn validate(q: &LoweredQuery) -> Result<()> {
     }
 }
 
-/// Fails if the EXISTS reference graph (`refs[i]` = the patterns exists[i] references) has a
+/// Fails if the EXISTS reference graph (`refs[i]` = the patterns `exists[i]` references) has a
 /// cycle: evaluating such a pattern would recurse forever. A three-colour depth-first search
 /// with an explicit stack, so a long chain of nested EXISTS cannot overflow the call stack.
 fn check_acyclic(refs: &[Vec<ExistsId>]) -> Result<()> {

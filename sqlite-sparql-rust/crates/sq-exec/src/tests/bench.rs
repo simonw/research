@@ -183,7 +183,9 @@ fn bench_operators() {
         count(&fx, 3, filter(s(0, p, 1), Expr::Greater(Box::new(sv(1)), Box::new(cv(int(50_000))))))
     });
     time("extend ?o + 1", N, || count(&fx, 3, extend(s(0, p, 1), 2, Expr::Add(Box::new(sv(1)), Box::new(cv(int(1)))))));
-    time("hash join (s)", 2 * N, || count(&fx, 3, hash_join(s(0, q, 2), s(0, p, 1), &[0], &[], JoinKind::Inner, false)));
+    time("hash join (s)", 2 * N, || {
+        count(&fx, 3, hash_join(s(0, q, 2), s(0, p, 1), &[0], &[], JoinKind::Inner, false))
+    });
     time("merge join (s)", 2 * N, || count(&fx, 3, merge_join(s(0, p, 1), s(0, q, 2), 0, &[], 6)));
     time("merge join count (factorized)", 2 * N, || {
         let mut e = Q::new(&fx.store, 3, merge_join(s(0, p, 1), s(0, q, 2), 0, &[], 6)).exec(store_of(&fx));
@@ -201,9 +203,15 @@ fn bench_operators() {
     });
     time("group by ?o count(*) (1000 groups)", N, || {
         let agg = AggSpec { func: AggFunc::CountAll, distinct: false, arg: None };
-        count(&fx, 3, plan(Op::Group { input: Box::new(s(0, q, 1)), keys: vec![1], aggs: vec![(2, agg)], streaming: false }))
+        count(
+            &fx,
+            3,
+            plan(Op::Group { input: Box::new(s(0, q, 1)), keys: vec![1], aggs: vec![(2, agg)], streaming: false }),
+        )
     });
-    time("distinct ?o", N, || count(&fx, 3, plan(Op::Distinct { input: Box::new(project(s(0, p, 1), &[1])), slots: vec![1] })));
+    time("distinct ?o", N, || {
+        count(&fx, 3, plan(Op::Distinct { input: Box::new(project(s(0, p, 1), &[1])), slots: vec![1] }))
+    });
     time("count(*) scan (store count)", N, || {
         let mut e = Q::new(&fx.store, 3, s(0, p, 1)).exec(store_of(&fx));
         e.count().unwrap()
@@ -228,6 +236,8 @@ fn bench_operators() {
 fn bench_hash_join_only() {
     let (fx, p, q, _) = setup();
     let s = |a: Slot, pr: TermId, b: Slot| scan(v(a), c(pr), v(b));
-    time("hash join (s)", 2 * N, || count(&fx, 3, hash_join(s(0, q, 2), s(0, p, 1), &[0], &[], JoinKind::Inner, false)));
+    time("hash join (s)", 2 * N, || {
+        count(&fx, 3, hash_join(s(0, q, 2), s(0, p, 1), &[0], &[], JoinKind::Inner, false))
+    });
     time("scan", N, || count(&fx, 3, s(0, p, 1)));
 }

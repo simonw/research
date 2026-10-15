@@ -192,7 +192,8 @@ impl HashTable {
                 Cand::Chain(i) if i != NIL => {
                     *cur = Cand::Chain(self.next[i as usize]);
                     let r = self.rows.row(i as usize);
-                    let keys_eq = self.keys.len() == 1 || self.keys.iter().all(|k| probe[*k as usize] == r[*k as usize]);
+                    let keys_eq =
+                        self.keys.len() == 1 || self.keys.iter().all(|k| probe[*k as usize] == r[*k as usize]);
                     if keys_eq && compatible(probe, r, &self.check) {
                         return Some(i);
                     }

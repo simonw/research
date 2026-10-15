@@ -2,11 +2,12 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use sq_core::stats::{CostConstants, Stats, SQL_CURSOR_COSTS};
+use sq_core::stats::{BTREE_COSTS, CostConstants, SQL_CURSOR_COSTS, Stats};
 use sq_core::store::*;
 use sq_core::term::Term;
 use sq_core::{Error, Result, TermId};
 
+use crate::btree::BtreeCursor;
 use crate::cursor::{bind_count, EmptyCursor, SqlCursor, SqlRowsCursor};
 use crate::loader::{LoadOptions, LoadReport, LoadSource};
 use crate::pool::PoolKey;
@@ -113,12 +114,17 @@ impl Dictionary for SqliteStore {
 }
 
 impl QuadStore for SqliteStore {
+    /// The direct B-tree reader when it is enabled and its §13 preconditions hold, otherwise a
+    /// `SqlCursor` (count() always runs in the VDBE).
     fn cursor(&self, spec: &ScanSpec) -> Result<Box<dyn QuadCursor>> {
         if spec.prefix_len > 4 {
             return Err(Error::Invalid(format!("prefix_len {} > 4", spec.prefix_len)));
         }
         if !self.0.tables_present()? {
             return Ok(Box::new(EmptyCursor { width: 4 - spec.prefix_len as usize }));
+        }
+        if let Some(c) = BtreeCursor::open(&self.0.btree, &self.0.pool, spec)? {
+            return Ok(Box::new(c));
         }
         Ok(Box::new(SqlCursor::open(self.0.pool.clone(), spec)?))
     }
@@ -152,11 +158,12 @@ impl QuadStore for SqliteStore {
     }
 
     fn costs(&self) -> &CostConstants {
-        &SQL_CURSOR_COSTS
+        if self.0.btree_active() { &BTREE_COSTS } else { &SQL_CURSOR_COSTS }
     }
 
     fn caps(&self) -> StoreCaps {
-        StoreCaps { sql: true, reader: ReaderKind::SqlCursor }
+        let reader = if self.0.btree_active() { ReaderKind::Btree } else { ReaderKind::SqlCursor };
+        StoreCaps { sql: true, reader }
     }
 
     fn sql_rows(&self, sql: &str, params: &[i64], width: usize) -> Result<Box<dyn QuadCursor>> {

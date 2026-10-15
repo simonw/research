@@ -35,7 +35,7 @@ enum State {
 }
 
 /// Effective inclusive lower bound of the first free column; None = empty range.
-fn lower_incl(b: Bound<i64>) -> Option<i64> {
+pub(crate) fn lower_incl(b: Bound<i64>) -> Option<i64> {
     match b {
         Bound::Unbounded => Some(i64::MIN),
         Bound::Included(v) => Some(v),
@@ -43,7 +43,8 @@ fn lower_incl(b: Bound<i64>) -> Option<i64> {
     }
 }
 
-fn upper_incl(b: Bound<i64>) -> Option<i64> {
+/// Effective inclusive upper bound of the first free column; None = empty range.
+pub(crate) fn upper_incl(b: Bound<i64>) -> Option<i64> {
     match b {
         Bound::Unbounded => Some(i64::MAX),
         Bound::Included(v) => Some(v),

@@ -116,6 +116,21 @@ fn unbound_keys_form_their_own_group_and_having_filters_groups() {
     assert_eq!(fx.select(&[k, n], filter(grouped, Expr::Bound(k))), rows(&[&[":a", &int(2)]]));
 }
 
+/// §18.5.1: ListEval((unbound), μ) = (error), so a GROUP BY expression that is an error and
+/// one over an unbound variable give the same key, (error), and fall into one group.
+#[test]
+fn error_and_unbound_group_keys_share_a_group() {
+    let mut fx = Fx::new();
+    let (x, k, n) = (fx.var("x"), fx.var("k"), fx.var("n"));
+    let (zero, one) = (fx.int(0), fx.int(1));
+    // GROUP BY (1/?x) with ?x unbound, ?x = 0 (division by zero), ?x = 1.
+    let input = values(&[x], &[&[TermId::UNBOUND], &[zero], &[one]]);
+    let keyed = extend(input, k, Expr::Divide(Box::new(ec(one)), Box::new(es(x))));
+    let grouped = group(keyed, &[k], vec![(n, agg(AggFunc::CountAll, false, None))]);
+    let one_dec = format!("\"1\"^^{DEC}");
+    assert_eq!(fx.bag(&[k, n], grouped), bag(&[&["-", &int(2)], &[&one_dec, &int(1)]]));
+}
+
 #[test]
 fn sample_and_custom_aggregates() {
     let mut fx = Fx::new();

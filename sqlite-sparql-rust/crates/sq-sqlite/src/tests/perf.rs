@@ -7,6 +7,9 @@
 //!   memory-bound (~1.4–2.5 µs on this shared machine, the same for the raw SQLite statement)
 //!   and would make the gate flaky;
 //! * 2-column pinned scan < 150 ns/row.
+//!
+//! These budgets are for SQL cursors (`reader = sql`); `btree_perf` compares them with the
+//! phase-2 B-tree reader.
 use std::ops::Bound;
 use std::time::Instant;
 
@@ -20,7 +23,7 @@ use super::loader::social_ntriples;
 use super::{iri, Db};
 use crate::raw::RawStmt;
 use crate::template::{StmtKey, StmtKind};
-use crate::{BulkMode, LoadOptions, LoadSource};
+use crate::{BulkMode, LoadOptions, LoadSource, ReaderMode};
 
 const PERSONS: usize = 142_000; // ~1.0M triples
 /// Micro-benchmarks report the best of this many rounds (the machine is shared).
@@ -38,6 +41,7 @@ fn perf_budgets_1m_triples() {
         return;
     }
     let db = Db::file();
+    db.shared().set_reader(ReaderMode::Sql);
     db.conn.execute_batch("PRAGMA page_size=8192; VACUUM; PRAGMA cache_size=-524288;").unwrap();
     let data = social_ntriples(PERSONS);
     let opts = LoadOptions { bulk: BulkMode::Auto, ..LoadOptions::new(RdfFormat::NTriples) };

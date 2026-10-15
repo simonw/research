@@ -70,33 +70,39 @@ fn order_for(bound: [bool; 4]) -> IndexOrder {
     IndexOrder::candidates(bound)[0].0
 }
 
+/// The edge scans of a predicate.
+struct PredScans {
+    /// (g, s, p) -> o
+    fwd: Scan,
+    /// (g, p, o) -> s
+    bwd: Scan,
+    /// (g, p) -> s, o: the p edges in subject order.
+    by_s: Scan,
+    /// (g, p) -> o, s: the p edges in object order.
+    by_o: Scan,
+    /// |edges(p)| for the register value it was counted under (None: not countable).
+    edges: Option<(TermId, Option<u64>)>,
+}
+
+/// The edge scans of a negated property set.
+struct NpsScans {
+    set: Vec<TermId>,
+    /// (g, s) -> p, o
+    fwd: Scan,
+    /// (g, o) -> s, p
+    bwd: Scan,
+}
+
 /// A path with its edge scans.
 enum CPath {
-    Pred {
-        /// (g, s, p) -> o
-        fwd: Scan,
-        /// (g, p, o) -> s
-        bwd: Scan,
-        /// (g, p) -> s, o: the p edges in subject order.
-        by_s: Scan,
-        /// (g, p) -> o, s: the p edges in object order.
-        by_o: Scan,
-        /// |edges(p)| for the register value it was counted under (None: not countable).
-        edges: Option<(TermId, Option<u64>)>,
-    },
+    Pred(Box<PredScans>),
     Inv(Box<CPath>),
     Seq(Box<CPath>, Box<CPath>),
     Alt(Box<CPath>, Box<CPath>),
     Star(Box<CPath>),
     Plus(Box<CPath>),
     Opt(Box<CPath>),
-    Nps {
-        set: Vec<TermId>,
-        /// (g, s) -> p, o
-        fwd: Scan,
-        /// (g, o) -> s, p
-        bwd: Scan,
-    },
+    Nps(Box<NpsScans>),
 }
 
 impl CPath {
@@ -105,13 +111,13 @@ impl CPath {
         match p {
             PathPlan::Pred(id) => {
                 let pt = PatTerm::Const(*id);
-                CPath::Pred {
+                CPath::Pred(Box::new(PredScans {
                     fwd: Scan::internal(pat(g, pt), b(true, true, false), PW),
                     bwd: Scan::internal(pat(g, pt), b(false, true, true), PW),
                     by_s: Scan::internal(pat(g, pt), IndexOrder::Gpso, PW),
                     by_o: Scan::internal(pat(g, pt), IndexOrder::Gpos, PW),
                     edges: None,
-                }
+                }))
             }
             PathPlan::Inv(q) => CPath::Inv(Box::new(CPath::new(q, g))),
             PathPlan::Seq(a, c) => CPath::Seq(Box::new(CPath::new(a, g)), Box::new(CPath::new(c, g))),
@@ -124,11 +130,11 @@ impl CPath {
                 set.sort();
                 set.dedup();
                 let pt = PatTerm::Slot(P);
-                CPath::Nps {
+                CPath::Nps(Box::new(NpsScans {
                     set,
                     fwd: Scan::internal(pat(g, pt), b(true, false, false), PW),
                     bwd: Scan::internal(pat(g, pt), b(false, false, true), PW),
-                }
+                }))
             }
         }
     }
@@ -136,7 +142,7 @@ impl CPath {
     /// Can the path match a zero-length path (the `has_node` rule applies)?
     fn nullable(&self) -> bool {
         match self {
-            CPath::Pred { .. } | CPath::Nps { .. } => false,
+            CPath::Pred(_) | CPath::Nps(_) => false,
             CPath::Star(_) | CPath::Opt(_) => true,
             CPath::Inv(q) | CPath::Plus(q) => q.nullable(),
             CPath::Seq(a, b) => a.nullable() && b.nullable(),
@@ -147,15 +153,15 @@ impl CPath {
     /// Releases the cursors of every edge scan.
     fn close(&mut self, cx: &mut ExecCtx) {
         match self {
-            CPath::Pred { fwd, bwd, by_s, by_o, edges, .. } => {
-                for s in [fwd, bwd, by_s, by_o] {
+            CPath::Pred(e) => {
+                for s in [&mut e.fwd, &mut e.bwd, &mut e.by_s, &mut e.by_o] {
                     s.close(cx);
                 }
-                *edges = None;
+                e.edges = None;
             }
-            CPath::Nps { fwd, bwd, .. } => {
-                fwd.close(cx);
-                bwd.close(cx);
+            CPath::Nps(e) => {
+                e.fwd.close(cx);
+                e.bwd.close(cx);
             }
             CPath::Inv(q) | CPath::Star(q) | CPath::Plus(q) | CPath::Opt(q) => q.close(cx),
             CPath::Seq(a, b) | CPath::Alt(a, b) => {
@@ -230,7 +236,7 @@ impl Env {
         let mut last = None;
         while let Some(v) = scan.next_distinct(cx, slot, tmp, &mut last)? {
             out.push(v);
-            if out.len() % BATCH_ROWS == 0 {
+            if out.len().is_multiple_of(BATCH_ROWS) {
                 cx.tick(BATCH_ROWS)?;
             }
         }
@@ -286,7 +292,8 @@ fn step(
     }
     let before = out.len();
     match path {
-        CPath::Pred { fwd, bwd, by_s, by_o, edges } => {
+        CPath::Pred(e) => {
+            let PredScans { fwd, bwd, by_s, by_o, edges } = &mut **e;
             let reg = cx.active_graph().unwrap_or(TermId::UNBOUND);
             if starts.len() > 64 && edges.is_none_or(|(g, _)| g != reg) {
                 by_s.open(cx, None)?;
@@ -316,7 +323,8 @@ fn step(
                 }
             }
         }
-        CPath::Nps { set, fwd, bwd } => {
+        CPath::Nps(e) => {
+            let NpsScans { set, fwd, bwd } = &mut **e;
             let (scan, from, to) = match dir {
                 Dir::Fwd => (fwd, S, O),
                 Dir::Bwd => (bwd, O, S),
@@ -426,14 +434,14 @@ fn closure(
 /// Start (or end) candidates of `path`: the nodes a non-empty evaluation can start from.
 fn candidates(path: &mut CPath, env: &mut Env, cx: &mut ExecCtx, start: bool, out: &mut Vec<TermId>) -> Result<()> {
     match path {
-        CPath::Pred { by_s, by_o, .. } => {
+        CPath::Pred(e) => {
             if start {
-                Env::distinct(cx, by_s, S, &mut env.tmp, out)?;
+                Env::distinct(cx, &mut e.by_s, S, &mut env.tmp, out)?;
             } else {
-                Env::distinct(cx, by_o, O, &mut env.tmp, out)?;
+                Env::distinct(cx, &mut e.by_o, O, &mut env.tmp, out)?;
             }
         }
-        CPath::Nps { .. } => {
+        CPath::Nps(_) => {
             if start {
                 Env::distinct(cx, &mut env.nodes_s, S, &mut env.tmp, out)?;
             } else {

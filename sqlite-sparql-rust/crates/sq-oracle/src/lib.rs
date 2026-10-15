@@ -12,7 +12,8 @@
 //! * the dataset is explicit: the default graph is the RDF merge of its graphs (a set of
 //!   triples), `GRAPH` evaluates its pattern once per named graph of the dataset;
 //! * `EXISTS` evaluates its pattern with the current solution substituted (§18.6);
-//! * property paths use the ALP procedure, with the zero-length rules of §18.4 (`path`);
+//! * property paths use the ALP procedure, with the zero-length rules of §18.4; a sequence
+//!   joins its operands on a fresh middle variable (`path`);
 //! * expressions, effective boolean values, ORDER BY keys and aggregates come from sq-expr,
 //!   always producing canonical ids, so solution compatibility is id equality.
 //!
