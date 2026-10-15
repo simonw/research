@@ -5,6 +5,7 @@ mod dataset;
 mod numeric;
 mod solutions;
 mod text;
+mod ties;
 
 use oxrdf::{Dataset, Variable};
 use spargebra::algebra::{Expression, GraphPattern, OrderExpression};
@@ -13,7 +14,7 @@ use spargebra::Query;
 pub use dataset::compare_datasets;
 pub use numeric::Numeric;
 pub use solutions::compare_solutions;
-pub use text::compare_result_text;
+pub use text::{compare_result_text, ColumnOrder};
 pub(crate) use text::{csv_records, csv_value};
 
 use crate::results::{csv_lossy, triples_to_dataset, Expected, QueryOutcome, Solutions};
@@ -30,8 +31,9 @@ pub enum Verdict {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RowOrder {
     Unordered,
-    /// ORDER BY on plain projected variables: runs of equal keys are compared in order, rows
-    /// within a run as a multiset.
+    /// ORDER BY on plain projected variables: runs of tied keys (equal under SPARQL's
+    /// ordering: `1` and `1.0`, any two blank nodes) are compared in order, rows within a run
+    /// as a multiset.
     Runs(Vec<Variable>),
     /// ORDER BY on expressions or hidden variables: the exact sequence is compared.
     Sequence,

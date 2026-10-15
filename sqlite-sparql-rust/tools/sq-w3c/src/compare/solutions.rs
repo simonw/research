@@ -12,6 +12,7 @@ use std::collections::{BTreeSet, HashMap};
 use oxrdf::{Term, Variable};
 
 use super::numeric::Numeric;
+use super::ties::order_keys_tie;
 use super::RowOrder;
 use crate::results::{format_row, Solutions};
 
@@ -78,7 +79,8 @@ fn dedup(rows: &mut Vec<Row>) {
 }
 
 /// Group number of each row: rows only match rows of the same group. Unordered = one group;
-/// a sequence = one group per row; runs = one group per run of equal ORDER BY keys.
+/// a sequence = one group per row; runs = one group per run of tied ORDER BY keys (equal
+/// under SPARQL's ordering, not necessarily the same RDF terms: see `ties`).
 fn groups(rows: &[Row], order: &RowOrder, variables: &[Variable]) -> Vec<usize> {
     match order {
         RowOrder::Unordered => vec![0; rows.len()],
@@ -92,7 +94,7 @@ fn groups(rows: &[Row], order: &RowOrder, variables: &[Variable]) -> Vec<usize> 
             let mut group = 0;
             let mut out = Vec::with_capacity(rows.len());
             for (i, row) in rows.iter().enumerate() {
-                if i > 0 && cols.iter().any(|&c| rows[i - 1][c] != row[c]) {
+                if i > 0 && cols.iter().any(|&c| !order_keys_tie(rows[i - 1][c].as_ref(), row[c].as_ref())) {
                     group += 1;
                 }
                 out.push(group);
@@ -510,6 +512,31 @@ mod tests {
         // A key that is not a result column: exact sequence.
         cmp(&e, &e, &RowOrder::Runs(v(&["hidden"]))).unwrap();
         assert!(cmp(&e, &swapped_in_run, &RowOrder::Runs(v(&["hidden"]))).is_err());
+    }
+
+    #[test]
+    fn runs_group_tied_keys() {
+        let dec = |s: &str| -> Option<Term> {
+            Some(Literal::new_typed_literal(s, NamedNode::new_unchecked("http://www.w3.org/2001/XMLSchema#decimal")).into())
+        };
+        let runs = RowOrder::Runs(v(&["k"]));
+        // 1 and 1.0 tie; 2 does not.
+        let e = sols(&["k", "v"], vec![vec![int(1), iri("a")], vec![dec("1.0"), iri("b")], vec![int(2), iri("c")]]);
+        let swapped = sols(&["k", "v"], vec![vec![dec("1.0"), iri("b")], vec![int(1), iri("a")], vec![int(2), iri("c")]]);
+        cmp(&e, &swapped, &runs).unwrap();
+        let late = sols(&["k", "v"], vec![vec![int(2), iri("c")], vec![dec("1.0"), iri("b")], vec![int(1), iri("a")]]);
+        assert!(cmp(&e, &late, &runs).unwrap_err().contains("not in the required order"));
+        // Blank-node keys form one run, which still sorts before IRI keys.
+        let e = sols(&["k", "v"], vec![vec![b("x"), int(1)], vec![b("y"), int(2)], vec![iri("z"), int(3)]]);
+        let a = sols(&["k", "v"], vec![vec![b("q"), int(2)], vec![b("p"), int(1)], vec![iri("z"), int(3)]]);
+        cmp(&e, &a, &runs).unwrap();
+        let a = sols(&["k", "v"], vec![vec![b("q"), int(2)], vec![iri("z"), int(3)], vec![b("p"), int(1)]]);
+        assert!(cmp(&e, &a, &runs).unwrap_err().contains("not in the required order"));
+        // A tie in the first key leaves the second key in force.
+        let runs2 = RowOrder::Runs(v(&["k", "v"]));
+        let e = sols(&["k", "v"], vec![vec![int(1), int(1)], vec![dec("1.0"), int(2)]]);
+        let a = sols(&["k", "v"], vec![vec![dec("1.0"), int(2)], vec![int(1), int(1)]]);
+        assert!(cmp(&e, &a, &runs2).is_err());
     }
 
     #[test]

@@ -14,7 +14,7 @@ use oxrdf::{Dataset, NamedNode};
 use spargebra::{GraphUpdateOperation, SparqlParser};
 
 use crate::backend::{Backend, BackendError, BackendKind, Interrupter, QueryRequest, UpdateRequest};
-use crate::compare::{compare_query, compare_result_text, compare_update, RowOrder, Verdict};
+use crate::compare::{compare_query, compare_result_text, compare_update, ColumnOrder, RowOrder, Verdict};
 use crate::manifest::{DatasetFiles, GraphFile, QueryTest, TestCase, TestKind, UpdateTest};
 use crate::results::{parse_expected, TextFormat};
 use crate::suite::{parse_rdf_into, rdf_format, Suite};
@@ -159,7 +159,7 @@ fn run_query(suite: &Suite, backend: &mut dyn Backend, test: &QueryTest, text_fo
         let format = TextFormat::of_file(result)
             .ok_or_else(|| harness(format!("result-format test with unknown result type: {result}")))?;
         let actual = backend.query_text(&request, format)?;
-        return Ok(match compare_result_text(&expected, &actual, format) {
+        return Ok(match compare_result_text(&expected, &actual, format, ColumnOrder::of_query(&text)) {
             Ok(()) => Verdict::Pass,
             Err(m) => Verdict::Fail(m),
         });

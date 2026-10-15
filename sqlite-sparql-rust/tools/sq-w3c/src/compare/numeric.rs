@@ -55,6 +55,65 @@ impl Numeric {
     }
 }
 
+/// The value of a valid numeric literal, for ORDER BY ties (`op:numeric-equal`, which
+/// compares across datatypes after type promotion).
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum NumericValue {
+    /// xsd:decimal, xsd:integer and its subtypes: the canonical decimal form `-?I.F` (exact).
+    Exact(String),
+    /// xsd:float, widened to f64 without loss.
+    Float(f64),
+    Double(f64),
+}
+
+impl NumericValue {
+    /// The value of `l`, if it is a numeric literal with a valid lexical form.
+    pub(super) fn of(l: &Literal) -> Option<NumericValue> {
+        let local = l.datatype().as_str().strip_prefix(XSD)?;
+        let lex = l.value();
+        if INTEGER_TYPES.contains(&local) {
+            canonical_integer(lex)?;
+            return canonical_decimal(lex).map(NumericValue::Exact);
+        }
+        match local {
+            "decimal" => canonical_decimal(lex).map(NumericValue::Exact),
+            "float" => floating_value(lex, true).map(NumericValue::Float),
+            "double" => floating_value(lex, false).map(NumericValue::Double),
+            _ => None,
+        }
+    }
+
+    /// `op:numeric-equal` after promotion (integer and decimal compare exactly; with a float
+    /// they are cast to float, with a double everything is cast to double), except that NaN
+    /// equals NaN: two NaN keys are one ORDER BY class, a NaN and a number are not.
+    pub(super) fn same_value(&self, other: &NumericValue) -> bool {
+        use NumericValue::{Double, Exact, Float};
+        let pair = match (self, other) {
+            (Exact(a), Exact(b)) => return a == b,
+            (Double(_), _) | (_, Double(_)) => self.to_f64().zip(other.to_f64()),
+            (Float(_) | Exact(_), Float(_) | Exact(_)) => self.to_f32().zip(other.to_f32()),
+        };
+        pair.is_some_and(|(x, y)| x == y || (x.is_nan() && y.is_nan()))
+    }
+
+    /// The value cast to xsd:double (`-?I.F` always parses; out of range is ±infinity).
+    fn to_f64(&self) -> Option<f64> {
+        match self {
+            NumericValue::Exact(s) => s.parse().ok(),
+            NumericValue::Float(v) | NumericValue::Double(v) => Some(*v),
+        }
+    }
+
+    /// The value cast to xsd:float (correctly rounded from the exact decimal), as f64.
+    fn to_f32(&self) -> Option<f64> {
+        match self {
+            NumericValue::Exact(s) => s.parse::<f32>().ok().map(f64::from),
+            NumericValue::Float(v) => Some(*v),
+            NumericValue::Double(v) => Some(f64::from(*v as f32)),
+        }
+    }
+}
+
 /// A literal with the canonical lexical form of its value, if it is a valid numeric literal.
 fn canonical_literal(l: &Literal) -> Option<Literal> {
     let local = l.datatype().as_str().strip_prefix(XSD)?;
@@ -118,9 +177,9 @@ fn canonical_decimal(lex: &str) -> Option<String> {
     Some(format!("{}{int}.{frac}", if negative && !zero { "-" } else { "" }))
 }
 
-/// Value-canonical form of a double (or float, compared at single precision).
-fn canonical_floating(lex: &str, single: bool) -> Option<String> {
-    let value = match lex {
+/// The value of a valid xsd:double (or xsd:float, rounded to single precision) lexical form.
+fn floating_value(lex: &str, single: bool) -> Option<f64> {
+    Some(match lex {
         "INF" | "+INF" => f64::INFINITY,
         "-INF" => f64::NEG_INFINITY,
         "NaN" => f64::NAN,
@@ -136,7 +195,12 @@ fn canonical_floating(lex: &str, single: bool) -> Option<String> {
                 lex.parse::<f64>().ok()?
             }
         }
-    };
+    })
+}
+
+/// Value-canonical form of a double (or float, compared at single precision).
+fn canonical_floating(lex: &str, single: bool) -> Option<String> {
+    let value = floating_value(lex, single)?;
     Some(if value.is_nan() {
         "NaN".to_owned()
     } else if value.is_infinite() {

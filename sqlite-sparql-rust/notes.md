@@ -204,3 +204,16 @@ translating SPARQL to SQL text or running as an external client.
 - W3C through plain SQL (`sq-w3c --backend sqlite`, the full stack via sparql_load/sparql_query/
   sparql_update): 636 of 639 runnable tests (99.53%; 627 exact + 9 numeric-lenient) in 2.2 s; the 3 failures
   are spargebra parser divergences; 299 skipped by design (syntax-only, entailment, protocol, SERVICE).
+
+### Benchmark run A (1.6M social + 1M bsbm; native vs SQL baseline vs pyoxigraph; load avg 6-10 during run)
+- All 17 queries: row counts + checksums agree across all engines and modes.
+- full mode (every result term materialised as a Python string, like-for-like): geomean native vs
+  pyoxigraph 3.75x, native vs baseline 1.76x. Big wins: Q3 chain-2 count (factorized merge join) 74.6 ms vs
+  baseline 533 vs pyoxigraph 2294; Q6 FILTER(?a > 90) with IntRange pushdown 2.3 ms vs 33 / 150; Q10 DISTINCT
+  over a join 207 vs 1353 / 2895; Q5 OPTIONAL 61 ms vs 116, pyoxigraph timeout (>300 s).
+  Losses: Q4/Q15 tiny queries (fixed per-query overhead ~0.2 ms), Q7 REGEX (300 vs pyoxigraph 180),
+  Q16 COUNT(*) full (84 vs baseline 66).
+- count mode: Q3/Q13/Q16 are ARTIFACTS — `sparql_count()` of an aggregate query returns 1 without
+  evaluating it (verified: 0.006 s vs 0.13 s via sparql_value). Must be removed/handled before reporting.
+  Measured directly: Q16 count over 1.6M quads: B-tree reader 129 ms vs reader=sql (VDBE count) 68 ms ->
+  the reader should count by summing leaf cell counts instead of decoding rows.

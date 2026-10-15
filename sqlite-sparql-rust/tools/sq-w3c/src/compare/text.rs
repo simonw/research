@@ -2,9 +2,11 @@
 //!
 //! The documents are split into records and fields (CSV quoting respected; fields keep their
 //! exact text), line endings and a trailing newline are ignored, and blank nodes are renamed
-//! `_:b0`, `_:b1`, … in order of first appearance. The column order is aligned on the
-//! header first: `SELECT *` has no defined column order (spargebra projects it sorted), and
-//! these tests are about the serialization, not the projection order.
+//! `_:b0`, `_:b1`, … in order of first appearance. An explicit projection (`SELECT ?a ?b`)
+//! fixes the column order (SPARQL 1.1 Query Results CSV and TSV Formats §2: the header row
+//! lists the variables of the query), so those documents are compared as they are. Only for
+//! `SELECT *`, whose column order SPARQL leaves open (spargebra projects it sorted), are the
+//! actual columns aligned on the expected header first: see [`ColumnOrder`].
 use std::collections::HashMap;
 
 use crate::results::TextFormat;
@@ -98,6 +100,77 @@ fn relabel_blank_nodes(records: &mut Records) {
     }
 }
 
+/// Whether a CSV / TSV result document must list its columns in the expected order.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ColumnOrder {
+    /// The query projects explicitly (`SELECT ?a ?b`, or any query that is not `SELECT *`):
+    /// the column order is part of the result and is compared.
+    Projection,
+    /// `SELECT *`: the order is unspecified, so the actual columns are first aligned on the
+    /// expected header.
+    Unspecified,
+}
+
+impl ColumnOrder {
+    /// The column order of `query` (from its text: the algebra cannot tell `SELECT *` from an
+    /// explicit projection of the same variables in sorted order).
+    pub fn of_query(query: &str) -> ColumnOrder {
+        if selects_star(query) {
+            ColumnOrder::Unspecified
+        } else {
+            ColumnOrder::Projection
+        }
+    }
+}
+
+/// Is the query's own SELECT clause `SELECT *` (also with DISTINCT / REDUCED)? Skips the
+/// prologue (BASE and PREFIX declarations), white space and comments. Anything unexpected
+/// answers false, which is the strict reading.
+fn selects_star(query: &str) -> bool {
+    let mut rest = skip_space(query);
+    loop {
+        let word_len = rest.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(rest.len());
+        let (word, after) = rest.split_at(word_len);
+        let after = skip_space(after);
+        if word.eq_ignore_ascii_case("SELECT") {
+            let modifier = ["DISTINCT", "REDUCED"]
+                .into_iter()
+                .find(|m| after.get(..m.len()).is_some_and(|w| w.eq_ignore_ascii_case(m)));
+            let after = modifier.map_or(after, |m| skip_space(&after[m.len()..]));
+            return after.starts_with('*');
+        }
+        let declaration = if word.eq_ignore_ascii_case("BASE") {
+            skip_iri(after)
+        } else if word.eq_ignore_ascii_case("PREFIX") {
+            // PNAME_NS (`ex:` or `:`) then IRIREF.
+            after.split_once(':').and_then(|(_, iri)| skip_iri(skip_space(iri)))
+        } else {
+            None
+        };
+        match declaration {
+            Some(r) => rest = skip_space(r),
+            None => return false,
+        }
+    }
+}
+
+/// Skips white space and `#` comments.
+fn skip_space(mut text: &str) -> &str {
+    loop {
+        text = text.trim_start();
+        match text.strip_prefix('#') {
+            Some(comment) => text = comment.find(['\n', '\r']).map_or("", |end| &comment[end..]),
+            None => return text,
+        }
+    }
+}
+
+/// Skips an IRIREF (`<…>`; it cannot contain `>`).
+fn skip_iri(text: &str) -> Option<&str> {
+    let inner = text.strip_prefix('<')?;
+    inner.find('>').map(|end| &inner[end + 1..])
+}
+
 /// Puts the columns of `actual` in the order of `expected`'s header when both headers name
 /// the same variables.
 fn align_columns(expected: &Records, actual: &mut Records) {
@@ -114,10 +187,17 @@ fn align_columns(expected: &Records, actual: &mut Records) {
 }
 
 /// Compares two CSV or TSV documents; the error names the first differing record.
-pub fn compare_result_text(expected: &str, actual: &str, format: TextFormat) -> Result<(), String> {
+pub fn compare_result_text(
+    expected: &str,
+    actual: &str,
+    format: TextFormat,
+    columns: ColumnOrder,
+) -> Result<(), String> {
     let mut e = records(expected, format);
     let mut a = records(actual, format);
-    align_columns(&e, &mut a);
+    if columns == ColumnOrder::Unspecified {
+        align_columns(&e, &mut a);
+    }
     relabel_blank_nodes(&mut e);
     relabel_blank_nodes(&mut a);
     if e == a {
@@ -150,6 +230,8 @@ mod tests {
 
     const CSV: TextFormat = TextFormat::Csv;
     const TSV: TextFormat = TextFormat::Tsv;
+    const FIXED: ColumnOrder = ColumnOrder::Projection;
+    const STAR: ColumnOrder = ColumnOrder::Unspecified;
 
     #[test]
     fn csv_records_respect_quoting() {
@@ -165,28 +247,56 @@ mod tests {
     fn relabels_blank_nodes_and_line_endings() {
         let expected = "s,o\nhttp://ex/a,_:a\n_:a,_:zz\n";
         let actual = "s,o\r\nhttp://ex/a,_:b17\r\n_:b17,_:q\r\n";
-        compare_result_text(expected, actual, CSV).unwrap();
+        compare_result_text(expected, actual, CSV, FIXED).unwrap();
         // Co-reference matters: one label vs two.
-        assert!(compare_result_text("x\n_:a\n_:a\n", "x\n_:a\n_:b\n", CSV).is_err());
+        assert!(compare_result_text("x\n_:a\n_:a\n", "x\n_:a\n_:b\n", CSV, FIXED).is_err());
     }
 
     #[test]
-    fn aligns_permuted_columns() {
+    fn aligns_permuted_columns_only_for_select_star() {
         let expected = "s,p,o\nhttp://ex/s,http://ex/p,_:x\nhttp://ex/t,http://ex/p,\"a,b\"\n";
         let actual = "o,p,s\r\n_:y,http://ex/p,http://ex/s\r\n\"a,b\",http://ex/p,http://ex/t\r\n";
-        compare_result_text(expected, actual, CSV).unwrap();
+        compare_result_text(expected, actual, CSV, STAR).unwrap();
+        let err = compare_result_text(expected, actual, CSV, FIXED).unwrap_err();
+        assert!(err.starts_with("record 1"), "{err}");
         let expected = "?s\t?o\n<http://ex/s>\t\"x\"\n";
         let actual = "?o\t?s\n\"x\"\t<http://ex/s>\n";
-        compare_result_text(expected, actual, TSV).unwrap();
+        compare_result_text(expected, actual, TSV, STAR).unwrap();
+        assert!(compare_result_text(expected, actual, TSV, FIXED).is_err());
         // Different variables are not aligned.
-        assert!(compare_result_text("a,b\n1,2\n", "a,c\n1,2\n", CSV).is_err());
+        assert!(compare_result_text("a,b\n1,2\n", "a,c\n1,2\n", CSV, STAR).is_err());
+    }
+
+    #[test]
+    fn column_order_of_query_text() {
+        let star = [
+            "SELECT * WHERE { ?s ?p ?o }",
+            "select*{?s ?p ?o}",
+            "PREFIX : <http://example.org/>\n\nSELECT * WHERE { ?s ?p ?o} ORDER BY ?s ?p ?o",
+            "# SELECT ?s\nBASE <http://ex/#frag> PREFIX ex:<http://ex/> prefix : <a#b>\r\n  SELECT DISTINCT * { ?s ?p ?o }",
+            "PREFIX # the prefix:\n  p: <http://ex/> SELECT reduced\t* {}",
+        ];
+        for q in star {
+            assert_eq!(ColumnOrder::of_query(q), STAR, "{q}");
+        }
+        let fixed = [
+            "SELECT ?a ?b WHERE { BIND(1 AS ?a) BIND(2 AS ?b) }",
+            "PREFIX : <http://ex/*> SELECT ?s { { SELECT * { ?s ?p ?o } } }",
+            "SELECT (COUNT(*) AS ?c) { ?s ?p ?o }",
+            "SELECT DISTINCT ?x {}",
+            "ASK { ?s ?p ?o }",
+            "# SELECT *\nSELECT ?s {}",
+        ];
+        for q in fixed {
+            assert_eq!(ColumnOrder::of_query(q), FIXED, "{q}");
+        }
     }
 
     #[test]
     fn tsv_quoted_fields_and_differences() {
-        compare_result_text("?s\t?o\n_:x\t\"_:not a bnode\"\n", "?s\t?o\n_:y\t\"_:not a bnode\"\n", TSV).unwrap();
-        let err = compare_result_text("a\n1\n2\n", "a\n1\n3\n", CSV).unwrap_err();
+        compare_result_text("?s\t?o\n_:x\t\"_:not a bnode\"\n", "?s\t?o\n_:y\t\"_:not a bnode\"\n", TSV, FIXED).unwrap();
+        let err = compare_result_text("a\n1\n2\n", "a\n1\n3\n", CSV, FIXED).unwrap_err();
         assert!(err.starts_with("record 3"), "{err}");
-        assert!(compare_result_text("?x\n1.0e6\n", "?x\n1.0E6\n", TSV).is_err());
+        assert!(compare_result_text("?x\n1.0e6\n", "?x\n1.0E6\n", TSV, FIXED).is_err());
     }
 }
