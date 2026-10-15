@@ -150,3 +150,35 @@ fn paths_never_cross_graphs() {
     // The default graph is empty here; a zero-length path still matches the constant.
     assert_eq!(fx.select(&[y], path(c(a), star(pred(p)), v(y))), rows(&[&[":a"]]));
 }
+
+/// §18.4 sequence: `Join(eval(Path(X, P, V)), eval(Path(V, Q, Y)))` with V a fresh variable,
+/// whichever endpoint is fixed.
+#[test]
+fn sequence_joins_both_operands_on_a_free_middle() {
+    let mut fx = Fx::new();
+    let (a, m1, m2, z, p, q) = (fx.iri("a"), fx.iri("m1"), fx.iri("m2"), fx.iri("z"), fx.iri("p"), fx.iri("q"));
+    fx.add(a, p, m1);
+    fx.add(a, p, m2);
+    fx.add(m1, q, z);
+    fx.add(m2, q, z);
+    let (zz, yy) = (fx.absent("zz"), fx.absent("yy"));
+    let (x, y) = (fx.var("x"), fx.var("y"));
+    // Fixed object: one solution per middle node, as from a fixed subject.
+    assert_eq!(fx.select(&[x], path(v(x), seq(pred(p), pred(q)), c(z))), rows(&[&[":a"], &[":a"]]));
+    assert_eq!(fx.select(&[x], path(v(x), plus(seq(pred(p), pred(q))), c(z))), rows(&[&[":a"]]));
+    // Both ends free.
+    assert_eq!(fx.bag(&[x, y], path(v(x), seq(pred(p), pred(q)), v(y))), bag(&[&[":a", ":z"], &[":a", ":z"]]));
+    // Path(?x, :p?, V) has two free ends, so V only matches nodes(G) through the zero-length
+    // step: it never meets the constant :zz that Path(V, :q?, :zz) binds it to.
+    assert!(fx.select(&[x], path(v(x), seq(opt(pred(p)), opt(pred(q))), c(zz))).is_empty());
+    assert!(fx.select(&[y], path(c(zz), seq(opt(pred(p)), opt(pred(q))), v(y))).is_empty());
+    // With both ends constant, each operand has one fixed end and binds V to it: the two
+    // operands agree on V = :zz only when the endpoints are the same term.
+    assert_eq!(fx.select(&[], path(c(zz), seq(opt(pred(p)), opt(pred(q))), c(zz))), rows(&[&[]]));
+    assert!(fx.select(&[], path(c(zz), seq(opt(pred(p)), opt(pred(q))), c(yy))).is_empty());
+    // A closure over such a sequence takes no step from :zz (eval(:zz, :p?/:q?) is empty)
+    // but `*` still matches :zz itself.
+    assert_eq!(fx.select(&[y], path(c(zz), star(seq(opt(pred(p)), opt(pred(q)))), v(y))), rows(&[&[":zz"]]));
+    // Nodes of the graph still take zero-length steps through the middle.
+    assert_eq!(fx.bag(&[y], path(c(m1), seq(opt(pred(p)), opt(pred(q))), v(y))), bag(&[&[":m1"], &[":z"]]));
+}

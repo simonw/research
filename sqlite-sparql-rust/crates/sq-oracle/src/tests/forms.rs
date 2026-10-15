@@ -110,3 +110,27 @@ fn malformed_ir_is_rejected_before_evaluation() {
     let template = vec![[TemplateTerm::Slot(x + 2), TemplateTerm::Slot(x), TemplateTerm::Slot(x)]];
     assert!(invalid(fx.try_run(QueryForm::Construct(template), Logical::Unit)));
 }
+
+/// An EXISTS pattern that references itself, directly or through another EXISTS pattern,
+/// would recurse forever (a stack overflow aborts the process): it is rejected up front.
+#[test]
+fn cyclic_exists_references_are_rejected() {
+    let refers_to = |id: u32| filter(Logical::Unit, Expr::Exists(ExistsId(id)));
+    let invalid = |r: sq_core::Result<OracleOutput>| matches!(r, Err(Error::Invalid(_)));
+
+    let mut direct = Fx::new();
+    direct.exists.push(refers_to(0));
+    assert!(invalid(direct.try_run(QueryForm::Ask, refers_to(0))));
+    // Unreferenced from the root, still malformed.
+    assert!(invalid(direct.try_run(QueryForm::Ask, Logical::Unit)));
+
+    let mut indirect = Fx::new();
+    indirect.exists.extend([Logical::Unit, refers_to(2), refers_to(3), refers_to(1)]);
+    assert!(invalid(indirect.try_run(QueryForm::Ask, refers_to(0))));
+
+    // A diamond (#0 -> #1, #0 -> #2, #1 -> #2) is not a cycle.
+    let mut diamond = Fx::new();
+    let both = Expr::And(Box::new(Expr::Exists(ExistsId(1))), Box::new(Expr::Exists(ExistsId(2))));
+    diamond.exists.extend([filter(Logical::Unit, both), refers_to(2), Logical::Unit]);
+    assert!(diamond.ask(refers_to(0)));
+}
