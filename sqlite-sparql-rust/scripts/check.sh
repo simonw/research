@@ -10,7 +10,7 @@ export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$SCRATCH/targets/check}
 export CARGO_INCREMENTAL=0
 EXT_TARGET=${EXT_TARGET:-$SCRATCH/targets/ext}
 
-cargo test --workspace --release                                   # native, system libsqlite3 3.45.1
+cargo test --workspace --release --no-fail-fast                                   # native, system libsqlite3 3.45.1
 CARGO_TARGET_DIR=$EXT_TARGET cargo build --release --manifest-path ext/Cargo.toml
 if CARGO_TARGET_DIR=$EXT_TARGET cargo tree --manifest-path ext/Cargo.toml -e features -i libsqlite3-sys | grep -E 'bundled|modern_sqlite'; then
   echo "GATE FAILED: bundled/modern_sqlite leaked into the loadable extension" >&2; exit 1

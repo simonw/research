@@ -35,6 +35,7 @@ pub fn write_solutions(src: &mut dyn SolutionSource, fmt: ResultFormat, w: &mut 
         .serialize_solutions_to_writer(&mut out, variables.clone())
         .map_err(io_error)?;
 
+    let xml = matches!(fmt, ResultFormat::Xml);
     let mut ids: Vec<TermId> = Vec::with_capacity(BATCH_ROWS * width);
     let mut terms: Vec<Option<Arc<Term>>> = Vec::with_capacity(BATCH_ROWS * width);
     loop {
@@ -70,6 +71,14 @@ pub fn write_solutions(src: &mut dyn SolutionSource, fmt: ResultFormat, w: &mut 
                 ids.len()
             )));
         }
+        if xml {
+            if let Some(c) = terms.iter().flatten().find_map(|t| first_non_xml_char(t)) {
+                return Err(Error::Invalid(format!(
+                    "a result value contains U+{:04X}, which XML 1.0 cannot represent; use the json, csv or tsv format",
+                    c as u32
+                )));
+            }
+        }
         for row in terms.chunks_exact(width) {
             let bindings =
                 variables.iter().zip(row).filter_map(|(var, term)| Some((var.as_ref(), term_ref(term.as_deref()?))));
@@ -78,6 +87,21 @@ pub fn write_solutions(src: &mut dyn SolutionSource, fmt: ResultFormat, w: &mut 
     }
     serializer.finish().map_err(io_error)?;
     out.flush().map_err(io_error)
+}
+
+/// First character of `t` outside the XML 1.0 `Char` production (C0 controls other than tab, LF
+/// and CR, and U+FFFE/U+FFFF). Such characters cannot appear in an XML 1.0 document at all, not even
+/// as character references, so the XML writer refuses the result instead of emitting broken XML.
+fn first_non_xml_char(t: &Term) -> Option<char> {
+    let bad = |s: &str| {
+        s.chars().find(|c| {
+            !matches!(c, '\u{9}' | '\u{A}' | '\u{D}' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..)
+        })
+    };
+    match t {
+        Term::Iri(s) | Term::BNode(s) => bad(s),
+        Term::Literal(l) => bad(&l.lex).or_else(|| bad(&l.datatype)),
+    }
 }
 
 /// Writes an ASK result. CSV and TSV carry the bare `true` / `false` (no header), as

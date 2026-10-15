@@ -340,10 +340,11 @@ SELECT * FROM rdf_quad;
 └───┴───────┴───────┴─────────────────────┘
 ```
 
-Each integer is a *term id*. IRIs and strings are stored once, in the dictionary table
-`rdf_term`; the ids of small numbers, dates, booleans and blank nodes encode the value itself,
-so `34` and `29` above never appear in `rdf_term`. `sparql_term(id)` turns any id back into the
-term, in N-Triples syntax:
+Each integer is a *term id*. IRIs, language-tagged strings and strings longer than 7 bytes are
+stored once, in the dictionary table `rdf_term`, and their id points to that row. Every other
+term gets an id that encodes the value itself: integers, decimals, booleans, dates, short strings
+such as `"Alice"`, and blank nodes. So `34`, `29`, `"Alice"` and `"Bob"` above never appear in
+`rdf_term`. `sparql_term(id)` turns any id back into the term, in N-Triples syntax:
 
 ```sql
 SELECT sparql_term(s) AS s, sparql_term(p) AS p, sparql_term(o) AS o FROM rdf_quad;
@@ -361,15 +362,26 @@ SELECT sparql_term(s) AS s, sparql_term(p) AS p, sparql_term(o) AS o FROM rdf_qu
 └────────────────────────────┴────────────────────────────┴──────────────────────────────────────────────────┘
 ```
 
+The dictionary holds the three IRIs of the example (the predicates and both people) under row
+numbers from 1024 on; rows 1 to 63 hold built-in IRIs such as `rdf:type` and the XML Schema
+datatypes. A term id is the row number times 16 plus a *tag* in the low 4 bits that says what kind
+of term it is (1 = IRI), so row 1024 is id 16385:
+
 ```sql
-SELECT id, tag, lex FROM rdf_term WHERE id >= 16384;
+SELECT id AS row, tag, lex, id * 16 + tag AS term_id FROM rdf_term WHERE id >= 1024;
 ```
 
 ```output
+┌──────┬─────┬──────────────────────────┬─────────┐
+│ row  │ tag │           lex            │ term_id │
+├──────┼─────┼──────────────────────────┼─────────┤
+│ 1024 │ 1   │ http://example.org/alice │ 16385   │
+│ 1025 │ 1   │ http://example.org/name  │ 16401   │
+│ 1026 │ 1   │ http://example.org/age   │ 16417   │
+│ 1027 │ 1   │ http://example.org/knows │ 16433   │
+│ 1028 │ 1   │ http://example.org/bob   │ 16449   │
+└──────┴─────┴──────────────────────────┴─────────┘
 ```
-
-(`id >= 16384` skips the 63 built-in rows, such as `rdf:type` and the XML Schema datatypes, that
-`sparql_init()` creates. The low 4 bits of an id say what kind of term it is.)
 
 The opposite direction, from a term to its id, is `sparql_term_id()`; there are also helpers that
 take an id apart:
@@ -390,7 +402,7 @@ SELECT sparql_term_id('<http://example.org/alice>') AS id,
 ```
 
 You can read these tables with plain SQL, as above. Do not write to them with plain SQL: change
-data with `sparql_load` and `sparql_update` (section 5.16), which keep the dictionary, indexes
+data with `sparql_load` and `sparql_update` (lesson 5.15), which keep the dictionary, indexes
 and statistics consistent.
 
 ---
@@ -477,15 +489,15 @@ ex:bob a ex:Person ;
        ex:born    "1997-04-02"^^xsd:date ;
        ex:height  1.82 ;
        ex:member  [ ex:club "Chess club" ; ex:since 2019 ] .
-');
+') AS new_triples;
 ```
 
 ```output
-┌───────────────┐
-│ sparql_load(' │
-├───────────────┤
-│ 8             │
-└───────────────┘
+┌─────────────┐
+│ new_triples │
+├─────────────┤
+│ 8           │
+└─────────────┘
 ```
 
 and look at everything about `ex:bob`, using the `t` columns to see the exact RDF terms:
@@ -525,15 +537,15 @@ SELECT sparql_load('
 @prefix ex: <http://example.org/> .
 GRAPH ex:diary-2025 { ex:alice ex:visited ex:paris . }
 GRAPH ex:diary-2026 { ex:alice ex:visited ex:rome , ex:paris . }
-', 'trig');
+', 'trig') AS new_quads;
 ```
 
 ```output
-┌───────────────┐
-│ sparql_load(' │
-├───────────────┤
-│ 3             │
-└───────────────┘
+┌───────────┐
+│ new_quads │
+├───────────┤
+│ 3         │
+└───────────┘
 ```
 
 Each stored row is now a *quad* (graph, subject, predicate, object), which is why the table is
@@ -681,10 +693,11 @@ sqlite3 tutorial/tutorial.db
 
 ```sql
 .load ext/target/release/libsparqlite
-.mode box
+.mode box --wordwrap on
 ```
 
-If you leave the shell and come back, repeat these two lines. Some examples change settings; the
+`--wordwrap on` makes box mode break values longer than 60 characters between words rather than
+in the middle of one. If you leave the shell and come back, repeat these two lines. Some examples change settings; the
 text says when, and how to change them back.
 
 ### 4.4 Explore its shape
@@ -807,3 +820,981 @@ FROM job_postings ORDER BY id LIMIT 5;
 │ 5  │ Senior Game Developer (C#)        │ Redwood Arc Studios │ C#         │ London    │ 127500     │ 2025-10-12 │
 └────┴───────────────────────────────────┴─────────────────────┴────────────┴───────────┴────────────┴────────────┘
 ```
+
+---
+
+## 5. A SPARQL course
+
+Each lesson explains one idea, runs a query on the tutorial database and shows the result, and
+ends with an exercise; click "Solution" to see an answer. Write your own attempt first: the
+shell is the best teacher.
+
+All queries are wrapped the same way: `sparql_rows` runs the SPARQL text, and the outer SQL
+`SELECT` names its columns (`v0` is the first variable of the SPARQL `SELECT`, `v1` the second,
+...), so the shell can draw a table:
+
+<!-- verify: skip -->
+```sql
+SELECT v0 AS first_variable, v1 AS second_variable FROM sparql_rows('
+  ... SPARQL query ...
+');
+```
+
+Inside the SQL string, a single quote must be doubled (`''`), as in any SQL string. SPARQL lets
+you use double quotes for its own strings, so you rarely need single quotes inside a query.
+
+### 5.1 SELECT, triple patterns and PREFIX
+
+A SPARQL query is a pattern of triples in which some positions are **variables** (names starting
+with `?`). The engine finds every way to give the variables values so that all the triples of the
+pattern are in the data. Each way is one **solution**, one row of the result.
+
+Who designed Python?
+
+```sql
+SELECT v0 AS designer FROM sparql_rows('
+  PREFIX ex: <http://example.org/pl/>
+  SELECT ?designer
+  WHERE { ex:Python ex:designer ?designer }
+');
+```
+
+```output
+┌───────────────────────────────────────────────┐
+│                   designer                    │
+├───────────────────────────────────────────────┤
+│ http://example.org/pl/person/guido-van-rossum │
+└───────────────────────────────────────────────┘
+```
+
+The answer is an IRI, the name of a node in the graph. To get something readable, follow one more
+arrow: the person's `schema:name`. Patterns in the same `{ }` group are separated by `.`, and a
+variable that appears in two patterns must have the same value in both. That is a join, exactly
+like joining two tables on a shared column:
+
+```sql
+SELECT v0 AS designer, v1 AS name FROM sparql_rows('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX schema: <https://schema.org/>
+  SELECT ?designer ?name
+  WHERE {
+    ex:Python ex:designer ?designer .
+    ?designer schema:name ?name .
+  }
+');
+```
+
+```output
+┌───────────────────────────────────────────────┬──────────────────┐
+│                   designer                    │       name       │
+├───────────────────────────────────────────────┼──────────────────┤
+│ http://example.org/pl/person/guido-van-rossum │ Guido van Rossum │
+└───────────────────────────────────────────────┴──────────────────┘
+```
+
+Things to notice:
+
+- `PREFIX ex: <http://example.org/pl/>` lets you write `ex:Python` instead of
+  `<http://example.org/pl/Python>`. Each query declares the prefixes it uses.
+- `SELECT ?designer ?name` lists the variables you want back, like a SQL column list. `SELECT *`
+  returns every variable of the pattern.
+- Keywords are case-insensitive (`select`, `where`); variable names and IRIs are not.
+
+**Exercise 5.1.** In which year did Haskell first appear? The predicate is `ex:firstAppeared`.
+
+<details>
+<summary>Solution</summary>
+
+```sql
+SELECT v0 AS year FROM sparql_rows('
+  PREFIX ex: <http://example.org/pl/>
+  SELECT ?year
+  WHERE { ex:Haskell ex:firstAppeared ?year }
+');
+```
+
+```output
+┌──────┐
+│ year │
+├──────┤
+│ 1990 │
+└──────┘
+```
+
+</details>
+
+### 5.2 Joins, `;` and `,` shorthand, and `a`
+
+Patterns can be chained as far as you like. Which languages were designed by someone who
+received the ACM Turing Award?
+
+```sql
+SELECT v0 AS language, v1 AS designer, v2 AS award FROM sparql_rows('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX rdfs:   <http://www.w3.org/2000/01/rdf-schema#>
+  PREFIX schema: <https://schema.org/>
+  SELECT ?language ?designer ?award
+  WHERE {
+    ?lang   ex:designer        ?person ;
+            rdfs:label         ?language .
+    ?person ex:turingAwardYear ?award ;
+            schema:name        ?designer .
+  }
+  ORDER BY ?award ?language
+  LIMIT 8
+');
+```
+
+```output
+┌──────────┬────────────────────┬───────┐
+│ language │      designer      │ award │
+├──────────┼────────────────────┼───────┤
+│ ALGOL 58 │ Alan Perlis        │ 1966  │
+│ ALGOL 60 │ Alan Perlis        │ 1966  │
+│ ALGOL 60 │ John McCarthy      │ 1971  │
+│ Lisp     │ John McCarthy      │ 1971  │
+│ ALGOL 58 │ John Backus        │ 1977  │
+│ ALGOL 60 │ John Backus        │ 1977  │
+│ Fortran  │ John Backus        │ 1977  │
+│ APL      │ Kenneth E. Iverson │ 1979  │
+└──────────┴────────────────────┴───────┘
+```
+
+(`ORDER BY` and `LIMIT` work as in SQL; lesson 5.7 covers them.) The `;` means "same subject,
+next predicate", so `?lang ex:designer ?person ; rdfs:label ?language .` is short for two
+patterns with the subject `?lang`. A `,` goes one step further and repeats subject *and*
+predicate: these are the languages that are both functional and class-based:
+
+```sql
+SELECT v0 AS language FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language
+  WHERE {
+    ?lang ex:paradigm ex:Functional , ex:ClassBased ;
+          rdfs:label  ?language .
+  }
+  ORDER BY ?language
+');
+```
+
+```output
+┌─────────────┐
+│  language   │
+├─────────────┤
+│ C#          │
+│ Common Lisp │
+│ D           │
+│ Dart        │
+│ Groovy      │
+│ Kotlin      │
+│ PHP         │
+│ Perl        │
+│ Python      │
+│ Raku        │
+│ Ruby        │
+│ Scala       │
+│ Swift       │
+└─────────────┘
+```
+
+The keyword `a` stands for `rdf:type`, the "is a" predicate. The query languages in the dataset:
+
+```sql
+SELECT v0 AS language FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language
+  WHERE { ?lang a ex:QueryLanguage ; rdfs:label ?language }
+  ORDER BY ?language
+');
+```
+
+```output
+┌──────────┐
+│ language │
+├──────────┤
+│ SPARQL   │
+│ SQL      │
+│ XQuery   │
+└──────────┘
+```
+
+**Exercise 5.2.** Which languages did Bell Labs develop? The organisation is `org:bell-labs`
+(declare `PREFIX org: <http://example.org/pl/org/>`) and the predicate is `ex:developer`. Show
+the languages' names.
+
+<details>
+<summary>Solution</summary>
+
+```sql
+SELECT v0 AS language FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX org:  <http://example.org/pl/org/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language
+  WHERE { ?lang ex:developer org:bell-labs ; rdfs:label ?language }
+  ORDER BY ?language
+');
+```
+
+```output
+┌──────────┐
+│ language │
+├──────────┤
+│ AWK      │
+│ B        │
+│ C        │
+│ C++      │
+│ Limbo    │
+│ S        │
+│ SNOBOL   │
+└──────────┘
+```
+
+</details>
+
+### 5.3 FILTER
+
+`FILTER (condition)` keeps only the solutions for which the condition is true, like SQL's
+`WHERE`. Comparisons (`=`, `!=`, `<`, `<=`, `>`, `>=`) compare numbers as numbers, strings as
+strings and dates as dates; `&&` is "and", `||` is "or", `!` is "not". Languages that appeared
+in the 1950s or that are called "Go":
+
+```sql
+SELECT v0 AS language, v1 AS year FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language ?year
+  WHERE {
+    ?lang ex:firstAppeared ?year ;
+          rdfs:label ?language .
+    FILTER ((?year >= 1950 && ?year < 1960) || ?language = "Go"@en)
+  }
+  ORDER BY ?year
+');
+```
+
+```output
+┌────────────┬──────┐
+│  language  │ year │
+├────────────┼──────┤
+│ FLOW-MATIC │ 1955 │
+│ Fortran    │ 1957 │
+│ ALGOL 58   │ 1958 │
+│ Go         │ 2009 │
+└────────────┴──────┘
+```
+
+Why `"Go"@en` and not `"Go"`? The labels are language-tagged, and in RDF the string `"Go"` and
+the English word `"Go"@en` are different terms, so `?language = "Go"` is never true. `STR()`
+strips the tag: `STR(?language) = "Go"` works too.
+
+String tests: `STRSTARTS`, `STRENDS`, `CONTAINS`, `REGEX` (regular expressions; the optional third
+argument `"i"` ignores case), plus `STRLEN`, `UCASE` and `LCASE`. Languages whose English
+description mentions Apple, in any capitalisation:
+
+```sql
+SELECT v0 AS language, v1 AS description FROM sparql_rows('
+  PREFIX rdfs:   <http://www.w3.org/2000/01/rdf-schema#>
+  PREFIX schema: <https://schema.org/>
+  SELECT ?language ?description
+  WHERE {
+    ?lang rdfs:label ?language ;
+          schema:description ?description .
+    FILTER (REGEX(?description, "apple", "i") && LANG(?description) = "en")
+  }
+  ORDER BY ?language
+');
+```
+
+```output
+┌─────────────┬──────────────────────────────────────────────────────────────┐
+│  language   │                         description                          │
+├─────────────┼──────────────────────────────────────────────────────────────┤
+│ Dylan       │ Multi-paradigm language created at Apple, combining Lisp ide │
+│             │ as with an ALGOL-like syntax.                                │
+├─────────────┼──────────────────────────────────────────────────────────────┤
+│ Objective-C │ C with Smalltalk-style messaging; long the main language for │
+│             │  Apple platforms.                                            │
+├─────────────┼──────────────────────────────────────────────────────────────┤
+│ Swift       │ Apple's general-purpose language for its platforms and beyon │
+│             │ d.                                                           │
+└─────────────┴──────────────────────────────────────────────────────────────┘
+```
+
+`LANG(?x)` returns a literal's language tag (`""` if it has none). Some things in the dataset
+have labels in several languages; the class `ex:ProgrammingLanguage`, for example:
+
+```sql
+SELECT t0 AS label, v1 AS lang FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?label (LANG(?label) AS ?lang)
+  WHERE { ex:ProgrammingLanguage rdfs:label ?label }
+  ORDER BY ?lang
+');
+```
+
+```output
+┌───────────────────────────────┬──────┐
+│             label             │ lang │
+├───────────────────────────────┼──────┤
+│ "Programmiersprache"@de       │ de   │
+│ "programming language"@en     │ en   │
+│ "lenguaje de programación"@es │ es   │
+│ "langage de programmation"@fr │ fr   │
+│ "プログラミング言語"@ja                │ ja   │
+└───────────────────────────────┴──────┘
+```
+
+(`(LANG(?label) AS ?lang)` computes a new column; lesson 5.9 explains such expressions.) Language
+tags have sub-tags, such as `en-GB` for British English, and the store keeps tags in lower case.
+To ask "is this English?", use `LANGMATCHES(LANG(?x), "en")`, which also accepts `en-gb`; a plain
+`LANG(?x) = "en"` does not. The paradigm `ex:ObjectOriented` has one British alternative label:
+
+```sql
+SELECT t0 AS alt_label,
+       v1 AS lang_is_en,
+       v2 AS langmatches_en
+FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+  SELECT ?alt (LANG(?alt) = "en" AS ?eq) (LANGMATCHES(LANG(?alt), "en") AS ?m)
+  WHERE { ex:ObjectOriented skos:altLabel ?alt }
+');
+```
+
+```output
+┌───────────────────────────────────────┬────────────┬────────────────┐
+│               alt_label               │ lang_is_en │ langmatches_en │
+├───────────────────────────────────────┼────────────┼────────────────┤
+│ "object-orientated programming"@en-gb │ 0          │ 1              │
+└───────────────────────────────────────┴────────────┴────────────────┘
+```
+
+Finally, `isIRI`, `isLiteral`, `isBlank` and `isNumeric` test what kind of term a value is. The
+literal (non-IRI) values recorded for Lua:
+
+```sql
+SELECT v0 AS predicate, t1 AS value FROM sparql_rows('
+  PREFIX ex: <http://example.org/pl/>
+  SELECT ?p ?value
+  WHERE { ex:Lua ?p ?value . FILTER (isLiteral(?value)) }
+  ORDER BY ?p ?value
+');
+```
+
+```output
+┌──────────────────────────────────────────────┬──────────────────────────────────────────────────────────────┐
+│                  predicate                   │                            value                             │
+├──────────────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ http://example.org/pl/fileExtension          │ ".lua"                                                       │
+├──────────────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ http://example.org/pl/firstAppeared          │ "1993"^^<http://www.w3.org/2001/XMLSchema#integer>           │
+├──────────────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ http://www.w3.org/2000/01/rdf-schema#comment │ "'Lua' means 'moon' in Portuguese."@en                       │
+├──────────────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ http://www.w3.org/2000/01/rdf-schema#label   │ "Lua"@en                                                     │
+├──────────────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ https://schema.org/description               │ "Lightweight, embeddable scripting language from PUC-Rio in  │
+│                                              │ Brazil."@en                                                  │
+└──────────────────────────────────────────────┴──────────────────────────────────────────────────────────────┘
+```
+
+**Exercise 5.3.** Which programming languages have a name of at most two characters?
+
+<details>
+<summary>Solution</summary>
+
+```sql
+SELECT v0 AS language FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language
+  WHERE {
+    ?lang a ex:ProgrammingLanguage ;
+          rdfs:label ?language .
+    FILTER (STRLEN(?language) <= 2)
+  }
+  ORDER BY ?language
+');
+```
+
+```output
+┌──────────┐
+│ language │
+├──────────┤
+│ B        │
+│ C        │
+│ C#       │
+│ D        │
+│ F#       │
+│ Go       │
+│ J        │
+│ K        │
+│ ML       │
+│ R        │
+│ S        │
+└──────────┘
+```
+
+</details>
+
+### 5.4 OPTIONAL and BOUND
+
+A plain pattern drops every solution for which part of it has no match. Only 40 of the 94
+languages have a homepage (`schema:url`), so requiring one would lose the others. `OPTIONAL { }`
+works like SQL's `LEFT JOIN`: if the optional part matches, its variables get values; if not,
+the solution is kept and those variables stay **unbound** (NULL in SQL):
+
+```sql
+SELECT v0 AS language, v1 AS year, v2 AS homepage FROM sparql_rows('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX rdfs:   <http://www.w3.org/2000/01/rdf-schema#>
+  PREFIX schema: <https://schema.org/>
+  SELECT ?language ?year ?homepage
+  WHERE {
+    ?lang ex:firstAppeared ?year ;
+          rdfs:label ?language .
+    OPTIONAL { ?lang schema:url ?homepage }
+    FILTER (?year >= 1990 && ?year < 1995)
+  }
+  ORDER BY ?year ?language
+');
+```
+
+```output
+┌──────────┬──────┬────────────────────────────┐
+│ language │ year │          homepage          │
+├──────────┼──────┼────────────────────────────┤
+│ Haskell  │ 1990 │ https://www.haskell.org/   │
+│ J        │ 1990 │ https://www.jsoftware.com/ │
+│ Python   │ 1991 │ https://www.python.org/    │
+│ Dylan    │ 1992 │                            │
+│ K        │ 1993 │                            │
+│ Lua      │ 1993 │ https://www.lua.org/       │
+│ R        │ 1993 │ https://www.r-project.org/ │
+└──────────┴──────┴────────────────────────────┘
+```
+
+`BOUND(?x)` is true when `?x` has a value. Combined with `OPTIONAL` it finds things that *lack*
+something, here the languages from 2010 on without a recorded homepage:
+
+```sql
+SELECT v0 AS language, v1 AS year FROM sparql_rows('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX rdfs:   <http://www.w3.org/2000/01/rdf-schema#>
+  PREFIX schema: <https://schema.org/>
+  SELECT ?language ?year
+  WHERE {
+    ?lang ex:firstAppeared ?year ;
+          rdfs:label ?language .
+    OPTIONAL { ?lang schema:url ?homepage }
+    FILTER (?year >= 2010 && !BOUND(?homepage))
+  }
+');
+```
+
+```output
+┌──────────┬──────┐
+│ language │ year │
+├──────────┼──────┤
+│ Mojo     │ 2023 │
+└──────────┴──────┘
+```
+
+(Lesson 5.6 shows two more direct ways to say "has no ...".)
+
+**Exercise 5.4.** List the people born before 1925 (`schema:birthDate`, an `xsd:date`) with their
+date of death (`schema:deathDate`) where one is recorded. Compare dates with a typed literal such
+as `"1925-01-01"^^xsd:date` (declare `PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>`).
+
+<details>
+<summary>Solution</summary>
+
+```sql
+SELECT v0 AS name, v1 AS born, v2 AS died FROM sparql_rows('
+  PREFIX schema: <https://schema.org/>
+  PREFIX xsd:    <http://www.w3.org/2001/XMLSchema#>
+  SELECT ?name ?born ?died
+  WHERE {
+    ?person schema:name ?name ;
+            schema:birthDate ?born .
+    OPTIONAL { ?person schema:deathDate ?died }
+    FILTER (?born < "1925-01-01"^^xsd:date)
+  }
+  ORDER BY ?born
+');
+```
+
+```output
+┌─────────────────────────┬────────────┬────────────┐
+│          name           │    born    │    died    │
+├─────────────────────────┼────────────┼────────────┤
+│ Grace Hopper            │ 1906-12-09 │ 1992-01-01 │
+│ Adriaan van Wijngaarden │ 1916-11-02 │ 1987-02-07 │
+│ Christopher Strachey    │ 1916-11-16 │ 1975-05-18 │
+│ Kenneth E. Iverson      │ 1920-12-17 │ 2004-10-19 │
+│ Alan Perlis             │ 1922-04-01 │ 1990-02-07 │
+│ John Backus             │ 1924-12-03 │ 2007-03-17 │
+└─────────────────────────┴────────────┴────────────┘
+```
+
+Dates come back as ISO 8601 text, so SQLite's own date functions work on them.
+
+</details>
+
+### 5.5 UNION
+
+`{ A } UNION { B }` returns the solutions of A plus those of B, like SQL's `UNION ALL`. Everyone
+credited for Java, as designer or as developer:
+
+```sql
+SELECT v0 AS name, v1 AS who FROM sparql_rows('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX schema: <https://schema.org/>
+  SELECT ?name ?who
+  WHERE {
+    { ex:Java ex:designer ?who } UNION { ex:Java ex:developer ?who }
+    ?who schema:name ?name .
+  }
+  ORDER BY ?name
+');
+```
+
+```output
+┌──────────────────┬────────────────────────────────────────────┐
+│       name       │                    who                     │
+├──────────────────┼────────────────────────────────────────────┤
+│ James Gosling    │ http://example.org/pl/person/james-gosling │
+│ Oracle           │ http://example.org/pl/org/oracle           │
+│ Sun Microsystems │ http://example.org/pl/org/sun-microsystems │
+└──────────────────┴────────────────────────────────────────────┘
+```
+
+The two branches may bind different variables; a variable that only one branch binds is unbound
+in the other branch's solutions. The patterns after the `UNION` apply to both branches.
+
+**Exercise 5.5.** Find the languages that use gradual typing (`ex:typing ex:GradualTyping`) or
+logic programming (`ex:paradigm ex:Logic`), with a `UNION`.
+
+<details>
+<summary>Solution</summary>
+
+```sql
+SELECT v0 AS language FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language
+  WHERE {
+    { ?lang ex:typing ex:GradualTyping } UNION { ?lang ex:paradigm ex:Logic }
+    ?lang rdfs:label ?language .
+  }
+  ORDER BY ?language
+');
+```
+
+```output
+┌────────────┐
+│  language  │
+├────────────┤
+│ Dylan      │
+│ Hack       │
+│ Mercury    │
+│ Prolog     │
+│ Raku       │
+│ TypeScript │
+└────────────┘
+```
+
+A language that matched both branches would appear twice; `SELECT DISTINCT` (lesson 5.7) removes
+such duplicates.
+
+</details>
+
+### 5.6 MINUS and FILTER NOT EXISTS
+
+Two ways to say "without": `FILTER NOT EXISTS { pattern }` keeps a solution if the pattern,
+with the solution's values filled in, has **no** match; `MINUS { pattern }` removes the solutions
+that are **compatible** with some solution of the pattern. The programming languages without a
+recorded designer, both ways:
+
+```sql
+SELECT v0 AS language FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language
+  WHERE {
+    ?lang a ex:ProgrammingLanguage ; rdfs:label ?language .
+    FILTER NOT EXISTS { ?lang ex:designer ?someone }
+  }
+  ORDER BY ?language
+');
+```
+
+```output
+┌──────────┐
+│ language │
+├──────────┤
+│ Caml     │
+│ Carbon   │
+│ Cyclone  │
+│ Dylan    │
+│ Hack     │
+│ Mesa     │
+│ PL/I     │
+│ Racket   │
+└──────────┘
+```
+
+```sql
+SELECT v0 AS language FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language
+  WHERE {
+    ?lang a ex:ProgrammingLanguage ; rdfs:label ?language .
+    MINUS { ?lang ex:designer ?someone }
+  }
+  ORDER BY ?language
+');
+```
+
+```output
+┌──────────┐
+│ language │
+├──────────┤
+│ Caml     │
+│ Carbon   │
+│ Cyclone  │
+│ Dylan    │
+│ Hack     │
+│ Mesa     │
+│ PL/I     │
+│ Racket   │
+└──────────┘
+```
+
+They agree here because the inner pattern shares the variable `?lang` with the outer one. They
+differ when nothing is shared. `MINUS` only removes solutions that share at least one variable
+with the removed pattern, so a pattern without shared variables removes nothing. `NOT EXISTS`
+simply asks "does this pattern match?", which for a pattern without shared variables is the same
+question for every solution:
+
+```sql
+SELECT v0 AS minus_keeps, v1 AS not_exists_keeps FROM sparql_rows('
+  PREFIX ex: <http://example.org/pl/>
+  SELECT
+    (SUM(IF(?m, 1, 0)) AS ?minus)
+    (SUM(IF(?n, 1, 0)) AS ?notexists)
+  WHERE {
+    { SELECT ?lang (true AS ?m) (false AS ?n) WHERE {
+        ?lang a ex:ProgrammingLanguage MINUS { ex:Python ex:designer ?d } } }
+    UNION
+    { SELECT ?lang (false AS ?m) (true AS ?n) WHERE {
+        ?lang a ex:ProgrammingLanguage FILTER NOT EXISTS { ex:Python ex:designer ?d } } }
+  }
+');
+```
+
+```output
+┌─────────────┬──────────────────┐
+│ minus_keeps │ not_exists_keeps │
+├─────────────┼──────────────────┤
+│ 91          │ 0                │
+└─────────────┴──────────────────┘
+```
+
+That query packs both versions into one (with sub-queries from lesson 5.11); it is easier to try
+them one at a time with `sparql_count()`, a SQL function that counts a query's solutions:
+
+```sql
+SELECT
+  sparql_count('PREFIX ex: <http://example.org/pl/>
+    SELECT ?lang WHERE { ?lang a ex:ProgrammingLanguage
+                         MINUS { ex:Python ex:designer ?d } }') AS with_minus,
+  sparql_count('PREFIX ex: <http://example.org/pl/>
+    SELECT ?lang WHERE { ?lang a ex:ProgrammingLanguage
+                         FILTER NOT EXISTS { ex:Python ex:designer ?d } }') AS with_not_exists;
+```
+
+```output
+┌────────────┬─────────────────┐
+│ with_minus │ with_not_exists │
+├────────────┼─────────────────┤
+│ 91         │ 0               │
+└────────────┴─────────────────┘
+```
+
+Python has a designer, so `NOT EXISTS` is false for every language and removes all 91; `MINUS`
+finds no shared variable and removes none. Rule of thumb: use `FILTER NOT EXISTS` when you mean
+"there is no ...", and `MINUS` when you mean "take away these solutions". (`FILTER EXISTS` is the
+positive form.)
+
+**Exercise 5.6.** Which languages influenced at least one other language in the dataset but were
+not themselves influenced by any language in it? (Use `DISTINCT` after `SELECT` to list each
+once; it is explained in the next lesson.)
+
+<details>
+<summary>Solution</summary>
+
+```sql
+SELECT v0 AS language FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT DISTINCT ?language
+  WHERE {
+    ?newer ex:influencedBy ?root .
+    ?root rdfs:label ?language .
+    FILTER NOT EXISTS { ?root ex:influencedBy ?older }
+  }
+  ORDER BY ?language
+');
+```
+
+```output
+┌──────────────────┐
+│     language     │
+├──────────────────┤
+│ APL              │
+│ FLOW-MATIC       │
+│ Fortran          │
+│ Lisp             │
+│ MATLAB           │
+│ Mesa             │
+│ Prolog           │
+│ S                │
+│ SNOBOL           │
+│ SQL              │
+│ Wolfram Language │
+└──────────────────┘
+```
+
+</details>
+
+### 5.7 DISTINCT, ORDER BY, LIMIT and OFFSET
+
+These work as in SQL. `ORDER BY ?x` sorts ascending, `ORDER BY DESC(?x)` descending; several keys
+are separated by spaces. Unbound values sort first. `LIMIT n` keeps the first n solutions and
+`OFFSET n` skips n, which together page through a result. The five most recent languages:
+
+```sql
+SELECT v0 AS language, v1 AS year FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language ?year
+  WHERE { ?lang ex:firstAppeared ?year ; rdfs:label ?language }
+  ORDER BY DESC(?year) ?language
+  LIMIT 5
+');
+```
+
+```output
+┌──────────┬──────┐
+│ language │ year │
+├──────────┼──────┤
+│ Mojo     │ 2023 │
+│ Carbon   │ 2022 │
+│ Gleam    │ 2016 │
+│ Zig      │ 2016 │
+│ Raku     │ 2015 │
+└──────────┴──────┘
+```
+
+`SELECT DISTINCT` removes duplicate solutions. The paradigms of the languages that appeared
+before 1960; without `DISTINCT`, "procedural programming" would appear once per language:
+
+```sql
+SELECT v0 AS paradigm FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT DISTINCT ?paradigm
+  WHERE {
+    ?lang ex:firstAppeared ?year ;
+          ex:paradigm ?p .
+    ?p rdfs:label ?paradigm .
+    FILTER (?year < 1960 && LANG(?paradigm) = "en")
+  }
+  ORDER BY ?paradigm
+');
+```
+
+```output
+┌────────────────────────┐
+│        paradigm        │
+├────────────────────────┤
+│ array programming      │
+│ imperative programming │
+│ procedural programming │
+└────────────────────────┘
+```
+
+**Exercise 5.7.** Page through the languages by year, five per page: show page 3 (the 11th to
+15th oldest languages with a known year, ties broken by name).
+
+<details>
+<summary>Solution</summary>
+
+```sql
+SELECT v0 AS language, v1 AS year FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?language ?year
+  WHERE { ?lang ex:firstAppeared ?year ; rdfs:label ?language }
+  ORDER BY ?year ?language
+  LIMIT 5 OFFSET 10
+');
+```
+
+```output
+┌──────────┬──────┐
+│ language │ year │
+├──────────┼──────┤
+│ PL/I     │ 1964 │
+│ ALGOL W  │ 1966 │
+│ APL      │ 1966 │
+│ ISWIM    │ 1966 │
+│ BCPL     │ 1967 │
+└──────────┴──────┘
+```
+
+</details>
+
+### 5.8 Aggregates: COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT, SAMPLE
+
+`GROUP BY` splits the solutions into groups, and aggregate functions summarise each group, as in
+SQL. In SPARQL an aggregate must be given a name with `(... AS ?name)`. Per paradigm: how many
+languages, the earliest and latest year, and the average year:
+
+```sql
+SELECT v0 AS paradigm, v1 AS languages, v2 AS first, v3 AS last, v4 AS average
+FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+  SELECT ?paradigm (COUNT(?lang) AS ?n) (MIN(?year) AS ?first)
+         (MAX(?year) AS ?last) (AVG(?year) AS ?avg)
+  WHERE {
+    ?lang ex:paradigm ?p ;
+          ex:firstAppeared ?year .
+    ?p rdfs:label ?paradigm .
+    FILTER (LANG(?paradigm) = "en")
+  }
+  GROUP BY ?paradigm
+  ORDER BY DESC(?n)
+');
+```
+
+```output
+┌─────────────────────────────────────────┬───────────┬───────┬──────┬──────────────────┐
+│                paradigm                 │ languages │ first │ last │     average      │
+├─────────────────────────────────────────┼───────────┼───────┼──────┼──────────────────┤
+│ procedural programming                  │ 49        │ 1957  │ 2022 │ 1983.79591836735 │
+│ functional programming                  │ 42        │ 1960  │ 2016 │ 1995.28571428571 │
+│ class-based programming                 │ 22        │ 1962  │ 2015 │ 1995.86363636364 │
+│ object-oriented programming             │ 12        │ 1975  │ 2022 │ 1994.5           │
+│ concurrent programming                  │ 10        │ 1980  │ 2016 │ 2002.6           │
+│ array programming                       │ 7         │ 1957  │ 2012 │ 1985.57142857143 │
+│ imperative programming                  │ 4         │ 1955  │ 2023 │ 1979.0           │
+│ prototype-based programming             │ 4         │ 1987  │ 2009 │ 1996.0           │
+│ declarative programming                 │ 3         │ 1973  │ 2008 │ 1996.0           │
+│ purely functional programming           │ 3         │ 1985  │ 2012 │ 1995.66666666667 │
+│ concatenative (stack-based) programming │ 2         │ 1970  │ 1982 │ 1976.0           │
+│ logic programming                       │ 2         │ 1972  │ 1995 │ 1983.5           │
+└─────────────────────────────────────────┴───────────┴───────┴──────┴──────────────────┘
+```
+
+`HAVING` filters groups after aggregation. `SAMPLE(?x)` picks any one value from the group, and
+`GROUP_CONCAT(?x; separator=" ")` joins all of them into one string. The people who designed at
+least three languages:
+
+```sql
+SELECT v0 AS designer, v1 AS languages, v2 AS names FROM sparql_rows('
+  PREFIX ex:     <http://example.org/pl/>
+  PREFIX rdfs:   <http://www.w3.org/2000/01/rdf-schema#>
+  PREFIX schema: <https://schema.org/>
+  SELECT ?designer (COUNT(?lang) AS ?n) (GROUP_CONCAT(?language; separator=", ") AS ?names)
+  WHERE {
+    ?lang ex:designer ?person ; rdfs:label ?language .
+    ?person schema:name ?designer .
+  }
+  GROUP BY ?designer
+  HAVING (COUNT(?lang) >= 3)
+  ORDER BY DESC(?n) ?designer
+');
+```
+
+```output
+┌──────────────────┬───────────┬──────────────────────────────────────────────────┐
+│     designer     │ languages │                      names                       │
+├──────────────────┼───────────┼──────────────────────────────────────────────────┤
+│ Niklaus Wirth    │ 5         │ ALGOL W, Pascal, Modula-2, Object Pascal, Oberon │
+│ Anders Hejlsberg │ 3         │ Object Pascal, C#, TypeScript                    │
+│ John Backus      │ 3         │ Fortran, ALGOL 58, ALGOL 60                      │
+└──────────────────┴───────────┴──────────────────────────────────────────────────┘
+```
+
+Without `GROUP BY`, the whole result is one group. `COUNT(DISTINCT ?x)` counts different values.
+Be careful with solutions in which the aggregated variable has no value. This query combines the
+275 influence edges with the two fictional surveys (described in the default graph), so `?older`
+is unbound in two solutions and `?respondents` in 275:
+
+```sql
+SELECT v0 AS solutions, v1 AS edges, v2 AS influencers, v3 AS respondents
+FROM sparql_rows('
+  PREFIX ex: <http://example.org/pl/>
+  SELECT (COUNT(*) AS ?all) (COUNT(?older) AS ?edges)
+         (COUNT(DISTINCT ?older) AS ?influencers) (SUM(?respondents) AS ?total)
+  WHERE {
+    { ?lang ex:influencedBy ?older }
+    UNION
+    { ?survey ex:respondents ?respondents }
+  }
+');
+```
+
+```output
+```
+
+`COUNT(*)` counts all solutions, and `COUNT(?older)` skips the ones where `?older` is unbound.
+But `SUM`, `AVG`, `MIN`, `MAX` and `GROUP_CONCAT` have **no value at all** for a group in which
+their expression fails for some solution, because the variable is unbound there or a value is
+not a number. Count, filter, or give missing values a default with `COALESCE` (lesson 5.9):
+`SUM(COALESCE(?respondents, 0))` is 100090.
+
+**Exercise 5.8.** How many languages first appeared in each decade? Hint: you can group by an
+expression, `GROUP BY (FLOOR(?year / 10) * 10 AS ?decade)`, and select `?decade`.
+
+<details>
+<summary>Solution</summary>
+
+```sql
+SELECT v0 AS decade, v1 AS languages FROM sparql_rows('
+  PREFIX ex: <http://example.org/pl/>
+  SELECT ?decade (COUNT(?lang) AS ?n)
+  WHERE { ?lang ex:firstAppeared ?year }
+  GROUP BY (FLOOR(?year / 10) * 10 AS ?decade)
+  ORDER BY ?decade
+');
+```
+
+```output
+┌────────┬───────────┐
+│ decade │ languages │
+├────────┼───────────┤
+│ 1950.0 │ 3         │
+│ 1960.0 │ 15        │
+│ 1970.0 │ 14        │
+│ 1980.0 │ 18        │
+│ 1990.0 │ 15        │
+│ 2000.0 │ 13        │
+│ 2010.0 │ 13        │
+│ 2020.0 │ 2         │
+└────────┴───────────┘
+```
+
+The decades come out as `1950.0`: in SPARQL, dividing two integers gives a decimal, and
+`FLOOR` keeps it a decimal, which sparqlite hands to SQL as a REAL. Lesson 5.9 shows how to turn
+it back into an integer.
+
+</details>
