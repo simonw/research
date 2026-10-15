@@ -253,3 +253,66 @@ fn estimates_are_clamped() {
     // Saturated estimates stay comparable and finite through further arithmetic + clamping.
     assert!(clamp_est(MAX_ESTIMATE * MAX_ESTIMATE + MAX_ESTIMATE).is_finite());
 }
+
+/// MemStore that counts `count` calls (the planner's bounded-count probes).
+struct CountingStore {
+    inner: MemStore,
+    counts: std::cell::Cell<u32>,
+}
+
+impl QuadStore for CountingStore {
+    fn cursor(&self, spec: &sq_core::store::ScanSpec) -> Result<Box<dyn sq_core::store::QuadCursor>> {
+        self.inner.cursor(spec)
+    }
+    fn count(&self, spec: &sq_core::store::ScanSpec, cap: Option<u64>) -> Result<u64> {
+        self.counts.set(self.counts.get() + 1);
+        self.inner.count(spec, cap)
+    }
+    fn dict(&self) -> &dyn sq_core::store::Dictionary {
+        self.inner.dict()
+    }
+    fn named_graphs(&self) -> Result<Vec<TermId>> {
+        self.inner.named_graphs()
+    }
+    fn stats(&self) -> Option<std::sync::Arc<sq_core::stats::Stats>> {
+        self.inner.stats()
+    }
+    fn costs(&self) -> &CostConstants {
+        self.inner.costs()
+    }
+    fn caps(&self) -> StoreCaps {
+        self.inner.caps()
+    }
+}
+
+/// A single quad pattern under modifiers has no cost-based choice: planning it runs no
+/// bounded count. A join, or a filter (an IntRange alternative), still probes.
+#[test]
+fn single_pattern_queries_plan_without_bounded_counts() {
+    let st = CountingStore { inner: chain_store(3), counts: std::cell::Cell::new(0) };
+    let s_const = |p: i64| QuadPat { g: GraphSel::Default, s: PatTerm::Const(iri(1001)), p: PatTerm::Const(iri(p)), o: PatTerm::Slot(0) };
+    let probes = |root: Logical, width: usize| {
+        st.counts.set(0);
+        let q = query(root, width);
+        let named = named_graphs(&q, &st).unwrap();
+        let rw = rewrite::rewrite(q.root.clone(), q.exists.clone(), &named).unwrap();
+        let p = plan_query(&q, rw, named, &st, &QueryOptions::default()).unwrap();
+        crate::validate(&p).unwrap();
+        st.counts.get()
+    };
+    let one = Logical::Bgp(vec![s_const(0)]);
+    assert_eq!(probes(one.clone(), 1), 0);
+    let modified = Logical::Slice {
+        input: Box::new(Logical::Distinct(Box::new(Logical::Project { input: Box::new(one.clone()), slots: vec![0] }))),
+        offset: 0,
+        limit: Some(5),
+    };
+    assert_eq!(probes(modified, 1), 0);
+    let joined = Logical::Bgp(vec![s_const(0), pat(0, 1, 1)]);
+    assert!(probes(joined, 2) > 0, "a join is ordered by its estimates");
+    let filtered = Logical::Filter {
+        input: Box::new(one),
+        expr: sq_core::ir::Expr::Bound(0),
+    };
+    assert!(probes(filtered, 1) > 0, "a filtered pattern keeps its probes");
+}

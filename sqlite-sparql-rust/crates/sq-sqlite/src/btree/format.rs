@@ -1,6 +1,6 @@
 //! The parts of the SQLite file format (<https://www.sqlite.org/fileformat2.html>) the reader
 //! needs: the database header, index b-tree pages (interior 0x02, leaf 0x0A), varints, and
-//! records whose 4 columns are integers.
+//! records whose 4 columns are integers. Table b-tree pages (`rdf_term`) are in `terms`.
 //!
 //! Every byte read from disk is untrusted. Each access is bounds-checked against the usable
 //! area of the page. Each inconsistency becomes a [`Fallback`] (the scan then continues as a
@@ -32,12 +32,12 @@ const fn corrupt(what: &'static str) -> Fallback {
 }
 
 #[inline]
-fn be16(b: &[u8], at: usize) -> Option<u16> {
+pub(super) fn be16(b: &[u8], at: usize) -> Option<u16> {
     Some(u16::from_be_bytes(b.get(at..at + 2)?.try_into().ok()?))
 }
 
 #[inline]
-fn be32(b: &[u8], at: usize) -> Option<u32> {
+pub(super) fn be32(b: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_be_bytes(b.get(at..at + 4)?.try_into().ok()?))
 }
 
@@ -57,6 +57,8 @@ pub(crate) struct DbHeader {
     pub page_count: Option<u32>,
     /// Schema cookie (byte 40).
     pub schema_cookie: u32,
+    /// Text encoding (byte 56): 1 = UTF-8, 2 = UTF-16le, 3 = UTF-16be.
+    pub text_encoding: u32,
 }
 
 impl DbHeader {
@@ -87,6 +89,7 @@ impl DbHeader {
             change_counter,
             page_count: (size != 0 && valid_for == change_counter).then_some(size),
             schema_cookie: be32(b, 40).ok_or(corrupt("schema cookie"))?,
+            text_encoding: be32(b, 56).ok_or(corrupt("text encoding"))?,
         })
     }
 
@@ -208,8 +211,37 @@ impl<'p> Cells<'p> {
 
     /// The key of cell `i`. Interior cells of index b-trees are entries too (they come
     /// between their left child and the next child in key order).
+    ///
+    /// Fast path for the shape of every record SQLite writes for 4 integer columns (a
+    /// one-byte payload size, a 5-byte header of one-byte integer serial types, a body of
+    /// exactly their widths): each column is one bounds-checked 8-byte big-endian load that
+    /// ends where the column ends, shifted to its width with sign extension. The loads stay
+    /// inside the page: a cell starts after the page header, more than 8 bytes in. Any other
+    /// shape goes through `decode_record`, which validates it in full.
     #[inline(always)]
     pub fn key(&self, i: usize) -> Result<Key, Fallback> {
+        let at = self.offset(i)? + self.skip;
+        if let Some(&[size, 5, t0, t1, t2, t3, ..]) = self.b.get(at..)
+            && size < 0x80
+        {
+            let w = [INT_WIDTH[usize::from(t0)], INT_WIDTH[usize::from(t1)], INT_WIDTH[usize::from(t2)], INT_WIDTH[usize::from(t3)]];
+            let end = at + 1 + usize::from(size);
+            if (w[0] | w[1] | w[2] | w[3]) & NOT_INT == 0
+                && usize::from(w[0]) + usize::from(w[1]) + usize::from(w[2]) + usize::from(w[3]) + 5 == usize::from(size)
+                && at >= 8
+                && end <= self.b.len()
+            {
+                let e0 = at + 6 + usize::from(w[0]);
+                let e1 = e0 + usize::from(w[1]);
+                let e2 = e1 + usize::from(w[2]);
+                return Ok([
+                    int_ending_at(self.b, e0, w[0], t0),
+                    int_ending_at(self.b, e1, w[1], t1),
+                    int_ending_at(self.b, e2, w[2], t2),
+                    int_ending_at(self.b, end, w[3], t3),
+                ]);
+            }
+        }
         decode_record(self.record(i)?)
     }
 
@@ -233,6 +265,21 @@ impl<'p> Cells<'p> {
         }
         Ok(pgno)
     }
+}
+
+/// First index in `0..n` where `before(i)` is false; `before` must hold on a prefix of `0..n`
+/// (a binary search with a fallible predicate).
+pub(super) fn partition(n: usize, mut before: impl FnMut(usize) -> Result<bool, Fallback>) -> Result<usize, Fallback> {
+    let (mut lo, mut hi) = (0, n);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if before(mid)? {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    Ok(lo)
 }
 
 /// Child `i` of an interior page (see [`Cells::child`]).
@@ -378,6 +425,22 @@ fn int_at(st: u8, body: &[u8], at: usize) -> Option<i64> {
         8 => 0,
         _ => 1,
     })
+}
+
+/// The integer column of serial type `st` (body width `w`, 0 for the constants 0 and 1 of
+/// types 8 and 9) whose last byte is `b[end - 1]`. The caller guarantees `8 <= end <= b.len()`;
+/// a violation would read 0 instead of panicking.
+#[inline(always)]
+fn int_ending_at(b: &[u8], end: usize, w: u8, st: u8) -> i64 {
+    if w == 0 {
+        return i64::from(st) - 8;
+    }
+    let raw = match b.get(end.wrapping_sub(8)..end) {
+        Some(&[a, b, c, d, e, f, g, h]) => i64::from_be_bytes([a, b, c, d, e, f, g, h]),
+        _ => 0,
+    };
+    let shift = 64 - 8 * u32::from(w);
+    (raw << shift) >> shift
 }
 
 /// Decodes a record of exactly 4 integer columns.
@@ -579,6 +642,7 @@ mod tests {
         h[24..28].copy_from_slice(&7u32.to_be_bytes());
         h[28..32].copy_from_slice(&42u32.to_be_bytes());
         h[40..44].copy_from_slice(&3u32.to_be_bytes());
+        h[56..60].copy_from_slice(&1u32.to_be_bytes());
         h[92..96].copy_from_slice(&7u32.to_be_bytes());
         h
     }
@@ -587,6 +651,10 @@ mod tests {
     fn database_headers() {
         let h = DbHeader::parse(&header(4096, 0, 1)).unwrap();
         assert_eq!((h.page_size, h.reserved, h.page_count, h.schema_cookie, h.change_counter), (4096, 0, Some(42), 3, 7));
+        assert_eq!(h.text_encoding, 1);
+        let mut utf16 = header(4096, 0, 1);
+        utf16[59] = 2;
+        assert_eq!(DbHeader::parse(&utf16).unwrap().text_encoding, 2);
         assert!(h.rollback_journal());
         assert_eq!(h.geometry(), Geometry { page_size: 4096, usable: 4096, max_local: (4096 - 12) * 64 / 255 - 23 });
         // 65536 is encoded as 1.
@@ -689,6 +757,35 @@ mod tests {
         p[100] = 120; // payload length > max_local (103)
         let h = NodeHeader::parse(&p, 2, &big).unwrap();
         assert!(matches!(cell_key(&p, &h, 0, &big), Err(Fallback::Unsupported(_))));
+    }
+
+    /// `Cells::key` (with its fast path) equals `decode_record` for records of every integer
+    /// serial type, on leaf and interior pages, page 1 included.
+    #[test]
+    fn fast_key_decode_matches_the_general_decoder() {
+        let edges = [0i64, 1, -1, 2, 127, -128, 128, 32767, -32768, 40_000, -8_388_608, 8_388_608, i32::MIN as i64, 1 << 40, -(1 << 47), (1 << 47) - 1, i64::MAX, i64::MIN];
+        let g = Geometry::new(4096, 0);
+        let mut x = 7u64;
+        for round in 0..200 {
+            let recs: Vec<(u32, Vec<u8>)> = (0..40)
+                .map(|i| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    let pick = |k: u64| edges[((x >> (8 * k)) % edges.len() as u64) as usize];
+                    let cols = [pick(0), pick(1), pick(2), if round % 2 == 0 { pick(3) } else { i as i64 }];
+                    (2 + i as u32, encode_record(&cols))
+                })
+                .collect();
+            for (pgno, leaf) in [(2u32, true), (2, false), (1, true)] {
+                let p = page(&g, pgno, leaf, &recs, 99);
+                let h = NodeHeader::parse(&p, pgno, &g).unwrap();
+                let cells = Cells::new(&p, &h, &g).unwrap();
+                for (i, (_, rec)) in recs.iter().enumerate() {
+                    assert_eq!(cells.key(i).unwrap(), decode_record(rec).unwrap(), "round {round} cell {i}");
+                }
+            }
+        }
     }
 
     fn h_leaf(p: &[u8], g: &Geometry) -> NodeHeader {

@@ -1,6 +1,7 @@
 //! Dictionary read paths (§4.3): `lookup` (inline, store bnode labels and well-known IRIs ->
 //! no I/O; LookupCache then a hash probe of `rdf_term_h` with exact compare) and `decode`
 //! (inline / bnode / well-known rows without I/O; DecodeCache; sorted, deduplicated misses
+//! read from the `rdf_term` b-tree pages by the direct reader when it can serve them, else
 //! fetched by pooled point lookups or, for large batches, one merge scan). Only rows admitted
 //! by the §4.4 rule enter the connection caches; negative lookups are never cached.
 use std::sync::Arc;
@@ -9,6 +10,7 @@ use sq_core::codec::{self, bnode_label, decode_inline};
 use sq_core::term::{Literal, Term};
 use sq_core::{Error, Result, Tag, TermId};
 
+use crate::btree::{self, TermRow};
 use crate::keys::{well_known_iri, KeyLike, KeyView};
 use crate::raw::RawStmt;
 use crate::shared::StorageShared;
@@ -95,6 +97,24 @@ impl StorageShared {
         Ok(None)
     }
 
+    /// `Dictionary::decode_one`: a dictionary id is looked up in the DecodeCache without the
+    /// batch machinery (no allocation for a hit), and a miss fetches its one row; other ids go
+    /// through `decode_ids`.
+    pub(crate) fn decode_one_id(&self, id: TermId) -> Result<Arc<Term>> {
+        if id.is_dict() && self.well_known_term(id).is_none() {
+            let hit = self.decode_cache.try_borrow_mut().map_err(|_| Error::Reentrant)?.get(id.0).cloned();
+            self.count(|c| c.decode_calls += 1);
+            if let Some(t) = hit {
+                return Ok(t);
+            }
+            // A miss: the one row, without the batch bookkeeping of `decode_into`.
+            return self.fetch_terms(&[id])?.pop().ok_or_else(|| Error::internal("decode returned nothing"));
+        }
+        let mut out = Vec::with_capacity(1);
+        self.decode_ids(&[id], &mut out)?;
+        out.pop().ok_or_else(|| Error::internal("decode returned nothing"))
+    }
+
     /// `Dictionary::decode`. On error `out` is left as it was.
     pub(crate) fn decode_ids(&self, ids: &[TermId], out: &mut Vec<Arc<Term>>) -> Result<()> {
         self.count(|c| c.decode_calls += 1);
@@ -149,13 +169,7 @@ impl StorageShared {
     /// Fetches sorted, distinct dictionary ids; returns their terms in the same order and
     /// admits committed rows to the DecodeCache.
     fn fetch_terms(&self, ids: &[TermId]) -> Result<Vec<Arc<Term>>> {
-        let committed = self.committed_max_row();
-        let rows = if committed > 0 && ids.len() * MERGE_SCAN_DIVISOR > committed as usize {
-            self.count(|c| c.decode_merge_scans += 1);
-            self.fetch_merge(ids)?
-        } else {
-            self.fetch_points(ids)?
-        };
+        let rows = self.fetch_rows(ids)?;
         self.count(|c| c.decode_db_rows += rows.len() as u64);
         // Datatype IRIs of TYPED rows: from this batch, the cache, or one more fetch.
         let mut cached_dt: Vec<(TermId, Arc<Term>)> = Vec::new();
@@ -239,6 +253,39 @@ impl StorageShared {
         })
     }
 
+    /// The rows of sorted, distinct dictionary ids, read from the `rdf_term` b-tree pages by
+    /// the direct reader when it can serve them (`btree::read_terms`). The rows it leaves to
+    /// SQL, or all of them when it cannot serve, go through `fetch_sql`.
+    fn fetch_rows(&self, ids: &[TermId]) -> Result<Vec<Row>> {
+        let rowids: Vec<i64> = ids.iter().map(|id| id.dict_row()).collect();
+        let mut direct: Vec<Option<Row>> = Vec::new();
+        direct.resize_with(ids.len(), || None);
+        let rest = btree::read_terms(&self.btree, &rowids, &mut || self.check_interrupt(), &mut |i, t| {
+            direct[i] = Some(row_from_page(ids[i], &t)?);
+            Ok(())
+        })?;
+        let Some(rest) = rest else { return self.fetch_sql(ids) };
+        if !rest.is_empty() {
+            let want: Vec<TermId> = rest.iter().map(|&i| ids[i]).collect();
+            for (i, row) in rest.into_iter().zip(self.fetch_sql(&want)?) {
+                direct[i] = Some(row);
+            }
+        }
+        direct.into_iter().map(|r| r.ok_or_else(|| Error::internal("dictionary row neither read nor fetched"))).collect()
+    }
+
+    /// Pooled point lookups, or one merge scan when the batch needs more than 1/20 of the
+    /// committed dictionary rows.
+    fn fetch_sql(&self, ids: &[TermId]) -> Result<Vec<Row>> {
+        let committed = self.committed_max_row();
+        if committed > 0 && ids.len() * MERGE_SCAN_DIVISOR > committed as usize {
+            self.count(|c| c.decode_merge_scans += 1);
+            self.fetch_merge(ids)
+        } else {
+            self.fetch_points(ids)
+        }
+    }
+
     /// Pooled `SELECT … WHERE id=?1` per id (sorted ids keep the B-tree path warm).
     fn fetch_points(&self, ids: &[TermId]) -> Result<Vec<Row>> {
         let mut st = self.pool.lease_fixed(Fixed::TermById)?;
@@ -287,6 +334,14 @@ impl StorageShared {
 
 fn unknown(id: TermId) -> Error {
     Error::internal(format!("unknown dictionary id {id:?}"))
+}
+
+/// A row read from its b-tree page, with the checks of `read_row`.
+fn row_from_page(id: TermId, t: &TermRow<'_>) -> Result<Row> {
+    if t.tag != id.tag() as i64 {
+        return Err(Error::internal(format!("dictionary row {} has tag {}, id {id:?}", id.dict_row(), t.tag)));
+    }
+    Ok(Row { id, lex: Arc::from(t.lex), dt: t.dt.unwrap_or(0), lang: t.lang.map(Arc::from) })
 }
 
 /// Reads `tag, lex, dt, lang` starting at column `c0` and checks the tag against the id.

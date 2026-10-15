@@ -36,6 +36,7 @@ use super::Fallback;
 use super::file::{self, FileId, ReadError};
 use super::format::{DbHeader, Geometry, HEADER_LEN};
 use super::roots::{self, Roots};
+use super::terms::TermPath;
 use crate::cache::ClockCache;
 use crate::raw::{RawDb, RawStmt};
 
@@ -99,6 +100,8 @@ pub struct BtreeCounters {
     /// reader abandons midway (an unsupported or corrupt page) runs in the VDBE and counts
     /// as a fallback instead.
     pub counts: u64,
+    /// Dictionary rows (`rdf_term`) read directly by `Dictionary::decode` cache misses.
+    pub term_rows: u64,
 }
 
 /// A validated read snapshot: the main database file (by identity) at one data version,
@@ -110,6 +113,8 @@ pub(crate) struct Snapshot {
     pub geom: Geometry,
     /// Pages in the file (the in-header size), `u32::MAX` when the header does not say.
     pub page_count: u32,
+    /// The database text encoding is UTF-8 (dictionary rows can be read directly).
+    pub utf8: bool,
     pub roots: Roots,
 }
 
@@ -133,6 +138,8 @@ struct State {
     shared_cache: Option<(FileId, bool)>,
     /// Page number -> page, CLOCK eviction, budget `page_cache_mb`.
     cache: ClockCache<Arc<[u8]>>,
+    /// The `rdf_term` root-to-leaf path of the last dictionary read, kept for the next one.
+    term_path: TermPath,
 }
 
 pub(crate) struct BtreeReader {
@@ -167,6 +174,7 @@ impl BtreeReader {
                 roots: None,
                 shared_cache: None,
                 cache: ClockCache::new(budget_bytes(DEFAULT_PAGE_CACHE_MB)),
+                term_path: TermPath::default(),
             }),
             counters: Cell::new(BtreeCounters::default()),
             last_fallback: Cell::new(None),
@@ -304,7 +312,21 @@ impl BtreeReader {
             self.count(|c| c.cache_flushes += 1);
         }
         st.cache = ClockCache::new(budget_bytes(self.page_cache_mb.get()));
+        st.term_path = TermPath::default();
         Ok(())
+    }
+
+    /// Takes the kept `rdf_term` path out of the state (empty when it is borrowed), so that no
+    /// borrow is held while it is used (rule R1).
+    pub(super) fn take_term_path(&self) -> TermPath {
+        self.state.try_borrow_mut().map(|mut st| std::mem::take(&mut st.term_path)).unwrap_or_default()
+    }
+
+    /// Keeps `path` for the next dictionary read.
+    pub(super) fn keep_term_path(&self, path: TermPath) {
+        if let Ok(mut st) = self.state.try_borrow_mut() {
+            st.term_path = path;
+        }
     }
 
     /// Precondition 1 and the header checks for a new (file, data version) pair.
@@ -326,6 +348,7 @@ impl BtreeReader {
             data_version: version,
             geom: header.geometry(),
             page_count: header.page_count.unwrap_or(u32::MAX),
+            utf8: header.text_encoding == 1,
             roots: self.roots_for(file, header.schema_cookie)?,
         })
     }
@@ -408,6 +431,7 @@ impl BtreeReader {
             ("btree_fallbacks".into(), c.fallbacks.to_string()),
             ("btree_resumes".into(), c.resumes.to_string()),
             ("btree_counts".into(), c.counts.to_string()),
+            ("btree_term_rows".into(), c.term_rows.to_string()),
             ("btree_last_fallback".into(), last),
         ]
     }

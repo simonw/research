@@ -344,7 +344,7 @@ all three presets, because `BTREE_COSTS` and `MEMORY_COSTS` inherit them with
 | `seek_random` | 1100 | 1300 | 300 | SQL probe in a held read txn 1.0–1.4 µs (§0), 1.3–2.1 µs (notes) |
 | `seek_sorted` | 700 | 300 | 150 | SQL 0.66–0.84 µs (§0), ~0.9 µs (notes); B-tree 0.29–0.38 µs |
 | `decode_miss` / `decode_hit` | 1000 / 50 | same | same | ~1.0 µs / 46–75 ns (§0), ~100 ns (notes) |
-| `vdbe_probe` / `vdbe_count_row` | 550 / 40 | same | same | SQLite nested-loop probe ~0.55 µs; `count(*)` 37–50 ns/row |
+| `vdbe_probe` / `vdbe_count_row` | 750 / 40 | same | same | SQLite nested-loop probe ~0.55 µs (SPEC §0); 0.65–1.2 µs per outer row in SqlJoins over the 1–1.6M-triple benchmark databases; `count(*)` 37–50 ns/row |
 | `hash_build_*` / `hash_probe_*` (small, large) | 60, 250 / 25, 120 | same | same | 600K-key hash build 0.33–0.65 µs/row including the scan |
 
 The low-bit tag layout is a measured choice. SPEC §2.2 reports about 62 bytes per triple

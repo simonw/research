@@ -77,7 +77,11 @@ exactly the same rows as a join. `safe_hat()` adds every slot outside `vars`, an
 `accepts_seed(s)` tests `s ⊆ safe_hat()`. There is one deliberate deviation. For Filter,
 Extend and LeftJoin, `safe_inject` uses all variables of referenced EXISTS patterns, not
 `vars ∩ maybe(context)`. Otherwise a seed on a slot that only the EXISTS mentions could leak
-into the correlated evaluation. Filter placement still uses the spec's `evars`.
+into the correlated evaluation. Filter placement still uses the spec's `evars`. A GROUP BY
+key that is certain in the group's input is certain in its output (every group takes its key
+from bound input rows), so a join with an aggregating sub-select on such a key can hash or
+merge on it instead of re-running the aggregation per BindJoin probe or falling back to a
+NestedLoop.
 
 **4. The seed propagation contract** (`physical/mod.rs`, checked by `validate()`, implemented
 by `sq-exec`). A subtree opened with a Join-mode seed S passes S to:
@@ -139,12 +143,20 @@ their `evars`.
 Each step considers these join operators:
 - **BindJoin** (index nested loop, emitted `adaptive`). Above 64 left rows that are not already
   sorted by a seed slot it re-sorts batches (`sort_left`); both variants are costed when the
-  left order may feed a later merge.
+  left order may feed a later merge. Probes in key order cost `seek_sorted` when consecutive
+  keys are close in the unit's index range and up to `seek_random` when they are more than
+  256 rows apart on average (`ordered_seek_cost`). A unit that mints values (BNODE, RAND, UUID,
+  STRUUID anywhere in it) is never a BindJoin right side of an inner or OPTIONAL join: it is
+  evaluated once (HashJoin, else NestedLoop), which is what sq-exec runs anyway.
 - **SQL step:** the same probe inside a SqlJoin, while the prefix is an open SQL chain of fewer
-  than 64 patterns.
+  than 64 patterns, costed `vdbe_probe` (750 ns) per left row plus `vdbe_row` per produced
+  column.
 - **HashJoin:** `_small` cost constants below 32,768 build entries, `_large` above.
 - **MergeJoin:** gallops after 6 misses (10 with the direct B-tree reader); `SortBySlot`
-  enforcers can sort an input by the key.
+  enforcers can sort an input by the key. A galloping right side costs, per distinct left key,
+  an ordered seek (random when the keys are sparse) plus the rows read past the previous key
+  before it (up to the gallop threshold), so 9 keys against a 600K-row range no longer look
+  cheaper than 9 probes.
 - **NestedLoop:** used when nothing else is legal.
 
 By default (`choose_order`), a quad pattern reads the first `IndexOrder::candidates` order for
@@ -198,7 +210,10 @@ correctness).
   cap is `probe_count_cap` (1,000), with at most `max_probe_counts` (32) counts per query.
   Without statistics the cap is 10,000, and a count that exceeds it is extrapolated 10×.
   IntRange costing spends the same budget on bounded counts of the `rdf_gpox` numeric
-  exceptions, and assumes 0 exceptions once the budget is spent.
+  exceptions, and assumes 0 exceptions once the budget is spent. A query that is one quad
+  pattern under solution modifiers only (no filter, no EXISTS) has no cost-based choice and
+  plans no bounded count (`single_pattern_root`); its EXPLAIN estimate then comes from the
+  statistics.
 - **Statistics.** Otherwise the estimate comes from heavy hitters and per-predicate statistics,
   then fixed defaults. Subject stars use characteristic sets. One named graph is estimated as
   an even share of the named-graph scope.
@@ -307,7 +322,7 @@ SqlJoin `EXPLAIN QUERY PLAN` assertions in `differential.rs` were validated on S
 another SQLite version may choose a different plan shape.
 
 ```sh
-cargo test -p sq-plan                       # 59 unit tests in src/ + 75 integration tests
+cargo test -p sq-plan                       # 60 unit tests in src/ + 77 integration tests
 cargo test -p sq-plan --test golden         # one file
 SQ_W3C_DIR=/path/to/rdf-tests/sparql cargo test -p sq-plan --test w3c -- --nocapture
 REVIEW_SEED=3 REVIEW_N=600 cargo test -p sq-plan --test review3_semantics -- review_physical_plans
@@ -329,13 +344,13 @@ There are no `#[ignore]`d tests. Some tests read environment variables:
 - **`tests/review_wp8.rs`** reads `REVIEW_SEED`, `REVIEW_CASES` and `REVIEW_SIZE` (defaults
   11, 150 and 90).
 
-In a dev-profile run on the 4-vCPU dev VM, all 134 tests passed. The slowest files were
+In a dev-profile run on the 4-vCPU dev VM, all 137 tests passed. The slowest files were
 `differential` (7.0 s), `review_wp8` (4.1 s) and `review3_semantics` (3.4 s).
 
 | File | Covers |
 |---|---|
 | `lower.rs` | Slot scopes, blank nodes, constants and TEMP ids, datasets, forms, the 256-slot limit, UPDATE WHERE, a logical EXPLAIN snapshot |
-| `planner.rs` | GRAPH push / loop, filter scope, OPTIONAL filters, seeds, TopK / Count / ASK, policies, EXISTS plans and decorrelation, canonical flags, SERVICE |
+| `planner.rs` | GRAPH push / loop, filter scope, OPTIONAL filters, seeds, TopK / Count / ASK, policies, EXISTS plans and decorrelation, canonical flags, SERVICE, no BindJoin into a side that mints values, joins on a GROUP BY key that evaluate the aggregation once |
 | `optimizer.rs` | Merge joins and enforcers, order claims, COUNT fast paths, StarMerge, galloping, IntRange choice, SQL chain placement and the 64-alias cap, `validate()` on corrupted plans |
 | `golden.rs` | EXPLAIN snapshots: star (and its SqlJoin on SQLite), chain, OPTIONAL, TopK, factorized count, IntRange, cycle. Update them deliberately when costs change. |
 | `validate.rs` | The core `validate()` checks (seeds, keys / checks, Extend, Distinct, Active graph, scan order, sortedness, slot ranges, ids), each exercised by mutating a valid plan. The optimizer-specific checks (merge, SortBySlot, IntRange, SqlJoin) are in `optimizer.rs`. |
@@ -372,9 +387,9 @@ sweep, which comes from the test run above.
   StarMerge. Without the count, the StarMerge is slower: 70 ms against 46 ms for 2.4M output
   rows.
 - **Correctness evidence.** `differential.rs` ran 16,000 executions with zero differences
-  from the oracle. The test is deterministic; its tally covers 548 SqlJoins, 7,731 MergeJoins,
-  2,399 enforcers, 1,606 streaming groups, 169 factorized counts and 58 IntRange scans. All
-  1,646 forced StarMerge rewrites matched the oracle.
+  from the oracle. The test is deterministic; its tally covers 380 SqlJoins, 7,737 MergeJoins,
+  2,403 enforcers, 1,624 streaming groups, 169 factorized counts and 59 IntRange scans. All
+  1,649 forced StarMerge rewrites matched the oracle.
 
 ## Limitations and known gaps
 

@@ -8,11 +8,11 @@ use std::ops::Bound;
 
 use rusqlite::{Connection, ffi};
 use sq_core::stats::{BTREE_COSTS, SQL_CURSOR_COSTS};
-use sq_core::store::{IndexOrder, QuadCursor, QuadStore, QuadStoreWriter, ReaderKind, ScanSpec};
+use sq_core::store::{Dictionary, IndexOrder, QuadCursor, QuadStore, QuadStoreWriter, ReaderKind, ScanSpec};
 use sq_core::testing::{Rng, cursor_conformance, expected_rows, random_id, random_quads};
 use sq_core::{Error, Tag, TermId};
 
-use super::{Db, TempPath};
+use super::{Db, TempPath, iri};
 use crate::btree::BtreeCursor;
 use crate::{ReaderMode, SqliteStore};
 
@@ -1234,4 +1234,307 @@ fn counts_and_absent_schema() {
         assert_eq!(db.store.count(&spec, None).unwrap() as usize, expected_rows(&q, &spec).len());
     }
     assert_eq!(db.shared().btree_counters().counts, 9);
+}
+
+// ---------------------------------------------------------------------- dictionary rows
+
+/// A mix of dictionary terms: every tag, custom datatypes (TYPED rows whose datatype is a
+/// dictionary IRI), unicode, empty lexical forms, and long ones that spill to overflow pages.
+fn dictionary_terms(n: usize, long_every: usize) -> Vec<oxrdf::Term> {
+    use oxrdf::Literal;
+    (0..n)
+        .map(|i| -> oxrdf::Term {
+            if long_every > 0 && i % long_every == long_every / 2 {
+                // 600 bytes .. 70 KB: beyond `usable - 35` at every page size.
+                let len = [600usize, 1500, 5000, 9000, 70_000][(i / long_every) % 5];
+                return Literal::new_simple_literal(format!("{i}:{}", "ü".repeat(len / 2))).into();
+            }
+            match i % 7 {
+                0 => iri(&format!("http://ex.org/r/{i}")).into(),
+                1 => Literal::new_simple_literal(format!("plain string {i}")).into(),
+                2 => Literal::new_language_tagged_literal(format!("mot {i} é漢🙂"), ["fr", "en-gb", "de"][i % 3]).unwrap().into(),
+                3 => Literal::new_typed_literal(format!("{i}.5e0"), iri("http://www.w3.org/2001/XMLSchema#double")).into(),
+                4 => Literal::new_typed_literal(format!("v{i}"), iri(&format!("http://ex.org/dt/{}", i % 5))).into(),
+                5 => Literal::new_simple_literal(if i % 2 == 0 { String::new() } else { format!("{i}") }).into(),
+                _ => iri(&format!("http://ex.org/very/long/namespace/path/that/repeats/{i}#fragment")).into(),
+            }
+        })
+        .collect()
+}
+
+/// A file database with `page_size` holding `terms` (each the object of one quad, so that
+/// `vacuum_terms` keeps them).
+fn term_db(page_size: u32, pragmas: &str, terms: &[oxrdf::Term]) -> (Db, Vec<TermId>) {
+    let path = TempPath::new("terms");
+    let conn = Connection::open(&path.0).unwrap();
+    conn.execute_batch(&format!("PRAGMA page_size={page_size}; {pragmas}")).unwrap();
+    let db = Db::with(conn, Some(path));
+    let ws = db.store.write_scope(0).unwrap();
+    let p = db.store.intern(iri("http://ex.org/p").as_ref().into()).unwrap();
+    let ids: Vec<TermId> = terms.iter().map(|t| db.store.intern(t.as_ref()).unwrap()).collect();
+    let mut quads: Vec<[TermId; 4]> =
+        ids.iter().enumerate().map(|(i, o)| [TermId::DEFAULT_GRAPH, TermId::bnode(1 + i as i64), p, *o]).collect();
+    db.store.insert(&mut quads).unwrap();
+    ws.commit().unwrap();
+    (db, ids)
+}
+
+/// Decodes `ids` (cold: the caches are flushed first) in chunks of `chunk`, through `decode`
+/// or `decode_one`.
+fn decode_cold(db: &Db, ids: &[TermId], chunk: usize, one: bool) -> Vec<oxrdf::Term> {
+    db.shared().flush_dictionary_caches().unwrap();
+    let mut out = Vec::new();
+    if one {
+        out.extend(ids.iter().map(|id| db.store.decode_one(*id).unwrap()));
+    } else {
+        for c in ids.chunks(chunk) {
+            db.store.decode(c, &mut out).unwrap();
+        }
+    }
+    out.iter().map(|t| t.to_oxrdf()).collect()
+}
+
+/// Decode cache misses read `rdf_term` rows from the table b-tree pages, at every page size:
+/// the same terms as the SQL path, in any order, with duplicates, in batches of any size and
+/// one by one. Overflowing lexical forms are left to SQL; nothing falls back.
+#[test]
+fn decoded_rows_are_read_from_the_term_btree() {
+    for (page_size, n) in [(512u32, 3000usize), (1024, 4000), (4096, 6000), (65536, 20_000)] {
+        let terms = dictionary_terms(n, 97);
+        let (db, ids) = term_db(page_size, "", &terms);
+        // Distinct dictionary rows, and an upper bound of those that spill to overflow pages.
+        let dict: BTreeSet<TermId> = ids.iter().copied().filter(|id| id.is_dict()).collect();
+        let long = dict.iter().filter(|id| terms[ids.iter().position(|x| x == *id).unwrap()].to_string().len() >= 600).count() as u64;
+        let dict = dict.len() as u64;
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        let mut r = Rng(u64::from(page_size));
+        let mut order: Vec<usize> = (0..n).collect();
+        for i in (1..n).rev() {
+            order.swap(i, r.below(i as u64 + 1) as usize);
+        }
+        order.extend((0..n / 10).map(|_| r.below(n as u64) as usize));
+        let shuffled: Vec<TermId> = order.iter().map(|&i| ids[i]).collect();
+        let want: Vec<oxrdf::Term> = order.iter().map(|&i| terms[i].clone()).collect();
+        for (chunk, one) in [(usize::MAX, false), (1000, false), (7, false), (1, false), (1, true)] {
+            let before = db.shared().btree_counters();
+            let got = decode_cold(&db, &shuffled, chunk.min(shuffled.len()), one);
+            assert_eq!(got, want, "page size {page_size}, chunk {chunk}, one {one}");
+            let after = db.shared().btree_counters();
+            let direct = after.term_rows - before.term_rows;
+            // Every distinct row (plus the custom datatype IRIs of TYPED rows), but the long ones.
+            assert!(direct + long >= dict && direct <= dict + 5, "{page_size} {chunk}: {direct} of {dict} rows read directly, {long} long");
+            assert_eq!(after.fallbacks, before.fallbacks, "{}", last_fallback(&db));
+        }
+        // Cached rows are not read again.
+        let before = db.shared().btree_counters().term_rows;
+        let mut out = Vec::new();
+        db.store.decode(&shuffled, &mut out).unwrap();
+        assert_eq!(db.shared().btree_counters().term_rows, before);
+        // The SQL path agrees.
+        db.shared().set_reader(ReaderMode::Sql);
+        assert_eq!(decode_cold(&db, &shuffled, 500, false), want);
+        assert_eq!(db.shared().btree_counters().term_rows, before);
+        db.shared().set_reader(ReaderMode::Auto);
+    }
+}
+
+/// After deletes, `vacuum_terms` and `VACUUM` (rows removed, the table rebuilt with new
+/// pages), and in the connection's own write transaction (SQL path, nothing admitted to the
+/// cache): the right terms, and the same error as SQL for a row that no longer exists.
+#[test]
+fn decoded_rows_after_vacuum_and_inside_write_transactions() {
+    let terms = dictionary_terms(5000, 211);
+    let (db, ids) = term_db(1024, "", &terms);
+    // Decode everything one by one first: the reader keeps its last `rdf_term` path, which the
+    // rewrites below make stale.
+    {
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        assert_eq!(decode_cold(&db, &ids, 1, true), terms);
+    }
+    // Drop every third quad, then the unreferenced terms.
+    let p = db.store.lookup(iri("http://ex.org/p").as_ref().into()).unwrap().unwrap();
+    let gone: Vec<[TermId; 4]> =
+        (0..ids.len()).step_by(3).map(|i| [TermId::DEFAULT_GRAPH, TermId::bnode(1 + i as i64), p, ids[i]]).collect();
+    db.remove(&gone);
+    assert!(db.store.vacuum_terms().unwrap() > 1000);
+    db.conn.execute_batch("VACUUM").unwrap();
+    let kept: Vec<usize> = (0..ids.len()).filter(|i| i % 3 != 0).collect();
+    {
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        let want: Vec<oxrdf::Term> = kept.iter().map(|&i| terms[i].clone()).collect();
+        let kept_ids: Vec<TermId> = kept.iter().map(|&i| ids[i]).collect();
+        let before = db.shared().btree_counters().term_rows;
+        assert_eq!(decode_cold(&db, &kept_ids, 1, true), want);
+        assert_eq!(decode_cold(&db, &kept_ids, 300, false), want);
+        assert!(db.shared().btree_counters().term_rows > before);
+        // Another connection adds terms between two read scopes (new pages, new data version;
+        // rollback-journal mode keeps writers out while a read lock is held).
+        drop(_read);
+        let other = db.reopen();
+        let extra: Vec<oxrdf::Term> = (0..300).map(|i| iri(&format!("http://ex.org/extra/{i}")).into()).collect();
+        let extra_ids: Vec<TermId> = {
+            let ws = other.store.write_scope(0).unwrap();
+            other.shared().validate_epoch().unwrap();
+            let ids: Vec<TermId> = extra.iter().map(|t| other.store.intern(t.as_ref()).unwrap()).collect();
+            ws.commit().unwrap();
+            ids
+        };
+        drop(other);
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        assert_eq!(decode_cold(&db, &extra_ids, 1, true), extra);
+        assert_eq!(decode_cold(&db, &kept_ids, 1, true), want);
+        // A deleted row: the same internal error from both paths.
+        let deleted = ids[0];
+        db.shared().flush_dictionary_caches().unwrap();
+        let direct = db.store.decode_one(deleted).unwrap_err().to_string();
+        db.shared().set_reader(ReaderMode::Sql);
+        let sql = db.store.decode_one(deleted).unwrap_err().to_string();
+        db.shared().set_reader(ReaderMode::Auto);
+        assert_eq!(direct, sql);
+        assert!(direct.contains("unknown dictionary id"), "{direct}");
+    }
+    // Inside the connection's own write transaction: SQL, uncommitted rows never cached.
+    let ws = db.store.write_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    let fresh = db.store.intern(iri("http://ex.org/fresh").as_ref().into()).unwrap();
+    let before = db.shared().btree_counters().term_rows;
+    let mut out = Vec::new();
+    db.store.decode(&[fresh, ids[1]], &mut out).unwrap();
+    assert_eq!(out[0].to_oxrdf(), iri("http://ex.org/fresh").into());
+    assert_eq!(out[1].to_oxrdf(), terms[1]);
+    assert_eq!(db.shared().btree_counters().term_rows, before);
+    assert!(db.shared().decode_cache.borrow_mut().get(fresh.0).is_none());
+    drop(ws);
+}
+
+/// An `rdf_term` the reader does not trust is decoded through SQL. (UTF-16 databases are
+/// declined too, by the header's text encoding, but the store cannot initialize one at all:
+/// its schema detection reads TEXT columns as UTF-8 bytes.)
+#[test]
+fn unexpected_term_tables_use_sql() {
+    let terms = dictionary_terms(800, 0);
+    // An extra column: the layout check refuses the table.
+    let (db, ids) = term_db(4096, "", &terms);
+    db.conn.execute_batch("ALTER TABLE rdf_term ADD COLUMN note TEXT").unwrap();
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    assert_eq!(decode_cold(&db, &ids, 100, false), terms);
+    assert_eq!(db.shared().btree_counters().term_rows, 0);
+    assert!(last_fallback(&db).contains("rdf_term"), "{}", last_fallback(&db));
+}
+
+/// Damaged `rdf_term` pages: decoding returns the right terms (SQL takes over) or an error, and
+/// never panics.
+#[test]
+fn corrupt_term_pages_never_panic() {
+    let terms = dictionary_terms(4000, 151);
+    let path = TempPath::new("terms-corrupt-src");
+    let ids = {
+        let conn = Connection::open(&path.0).unwrap();
+        conn.execute_batch("PRAGMA page_size=1024;").unwrap();
+        let (db, ids) = {
+            let db = Db::with(conn, None);
+            let ws = db.store.write_scope(0).unwrap();
+            let ids: Vec<TermId> = terms.iter().map(|t| db.store.intern(t.as_ref()).unwrap()).collect();
+            ws.commit().unwrap();
+            (db, ids)
+        };
+        drop(db);
+        ids
+    };
+    let pristine = std::fs::read(&path.0).unwrap();
+    // The pages of rdf_term: table b-tree pages (the other table b-trees are tiny).
+    let table_pages: Vec<usize> = (1..pristine.len() / 1024).filter(|p| matches!(pristine[p * 1024], 0x05 | 0x0D)).collect();
+    assert!(table_pages.len() > 50);
+    let mut r = Rng(151);
+    let (mut fallbacks, mut direct, mut errors) = (0, 0, 0);
+    for round in 0..60 {
+        let mut bytes = pristine.clone();
+        for _ in 0..1 + round % 3 {
+            let page = table_pages[r.below(table_pages.len() as u64) as usize] * 1024;
+            match r.below(5) {
+                0 => bytes[page] = [0x02u8, 0x0A, 0x05, 0x0D, 0x00][r.below(5) as usize],
+                1 => bytes[page + 3..page + 5].copy_from_slice(&(r.below(65536) as u16).to_be_bytes()),
+                2 => bytes[page + 8..page + 12].copy_from_slice(&(r.below(1 << 20) as u32).to_be_bytes()),
+                3 => {
+                    let at = page + r.below(1024) as usize;
+                    bytes[at] ^= 1 << r.below(8);
+                }
+                _ => {
+                    let at = page + r.below(1024 - 16) as usize;
+                    bytes[at..at + 16].iter_mut().for_each(|b| *b = r.below(256) as u8);
+                }
+            }
+        }
+        let copy = TempPath::new("terms-corrupt");
+        std::fs::write(&copy.0, &bytes).unwrap();
+        let conn = Connection::open(&copy.0).unwrap();
+        let store = super::store_for(&conn);
+        let Ok(read) = store.read_scope(0) else { continue };
+        if store.shared().validate_epoch().is_err() {
+            continue;
+        }
+        let mut out = Vec::new();
+        for chunk in ids.chunks(r.below(900) as usize + 1) {
+            out.clear();
+            match store.decode(chunk, &mut out) {
+                Ok(()) => assert_eq!(out.len(), chunk.len()),
+                Err(_) => errors += 1,
+            }
+        }
+        for id in ids.iter().step_by(37) {
+            let _ = store.decode_one(*id);
+        }
+        let c = store.shared().btree_counters();
+        fallbacks += c.fallbacks;
+        direct += c.term_rows;
+        drop(read);
+        drop(store);
+        drop(conn);
+    }
+    assert!(fallbacks > 0 && direct > 0, "{fallbacks} fallbacks, {direct} rows read directly, {errors} errors");
+}
+
+/// The `rdf_term` path the reader keeps between calls belongs to one snapshot: after another
+/// connection deletes the last row (`vacuum_terms`) and interns a different term under the
+/// same row number, the next read sees the new term, not the old page.
+#[test]
+fn kept_term_path_is_dropped_when_the_snapshot_changes() {
+    let terms = dictionary_terms(2000, 0);
+    let (db, ids) = term_db(1024, "", &terms);
+    // An unreferenced last row.
+    let old_term: oxrdf::Term = oxrdf::Literal::new_simple_literal("the old term at the last row").into();
+    let old = {
+        let ws = db.store.write_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        let id = db.store.intern(old_term.as_ref()).unwrap();
+        ws.commit().unwrap();
+        id
+    };
+    {
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        assert_eq!(decode_cold(&db, &[ids[5], old], 1, true), vec![terms[5].clone(), old_term]);
+    }
+    let other = db.reopen();
+    assert!(other.store.vacuum_terms().unwrap() >= 1);
+    let new_term: oxrdf::Term = oxrdf::Literal::new_simple_literal("a new term that reuses the row").into();
+    let new = {
+        let ws = other.store.write_scope(0).unwrap();
+        other.shared().validate_epoch().unwrap();
+        let id = other.store.intern(new_term.as_ref()).unwrap();
+        ws.commit().unwrap();
+        id
+    };
+    drop(other);
+    assert_eq!(new.dict_row(), old.dict_row(), "the row number is reused");
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    let before = db.shared().btree_counters().term_rows;
+    assert_eq!(decode_cold(&db, &[new], 1, true), vec![new_term]);
+    assert_eq!(db.shared().btree_counters().term_rows, before + 1, "read directly");
 }

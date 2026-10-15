@@ -206,6 +206,11 @@ pub(crate) fn slice(p: &Props, extra_vars: SlotSet) -> Props {
     Props { vars: p.vars.union(extra_vars), safe_inject: SlotSet::EMPTY, ..*p }
 }
 
+/// GROUP BY: COUNT outputs are always bound, and so is every key that is certain in the input
+/// (each group takes its key values from input rows, and such a key is never an erroring
+/// expression: an Extend slot is certain only for a constant). Other keys and aggregates may
+/// be unbound. A join on a certain key can then hash (one aggregation) instead of re-running
+/// the aggregation per probe.
 pub(crate) fn group(p: &Props, keys: &[Slot], aggs: &[(Slot, AggSpec)], agg_vars: SlotSet) -> Props {
     let keys = SlotSet::from_slots(keys.iter().copied());
     let outs = SlotSet::from_slots(aggs.iter().map(|(s, _)| *s));
@@ -214,7 +219,7 @@ pub(crate) fn group(p: &Props, keys: &[Slot], aggs: &[(Slot, AggSpec)], agg_vars
     );
     Props {
         vars: p.vars.union(keys).union(outs).union(agg_vars),
-        certain: counts,
+        certain: counts.union(keys.intersect(p.certain)),
         maybe: keys.union(outs),
         safe_inject: SlotSet::EMPTY,
     }
@@ -504,9 +509,13 @@ mod tests {
             ],
         };
         let p = props(&g, &[]);
-        assert_eq!(p.certain, set(&[3]));
+        assert_eq!(p.certain, set(&[0, 3]), "a key certain in the input is certain in the output");
         assert_eq!(p.maybe, set(&[0, 3, 4]));
         assert_eq!(p.safe_inject, set(&[0]));
+        // A key that may be unbound in the input (here an Extend that may fail) stays maybe.
+        let ext = Logical::Extend { input: Box::new(base.clone()), slot: 2, expr: Expr::Slot(1) };
+        let g2 = Logical::Group { input: Box::new(ext), keys: vec![2], aggs: vec![] };
+        assert_eq!(props(&g2, &[]).certain, set(&[]));
 
         let pr = Logical::Project { input: Box::new(base.clone()), slots: vec![1, 5] };
         let p = props(&pr, &[]);

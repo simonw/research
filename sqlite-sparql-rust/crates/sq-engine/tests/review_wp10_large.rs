@@ -87,13 +87,13 @@ fn review_large_inputs_agree_with_the_oracle() {
     assert!(failures.is_empty(), "{} mismatches:\n{}", failures.len(), failures.join("\n"));
 }
 
-/// A join with an aggregating sub-select on its GROUP BY key (sq-plan). `props::group`
-/// (sq-plan/src/props.rs) marks GROUP BY keys only "maybe" bound, even plain variables that are
-/// certain in the group's input, so the join gets no hash key: the planner picks either a
-/// NestedLoop that checks every left row against every group (O(left x groups)) or a BindJoin
-/// that re-runs the whole aggregation once per left row (50,000 Group opens here).
+/// A join with an aggregating sub-select on its GROUP BY key (sq-plan). `props::group` used to
+/// mark GROUP BY keys only "maybe" bound, even plain variables that are certain in the group's
+/// input, so the join got no hash key: the planner picked either a NestedLoop that checks every
+/// left row against every group (O(left x groups)) or a BindJoin that re-ran the whole
+/// aggregation once per left row (50,000 Group opens here). Such keys are now certain, and the
+/// aggregation runs once.
 #[test]
-#[ignore = "sq-plan performance defect (props::group), outside sq-engine: fails until sq-plan is fixed"]
 fn review_join_on_a_group_by_key_evaluates_the_aggregation_once() {
     let (rows, groups) = (50_000, 100);
     let mut ttl = String::new();

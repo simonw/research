@@ -47,7 +47,7 @@ interrupt-polling counter. The methods are:
 | `open(cx, Option<Seed>)` | (re)start; may be called again without `close` |
 | `next(cx, &mut Batch)` | append rows until the batch is full (`true`) or the input is exhausted (`false`) |
 | `next_limited(cx, out, max)` | row-count hint: honoured by Scan, used by merge joins and row-dropping operators |
-| `fast_count(cx, cap)` | count without producing rows (Scan via `store.count`, MergeJoin as a sum of run products) |
+| `fast_count(cx, cap)` | count without producing rows (Scan via `store.count`, MergeJoin as a sum of run products; Count evaluates its input first) |
 | `seek(cx, slot, key)` | galloping support (Scan, SortBySlot) |
 | `reset(cx)` | release memory, keep cursors leased so the next `open` can `rebind` them |
 | `close(cx)` | release cursors and memory |
@@ -109,7 +109,10 @@ Graph selection works as follows:
   row whose key is not fully bound goes to a wildcard list that every probe visits. A probe row
   with an unbound key visits every build row. NestedLoop is a HashJoin with no keys.
 - **MergeJoin** needs both inputs sorted by signed id. It buffers the right run and, after
-  `gallop` misses, seeks whichever input supports `seek`. `fast_count` sums run products when
+  `gallop` misses, seeks whichever input supports `seek`. An input that may gallop reads 16
+  rows on its first refill and right after each seek, doubling per refill up to a batch, so a
+  selective merge (9 left keys against a 600K-row index range) does not read a whole batch
+  from the start of the range before its first seek. `fast_count` sums run products when
   `check` is empty. The join returns an internal error if an input turns out not to be sorted.
   **StarMerge** is a leapfrog over k inputs.
 - **Minus** hashes an independent evaluation of the right side. It removes a left row only if
@@ -143,15 +146,26 @@ memoized per (id, active graph, correlated values). The memo holds at most 65,53
 charged against the budget, and is cleared rather than failing the query when memory is short.
 
 **8. Other operators.**
-- **Sort, TopK, SortBySlot** (`ops/sort.rs`). Sort is stable and computes the `SortKey`s once per
-  row. TopK keeps a bounded heap of offset + limit rows. SortBySlot is the merge-join enforcer
-  and sorts by the raw signed id of one slot. When every key is a bare variable and every value
-  is an inline INT, Sort and TopK compare raw ids and build no `SortKey` (the "INT fast path").
+- **Sort, TopK, SortBySlot** (`ops/sort.rs`). Sort is stable; TopK keeps a bounded heap of
+  offset + limit rows, ties in input order. SortBySlot is the merge-join enforcer and sorts by
+  the raw signed id of one slot. When every key is a bare variable and every value is an inline
+  INT, Sort compares raw ids and builds no `SortKey` (the "INT fast path"). Otherwise keys are
+  built lazily, at most once per row and only where the earlier keys do not already decide the
+  order. Sort refines runs: it sorts by the first key, then sorts each run of rows tied on it by
+  the next key, building that key only for the tied rows. The runs wait on a work list rather
+  than the call stack, so a long ORDER BY key list does not recurse once per key (the nesting
+  budget of sq-api does not charge ORDER BY keys). TopK compares bare-variable keys on
+  raw ids whenever that decides (`cheap_cmp`: the same id, unbound or ERROR, two inline INTs,
+  or two different term classes) and builds a `SortKey` only for the comparisons it cannot
+  decide, typically rows that tie on the earlier keys at the heap boundary. `ORDER BY
+  DESC(?age) ?x LIMIT 10` over 200K rows thus decodes a few hundred IRIs instead of 200K. The
+  order is exactly the SortKey order either way.
 - **Group, Count** (`ops/group.rs`). Group uses hash aggregation, with groups in first-seen
   order, or streams when the input is sorted by its single key. DISTINCT aggregates are
   deduplicated in a per-group set charged against the budget. Count is COUNT(*) without
   DISTINCT or GROUP BY: it uses its input's `fast_count` (a store count or a factorized merge
-  join) and iterates otherwise.
+  join) and iterates otherwise. Its own `fast_count` (one row) runs that count first, so
+  `Execution::count` of an aggregate query evaluates the query.
 - **Distinct** keeps the first row of each key in a hash set. **Reduced** drops only adjacent
   duplicates.
 - **Union** (`ops/union.rs`) runs its branches one after another (bag semantics) and opens each
@@ -220,10 +234,14 @@ Things to know when you call it:
 - `count()` and `ask()` consume the execution. `count()` returns the number of solutions not
   yet read (triples for CONSTRUCT and DESCRIBE, 0 or 1 for ASK) without decoding anything, then
   closes the tree. If nothing has been read yet, it uses the root's `fast_count`. For example,
-  a plain triple pattern turns into one `store.count`. `ask()` closes the tree after the first
-  solution.
+  a plain triple pattern turns into one `store.count`. It always evaluates the query: an
+  aggregate query (`SELECT (COUNT(*) AS ?n) {...}`, or any GROUP BY) counts 1 only after its
+  aggregation ran, with the fast paths inside the plan (store counts, factorized merges)
+  still applying. `ask()` closes the tree after the first solution.
 - `set_now(oxsdatatypes::DateTime)` pins `NOW()`; sq-engine uses it so that a whole update
-  request sees one value. `memory_used()` reports the bytes currently charged.
+  request sees one value. Otherwise `new` takes the current time once (`ctx::now_utc`: the Unix
+  epoch plus the elapsed time, a timeline addition; `DateTime::now()` does the same through
+  general date arithmetic, about 20K instructions per query). `memory_used()` reports the bytes currently charged.
   `enable_timing()` adds per-node wall time to `profile()`, which returns an
   `sq_core::plan::ExecProfile` with `opens`, `rows_out` and `seeks` per `Plan::id`, decode
   hits and misses, and `exec_ns`. `plan_ns` is left at 0 for the caller to fill in.
@@ -278,7 +296,7 @@ a match with a wildcard arm, such as the one in `physical/estimate.rs`.
 ## Testing
 
 ```sh
-cargo test -p sq-exec                                            # 113 passed, 2 ignored
+cargo test -p sq-exec                                            # 118 passed, 2 ignored
 cargo test --release -p sq-exec bench_operators -- --ignored --nocapture --test-threads=1
 ```
 
@@ -298,9 +316,9 @@ polls. It can also inject interrupts and supply canned `SqlJoin` rows.
 | `prop.rs` | 2 | 60 random graphs and join trees: BindJoin = HashJoin (both sides) = NestedLoop = MergeJoin; merge `fast_count` = iterated count |
 | `paths.rs` | 12 | every path form, zero-length rules, NPS multiplicities, cycles, graphs, brute-force reachability for both expansion strategies, capped edge counts |
 | `exists.rs` | 11 | substitution through OPTIONAL/MINUS/FILTER/GRAPH, memoization, nesting, bounded memo, cursor reuse |
-| `modifiers.rs` | 15 | Filter, Extend, Group/Count, Sort/TopK/SortBySlot, Distinct, Reduced, Slice, Project |
+| `modifiers.rs` | 19 | Filter, Extend, Group/Count (and `Execution::count` of an aggregate), Sort/TopK/SortBySlot (lazy keys against eagerly built SortKeys for every term class; a 4,001-key ORDER BY on a 256 KiB stack), Distinct, Reduced, Slice, Project |
 | `graphs.rs`, `construct.rs` | 6, 5 | GraphLoop register, GraphNames; CONSTRUCT, DESCRIBE, ASK, decoding |
-| `limits.rs` | 8 | interrupts, deadlines, the memory budget, polling of probes that find no match |
+| `limits.rs` | 9 | interrupts, deadlines, the memory budget, polling of probes that find no match, `now_utc` |
 | `review.rs`, `review_exec.rs` | 8, 13 | reviewer-pinned semantics; inputs that cross batch boundaries; resource handling |
 
 End-to-end coverage lives in other crates. These are the main checks of sq-exec:

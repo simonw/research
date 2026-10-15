@@ -847,7 +847,7 @@ Statistics are hints only.
 
 ### 7.5 Costs and join ordering
 `CostConstants` (§10, `stats.rs`) are selected by `store.costs()`: SQL cursor, B-tree reader, or memory. Per (left plan L, right unit R):
-- **BindJoin**: `distinct_keys(L) × (sorted ? seek_sorted : seek_random) + out × (scan_row + free_cols × scan_col) + |L| × row_copy`. `sort_left` is chosen when |L| > 64 and L's order isn't needed above. Requires seed ⊆ safe_inject(R). If L∪R is a pure chain of quad patterns ("sqlable": default or constant graph, no Values/paths/filters inside) and `caps().sql`, use `vdbe_probe` (550 ns) per probe instead of `seek_*`. Such chains become `SqlJoin` (below).
+- **BindJoin**: `distinct_keys(L) × (sorted ? seek_sorted : seek_random) + out × (scan_row + free_cols × scan_col) + |L| × row_copy`. `sort_left` is chosen when |L| > 64 and L's order isn't needed above. Requires seed ⊆ safe_inject(R). If L∪R is a pure chain of quad patterns ("sqlable": default or constant graph, no Values/paths/filters inside) and `caps().sql`, use `vdbe_probe` (750 ns) per probe instead of `seek_*`. Such chains become `SqlJoin` (below).
 - **MergeJoin** (both sides sorted by v, each side either free or via a SortBySlot enforcer at `n·log2(n)·sort_row_log`): `inputs + min(|R| × scan_row, distinct(L) × seek_sorted + matched × scan_row) + out × row_copy`.
 - **HashJoin** (build the smaller side): `|B| × hash_build(|B|) + |P| × hash_probe(|B|) + inputs`, where build and probe costs use the `_small` constants below 32K entries and `_large` above. This corrects engineering's 3–5× underestimate.
 - **StarMerge** (k ≥ 3 inputs s-sorted on v): `Σ_i min(|R_i| × scan_row, |driver| × seek_sorted) + steps × 300 ns`. Taken only if cheaper than chained MergeJoins.
@@ -2561,7 +2561,7 @@ pub const SQL_CURSOR_COSTS: CostConstants = CostConstants {
     row_copy_per_slot: 1.0,
     decode_miss: 1000.0,
     decode_hit: 50.0,
-    vdbe_probe: 550.0,
+    vdbe_probe: 750.0,
     vdbe_row: 60.0,
     vdbe_count_row: 40.0,
 };

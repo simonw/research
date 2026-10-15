@@ -246,7 +246,7 @@ drop(conn);
 ```sh
 cargo test -p sq-engine                                                    # default suite
 cargo test -p sq-engine --test differential -- --ignored --nocapture       # long fuzz runs
-cargo test -p sq-engine --test review_wp10_large -- --ignored              # 90,000-row shapes (+1 known failure)
+cargo test -p sq-engine --test review_wp10_large -- --ignored              # 90,000-row shapes
 SQ_REPRO=report.txt SQ_REPRO_PLANS=1 cargo test -p sq-engine --test differential -- --ignored --nocapture replay_report
 ```
 
@@ -299,8 +299,8 @@ Environment variables:
 ## Numbers
 
 Measured on the project's 4-vCPU dev VM (SQLite 3.45.1, dev profile = `opt-level 1`):
-- `cargo test -p sq-engine` gives 100 passed + 5 ignored (105 runs). There are 85 distinct tests,
-  80 of them run by default; the harness's 5 self-tests run once in each of the 5 binaries that
+- `cargo test -p sq-engine` gives 101 passed + 4 ignored (105 runs). There are 85 distinct tests,
+  81 of them run by default; the harness's 5 self-tests run once in each of the 5 binaries that
   include `mod fuzz`. The suite takes about 8-12 s after the build, 3-6 s of it in `differential`.
 - Run on their own (`--exact`), the long query fuzz run takes about 95-100 s (10,000 cases, 167
   invalid, 3 too large, 5,495 empty, 294,900 native comparisons) and the long update run about
@@ -331,15 +331,16 @@ Measured on the project's 4-vCPU dev VM (SQLite 3.45.1, dev profile = `opt-level
   `review_large_inputs_agree_with_the_oracle` exercises it, so the default `cargo test` never does
   (run it with `--ignored`). The update differential compares stores with each other.
   Only `review_wp10_update_oracle.rs` checks DELETE/INSERT WHERE against an independent oracle.
-- `BNODE()`/`RAND()`/`UUID()`/`STRUUID()` on a BindJoin probe side are handled at run time by
-  sq-exec (`build.rs::mints_values`), which hash-joins against a single evaluation. sq-plan still
-  costs and EXPLAINs these joins as `BindJoin ... adaptive`. EXISTS patterns are not checked for
-  these functions (author notes).
-- Ignored test `review_join_on_a_group_by_key_evaluates_the_aggregation_once` documents an sq-plan
-  performance defect: `props::group` marks GROUP BY keys only "maybe" bound. A join with an
-  aggregating sub-select on its key therefore re-runs the aggregation per left row. Run on the dev
-  VM while writing this README, it still fails: `Group ... opens=50000` under a `BindJoin` over
-  50,000 left rows.
+- `BNODE()`/`RAND()`/`UUID()`/`STRUUID()` in a join's right side: sq-plan never plans a BindJoin
+  into such a side (inner or OPTIONAL) and costs and EXPLAINs it as the hash or nested-loop join
+  it is; sq-exec (`build.rs::mints_values`) still hash-joins against a single evaluation if a
+  hand-built plan asks for one. EXISTS patterns are not checked for these functions (author
+  notes).
+- `review_join_on_a_group_by_key_evaluates_the_aggregation_once` (in `review_wp10_large.rs`, no
+  longer ignored) pins the fix of an sq-plan performance defect: `props::group` used to mark
+  GROUP BY keys only "maybe" bound, so a join with an aggregating sub-select on its key re-ran
+  the aggregation per left row (`Group ... opens=50000` under a `BindJoin`). Keys certain in the
+  group's input are now certain, and the aggregation runs once.
 - The facade has no `count` function, although SPEC §1.2 lists one; use `Execution::count`.
 
 ## Further reading

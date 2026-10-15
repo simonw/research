@@ -181,3 +181,15 @@ fn probes_without_matches_are_polled() {
         assert!(ts.polls.get() >= 1000, "{name}: {} polls", ts.polls.get());
     }
 }
+
+/// `now_utc` is the value of `DateTime::now()` (UTC, same instant up to the time between the
+/// two calls), computed without the general date arithmetic.
+#[test]
+fn now_utc_agrees_with_datetime_now() {
+    let before = oxsdatatypes::DateTime::now();
+    let ours = crate::ctx::now_utc();
+    let after = oxsdatatypes::DateTime::now();
+    assert!(before <= ours && ours <= after, "{before} <= {ours} <= {after}");
+    assert_eq!(ours.timezone_offset(), before.timezone_offset());
+    assert!(ours.to_string().ends_with('Z'), "{ours}");
+}

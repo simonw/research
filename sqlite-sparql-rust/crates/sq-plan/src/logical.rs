@@ -1,4 +1,5 @@
 //! Structural helpers over `sq_core::ir::Logical`.
+use spargebra::algebra::Function;
 use sq_core::ir::{Expr, Logical};
 
 /// Rebuild `l` with `f` applied to each direct child (expressions untouched).
@@ -71,6 +72,24 @@ pub(crate) fn exprs(l: &Logical) -> Vec<&Expr> {
         Logical::OrderBy { keys, .. } => keys.iter().map(|k| &k.expr).collect(),
         _ => vec![],
     }
+}
+
+/// Does evaluating `l` call a function that returns a new value on every call (BNODE, RAND,
+/// UUID, STRUUID)? Each evaluation of such a subtree gives its solutions different values, so
+/// the planner never re-opens it per probe (BindJoin) where its values reach the output; it is
+/// evaluated once instead (HashJoin / NestedLoop), as sq-exec's `build::mints_values` also
+/// enforces at run time. EXISTS patterns are not inspected: they only contribute a boolean.
+pub(crate) fn mints_values(l: &Logical) -> bool {
+    let mut mints = false;
+    for e in exprs(l) {
+        crate::expr::visit(e, &mut |x| {
+            mints |= matches!(
+                x,
+                Expr::Call(Function::BNode | Function::Rand | Function::Uuid | Function::StrUuid, _)
+            );
+        });
+    }
+    mints || children(l).into_iter().any(mints_values)
 }
 
 /// Is this node a leaf of a join group that the DP orders directly?

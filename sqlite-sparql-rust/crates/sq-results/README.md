@@ -295,10 +295,10 @@ in the writers' own code, and a 64 KiB output buffer for solutions and triples.
 To separate engine cost from decode and serialization cost, be careful with `sparql_count(q)`
 as a baseline. It does not decode or serialize (SPEC §8.2, implemented in `sq-api`), but it
 may also skip work through the executor's COUNT fast paths (`fast_count` in `sq-exec`). Scans
-can count inside the store index, merge joins sum run products, sorts are never built, BIND
-expressions are not evaluated, and a `COUNT(*)` with no DISTINCT or GROUP BY reports its one row
-without counting. For such queries, `sparql_query(q) - sparql_count(q)` overstates serialization
-cost. A closer baseline is `SELECT count(*) FROM sparql_rows(q)`, which enumerates every row but
+can count inside the store index, merge joins sum run products, sorts are never built, and BIND
+expressions are not evaluated. (A `COUNT(*)` with no DISTINCT or GROUP BY still runs its count
+before reporting its one row.) For such queries, `sparql_query(q) - sparql_count(q)` overstates
+serialization cost. A closer baseline is `SELECT count(*) FROM sparql_rows(q)`, which enumerates every row but
 decodes no columns (SPEC §8.3), or a query whose operators have no fast path.
 
 ## Limitations and known gaps

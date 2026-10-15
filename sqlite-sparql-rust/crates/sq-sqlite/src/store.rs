@@ -111,6 +111,10 @@ impl Dictionary for SqliteStore {
     fn decode(&self, ids: &[TermId], out: &mut Vec<Arc<Term>>) -> Result<()> {
         self.0.decode_ids(ids, out)
     }
+
+    fn decode_one(&self, id: TermId) -> Result<Arc<Term>> {
+        self.0.decode_one_id(id)
+    }
 }
 
 impl QuadStore for SqliteStore {

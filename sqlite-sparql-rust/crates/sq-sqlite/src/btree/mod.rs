@@ -20,15 +20,18 @@
 //! * `cursor`: [`BtreeCursor`], with leaf pinning, finger seeks, and the transparent fallback
 //!   to a `SqlCursor` at the row-value resume key;
 //! * `count`: range counts (`QuadStore::count`) that sum the cell counts of the pages inside
-//!   the range and search only the pages on its two boundary paths.
+//!   the range and search only the pages on its two boundary paths;
+//! * `terms`: dictionary rows read from the `rdf_term` table b-tree for decode cache misses.
 mod count;
 mod cursor;
 mod file;
 mod format;
 mod reader;
 mod roots;
+mod terms;
 
 pub(crate) use count::count;
+pub(crate) use terms::{TermRow, read_terms};
 pub use cursor::BtreeCursor;
 pub use reader::{BtreeCounters, DEFAULT_PAGE_CACHE_MB, ReaderMode};
 pub(crate) use reader::BtreeReader;

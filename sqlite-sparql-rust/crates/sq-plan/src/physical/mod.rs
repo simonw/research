@@ -193,6 +193,8 @@ pub(crate) struct Planner<'a> {
     est_memo: FxHashMap<(usize, Ctx), Est>,
     /// `vars` per node address (the logical trees outlive the planner and never move).
     vars: FxHashMap<usize, SlotSet>,
+    /// `logical::mints_values` per node address.
+    mints: FxHashMap<usize, bool>,
 }
 
 impl<'a> Planner<'a> {
@@ -222,6 +224,7 @@ impl<'a> Planner<'a> {
             scan_memo: FxHashMap::default(),
             est_memo: FxHashMap::default(),
             vars: FxHashMap::default(),
+            mints: FxHashMap::default(),
         }
     }
 
@@ -241,6 +244,12 @@ impl<'a> Planner<'a> {
             return self.temps.get(id).map(|t| (**t).clone());
         }
         self.store.dict().decode_one(id).ok().map(|t| (*t).clone())
+    }
+
+    /// Does evaluating `l` mint values (`logical::mints_values`, memoized per node)?
+    pub(super) fn mints(&mut self, l: &Logical) -> bool {
+        let addr = l as *const Logical as usize;
+        *self.mints.entry(addr).or_insert_with(|| crate::logical::mints_values(l))
     }
 
     /// The memo key of `l` in `ctx`: bound slots `l` never mentions cannot change its plan
@@ -560,6 +569,25 @@ pub(crate) fn named_graphs(q: &LoweredQuery, store: &dyn QuadStore) -> Result<Ve
     Ok(v)
 }
 
+/// Is the query one quad pattern under solution modifiers only (projection, DISTINCT,
+/// REDUCED, LIMIT, ORDER BY, aggregation, BIND)? Then no plan choice depends on an estimate:
+/// a one-unit group has no join to order, its index order follows from its bound columns, and
+/// the modifiers above it are chosen by shape. Filters are excluded (an integer range filter
+/// makes the IntRange scan a cost-based alternative), and so are EXISTS patterns.
+fn single_pattern_root(l: &Logical) -> bool {
+    match l {
+        Logical::Bgp(pats) => pats.len() == 1,
+        Logical::Project { input, .. }
+        | Logical::Distinct(input)
+        | Logical::Reduced(input)
+        | Logical::Slice { input, .. }
+        | Logical::OrderBy { input, .. }
+        | Logical::Group { input, .. }
+        | Logical::Extend { input, .. } => single_pattern_root(input),
+        _ => false,
+    }
+}
+
 /// Plan a rewritten query. `named` are the dataset's sorted named graphs.
 pub(crate) fn plan_query(
     q: &LoweredQuery,
@@ -569,6 +597,10 @@ pub(crate) fn plan_query(
     opts: &QueryOptions,
 ) -> Result<QueryPlan> {
     let mut planner = Planner::new(store, opts, &q.dataset, named.len(), &rw.exists, &q.temps, q.vars.width());
+    if rw.exists.is_empty() && single_pattern_root(&rw.root) {
+        // Nothing is chosen by cost: bounded counts would only refine EXPLAIN's estimate.
+        planner.card.skip_probes();
+    }
     let mut root = planner.plan(&rw.root, Ctx::default())?;
     if q.form == QueryForm::Ask {
         let (rows, cost) = (root.est_rows.min(1.0), root.est_cost_ns);

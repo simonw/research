@@ -78,6 +78,12 @@ impl<'a> Card<'a> {
         }
     }
 
+    /// Plans no runtime bounded count from now on: estimates come from the statistics (or the
+    /// defaults). For queries whose plan does not depend on estimates.
+    pub(crate) fn skip_probes(&mut self) {
+        self.probes_left = 0;
+    }
+
     /// Named graphs of the query's dataset.
     pub(crate) fn named_count(&self) -> f64 {
         self.named_count

@@ -6,9 +6,10 @@ user's database file, and it implements the `sq_core` storage traits (`QuadStore
 executor never generate SQL for basic graph patterns: they ask for index range scans
 (`ScanSpec`) and receive integer-encoded rows from a cursor. A cursor is either a pooled,
 pre-rendered SQL statement (`SqlCursor`) or, when it is safe, a reader that decodes the index
-B-tree pages of the database file itself (`BtreeCursor`). The crate also contains the bulk
-loader, the statistics pass (`analyze`), the dictionary caches and the savepoint scopes that make
-every API call see one snapshot.
+B-tree pages of the database file itself (`BtreeCursor`). The same reader answers range counts
+from page cell counts and reads dictionary rows from the `rdf_term` pages. The crate also
+contains the bulk loader, the statistics pass (`analyze`), the dictionary caches and the
+savepoint scopes that make every API call see one snapshot.
 
 ## Where it fits
 
@@ -81,8 +82,8 @@ statements back and leases a different pooled template (which may be prepared th
 with `m >= 2` key columns uses the row-value variant (`(s,o)>=(?3,?4)`). A forward seek first steps up to
 `GALLOP` = 6 rows before re-seeking. After a failed seek, rebind or step, `fill` returns an
 error (`Error::Interrupted` or `Error::Invalid`) until the cursor is repositioned, never a silent
-end of the scan. `count()` always runs `count(*)` in SQLite's VDBE, with an optional
-`LIMIT cap+1` sub-select.
+end of the scan. When the B-tree reader cannot serve a count (concept 8), `count()` runs
+`count(*)` in SQLite's VDBE, with an optional `LIMIT cap+1` sub-select.
 
 **5. Scopes** (`src/scope.rs`, SPEC §8.6).
 - `ReadScope` runs `SAVEPOINT sq_r{depth}` only when `main` has no transaction, as in a bare
@@ -110,8 +111,11 @@ end of the scan. `count()` always runs `count(*)` in SQLite's VDBE, with an opti
   Negative results are never cached.
 - `decode`: inline, blank-node and well-known ids need no I/O. Other ids go to the
   `DecodeCache` (CLOCK, `decode_cache_mb` budget of 64 MB by default, about 96 bytes plus the
-  lexical size per entry). Sorted, deduplicated misses are fetched by pooled point lookups, or
-  by one merge scan when a batch needs more than 1/20 of the committed rows.
+  lexical size per entry). Sorted, deduplicated misses are read from the `rdf_term` table
+  b-tree pages by the direct reader when it can serve them (concept 8). The rows it leaves
+  to SQL, or all of them when it cannot serve, are fetched by pooled point lookups, or by one
+  merge scan when a batch needs more than 1/20 of the committed rows. `decode_one` returns a
+  cache hit without allocating and fetches a miss's one row without the batch bookkeeping.
 - `validate_epoch()` must run once per API entry, inside the entry's scope: the read scope for
   reads, the write scope for writes (open the write scope before the first read). It reads the
   schema cookie, `dict_gen`, `stats_gen`, `max(id)` and the version rows. Skipping it on a
@@ -169,7 +173,34 @@ end of the scan. `count()` always runs `count(*)` in SQLite's VDBE, with an opti
   state (outside a read transaction, or inside a write transaction, they report the SQL
   cursor), so query them inside the read scope after `validate_epoch()`.
   `StorageShared::btree_serves(order)` answers the same question for one order.
-- `count()`, `analyze` and the maintenance functions always use SQL.
+- **Counts** (`btree/count.rs`). Whenever a cursor over the order would be a `BtreeCursor`,
+  `count(spec, cap)` walks the order's b-tree instead of running `count(*)`. Every entry of an
+  index b-tree is one cell, interior cells included, so a subtree that lies entirely inside the
+  range contributes the cell counts of its pages, read from the page headers. Only the pages
+  on the two boundary paths are binary-searched. A cap stops the walk once the total exceeds
+  it (`min(count, cap + 1)`), so a planner probe with cap 1000 reads only a few pages. The
+  separator cells that bound each visited child must increase strictly within the parent's
+  interval, and the first and last cell of each visited leaf must lie inside the leaf's interval. A
+  damaged b-tree therefore cannot count a page twice. Rows inside a counted leaf are not
+  decoded: their order and the partial-index predicate are trusted to the index definition
+  that the root check verified, as SQLite's own `OP_Count` trusts them. A page or record the
+  reader cannot use abandons the walk (a counted fallback) and the VDBE count runs instead. A
+  pending interrupt is noticed every 1024 pages.
+- **Dictionary rows** (`btree/terms.rs`). Decode cache misses read `rdf_term`, a rowid table,
+  from its table b-tree (interior 0x05, leaf 0x0D pages). The root is used only when the table
+  has exactly the §2.1 columns, `id` is the rowid alias (no primary-key index), and the
+  database is UTF-8. Lookups run in ascending row order along a root-to-leaf path that climbs
+  only as far as the next row needs, and each page is searched by interpolation between its
+  first and last rowid, since rowids are dense. The reader keeps the path between calls for
+  as long as the snapshot is unchanged (it is dropped with the page cache when the data
+  version changes), which mostly helps single-id misses. A row the b-tree does not hold, a payload that spills to overflow pages, or a record
+  of any other shape (non-integer tag or datatype, BLOB, invalid UTF-8, missing columns) is
+  read by the pooled SQL statement, which returns the same value or the same error. An
+  inconsistent page sends the rest of the batch to SQL. The `DecodeCache` admission rule is
+  unchanged.
+- The `btree_counts` and `btree_term_rows` status rows count the counts and the dictionary
+  rows the reader served.
+- `analyze` and the maintenance functions always use SQL.
 
 ## Public API tour
 
@@ -225,7 +256,7 @@ let spec = ScanSpec::new(IndexOrder::Gpso, &[TermId::DEFAULT_GRAPH, knows]);
 let mut cur = store.cursor(&spec)?;
 let mut rows: Vec<TermId> = Vec::new();
 while cur.fill(&mut rows, 1024)? > 0 {}                 // width 2: [s0, o0, s1, o1, ...]
-let capped = store.count(&spec, Some(1000))?;           // min(count, 1001); count(*), always SQL
+let capped = store.count(&spec, Some(1000))?;           // min(count, 1001); page cell counts or count(*)
 // Index-nested-loop probes: one cursor, rebound per (sorted) subject.
 let mut probe = store.cursor(&ScanSpec::new(IndexOrder::Gpso, &[TermId::DEFAULT_GRAPH, knows, subjects[0]]))?;
 let mut objects = Vec::new();
@@ -287,8 +318,8 @@ counters behind `status()` are also available typed: `dict_counters()`, `pool_co
 ## Testing
 
 ```sh
-cargo test -p sq-sqlite                                        # debug: 131 tests run, 3 ignored
-cargo test -p sq-sqlite --release -- --ignored --nocapture     # the 3 perf tests (about 47 s)
+cargo test -p sq-sqlite                                        # debug: 152 tests run, 3 ignored
+cargo test -p sq-sqlite --release -- --ignored --nocapture     # the 3 perf tests (about 60 s)
 cargo test -p sq-sqlite review_rejected_snapshot               # one test by name filter
 ```
 
@@ -303,18 +334,21 @@ No test reads its own environment variables. Temporary database files go to
 They hold `tests::perf_lock()`, so they run one at a time without `--test-threads=1`.
 `scripts/check.sh` runs the whole workspace with `--release`.
 
-Unit tests live in `btree/format.rs`, `btree/cursor.rs`, `cache.rs` and `keys.rs`. The
+Unit tests live in `btree/format.rs` (including the fast key decoder against the general one),
+`btree/cursor.rs`, `btree/terms.rs` (record shapes, interpolation search against
+`partition_point`), `cache.rs` and `keys.rs`. The
 integration-style tests are in `src/tests/`:
 
 | File | Covers |
 |---|---|
 | `conformance.rs` | `sq_core::testing::cursor_conformance` on SQL cursors (memory and file DBs, after deletes), galloping seeks vs brute force |
-| `btree.rs`, `review_btree.rs` | reader conformance at page sizes 4K–64K, reserved bytes, after VACUUM; WAL / memory / shared-cache / own-write fallbacks; mid-scan fallback at the exact key; kill switch; corrupt pages never panic; journal-mode and root-page changes under a positioned cursor |
+| `btree.rs`, `review_btree.rs` | reader conformance at page sizes 4K–64K, reserved bytes, after VACUUM; WAL / memory / shared-cache / own-write fallbacks; mid-scan fallback at the exact key; kill switch; corrupt pages never panic; journal-mode and root-page changes under a positioned cursor. Counts: `count(spec, cap)` against brute force for every order, prefix length, bound shape and cap below, at and above the count, inside every conformance scenario (page sizes, reserved bytes, partial indexes, deletes, VACUUM); ranges that start or end exactly at every entry, interior cells included; capped counts read only the pages they need; counts fall back where cursors do; interrupts; damaged pages. Dictionary rows: decoded from the `rdf_term` pages at page sizes 512–64K, in any order, in batches and one by one, with overflowing lexical forms left to SQL; after `vacuum_terms` and VACUUM; the same error as SQL for a deleted row; the path kept between calls is dropped when another connection reuses a row number; SQL inside the own write transaction and for an unexpected table layout; damaged pages never panic |
+| `review_perf.rs` | review of the count walk and the direct dictionary reads against the VDBE / SQL paths: keys of every integer width and the i64 extremes, and non-integer keys (REAL in and out of the i64 range, TEXT, BLOB) written by plain SQL; counts after the connection's own commits, a rolled-back transaction whose pages spilled to the file, deleting every row, and with a zero page-cache budget; lexical forms straddling the table-leaf local limit (512 / 1024 with reserved bytes / 4096-byte pages); sparse rowids up to 2^59 and odd `rdf_term` records; `decode_one` against `decode` for every kind of id; the kept `rdf_term` path after the connection's own commit reuses a row number |
 | `dict.rs` | intern/lookup/decode round trips, point vs merge decode, cache admission and rollback, `dict_gen` / schema invalidation, hash collisions, exact DDL |
 | `scope.rs`, `review.rs` | savepoint nesting, pool limits and disarm-on-close, interrupts, busy commits, writing host statements, `busy_timeout`, re-analysis triggers |
 | `writer.rs`, `loader.rs` | random operations vs `MemStore`; every RDF format; bulk, incremental and chunked loads build identical tables; parse errors leave the store untouched |
 | `analyze.rs`, `maint.rs`, `eqp.rs` | stats equal `sq_memstore::compute_stats`; `check()` detects each broken invariant; `EXPLAIN QUERY PLAN` of every reachable `StmtKey` uses the expected covering index and never a temp B-tree |
-| `perf.rs`, `btree_perf.rs`, `review_btree.rs::review_perf_per_call_overhead` (ignored) | budgets on 1M triples (load < 10 s, sorted probe < 1.5 µs, 2-column scan < 150 ns/row); reader scans at least 2.5x faster than SQL, warm sorted probes faster, zero fallbacks; per-call overhead of reader `fill`/`seek` vs a `SqlCursor` |
+| `perf.rs`, `btree_perf.rs`, `review_btree.rs::review_perf_per_call_overhead` (ignored) | budgets on 1M triples (load < 10 s, sorted probe < 1.5 µs, 2-column scan < 150 ns/row); reader scans at least 2.5x faster than SQL, warm sorted probes faster, counts (exact and capped) at least 10x faster than the VDBE, decode misses read directly faster than through SQL, zero fallbacks; per-call overhead of reader `fill`/`seek` vs a `SqlCursor` |
 
 Pitfalls for test authors: `sq_core::testing::random_quads` seeds with `seed | 1`, so seeds 2k and
 2k+1 give identical data. Its blank nodes are not below `next_bnode`, so that data does not
@@ -331,18 +365,28 @@ round measured decode cache hits at 40–160 ns/term).
 | Measurement | SQL cursors (`reader=sql`) | B-tree reader |
 |---|---|---|
 | Bulk load, 1M triples (budget 10 s) | 6.3–7.7 s | – |
-| 2-column pinned scan, GPSO (g,p) -> s,o | 116–131 ns/row | 27 warm / 34 cold ns/row (4.2x) |
-| 3-column scan, GSPO (g) -> s,p,o | 137 ns/row | 30 warm / 39 cold ns/row (4.5x) |
+| 2-column pinned scan, GPSO (g,p) -> s,o | 116–131 ns/row | 21 warm / 29 cold ns/row (5.6x) |
+| 3-column scan, GSPO (g) -> s,p,o | 137 ns/row | 22 warm / 30 cold ns/row (6.2x) |
 | Sorted point probe (rebind + fill), GSPO / GPSO | 0.88–1.16 / 0.97–1.28 µs | 0.38 / 0.29 µs |
 | Random point probe, GSPO / GPSO | 2.1–2.6 / 1.3–1.7 µs | about the same (memory-bound) |
-| `count(*)` in the VDBE | 40–69 ns/row | (always SQL) |
-| Decode, batched miss / cache hit | 1.0–1.7 µs / 95–144 ns per term | – |
+| Exact count, GSPO (g), 999,680 rows | 38.6 ms (`count(*)`, 39 ns/row) | 0.48 warm / 10.1 cold ms (80x) |
+| Capped count (cap 1000), GPSO (g,p) | 56 µs | 1 µs (67x) |
+| Decode, batched miss (sorted batches of 1024) | 1.0–1.7 µs per term | 1.06 µs warm / 1.14 µs cold page cache |
+| Decode, cache hit | 95–144 ns per term (batched) | – |
 | Bare API entry (read scope + epoch check) | 10.6–12 µs | – |
 
 - On a quiet machine the load breaks down as: parse + encode 2.7 s, `rdf_term_h` rebuild 0.3 s,
   primary-key insert 0.5 s, 3 full index builds 3.2 s, analyze 0.4 s, commit 0.2 s.
 - Most of the entry cost is taking and releasing the read-transaction lock.
 - The reader's precondition check costs about 43 ns per cursor call.
+- The scan, count and decode-miss rows were re-measured after the count walk, the direct
+  dictionary reads and the fast key decoder (release perf test, 2026-10-15, load average 2–5);
+  the other rows are older. On the 1.6M-triple benchmark database (8K pages, 402K terms) a
+  `SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }` takes about 2–3 ms of CPU instead of about
+  68 ms. Decoding the 200K `:name` literals with a cold decode cache takes 0.74 µs/term in
+  sorted batches of 1024 (1.43 µs through SQL) and 1.3 µs/term one by one through
+  `decode_one` (2.0 µs). A warm cache hit through `decode_one` costs 160–200 ns, mostly cache
+  misses on the 200K-entry cache (it was about 380 ns with the generic batch path).
 - For `(g,s,p)` probes, GPSO is about 1.7x faster than GSPO with random subjects.
 
 ## Limitations and known gaps
@@ -367,10 +411,23 @@ round measured decode cache hits at 40–160 ns/term).
   does for an interrupted `INSERT`.
 - **Perf gate sensitivity.** The 2-column scan budget (150 ns/row) depends on machine load; one
   busy run measured 154–174 ns/row.
+- **Counts trust the index definition.** A B-tree count does not decode the rows inside
+  counted leaves, so it does not re-check their order or the partial-index predicate the way a
+  scan does. On a damaged file it can therefore return a different number than a scan (SQLite's
+  own `count(*)` has the same property). `check()` and `PRAGMA integrity_check` find such
+  damage.
+- **UTF-16 databases.** `sparql_init()` fails on a database whose text encoding is UTF-16
+  ("schema still absent after sparql_init"), because `RawStmt::col_bytes` reads TEXT through
+  `sqlite3_column_blob`, which returns the database encoding. The dictionary reader declines
+  such databases too (header byte 56).
+- **Cold `decode_one`.** A single-id miss through `decode_one` (the engine's FILTER path
+  decodes one id at a time) costs about 1.3 µs: each call re-validates the snapshot and builds
+  a one-row batch. Sorted batches cost about 0.75 µs per term.
 
 ## Where the code differs from docs/SPEC.md
 
 - **§13.** The reader is the `btree` module of this crate, not a separate `sq-btree` crate.
+  It also answers `count()` and reads dictionary rows, which §13 does not describe.
   `cursor()` returns `Box<dyn QuadCursor>`, not an enum. Preconditions are re-checked at every
   entry point, not only on leaf refills, and there is an additional shared-cache precondition.
   When only the data version changed, `seek`/`rebind` re-descend instead of falling back.

@@ -22,6 +22,7 @@ mod maint;
 mod perf;
 mod review;
 mod review_btree;
+mod review_perf;
 mod scope;
 mod writer;
 

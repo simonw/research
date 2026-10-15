@@ -430,3 +430,82 @@ fn exists_decorrelation_follows_the_exact_conditions() {
         assert_eq!(semi(&plan_with(q, &st, opts)), 1, "{q}");
     }
 }
+
+/// Does the subtree evaluate BNODE / RAND / UUID / STRUUID (the test's own walk)?
+fn mints(p: &Plan) -> bool {
+    let here = match &p.op {
+        Op::Extend { expr, .. } | Op::Filter { expr, .. } => format!("{expr:?}").contains("BNode")
+            || format!("{expr:?}").contains("Rand")
+            || format!("{expr:?}").contains("Uuid"),
+        _ => false,
+    };
+    here || p.children().into_iter().any(mints)
+}
+
+/// A right side that mints values is never re-evaluated per probe: no BindJoin (inner or
+/// OPTIONAL) has one, under every policy and with reordering off (the syntactic order puts the
+/// scan first, which used to give `BindJoin seed=[?f]` into the UNION). The plan is costed and
+/// shown as the hash / nested-loop join that sq-exec runs.
+#[test]
+fn minting_right_sides_are_never_bind_joined() {
+    let st = store(":s3 :p0 :s0 . _:x0 :p0 :s0 .");
+    let queries = [
+        "SELECT * { { BIND(BNODE() AS ?e) } UNION { VALUES ?f { \"x\"^^:dt } } ?f :p0 :s0 }",
+        "SELECT * { ?f :p0 :s0 { BIND(BNODE() AS ?e) } UNION { VALUES ?f { \"x\"^^:dt } } }",
+        "SELECT * { ?f :p0 :s0 OPTIONAL { ?f :p0 ?o BIND(RAND() AS ?r) } }",
+        "SELECT * { ?f :p0 :s0 { SELECT ?f (STRUUID() AS ?u) { ?f :p0 ?o } } }",
+    ];
+    for q in queries {
+        for policy in [JoinPolicy::Auto, JoinPolicy::PreferBind, JoinPolicy::PreferHash, JoinPolicy::NoSql] {
+            for reorder in [true, false] {
+                let opts = QueryOptions { join_policy: policy, reorder, ..Default::default() };
+                let p = plan_with(q, &st, &opts);
+                for n in nodes(&p) {
+                    if let Op::BindJoin { right, kind, .. } = &n.op
+                        && matches!(kind, JoinKind::Inner | JoinKind::Left { .. })
+                    {
+                        assert!(!mints(right), "{q} ({policy:?}, reorder {reorder}): BindJoin into a minting side");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Joining an aggregating sub-select on its GROUP BY key: the key is certain (it is certain in
+/// the group's input), so the join can hash on it and the aggregation runs once, instead of a
+/// NestedLoop or a BindJoin that re-runs the aggregation per left row.
+#[test]
+fn join_on_a_group_by_key_can_hash() {
+    let mut ttl = String::new();
+    for i in 0..2000 {
+        ttl.push_str(&format!(":s{i} :p :o{} .\n", i % 20));
+    }
+    for j in 0..20 {
+        ttl.push_str(&format!(":o{j} :q {j} , {} .\n", j + 1));
+    }
+    let st = store(&ttl);
+    let q = "SELECT ?s ?c { ?s :p ?o { SELECT ?o (COUNT(*) AS ?c) { ?o :q ?v } GROUP BY ?o } }";
+    for policy in [JoinPolicy::Auto, JoinPolicy::PreferHash, JoinPolicy::NoSql, JoinPolicy::PreferMerge] {
+        let opts = QueryOptions { join_policy: policy, ..Default::default() };
+        let p = plan_with(q, &st, &opts);
+        let shown = sq_plan::explain_with(&p, None, Some(&st));
+        assert_eq!(count_ops(&p, |o| matches!(o, Op::NestedLoop { .. })), 0, "{policy:?}\n{shown}");
+        // The Group runs outside every BindJoin probe side: once per query. (`Auto` starts
+        // from the 20 groups and probes the 2,000-row pattern with their keys.)
+        for n in nodes(&p) {
+            if let Op::BindJoin { right, .. } = &n.op {
+                assert_eq!(count_ops_in(right, |o| matches!(o, Op::Group { .. })), 0, "{policy:?}\n{shown}");
+            }
+        }
+        if policy == JoinPolicy::PreferHash {
+            let o = slot(&p, "o");
+            let hashed = nodes(&p).into_iter().any(|n| matches!(&n.op, Op::HashJoin { keys, .. } if keys.contains(&o)));
+            assert!(hashed, "{shown}");
+        }
+    }
+}
+
+fn count_ops_in(p: &Plan, pred: impl Fn(&Op) -> bool + Copy) -> usize {
+    usize::from(pred(&p.op)) + p.children().into_iter().map(|c| count_ops_in(c, pred)).sum::<usize>()
+}

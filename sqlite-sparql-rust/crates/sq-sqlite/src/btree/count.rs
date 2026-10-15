@@ -35,7 +35,7 @@ use sq_core::{Error, Result};
 
 use super::Fallback;
 use super::cursor::key_range;
-use super::format::{self, Cells, Key, MAX_DEPTH, NodeHeader};
+use super::format::{self, Cells, Key, MAX_DEPTH, NodeHeader, partition};
 use super::reader::{BtreeReader, ReaderMode, Snapshot};
 
 /// Pages read between two interrupt polls.
@@ -77,20 +77,6 @@ struct Walk<'r> {
 
 /// An exclusive bound of a subtree's keys, `None` at the edge of the b-tree.
 type Fence = Option<Key>;
-
-/// First index in `0..n` where `before(i)` is false; `before` must hold on a prefix of `0..n`.
-fn partition(n: usize, mut before: impl FnMut(usize) -> Result<bool, Fallback>) -> Result<usize, Fallback> {
-    let (mut lo, mut hi) = (0, n);
-    while lo < hi {
-        let mid = lo + (hi - lo) / 2;
-        if before(mid)? {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    Ok(lo)
-}
 
 /// `lo < key < hi`.
 fn inside(key: &Key, lo: &Fence, hi: &Fence) -> bool {

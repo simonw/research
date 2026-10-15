@@ -457,3 +457,25 @@ fn topk_builds_secondary_keys_only_for_ties() {
     // "y0" sorts first; it is the IRI of rows 0, 97, 194 and 291.
     assert_eq!(got, vec![vec![int(1), fx.iri("y0")]; 3]);
 }
+
+/// A long ORDER BY key list whose rows tie on every key but the last: Sort refines the tied
+/// runs on a work list, not by recursing once per key (the nesting budget does not charge
+/// ORDER BY keys, so the depth would be unbounded), and runs on a small thread stack.
+#[test]
+fn sort_with_a_long_tied_key_list_does_not_recurse_per_key() {
+    std::thread::Builder::new()
+        .stack_size(256 << 10)
+        .spawn(|| {
+            let fx = Fx::new();
+            let row = |n: usize| vec![fx.iri("same"), fx.iri(&format!("z{n:02}"))];
+            let rows: Vec<Vec<TermId>> = (0..20).map(|i| row((i * 7) % 20)).collect();
+            let mut keys: Vec<OrderKey> = (0..4000).map(|_| order_key(sv(0), false)).collect();
+            keys.push(order_key(sv(1), true));
+            let sort = plan(Op::Sort { input: Box::new(values(&[0, 1], rows)), keys });
+            let got = Q::new(&fx.store, 2, sort).rows(fx.rc());
+            assert_eq!(got, (0..20).rev().map(row).collect::<Vec<_>>());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

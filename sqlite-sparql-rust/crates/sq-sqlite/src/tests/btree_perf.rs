@@ -2,8 +2,9 @@
 //! `cargo test -p sq-sqlite --release -- --ignored --nocapture`.
 //!
 //! Reports ns/row for full pinned scans (2 free columns: GPSO (g, p) -> s, o; 3 free columns:
-//! GSPO (g) -> s, p, o, the Q16 shape) and µs/probe for point probes (rebind + fill) with
-//! sorted and random subjects. The B-tree reader is measured with a warm page cache and a
+//! GSPO (g) -> s, p, o, the Q16 shape), µs/probe for point probes (rebind + fill) with
+//! sorted and random subjects, ms per count (exact over ~1M rows, and capped at 1000), and
+//! ns/term for decode cache misses (dictionary rows read directly vs pooled SQL lookups). The B-tree reader is measured with a warm page cache and a
 //! cold one (flushed before every round; the OS page cache stays warm, so a cold page costs
 //! one pread through the VFS). SQLite's own page cache is warm in every SQL measurement.
 use std::ops::Bound;
@@ -150,6 +151,44 @@ fn perf_btree_reader_vs_sql_cursor_1m_triples() {
             }
         }
     }
+    // Counts: the VDBE's count(*) against summed cell counts (exact over ~1M rows, and the
+    // planner's bounded probe count with cap 1000).
+    let mut count_ms = Vec::new();
+    for (name, spec, cap) in [("exact count GSPO(g)", &three, None), ("capped count GPSO(g,p), cap 1000", &two, Some(1000u64))] {
+        let want = {
+            db.shared().set_reader(ReaderMode::Sql);
+            db.store.count(spec, cap).unwrap()
+        };
+        println!("{name}: {want}");
+        for r in readers {
+            let reps = if cap.is_some() { 1000 } else { 1 };
+            let ns = measure(&db, r, SCAN_ROUNDS, || {
+                for _ in 0..reps {
+                    assert_eq!(db.store.count(spec, cap).unwrap(), want);
+                }
+                reps
+            });
+            println!("  {} {:9.3} ms/count", r.label(), ns / 1e6);
+            count_ms.push(ns / 1e6);
+        }
+    }
+    // Decode cache misses: dictionary rows read from the rdf_term b-tree against pooled SQL
+    // lookups, in sorted batches of 1024 (the decode cache is flushed before every round).
+    let terms: Vec<TermId> = random.iter().copied().take(50_000).collect();
+    let mut decode_ns = Vec::new();
+    for r in readers {
+        let ns = measure(&db, r, PROBE_ROUNDS, || {
+            db.shared().flush_dictionary_caches().unwrap();
+            let mut out = Vec::with_capacity(terms.len());
+            for chunk in terms.chunks(1024) {
+                db.store.decode(chunk, &mut out).unwrap();
+            }
+            terms.len()
+        });
+        println!("decode miss, batches of 1024: {} {ns:6.0} ns/term", r.label());
+        decode_ns.push(ns);
+    }
+
     // Cost of the per-call precondition check (txn_state + data version).
     db.shared().set_reader(ReaderMode::Btree);
     let mut cur = db.store.cursor(&two).unwrap();
@@ -172,6 +211,14 @@ fn perf_btree_reader_vs_sql_cursor_1m_triples() {
         println!("{name} scan speed-up (warm): {:.1}x", sql / warm);
         assert!(sql / warm >= 2.5, "{name} scan: B-tree {warm:.1} ns/row vs SQL {sql:.1} ns/row");
     }
+    // Counts: at least 10x faster than the VDBE with a warm page cache.
+    for (i, name) in ["exact", "capped"].into_iter().enumerate() {
+        let (sql, warm) = (count_ms[3 * i], count_ms[3 * i + 1]);
+        println!("{name} count speed-up (warm): {:.0}x", sql / warm);
+        assert!(sql / warm >= 10.0, "{name} count: B-tree {warm:.4} ms vs VDBE {sql:.4} ms");
+    }
+    // Decode misses read directly must not be slower than through SQL.
+    assert!(decode_ns[1] < decode_ns[0], "decode misses: direct {:.0} ns vs SQL {:.0} ns", decode_ns[1], decode_ns[0]);
     // Sorted probes must not be slower than through SQL.
     for (i, name) in ["GSPO sorted", "GPSO sorted"].into_iter().enumerate() {
         let (sql, warm) = (probe_ns[6 * i], probe_ns[6 * i + 1]);

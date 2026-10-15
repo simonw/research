@@ -69,6 +69,22 @@ pub(crate) struct SharedInit {
     pub rng: StdRng,
 }
 
+/// The current time as an `xsd:dateTime` in UTC: the value of `DateTime::now()`, computed as
+/// the Unix epoch plus the time elapsed since (a timeline addition). `DateTime::now()` itself
+/// adds that duration through the general date arithmetic, about 20K instructions, which
+/// dominated `Execution::new` for small queries; the result is the same instant.
+pub(crate) fn now_utc() -> oxsdatatypes::DateTime {
+    use std::str::FromStr;
+    use std::sync::OnceLock;
+    static EPOCH: OnceLock<Option<oxsdatatypes::DateTime>> = OnceLock::new();
+    let epoch = EPOCH.get_or_init(|| oxsdatatypes::DateTime::from_str("1970-01-01T00:00:00Z").ok());
+    let since = std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).ok();
+    match (epoch, since.and_then(|d| oxsdatatypes::DayTimeDuration::try_from(d).ok())) {
+        (Some(e), Some(d)) => e.checked_add_day_time_duration(d).unwrap_or_else(oxsdatatypes::DateTime::now),
+        _ => oxsdatatypes::DateTime::now(),
+    }
+}
+
 impl Shared {
     pub fn new(i: SharedInit) -> Self {
         let mut named_graphs = i.named_graphs;
@@ -81,7 +97,7 @@ impl Shared {
             terms: RefCell::new(i.terms),
             exists: RefCell::new(i.exists),
             base_iri: i.base_iri,
-            now: Cell::new(oxsdatatypes::DateTime::now()),
+            now: Cell::new(now_utc()),
             rng: RefCell::new(i.rng),
             visible: i.visible,
             deadline: i.timeout_ms.map(|ms| Instant::now() + std::time::Duration::from_millis(ms)),

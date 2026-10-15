@@ -86,7 +86,7 @@ pub const SQL_CURSOR_COSTS: CostConstants = CostConstants {
     row_copy_per_slot: 1.0,
     decode_miss: 1000.0,
     decode_hit: 50.0,
-    vdbe_probe: 550.0,
+    vdbe_probe: 750.0,
     vdbe_row: 60.0,
     vdbe_count_row: 40.0,
 };

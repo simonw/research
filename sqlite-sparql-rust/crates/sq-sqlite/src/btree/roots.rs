@@ -16,9 +16,13 @@ use crate::raw::{RawDb, RawStmt};
 use crate::schema::PK_INDEX;
 use crate::template::COL_NAMES;
 
-/// Root page of each order (`IndexOrder::ALL` positions); 0 = not readable directly.
+/// Root page of each order (`IndexOrder::ALL` positions) and of `rdf_term`; 0 = not readable
+/// directly.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
-pub(crate) struct Roots([u32; 9]);
+pub(crate) struct Roots {
+    quads: [u32; 9],
+    term: u32,
+}
 
 const fn slot(order: IndexOrder) -> usize {
     match order {
@@ -52,12 +56,17 @@ const fn schema_name(order: IndexOrder) -> &'static str {
 impl Roots {
     /// Root page of `order`; 0 when it must be read through SQL.
     pub fn get(&self, order: IndexOrder) -> u32 {
-        self.0[slot(order)]
+        self.quads[slot(order)]
     }
 
     /// Every order is readable directly.
     pub fn all(&self) -> bool {
-        self.0.iter().all(|r| *r != 0)
+        self.quads.iter().all(|r| *r != 0)
+    }
+
+    /// Root page of `rdf_term`; 0 when dictionary rows must be read through SQL.
+    pub fn term(&self) -> u32 {
+        self.term
     }
 }
 
@@ -89,9 +98,38 @@ pub(crate) fn load(db: RawDb) -> Result<Roots> {
     drop(st);
     let mut roots = Roots::default();
     for order in IndexOrder::ALL {
-        roots.0[slot(order)] = verify(db, order, &rows)?.unwrap_or(0);
+        roots.quads[slot(order)] = verify(db, order, &rows)?.unwrap_or(0);
     }
+    roots.term = verify_term(db)?.unwrap_or(0);
     Ok(roots)
+}
+
+/// The declared columns of `rdf_term` (§2.1): name, type, primary-key position.
+const TERM_COLUMNS: [(&str, &str, i64); 6] =
+    [("id", "INTEGER", 1), ("tag", "INTEGER", 0), ("lex", "TEXT", 0), ("dt", "INTEGER", 0), ("lang", "TEXT", 0), ("h", "INTEGER", 0)];
+
+/// The root page of `rdf_term` if it is a rowid table with exactly the §2.1 columns, `id`
+/// being the rowid alias.
+fn verify_term(db: RawDb) -> Result<Option<u32>> {
+    let mut st = RawStmt::prepare(db, "SELECT rootpage FROM main.sqlite_schema WHERE type = 'table' AND name = 'rdf_term'", false)?;
+    let root = if st.step()? { st.col_i64(0) } else { return Ok(None) };
+    drop(st);
+    let Some(root) = u32::try_from(root).ok().filter(|r| *r >= 2) else { return Ok(None) };
+    let mut st = RawStmt::prepare(db, "SELECT name, upper(type), pk, hidden FROM pragma_table_xinfo('rdf_term', 'main') ORDER BY cid", false)?;
+    let mut cols = Vec::with_capacity(6);
+    while st.step()? {
+        cols.push((st.col_str(0)?.to_string(), st.col_str(1)?.to_string(), st.col_i64(2), st.col_i64(3)));
+    }
+    drop(st);
+    let columns_ok = cols.len() == TERM_COLUMNS.len()
+        && cols.iter().zip(TERM_COLUMNS).all(|((n, t, pk, hidden), (wn, wt, wpk))| n == wn && t == wt && *pk == wpk && *hidden == 0);
+    if !columns_ok {
+        return Ok(None);
+    }
+    // A primary-key index means `id` is not the rowid (INTEGER PRIMARY KEY DESC, WITHOUT ROWID).
+    let mut st = RawStmt::prepare(db, "SELECT count(*) FROM pragma_index_list('rdf_term', 'main') WHERE origin = 'pk'", false)?;
+    let pk_index = st.step()? && st.col_i64(0) != 0;
+    Ok((!pk_index).then_some(root))
 }
 
 /// The root page of `order` if its b-tree has exactly the expected layout.

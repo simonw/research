@@ -4,7 +4,10 @@
 //! allows becomes a [`Choice`] with its estimated rows, cost and output order:
 //! * **BindJoin** (index nested loop): `probes × cost(R | seeded) + out × row_copy`, where a
 //!   left input sorted by a seed slot, or sorted per batch (`sort_left`), probes in key order
-//!   (`seek_sorted`) and only once per distinct key. Keeps the left order unless `sort_left`.
+//!   and only once per distinct key. A probe in key order costs `seek_sorted` when the keys
+//!   are dense in the unit's index range and up to `seek_random` when they are more than
+//!   `LOCAL_SEEK_ROWS` rows apart (`ordered_seek_cost`). Keeps the left order unless
+//!   `sort_left`.
 //! * **SQL step**: the same probe, run by SQLite's VDBE inside one SqlJoin statement
 //!   (`vdbe_probe` per left row, `vdbe_row` per produced column); only while the prefix is an
 //!   open SQL chain of fewer than `sqljoin::MAX_ALIASES` patterns. Unordered.
@@ -13,8 +16,10 @@
 //! * **MergeJoin** on each certainly-bound shared slot: both sides sorted by it, either already
 //!   (a quad pattern read through an index order whose first free column is the key) or through
 //!   a SortBySlot enforcer (`n·log2(n)·sort_row_log`); a right side read through one cursor
-//!   gallops (`min(|R| scanned, distinct(L) × seek_sorted + matched rows)`), merged multi-graph
-//!   streams cannot seek and are scanned. Sorted by the key.
+//!   gallops (`min(|R| scanned, distinct(L) × (ordered seek + rows read before it) + matched
+//!   rows)`, where each seek follows up to `gallop` rows read past the previous key and is a
+//!   random seek when the keys are sparse), merged multi-graph streams cannot seek and are
+//!   scanned. Sorted by the key.
 //! * **NestedLoop** when nothing else is legal. Keeps the left order.
 //!
 //! Policies: `PreferHash` and `PreferBind` force their operator wherever legal (WP5);
@@ -42,6 +47,10 @@ use crate::props::slots;
 const SORT_LEFT_NS: f64 = 20.0;
 /// Hash tables up to this many entries use the `_small` constants (spec §7.5).
 const SMALL_HASH: f64 = 32_768.0;
+/// Index rows within which a forward seek to the next key stays local (about a leaf page of
+/// index entries). Seeks in key order that are further apart than this cost a random seek:
+/// 9 keys spread over a 600K-row range are 9 descents, not 9 cheap forward steps.
+const LOCAL_SEEK_ROWS: f64 = 256.0;
 
 /// Which join candidates a caller asks for.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -92,6 +101,15 @@ impl Planner<'_> {
         }
     }
 
+    /// Cost of each of `keys` seeks made in key order into a sorted input of `rows` rows:
+    /// `seek_sorted` when consecutive keys are close, up to `seek_random` when they are more
+    /// than [`LOCAL_SEEK_ROWS`] rows apart on average.
+    pub(super) fn ordered_seek_cost(&self, keys: f64, rows: f64) -> f64 {
+        let gap = rows / keys.max(1.0);
+        let far = (gap / LOCAL_SEEK_ROWS).clamp(0.0, 1.0);
+        self.costs.seek_sorted + (self.costs.seek_random - self.costs.seek_sorted).max(0.0) * far
+    }
+
     /// Cost of a SortBySlot enforcer over `rows` rows (buffer and sort).
     pub(super) fn enforce_cost(&self, rows: f64) -> f64 {
         let n = rows.max(1.0);
@@ -125,7 +143,14 @@ impl Planner<'_> {
         let seed = left.certain.intersect(pr.maybe);
         let keys = left.certain.intersect(pr.certain).minus(both_seeded);
         let check = shared.minus(keys).minus(both_seeded);
-        let bind_ok = !seed.is_empty() && shared.is_subset(&left.certain) && pr.accepts_seed(seed);
+        // A unit that mints values (BNODE, RAND, UUID, STRUUID) is evaluated once: probing it
+        // per seed tuple would give one of its solutions several values (sq-exec hashes such
+        // a BindJoin anyway; planning it as hash keeps costs and EXPLAIN truthful).
+        let mints = match unit.r {
+            UnitRef::Node(n) => self.mints(n),
+            UnitRef::Pat(_) => false,
+        };
+        let bind_ok = !seed.is_empty() && shared.is_subset(&left.certain) && pr.accepts_seed(seed) && !mints;
         let hash_ok = !keys.is_empty();
         let merge_ok = inner && g.merge && hash_ok;
         let policy = self.opts.join_policy;
@@ -241,7 +266,6 @@ impl Planner<'_> {
         } else {
             smallvec::smallvec![true]
         };
-        let is_scan = matches!(g.units[i].r, UnitRef::Pat(_));
         for sort_left in variants {
             let sorted = bind_sorted(left.sorted, seed, sort_left);
             if !wanted.order(sorted) {
@@ -250,8 +274,13 @@ impl Planner<'_> {
             let sorted_probes = sort_left || in_order;
             let probes = if sorted_probes { self.distinct_probes(g, seed, lrows, in_order)? } else { lrows };
             let mut per_probe = right.cost;
-            if sorted_probes && is_scan {
-                per_probe -= self.costs.seek_random - self.costs.seek_sorted;
+            if sorted_probes && let UnitRef::Pat(p) = g.units[i].r {
+                // Probes in key order seek forward: cheap when the keys are dense in the
+                // unit's index range, as costly as random probes when they are sparse. A
+                // `sort_left` join sorts each batch on its own, so its runs are per batch.
+                let range_rows = self.group_scan_estimate(g, i, &p, g.ctx.bound())?.0;
+                let runs = if in_order { 1.0 } else { (lrows / BATCH_ROWS as f64).ceil().max(1.0) };
+                per_probe -= self.costs.seek_random - self.ordered_seek_cost(probes / runs, range_rows);
             }
             let sort = if sort_left { lrows * SORT_LEFT_NS } else { 0.0 };
             let cost = left.cost + sort + probes * per_probe.max(0.0) + rows * self.row_copy();
@@ -310,11 +339,15 @@ impl Planner<'_> {
             let right_cost = if enforce_right {
                 right.cost + self.enforce_cost(right.rows)
             } else if seekable {
-                // Galloping: after a few misses the right scan seeks to the next left key.
+                // Galloping: after a few misses the right scan seeks to the next left key. Each
+                // seek follows up to `gallop` rows read past the previous key, and is a random
+                // seek when the keys are sparse in the right input.
                 let distinct = lrows.min(self.slot_dv(g, key)?);
                 let matched = rows.min(right.rows);
                 let per_row = (right.cost - self.costs.seek_random).max(0.0) / right.rows.max(1.0);
-                let gallop = self.costs.seek_random + distinct * self.costs.seek_sorted + matched * per_row;
+                let gap = right.rows / distinct.max(1.0);
+                let per_seek = self.ordered_seek_cost(distinct, right.rows) + gap.min(f64::from(self.gallop)) * per_row;
+                let gallop = self.costs.seek_random + distinct * per_seek + matched * per_row;
                 right.cost.min(gallop)
             } else {
                 right.cost

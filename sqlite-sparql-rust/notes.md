@@ -225,3 +225,18 @@ translating SPARQL to SQL text or running as an external client.
   reproduced every output and all 15 exercise solutions; the expert review fixed several subtle explanations.
   It also surfaced engine issues now queued: a merge join on a ~20-value key with a residual check taking 55 s
   (0.43 s as a hash join), read-only functions not SQLITE_INNOCUOUS (stored views fail with trusted_schema off).
+
+### Performance pass 1 (two crate-disjoint lanes, each reviewed + re-measured independently)
+- storage lane (sq-sqlite): B-tree RANGE COUNT by summing leaf/interior cell counts (boundary pages binary
+  searched): Q16 COUNT(*) over 1.6M quads 64.6 -> 1.5 ms CPU (43x), planner's capped probes ~57 us -> ~1 us;
+  dictionary decode misses read rdf_term rows straight from its table B-tree (0.74 vs 1.43 us/term batched);
+  fixed-width key decoder makes every B-tree scan ~25% faster (GPSO 30 -> 23.5 ns/row).
+- engine lane: removed the `sparql_count` shortcut that returned 1 for aggregate queries without evaluating
+  them (benchmark artifact in run A); lazy sort keys in TopK/Sort (Q9 ORDER BY DESC(?age) ?x LIMIT 10: 254 ->
+  10 ms, IRI tie-breakers only decoded for rows still tied); planner no longer bind-joins into right sides that
+  mint values (BNODE/RAND/UUID/STRUUID); GROUP BY keys certain in the input are certain in the output (joins on
+  aggregating sub-selects can hash/merge); vdbe_probe cost 550 -> 750 ns (measured 0.65-1.2 us); Sort's lazy
+  refinement made iterative after a reviewer crashed it with a 5,000-key ORDER BY (stack overflow).
+- Gates after both lanes: all crate tests, long differential fuzz (2 seeds x 10,000 cases x 30 configs, 0
+  mismatches), W3C sqlite backend 636/639.
+- Not met: tiny-query fixed overhead (Q4 0.073 ms vs baseline 0.042; planning a 3-pattern group ~23 us).

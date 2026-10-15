@@ -147,7 +147,7 @@ so not callable from views, triggers or the schema):
 | `sparql_check()` | 0 | | `ok: ...` or `errors: ...` |
 | `sparql_config(key)` / `sparql_config(key, value)` | 1 / 2 | - / D | current / new value as TEXT |
 | `sparql_query(q [, format])` | 1-2 | | json (default)/xml/csv/tsv; graphs: ntriples (default)/nquads/turtle |
-| `sparql_ask`, `sparql_count`, `sparql_value` | 1 | | 0/1; count with no decode; native value of the first row's first variable (ASK: 0/1; CONSTRUCT/DESCRIBE: the first triple's subject) |
+| `sparql_ask`, `sparql_count`, `sparql_value` | 1 | | 0/1; count with no decode (always evaluates the query: an aggregate query counts 1 after its aggregation ran); native value of the first row's first variable (ASK: 0/1; CONSTRUCT/DESCRIBE: the first triple's subject) |
 | `sparql_explain(q [, mode])` | 1-2 | | `algebra`, `logical`, `plan` (default), `analyze`, `sql`, `sqlplan` |
 | `sparql_query_sql`, `sparql_count_sql`, `sparql_to_sql` | 1-2, 1, 1 | | baseline engine regardless of `engine` |
 | `sparql_term`, `sparql_term_value`, `sparql_term_id`, `sparql_term_kind/_lex/_lang/_datatype` | 1 | | term accessors |
@@ -244,6 +244,7 @@ themselves.
 | `tests/transactions.rs` (11) | ROLLBACK/COMMIT, atomic requests, writing host statements, two connections, `SQLITE_BUSY` with `busy_timeout`, one snapshot per temp-view scan |
 | `tests/robustness.rs` (11) | interrupts, `timeout_ms`, `max_memory_mb`, panics in every entry point, nesting limit on a 2 MiB stack, close hook (WAL removed) |
 | `tests/review.rs` (10), `tests/review2.rs` (5) | regressions for the adversarial review findings |
+| `tests/review_perf_engine.rs` (2), `tests/review_perf_sort_stack.rs` (1) | review of the engine performance pass: `sparql_count` of a COUNT(*) query evaluates it (and times out on an endless pattern); lazily built ORDER BY keys give the baseline engine's row sequences; a 6,000-key ORDER BY list runs on a 2 MiB thread (alone in its file: a stack overflow aborts the process) |
 
 The built extension is tested from Python's `sqlite3` module (Python 3.13, SQLite 3.45.1;
 `py/tests`, 33 test functions). `conftest.py` loads the path in `SPARQLITE_EXT` (default

@@ -14,7 +14,9 @@
 //!   statistics, `vacuum_terms` / `check` / `explain_query_plan`;
 //! * `btree` — the phase-2 direct B-tree reader (§13): [`BtreeCursor`] reads the covering
 //!   index pages of `rdf_quad` itself when the database is a rollback-journal file and a read
-//!   transaction is held, and falls back to a `SqlCursor` transparently otherwise.
+//!   transaction is held, and falls back to a `SqlCursor` transparently otherwise. Under the
+//!   same conditions it answers `count()` from page cell counts and reads decode-cache misses
+//!   from the `rdf_term` table b-tree.
 //!
 //! All state lives in one [`StorageShared`] per connection; [`SqliteStore`] is the cheap,
 //! clonable `QuadStore` / `QuadStoreWriter` / `Dictionary` handle over it. The connection is

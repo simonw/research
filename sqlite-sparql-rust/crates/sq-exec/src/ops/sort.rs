@@ -159,8 +159,7 @@ impl Sort {
             }
             _ => {
                 let mut perm: Vec<u32> = (0..n as u32).collect();
-                let mut built = 0usize;
-                self.sort_run(cx, &mut perm, 0, &mut built)?;
+                self.sort_runs(cx, &mut perm)?;
                 perm
             }
         };
@@ -168,24 +167,51 @@ impl Sort {
         Ok(())
     }
 
-    /// Sorts `run` (row indexes in ascending order, all tied on the keys before `level`) by
-    /// the keys from `level` on, ties in row order. Each level builds keys only for the rows
-    /// of runs that are still tied: a later key is never built for a row that an earlier key
-    /// already placed. `built` counts the SortKeys built so far (interrupt polling).
-    fn sort_run(&mut self, cx: &mut ExecCtx, run: &mut [u32], level: usize, built: &mut usize) -> Result<()> {
-        if run.len() < 2 || level == self.keys.len() {
-            return Ok(());
+    /// Sorts `perm` (row indexes in ascending order) by the keys, ties in row order, by run
+    /// refinement: a run of rows tied on the keys before `level` is sorted by key `level`, and
+    /// each of its sub-runs still tied on that key becomes a run for `level + 1`. A later key
+    /// is thus never built for a row that an earlier key already placed. Runs never overlap,
+    /// so they are kept on an explicit work list (in any order) rather than recursed into: the
+    /// depth would be the number of ORDER BY keys, which the nesting budget does not charge.
+    fn sort_runs(&mut self, cx: &mut ExecCtx, perm: &mut [u32]) -> Result<()> {
+        let nkeys = self.keys.len();
+        // (start, end, level): perm[start..end] is tied on the keys before `level`.
+        let mut work: Vec<(usize, usize, usize)> = vec![(0, perm.len(), 0)];
+        let mut tied: Vec<(usize, usize)> = Vec::new();
+        // SortKeys built so far (interrupt polling).
+        let mut built = 0usize;
+        while let Some((start, end, level)) = work.pop() {
+            if end - start < 2 || level == nkeys {
+                continue;
+            }
+            tied.clear();
+            self.sort_level(cx, &mut perm[start..end], level, &mut built, &mut tied)?;
+            work.extend(tied.iter().map(|&(a, b)| (start + a, start + b, level + 1)));
         }
+        Ok(())
+    }
+
+    /// Sorts `run` by key `level` alone, ties in row order (`run` is in ascending row order
+    /// on entry), and appends the ranges of `run` that tie on that key (two rows or more) to
+    /// `tied`, unless it is the last key.
+    fn sort_level(
+        &mut self,
+        cx: &mut ExecCtx,
+        run: &mut [u32],
+        level: usize,
+        built: &mut usize,
+        tied: &mut Vec<(usize, usize)>,
+    ) -> Result<()> {
         let desc = self.keys[level].desc;
+        // The last key's ties are final (row order).
+        let last = level + 1 == self.keys.len();
         let rows = &self.rows;
-        // Tied groups of `run` after sorting it by this level's key.
-        let mut groups: Vec<(usize, usize)> = Vec::new();
-        let mut push_groups = |eq: &dyn Fn(usize, usize) -> bool, len: usize| {
+        let mut push_tied = |eq: &dyn Fn(usize, usize) -> bool, len: usize| {
             let mut start = 0;
             for i in 1..=len {
                 if i == len || !eq(i - 1, i) {
                     if i - start > 1 {
-                        groups.push((start, i));
+                        tied.push((start, i));
                     }
                     start = i;
                 }
@@ -199,9 +225,10 @@ impl Sort {
                 for (dst, (_, i)) in run.iter_mut().zip(&v) {
                     *dst = *i;
                 }
-                if level + 1 < self.keys.len() {
-                    push_groups(&|a, b| v[a].0 == v[b].0, v.len());
+                if last {
+                    return Ok(());
                 }
+                push_tied(&|a, b| v[a].0 == v[b].0, v.len());
             }
             _ => {
                 let mut v: Vec<(SortKey, u32)> = Vec::with_capacity(run.len());
@@ -222,13 +249,11 @@ impl Sort {
                 for (dst, (_, i)) in run.iter_mut().zip(&v) {
                     *dst = *i;
                 }
-                if level + 1 < self.keys.len() {
-                    push_groups(&|a, b| v[a].0 == v[b].0, v.len());
+                if last {
+                    return Ok(());
                 }
+                push_tied(&|a, b| v[a].0 == v[b].0, v.len());
             }
-        }
-        for (a, b) in groups {
-            self.sort_run(cx, &mut run[a..b], level + 1, built)?;
         }
         Ok(())
     }
@@ -554,7 +579,6 @@ impl TopK {
 
     /// Offers row `r` of the input batch (input position `seq`).
     fn offer(&mut self, cx: &mut ExecCtx, r: usize, seq: u64) -> Result<()> {
-        self.cand.clear();
         if (self.heap.len() as u64) < self.k {
             cx.charge(&mut self.charge, self.rows.row_bytes() + 48)?;
             self.rows.push(self.inb.row(r));
@@ -563,7 +587,18 @@ impl TopK {
             let last = self.heap.len() - 1;
             return self.sift_up(cx, last);
         }
-        // Full: replace the worst retained row if the new one sorts before it.
+        // Full. Most rows lose to the worst retained row on the first key alone: reject them
+        // without the general comparison.
+        if let Some(&Some(s)) = self.key_slots.first() {
+            let top = self.rows.row(self.heap[0].row as usize)[s as usize];
+            if let Some(o) = cheap_cmp(self.inb.row(r)[s as usize], top)
+                && directed(o, self.keys[0].desc) == Ordering::Greater
+            {
+                return Ok(());
+            }
+        }
+        // Replace the worst retained row if the new one sorts before it.
+        self.cand.clear();
         if self.cmp(cx, Side::Cand(r, seq), Side::Heap(0))? != Ordering::Less {
             return Ok(());
         }

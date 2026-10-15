@@ -42,7 +42,7 @@ impl Default for StorageConfig {
 pub struct DictCounters {
     /// `Dictionary::decode` calls.
     pub decode_calls: u64,
-    /// Dictionary rows read from SQLite by decode (cache misses).
+    /// Dictionary rows read by decode (cache misses), from the `rdf_term` pages or through SQL.
     pub decode_db_rows: u64,
     /// Decode batches served by one merge scan instead of point lookups.
     pub decode_merge_scans: u64,
