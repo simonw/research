@@ -8,7 +8,8 @@
 //! * `Bound`;
 //! * `LangEq`: `LANG(?x) = "c"` reads only the cached language tag;
 //! * `LangMatchesConst`: LANGMATCHES with a constant range;
-//! * REGEX / REPLACE with constant pattern and flags compile once and check literal prefixes.
+//! * REGEX / REPLACE with constant pattern and flags compile once and check literal prefixes;
+//!   a constant REPLACE replacement string is prepared once.
 use std::cell::OnceCell;
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ use sq_core::{Error, Kind, Result, Slot, Tag, TermId, codec};
 
 use crate::compare::effective_tag;
 use crate::numeric::ArithOp;
-use crate::regex::CompiledRegex;
+use crate::regex::{CompiledRegex, Replacement};
 use crate::strings::HashAlg;
 use crate::value::{Value, inline_value};
 use crate::xsd::XsdType;
@@ -139,7 +140,9 @@ pub(crate) enum Node {
     If(Box<Node>, Box<Node>, Box<Node>),
     Coalesce(Vec<Node>),
     Regex { text: Box<Node>, src: RegexSrc },
-    Replace { text: Box<Node>, src: RegexSrc, replacement: Box<Node> },
+    /// `prepared` is set when the pattern, flags and replacement are all constant: the
+    /// replacement is then prepared for the regex once (`None` inside = invalid).
+    Replace { text: Box<Node>, src: RegexSrc, replacement: Box<Node>, prepared: Option<OnceCell<Option<Replacement>>> },
     Cast(XsdType, Box<Node>),
     Call(Builtin, Vec<Node>),
     /// Unknown function or wrong cast arity: always a SPARQL error.
@@ -149,6 +152,17 @@ pub(crate) enum Node {
 /// Tree with pre-encoded/pre-parsed constants, compiled regexes and fast paths.
 pub struct CompiledExpr {
     pub(crate) root: Node,
+    /// The expression's TEMP constants, sorted. A TEMP constant is canonical (IR contract: its
+    /// term is absent from the store), so a result equal to one is never re-interned.
+    pub(crate) temp_consts: Box<[TermId]>,
+}
+
+impl CompiledExpr {
+    /// True if `id` is one of the expression's TEMP constants (hence already canonical).
+    #[inline]
+    pub(crate) fn is_temp_const(&self, id: TermId) -> bool {
+        id.is_temp() && self.temp_consts.binary_search(&id).is_ok()
+    }
 }
 
 impl std::fmt::Debug for CompiledExpr {
@@ -160,11 +174,18 @@ impl std::fmt::Debug for CompiledExpr {
 /// Compiles an expression. Constants are canonical ids; TEMP constants are decoded through
 /// `temps` (the query's TempDict). Errors only for malformed IR (builtin arity).
 pub fn compile(e: &Expr, temps: &TempDict) -> Result<CompiledExpr> {
-    Ok(CompiledExpr { root: Compiler { temps }.node(e)? })
+    let mut c = Compiler { temps, temp_consts: Vec::new() };
+    let root = c.node(e)?;
+    let mut temp_consts = c.temp_consts;
+    temp_consts.sort_unstable();
+    temp_consts.dedup();
+    Ok(CompiledExpr { root, temp_consts: temp_consts.into() })
 }
 
 struct Compiler<'a> {
     temps: &'a TempDict,
+    /// TEMP constants that became `Node::Const` (the only constants a result can pass through).
+    temp_consts: Vec<TermId>,
 }
 
 /// Simple-literal value of a constant when known at compile time (SHORTSTR or TEMP).
@@ -187,17 +208,22 @@ impl Compiler<'_> {
         }
     }
 
-    fn boxed(&self, e: &Expr) -> Result<Box<Node>> {
+    fn boxed(&mut self, e: &Expr) -> Result<Box<Node>> {
         Ok(Box::new(self.node(e)?))
     }
 
-    fn nodes(&self, es: &[Expr]) -> Result<Vec<Node>> {
+    fn nodes(&mut self, es: &[Expr]) -> Result<Vec<Node>> {
         es.iter().map(|e| self.node(e)).collect()
     }
 
-    fn node(&self, e: &Expr) -> Result<Node> {
+    fn node(&mut self, e: &Expr) -> Result<Node> {
         Ok(match e {
-            Expr::Const(id) => Node::Const(*id, self.decode_const(*id)),
+            Expr::Const(id) => {
+                if id.is_temp() {
+                    self.temp_consts.push(*id);
+                }
+                Node::Const(*id, self.decode_const(*id))
+            }
             Expr::Slot(s) => Node::Slot(*s),
             Expr::Bound(s) => Node::Bound(*s),
             Expr::Exists(id) => Node::Exists(*id),
@@ -239,7 +265,7 @@ impl Compiler<'_> {
         }
     }
 
-    fn equal(&self, a: &Expr, b: &Expr) -> Result<Node> {
+    fn equal(&mut self, a: &Expr, b: &Expr) -> Result<Node> {
         for (x, y) in [(a, b), (b, a)] {
             if let Expr::Slot(s) = x {
                 if let Some((k, konst)) = Self::int_const(y) {
@@ -259,7 +285,7 @@ impl Compiler<'_> {
         Ok(Node::Equal(self.boxed(a)?, self.boxed(b)?))
     }
 
-    fn compare(&self, op: CmpOp, a: &Expr, b: &Expr) -> Result<Node> {
+    fn compare(&mut self, op: CmpOp, a: &Expr, b: &Expr) -> Result<Node> {
         if let (Expr::Slot(s), Some((k, konst))) = (a, Self::int_const(b)) {
             return Ok(Node::IntCmp { slot: *s, op: IntOp::Cmp(op), k, konst });
         }
@@ -269,7 +295,7 @@ impl Compiler<'_> {
         Ok(Node::Compare(op, self.boxed(a)?, self.boxed(b)?))
     }
 
-    fn in_list(&self, a: &Expr, list: &[Expr]) -> Result<Node> {
+    fn in_list(&mut self, a: &Expr, list: &[Expr]) -> Result<Node> {
         if let Expr::Slot(s) = a
             && !list.is_empty()
             && list.iter().all(|e| matches!(e, Expr::Const(id) if effective_tag(*id) == Tag::Iri))
@@ -286,7 +312,7 @@ impl Compiler<'_> {
         Ok(Node::In(self.boxed(a)?, self.nodes(list)?))
     }
 
-    fn regex_src(&self, pattern: &Expr, flags: Option<&Expr>) -> Result<RegexSrc> {
+    fn regex_src(&mut self, pattern: &Expr, flags: Option<&Expr>) -> Result<RegexSrc> {
         Ok(match (pattern, flags) {
             (Expr::Const(p), None) => RegexSrc::Const(ConstRegex { pattern: *p, flags: None, cell: OnceCell::new() }),
             (Expr::Const(p), Some(Expr::Const(f))) => {
@@ -296,7 +322,7 @@ impl Compiler<'_> {
         })
     }
 
-    fn call(&self, f: &Function, args: &[Expr]) -> Result<Node> {
+    fn call(&mut self, f: &Function, args: &[Expr]) -> Result<Node> {
         let arity = |min: usize, max: usize| -> Result<()> {
             if (min..=max).contains(&args.len()) {
                 Ok(())
@@ -335,10 +361,14 @@ impl Compiler<'_> {
             Function::StrLen => Builtin::StrLen,
             Function::Replace => {
                 arity(3, 4)?;
+                let src = self.regex_src(&args[1], args.get(3))?;
+                let prepared =
+                    (matches!(src, RegexSrc::Const(_)) && matches!(args[2], Expr::Const(_))).then(OnceCell::new);
                 return Ok(Node::Replace {
                     text: self.boxed(&args[0])?,
-                    src: self.regex_src(&args[1], args.get(3))?,
+                    src,
                     replacement: self.boxed(&args[2])?,
+                    prepared,
                 });
             }
             Function::UCase => Builtin::UCase,

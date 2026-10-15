@@ -39,14 +39,23 @@ impl RawDb {
     }
 
     /// Runs every statement of `sql` (one-shot, not pooled). For DDL and maintenance.
+    /// `Error::Invalid` for text containing a NUL byte (SQLite stops parsing there).
     pub fn exec(&self, sql: &str) -> Result<()> {
+        if sql.contains('\0') {
+            return Err(Error::Invalid("SQL text contains a NUL byte".into()));
+        }
         let mut rest = sql;
         while !rest.trim().is_empty() {
             let (stmt, tail) = RawStmt::prepare_with_tail(*self, rest, false)?;
-            rest = tail;
-            if let Some(mut stmt) = stmt {
-                while stmt.step()? {}
+            match stmt {
+                Some(mut stmt) => while stmt.step()? {},
+                // Without a statement SQLite consumed only comments / `;`; it must progress.
+                None if tail.len() == rest.len() => {
+                    return Err(Error::Invalid(format!("cannot parse SQL text: {rest}")));
+                }
+                None => {}
             }
+            rest = tail;
         }
         Ok(())
     }

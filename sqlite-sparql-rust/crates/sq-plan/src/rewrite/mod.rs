@@ -5,7 +5,7 @@ mod filter;
 mod graph;
 
 use sq_core::ir::Logical;
-use sq_core::TermId;
+use sq_core::{Result, TermId};
 
 use crate::props::LogicalProps;
 
@@ -15,8 +15,9 @@ pub(crate) struct Rewritten {
     pub exists: Vec<Logical>,
 }
 
-/// Apply all logical rewrites. `named` is the dataset's sorted named-graph list.
-pub(crate) fn rewrite(root: Logical, mut exists: Vec<Logical>, named: &[TermId]) -> Rewritten {
+/// Apply all logical rewrites. `named` is the dataset's sorted named-graph list. Debug builds
+/// check that filter placement moved no conjunct into an OPTIONAL / MINUS right side.
+pub(crate) fn rewrite(root: Logical, mut exists: Vec<Logical>, named: &[TermId]) -> Result<Rewritten> {
     // 1. GRAPH <c>: membership check + Active -> Const(c) (EXISTS patterns included).
     let mut root = graph::resolve_const_graphs(root, &mut exists, named);
     for i in 0..exists.len() {
@@ -39,7 +40,15 @@ pub(crate) fn rewrite(root: Logical, mut exists: Vec<Logical>, named: &[TermId])
     let snapshot = exists.clone();
     let lp = LogicalProps::new(&snapshot);
     let placer = filter::FilterPlacer::new(&lp);
-    let root = placer.place(root);
-    let exists = exists.into_iter().map(|e| placer.place(e)).collect();
-    Rewritten { root, exists }
+    let place = |l: Logical| -> Result<Logical> {
+        if !cfg!(debug_assertions) {
+            return Ok(placer.place(l));
+        }
+        let placed = placer.place(l.clone());
+        filter::check_barriers(&l, &placed)?;
+        Ok(placed)
+    };
+    let root = place(root)?;
+    let exists = exists.into_iter().map(place).collect::<Result<_>>()?;
+    Ok(Rewritten { root, exists })
 }

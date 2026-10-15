@@ -12,9 +12,10 @@
 //! where ?x is certain becomes `Join(Values{?x: [c]}, node)`, i.e. a seed constant.
 use sq_core::batch::SlotSet;
 use sq_core::ir::{Expr, Logical, PatTerm};
+use sq_core::{Error, Result};
 
 use crate::expr::{and_all, conjuncts, seed_constant};
-use crate::logical::is_group_leaf;
+use crate::logical::{children, is_group_leaf};
 use crate::props::LogicalProps;
 
 pub(crate) struct FilterPlacer<'p, 'a> {
@@ -196,6 +197,62 @@ impl<'p, 'a> FilterPlacer<'p, 'a> {
     }
 }
 
+/// Check the placement invariant that no physical plan can show (spec §7.1 step 6): no
+/// conjunct entered the right side of a LeftJoin (other than one of that LeftJoin's own
+/// filter) or of a Minus. A plan cannot tell a moved conjunct from a nested group's own filter
+/// that reads an outer variable, so `validate()` cannot check this; `optimize` runs this check
+/// on every pattern before and after placement in debug builds. Placement never creates, drops
+/// or reorders LeftJoin / Minus nodes, so their pre-order sequences align; the conjuncts in a
+/// right side may only lose members (seed constants) or be copied within it (UNION branches).
+pub(crate) fn check_barriers(before: &Logical, after: &Logical) -> Result<()> {
+    let (mut b, mut a) = (Vec::new(), Vec::new());
+    barrier_conjuncts(before, &mut b);
+    barrier_conjuncts(after, &mut a);
+    if a.len() != b.len() {
+        return Err(Error::internal("filter placement changed the OPTIONAL / MINUS structure"));
+    }
+    match b.iter().zip(&a).find(|(b, a)| !a.iter().all(|c| b.contains(c))) {
+        Some(_) => Err(Error::internal("filter placement moved a conjunct into an OPTIONAL / MINUS right side")),
+        None => Ok(()),
+    }
+}
+
+/// For each LeftJoin / Minus of `l` in pre-order: every conjunct inside its right side (Filter
+/// and LeftJoin filters at any depth), plus a LeftJoin's own filter conjuncts.
+fn barrier_conjuncts<'l>(l: &'l Logical, out: &mut Vec<Vec<&'l Expr>>) {
+    fn split<'l>(e: &'l Expr, out: &mut Vec<&'l Expr>) {
+        match e {
+            Expr::And(a, b) => {
+                split(a, out);
+                split(b, out);
+            }
+            other => out.push(other),
+        }
+    }
+    fn all_in<'l>(l: &'l Logical, out: &mut Vec<&'l Expr>) {
+        match l {
+            Logical::Filter { expr, .. } | Logical::LeftJoin { filter: Some(expr), .. } => split(expr, out),
+            _ => {}
+        }
+        children(l).into_iter().for_each(|c| all_in(c, out));
+    }
+    match l {
+        Logical::LeftJoin { right, filter, .. } => {
+            let mut cs = Vec::new();
+            all_in(right, &mut cs);
+            filter.iter().for_each(|f| split(f, &mut cs));
+            out.push(cs);
+        }
+        Logical::Minus { right, .. } => {
+            let mut cs = Vec::new();
+            all_in(right, &mut cs);
+            out.push(cs);
+        }
+        _ => {}
+    }
+    children(l).into_iter().for_each(|c| barrier_conjuncts(c, out));
+}
+
 /// Units of a join group: the leaves of a Join tree (Bgp nodes stay whole here).
 fn flatten_join(l: Logical, out: &mut Vec<Logical>) {
     match l {
@@ -298,6 +355,29 @@ mod tests {
             expr: Expr::Equal(Box::new(Expr::Slot(2)), Box::new(Expr::Const(k))),
         };
         assert!(matches!(place(f), Logical::Filter { .. }));
+    }
+
+    #[test]
+    fn barrier_check_accepts_placement_and_rejects_moved_conjuncts() {
+        let lj = |right: Logical, filter| {
+            Logical::LeftJoin { left: Box::new(tp(0, 1, 1)), right: Box::new(right), filter }
+        };
+        let not_bound = Expr::Not(Box::new(Expr::Bound(2)));
+        // Placement keeps FILTER(!bound(?2)) above its OPTIONAL and moves the OPTIONAL's own
+        // certain-right conjunct into the right side: both pass.
+        let before = Logical::Filter { input: Box::new(lj(tp(1, 2, 2), Some(gt(2)))), expr: not_bound.clone() };
+        let after = place(before.clone());
+        assert!(check_barriers(&before, &after).is_ok());
+        // The outer conjunct moved into the right side is rejected, for OPTIONAL and MINUS.
+        let moved = lj(Logical::Filter { input: Box::new(tp(1, 2, 2)), expr: not_bound.clone() }, None);
+        assert!(check_barriers(&before, &moved).is_err());
+        let minus = |right: Logical| Logical::Minus { left: Box::new(tp(0, 1, 1)), right: Box::new(right) };
+        let before = Logical::Filter { input: Box::new(minus(tp(1, 2, 2))), expr: gt(2) };
+        let moved = minus(Logical::Filter { input: Box::new(tp(1, 2, 2)), expr: gt(2) });
+        assert!(check_barriers(&before, &place(before.clone())).is_ok());
+        assert!(check_barriers(&before, &moved).is_err());
+        // A changed OPTIONAL / MINUS structure is rejected as well.
+        assert!(check_barriers(&before, &tp(0, 1, 1)).is_err());
     }
 
     #[test]

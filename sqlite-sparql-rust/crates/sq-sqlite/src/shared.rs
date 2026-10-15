@@ -5,16 +5,17 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use rusqlite::ffi;
-use sq_core::codec::{ENCODING_VERSION, RDF_LANG_STRING_IRI, SCHEMA_VERSION, XSD_STRING_IRI};
+use sq_core::codec::{ENCODING_VERSION, RDF_LANG_STRING_IRI, SCHEMA_VERSION, WELL_KNOWN, XSD_STRING_IRI};
 use sq_core::stats::Stats;
 use sq_core::term::Term;
-use sq_core::{Error, Result, TermId};
+use sq_core::{Error, Result, Tag, TermId};
 
 use crate::cache::ClockCache;
 use crate::keys::OwnedKey;
 use crate::pool::{PoolCounters, StmtPool};
 use crate::raw::RawDb;
 use crate::schema::{self, Detected, SchemaState};
+use crate::scope::Abort;
 use crate::template::Fixed;
 
 /// Dictionary rows 1..=63 are reserved for `codec::WELL_KNOWN` IRIs (§2.1) and never change.
@@ -65,6 +66,15 @@ pub(crate) struct CommonIris {
     pub lang_string: Arc<str>,
 }
 
+/// `codec::WELL_KNOWN` as decoded terms, indexed by dictionary row.
+fn well_known_terms() -> Box<[Option<Arc<Term>>]> {
+    let mut terms = vec![None; WELL_KNOWN_ROWS as usize + 1];
+    for (row, iri) in WELL_KNOWN {
+        terms[*row as usize] = Some(Arc::new(Term::Iri(Arc::from(*iri))));
+    }
+    terms.into_boxed_slice()
+}
+
 pub struct StorageShared {
     db: RawDb,
     cfg: RefCell<StorageConfig>,
@@ -81,8 +91,13 @@ pub struct StorageShared {
     stats: RefCell<StatsCache>,
     /// Scopes currently open through this store (savepoint name depth, rule R3).
     open_scopes: Cell<u32>,
+    /// Forced-rollback statement, held while a scope savepoint is open (`scope`).
+    pub(crate) abort: Abort,
     counters: Cell<DictCounters>,
     pub(crate) iris: CommonIris,
+    /// Terms of the reserved well-known rows, indexed by row (§2.1): decoded without I/O,
+    /// whether or not the schema exists.
+    well_known: Box<[Option<Arc<Term>>]>,
     /// Placeholder pushed for decode misses before they are fetched.
     pub(crate) placeholder: Arc<Term>,
 }
@@ -103,8 +118,10 @@ impl StorageShared {
             committed_max_row: Cell::new(0),
             stats: RefCell::new(StatsCache::default()),
             open_scopes: Cell::new(0),
+            abort: Abort::default(),
             counters: Cell::new(DictCounters::default()),
             iris: CommonIris { xsd_string: Arc::from(XSD_STRING_IRI), lang_string: Arc::from(RDF_LANG_STRING_IRI) },
+            well_known: well_known_terms(),
             placeholder: Arc::new(Term::Iri(Arc::from(""))),
         })
     }
@@ -230,6 +247,15 @@ impl StorageShared {
 
     pub(crate) fn committed_max_row(&self) -> i64 {
         self.committed_max_row.get()
+    }
+
+    /// The fixed term of a reserved well-known dictionary id, if `id` is one.
+    #[inline]
+    pub(crate) fn well_known_term(&self, id: TermId) -> Option<&Arc<Term>> {
+        if id.tag() != Tag::Iri {
+            return None;
+        }
+        self.well_known.get(usize::try_from(id.dict_row()).ok()?)?.as_ref()
     }
 
     /// Admission rule: the reserved well-known rows are fixed; other rows only when known

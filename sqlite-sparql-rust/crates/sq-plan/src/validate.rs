@@ -5,16 +5,18 @@
 //! * every slot is inside the layout, every EXISTS id exists;
 //! * slots are bound below their uses where operators require it: BindJoin seeds are certain
 //!   on the left, HashJoin / Minus keys certain on both sides, MergeJoin keys certain and both
-//!   inputs sorted by them, check lists cover every other slot both sides may bind, BindJoin
-//!   seed lists cover every slot both sides may bind, Extend never overwrites a bound slot,
-//!   Distinct / Reduced cover every slot their input may bind;
+//!   inputs sorted by them, check lists cover every other slot both sides may bind (slots
+//!   seeded on both inputs excepted), BindJoin seed lists cover every slot both sides may bind,
+//!   Extend never overwrites a bound slot, Distinct / Reduced cover every slot their input may
+//!   bind; "certain" counts a seeded slot only where the input's rows carry it
+//!   (`physical::carried`), never merely because the subtree was opened with it;
 //!   `seed ⊆ safe_inject(right)` for every BindJoin;
 //! * filters inside a LeftJoin-right / Minus-right side observe exactly their own scope: those
 //!   sides only ever receive seeds that are in `safe_inject` and that they bind themselves
-//!   (checked above). That no outer filter was moved INTO such a side is a property of the
-//!   filter placement pass (`rewrite::filter`, tested there): a physical plan cannot tell a
-//!   nested group's own filter (legal even when it reads an outer variable, which is unbound
-//!   there) from a moved one;
+//!   (checked above). That no outer filter was moved INTO such a side cannot be read off a
+//!   physical plan (a nested group's own filter may legally read an outer variable, which is
+//!   unbound there, and look exactly like a moved one); `optimize` checks it on the filter
+//!   placement itself in debug builds (`rewrite::filter::check_barriers`);
 //! * `GraphSel::Active` only under a GraphLoop (for EXISTS plans: every evaluation of the
 //!   pattern is under one);
 //! * `sorted_by` claims are derivable; Scan orders match their bound columns;
@@ -26,7 +28,7 @@ use sq_core::store::IndexOrder;
 use sq_core::{Error, Result};
 
 use crate::expr;
-use crate::physical::{bound_columns, canonical_needed, node_exprs, scan_sorted_by, walk};
+use crate::physical::{bound_columns, canonical_needed, carried, node_exprs, scan_sorted_by, walk};
 use crate::props::{slot_list, PlanProps, Props};
 
 /// Validate a physical plan; `Err(Error::Internal)` names the offending node.
@@ -40,6 +42,25 @@ fn fail<T>(p: &Plan, msg: impl std::fmt::Display) -> Result<T> {
 
 fn set(slots: &[Slot]) -> SlotSet {
     SlotSet::from_slots(slots.iter().copied())
+}
+
+/// A validated input as its parent sees it: static properties, the seed it was opened with and
+/// the seeded slots its rows carry.
+struct Input {
+    props: Props,
+    seed: SlotSet,
+    carried: SlotSet,
+}
+
+impl Input {
+    /// Slots bound in every row.
+    fn certain(&self) -> SlotSet {
+        self.props.certain.union(self.carried)
+    }
+    /// Slots bound in some row (a seeded slot holds the seed value or nothing).
+    fn maybe(&self) -> SlotSet {
+        self.props.maybe.union(self.seed)
+    }
 }
 
 struct Validator<'q> {
@@ -156,6 +177,12 @@ impl<'q> Validator<'q> {
         Ok(())
     }
 
+    /// Validate `p` opened with Join-mode seed `seeded`.
+    fn input(&mut self, p: &Plan, seeded: SlotSet, in_loop: bool, in_exists: bool) -> Result<Input> {
+        let props = self.node(p, seeded, in_loop, in_exists)?;
+        Ok(Input { props, seed: seeded, carried: carried(p, seeded) })
+    }
+
     /// Validate `p` opened with Join-mode seed `seeded`; returns its properties.
     fn node(&mut self, p: &Plan, seeded: SlotSet, in_loop: bool, in_exists: bool) -> Result<Props> {
         let props = self.pp.props(p);
@@ -197,19 +224,18 @@ impl<'q> Validator<'q> {
             }
             Op::BindJoin { left, right, seed, .. } => {
                 let seed_set = set(seed);
-                let lp = self.node(left, seeded, in_loop, in_exists)?;
+                let l = self.input(left, seeded, in_loop, in_exists)?;
                 let rp = self.node(right, seed_set, in_loop, in_exists)?;
-                let lc = lp.certain.union(seeded);
                 if seed.is_empty() {
                     return fail(p, "BindJoin without seed slots");
                 }
-                if !seed_set.is_subset(&lc) {
-                    return fail(p, "BindJoin seed slot not certainly bound on the left");
+                if !seed_set.is_subset(&l.certain()) {
+                    return fail(p, "BindJoin seed slot not certainly bound in the left rows");
                 }
                 if !rp.accepts_seed(seed_set) {
                     return fail(p, "BindJoin seed not in safe_inject(right)");
                 }
-                if !lp.maybe.union(seeded).intersect(rp.maybe).is_subset(&seed_set) {
+                if !l.maybe().intersect(rp.maybe).is_subset(&seed_set) {
                     return fail(p, "BindJoin: a slot both sides may bind is not in the seed list");
                 }
                 None
@@ -221,49 +247,53 @@ impl<'q> Validator<'q> {
                 }
                 let (l, r) = if *build_is_left { (build, probe) } else { (probe, build) };
                 let rseed = if inner { seeded } else { SlotSet::EMPTY };
-                let lp = self.node(l, seeded, in_loop, in_exists)?;
-                let rp = self.node(r, rseed, in_loop, in_exists)?;
-                self.check_keys(p, &lp, &rp, seeded, rseed, keys, check, true)?;
+                let l = self.input(l, seeded, in_loop, in_exists)?;
+                let r = self.input(r, rseed, in_loop, in_exists)?;
+                check_keys(p, &l, &r, keys, check, true)?;
                 None
             }
             Op::NestedLoop { left, right, check, kind } => {
                 let inner = matches!(kind, JoinKind::Inner);
                 let rseed = if inner { seeded } else { SlotSet::EMPTY };
-                let lp = self.node(left, seeded, in_loop, in_exists)?;
-                let rp = self.node(right, rseed, in_loop, in_exists)?;
-                self.check_keys(p, &lp, &rp, seeded, rseed, &[], check, false)?;
+                let l = self.input(left, seeded, in_loop, in_exists)?;
+                let r = self.input(right, rseed, in_loop, in_exists)?;
+                check_keys(p, &l, &r, &[], check, false)?;
                 None
             }
             Op::MergeJoin { left, right, key, check, .. } => {
-                let lp = self.node(left, seeded, in_loop, in_exists)?;
-                let rp = self.node(right, seeded, in_loop, in_exists)?;
+                let l = self.input(left, seeded, in_loop, in_exists)?;
+                let r = self.input(right, seeded, in_loop, in_exists)?;
                 if left.sorted_by != Some(*key) || right.sorted_by != Some(*key) {
                     return fail(p, "MergeJoin input not sorted by the key");
                 }
-                self.check_keys(p, &lp, &rp, seeded, seeded, &[*key], check, true)?;
+                check_keys(p, &l, &r, &[*key], check, true)?;
                 Some(*key)
             }
             Op::StarMerge { key, inputs, check } => {
                 if inputs.len() < 2 {
                     return fail(p, "StarMerge needs at least two inputs");
                 }
-                let mut acc: Option<Props> = None;
+                let mut acc: Option<Input> = None;
                 for i in inputs {
-                    let ip = self.node(i, seeded, in_loop, in_exists)?;
+                    let next = self.input(i, seeded, in_loop, in_exists)?;
                     if i.sorted_by != Some(*key) {
                         return fail(p, "StarMerge input not sorted by the key");
                     }
-                    if let Some(a) = &acc {
-                        self.check_keys(p, a, &ip, seeded, seeded, &[*key], check, true)?;
-                    }
-                    acc = Some(acc.map_or(ip, |a| crate::props::join(&a, &ip)));
+                    acc = Some(match acc {
+                        None => next,
+                        Some(a) => {
+                            check_keys(p, &a, &next, &[*key], check, true)?;
+                            let props = crate::props::join(&a.props, &next.props);
+                            Input { props, seed: seeded, carried: a.carried.union(next.carried) }
+                        }
+                    });
                 }
                 Some(*key)
             }
             Op::Minus { left, right, keys, check } => {
-                let lp = self.node(left, seeded, in_loop, in_exists)?;
-                let rp = self.node(right, SlotSet::EMPTY, in_loop, in_exists)?;
-                self.check_keys(p, &lp, &rp, seeded, SlotSet::EMPTY, keys, check, false)?;
+                let l = self.input(left, seeded, in_loop, in_exists)?;
+                let r = self.input(right, SlotSet::EMPTY, in_loop, in_exists)?;
+                check_keys(p, &l, &r, keys, check, false)?;
                 None
             }
             Op::Union(branches) => {
@@ -334,34 +364,23 @@ impl<'q> Validator<'q> {
         }
         Ok(props)
     }
+}
 
-    /// keys ⊆ certain on both sides; every other slot both sides may bind is in `check`.
-    #[allow(clippy::too_many_arguments)]
-    fn check_keys(
-        &self,
-        p: &Plan,
-        lp: &Props,
-        rp: &Props,
-        lseed: SlotSet,
-        rseed: SlotSet,
-        keys: &[Slot],
-        check: &[Slot],
-        need_keys: bool,
-    ) -> Result<()> {
-        let keys = set(keys);
-        let both_certain = lp.certain.union(lseed).intersect(rp.certain.union(rseed));
-        if need_keys && keys.is_empty() {
-            return fail(p, "join without key slots");
-        }
-        if !keys.is_subset(&both_certain) {
-            return fail(p, "join key not certainly bound on both sides");
-        }
-        let shared = lp.maybe.union(lseed).intersect(rp.maybe.union(rseed));
-        if !shared.minus(keys).is_subset(&set(check)) {
-            return fail(p, "a slot both sides may bind is neither a key nor checked");
-        }
-        Ok(())
+/// keys ⊆ certain on both sides; every other slot both sides may bind is in `check`, except
+/// slots seeded on both inputs: each side holds the seed value there or nothing.
+fn check_keys(p: &Plan, l: &Input, r: &Input, keys: &[Slot], check: &[Slot], need_keys: bool) -> Result<()> {
+    let keys = set(keys);
+    if need_keys && keys.is_empty() {
+        return fail(p, "join without key slots");
     }
+    if !keys.is_subset(&l.certain().intersect(r.certain())) {
+        return fail(p, "join key not certainly bound on both sides");
+    }
+    let shared = l.maybe().intersect(r.maybe()).minus(l.seed.intersect(r.seed));
+    if !shared.minus(keys).is_subset(&set(check)) {
+        return fail(p, "a slot both sides may bind is neither a key nor checked");
+    }
+    Ok(())
 }
 
 /// Every slot a node references directly (patterns, expressions, keys, lists).

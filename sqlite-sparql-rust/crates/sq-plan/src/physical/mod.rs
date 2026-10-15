@@ -12,9 +12,23 @@
 //! and GraphNames are never seeded. A BindJoin re-opens its right input with exactly its
 //! `seed` slots; every slot both sides may bind is in that list, so merging needs no check.
 //!
+//! Which seeded slots a row actually holds is [`carried`]: leaves (Unit, Scan, Values, Path)
+//! merge the seed into their rows, Project / Group keep it on their output slots only, and
+//! the never-seeded operators drop it. The planner reads a seeded slot from a join input (as a
+//! BindJoin seed or a HashJoin key) only where that input carries it, so no other operator has
+//! to re-merge the seed: the BindJoin that opened the subtree merges its output into the left
+//! row, which holds every seed value. Slots seeded on both inputs of an inner join hold the seed
+//! value or nothing on each side and are never compared.
+//!
+//! Planning effort stays near-linear in the query size: a node's plan depends only on the
+//! bound slots it mentions (the memo key is normalized to them), and the join ordering search
+//! costs opaque units from estimates (`estimate`) instead of planning them for every seed set
+//! it probes. EXISTS substitution hints are read off the emitted plans (`exists_hints`).
+//!
 //! Deferred to the optimizer package (structured so they slot in as extra join choices /
 //! post-passes): MergeJoin, StarMerge, SortBySlot, SqlJoin rendering, IntRange pushdown,
 //! interesting-order DP and constant calibration.
+mod estimate;
 mod finish;
 mod join;
 mod scan;
@@ -26,18 +40,19 @@ pub(crate) use scan::{bound_columns, scan_sorted_by};
 use rustc_hash::FxHashMap;
 use sq_core::batch::{Slot, SlotSet};
 use sq_core::ir::{
-    AggFunc, DatasetSpec, ExistsId, Expr, GraphSel, Logical, LoweredQuery, NamedGraphs, OrderKey, PatTerm, PathPlan,
+    AggFunc, DatasetSpec, ExistsId, GraphSel, Logical, LoweredQuery, NamedGraphs, OrderKey, PatTerm, PathPlan,
     QuadPat, QueryForm,
 };
-use sq_core::plan::{Op, Plan, QueryOptions, QueryPlan};
+use sq_core::plan::{JoinKind, Op, Plan, QueryOptions, QueryPlan};
 use sq_core::stats::CostConstants;
 use sq_core::store::QuadStore;
 use sq_core::{Error, Result, TermId};
 
 use crate::card::Card;
 use crate::expr;
-use crate::props::{slot_list, LogicalProps};
+use crate::props::{slot_list, LogicalProps, PlanProps};
 use crate::rewrite::Rewritten;
+use estimate::Est;
 
 /// Per-row cost of evaluating a scalar expression (ns).
 const EXPR_EVAL_NS: f64 = 25.0;
@@ -68,6 +83,66 @@ pub(crate) fn mk(op: Op, est_rows: f64, est_cost_ns: f64, sorted_by: Option<Slot
     Plan { id: 0, est_rows: est_rows.max(0.0), est_cost_ns: est_cost_ns.max(0.0), sorted_by, op }
 }
 
+/// The slots of a Join-mode seed `s` that are bound in every output row of `p` when `p` is
+/// opened with `s`, under the seed propagation contract above. Always a subset of `s`.
+pub(crate) fn carried(p: &Plan, s: SlotSet) -> SlotSet {
+    if s.is_empty() {
+        return s;
+    }
+    let set = |slots: &[Slot]| SlotSet::from_slots(slots.iter().copied());
+    // Inner joins keep what either seeded input keeps; the other kinds keep the left rows only.
+    let join = |left: &Plan, right: &Plan, right_seed: SlotSet, kind: &JoinKind| {
+        let l = carried(left, s);
+        if *kind == JoinKind::Inner { l.union(carried(right, right_seed).intersect(s)) } else { l }
+    };
+    match &p.op {
+        Op::Unit | Op::Empty | Op::Scan(_) | Op::Values { .. } | Op::Path { .. } => s,
+        Op::Slice { .. }
+        | Op::TopK { .. }
+        | Op::Count { .. }
+        | Op::GraphLoop { .. }
+        | Op::GraphNames { .. }
+        | Op::SqlJoin { .. } => SlotSet::EMPTY,
+        Op::Filter { input, .. }
+        | Op::Extend { input, .. }
+        | Op::Distinct { input, .. }
+        | Op::Reduced { input, .. }
+        | Op::Sort { input, .. }
+        | Op::SortBySlot { input, .. } => carried(input, s),
+        Op::Project { input, slots } => carried(input, s).intersect(set(slots)),
+        Op::Group { input, keys, .. } => carried(input, s).intersect(set(keys)),
+        Op::Union(branches) => branches.iter().fold(s, |acc, b| acc.intersect(carried(b, s))),
+        Op::BindJoin { left, right, seed, kind, .. } => join(left, right, set(seed), kind),
+        Op::HashJoin { build, probe, kind, build_is_left, .. } => {
+            let (l, r) = if *build_is_left { (build, probe) } else { (probe, build) };
+            join(l, r, s, kind)
+        }
+        Op::NestedLoop { left, right, kind, .. } => join(left, right, s, kind),
+        Op::MergeJoin { left, right, .. } => carried(left, s).union(carried(right, s)),
+        Op::StarMerge { inputs, .. } => inputs.iter().fold(SlotSet::EMPTY, |acc, i| acc.union(carried(i, s))),
+        Op::Minus { left, .. } => carried(left, s),
+    }
+}
+
+/// Every input of `p` with the Join-mode seed it is opened with when `p` is opened with `s`
+/// (the seed propagation contract above).
+pub(crate) fn input_seeds(p: &Plan, s: SlotSet) -> Vec<(&Plan, SlotSet)> {
+    let inner = |kind: &JoinKind| if *kind == JoinKind::Inner { s } else { SlotSet::EMPTY };
+    match &p.op {
+        Op::BindJoin { left, right, seed, .. } => vec![(left, s), (right, SlotSet::from_slots(seed.iter().copied()))],
+        Op::HashJoin { build, probe, kind, build_is_left, .. } => {
+            let (l, r) = if *build_is_left { (build, probe) } else { (probe, build) };
+            vec![(l, s), (r, inner(kind))]
+        }
+        Op::NestedLoop { left, right, kind, .. } => vec![(left, s), (right, inner(kind))],
+        Op::Minus { left, right, .. } => vec![(left, s), (right, SlotSet::EMPTY)],
+        Op::Slice { input, .. } | Op::TopK { input, .. } | Op::Count { input, .. } | Op::GraphLoop { input, .. } => {
+            vec![(input, SlotSet::EMPTY)]
+        }
+        _ => p.children().into_iter().map(|c| (c, s)).collect(),
+    }
+}
+
 pub(crate) struct Planner<'a> {
     opts: &'a QueryOptions,
     dataset: &'a DatasetSpec,
@@ -78,10 +153,13 @@ pub(crate) struct Planner<'a> {
     exists_pats: &'a [Logical],
     /// Row width (number of slots), for row-copy costs.
     width: f64,
+    /// Plans per (node address, context normalized to the node's slots).
     memo: FxHashMap<(usize, Ctx), Plan>,
     scan_memo: FxHashMap<(QuadPat, Ctx), Plan>,
-    /// Intersection of the bound slots at every place an EXISTS is evaluated.
-    exists_hint: Vec<Option<SlotSet>>,
+    /// Ordering-search estimates per (node address, normalized context).
+    est_memo: FxHashMap<(usize, Ctx), Est>,
+    /// `vars` per node address (the logical trees outlive the planner and never move).
+    vars: FxHashMap<usize, SlotSet>,
 }
 
 impl<'a> Planner<'a> {
@@ -103,7 +181,8 @@ impl<'a> Planner<'a> {
             width: width.max(1) as f64,
             memo: FxHashMap::default(),
             scan_memo: FxHashMap::default(),
-            exists_hint: vec![None; exists.len()],
+            est_memo: FxHashMap::default(),
+            vars: FxHashMap::default(),
         }
     }
 
@@ -111,22 +190,28 @@ impl<'a> Planner<'a> {
         self.costs.row_copy_per_slot * self.width
     }
 
-    /// Record that the EXISTS patterns in `e` are evaluated where `bound` slots are bound.
-    fn note_exists(&mut self, e: &Expr, bound: SlotSet) {
-        for ExistsId(id) in expr::exists_ids(e) {
-            if let Some(h) = self.exists_hint.get_mut(id as usize) {
-                *h = Some(h.map_or(bound, |h| h.intersect(bound)));
+    /// The memo key of `l` in `ctx`: bound slots `l` never mentions cannot change its plan
+    /// (seeds outside `vars` are merged, not read), so they are dropped from the context.
+    fn key(&mut self, l: &Logical, ctx: Ctx) -> (usize, Ctx) {
+        let addr = l as *const Logical as usize;
+        let vars = match self.vars.get(&addr) {
+            Some(v) => *v,
+            None => {
+                let v = self.lp.props(l).vars;
+                self.vars.insert(addr, v);
+                v
             }
-        }
+        };
+        (addr, Ctx { seeded: ctx.seeded.intersect(vars), subst: ctx.subst.intersect(vars), ..ctx })
     }
 
-    /// Plan `l` for context `ctx` (memoized per node and context).
+    /// Plan `l` for context `ctx` (memoized per node and normalized context).
     pub(crate) fn plan(&mut self, l: &Logical, ctx: Ctx) -> Result<Plan> {
-        let key = (l as *const Logical as usize, ctx);
+        let key = self.key(l, ctx);
         if let Some(p) = self.memo.get(&key) {
             return Ok(p.clone());
         }
-        let p = self.plan_node(l, ctx)?;
+        let p = self.plan_node(l, key.1)?;
         self.memo.insert(key, p.clone());
         Ok(p)
     }
@@ -153,7 +238,6 @@ impl<'a> Planner<'a> {
                 mk(Op::Union(plans), rows, cost, None)
             }
             Logical::Extend { input, slot, expr } => {
-                self.note_exists(expr, self.lp.props(input).certain.union(ctx.bound()));
                 let input = self.plan(input, ctx)?;
                 let (rows, cost) = (input.est_rows, input.est_cost_ns + input.est_rows * EXPR_EVAL_NS);
                 let sorted = input.sorted_by.filter(|s| s != slot);
@@ -165,12 +249,6 @@ impl<'a> Planner<'a> {
                 return Err(Error::internal("GRAPH <iri> must be resolved before physical planning"));
             }
             Logical::Group { input, keys, aggs } => {
-                let bound = self.lp.props(input).certain.union(ctx.bound());
-                for (_, a) in aggs {
-                    if let Some(e) = &a.arg {
-                        self.note_exists(e, bound);
-                    }
-                }
                 // COUNT(*) without DISTINCT / GROUP BY: the Count operator (never seeded).
                 let count_out = match aggs.as_slice() {
                     [(out, a)] if keys.is_empty() && a.func == AggFunc::CountAll && !a.distinct => Some(*out),
@@ -190,10 +268,6 @@ impl<'a> Planner<'a> {
             }
             Logical::OrderBy { input, keys } => {
                 let p = self.plan(input, ctx)?;
-                let bound = self.lp.props(input).certain.union(ctx.bound());
-                for k in keys {
-                    self.note_exists(&k.expr, bound);
-                }
                 let (rows, n) = (p.est_rows, p.est_rows.max(1.0));
                 let cost = p.est_cost_ns + n * n.log2().max(1.0) * self.costs.sort_row_log + n * self.costs.decode_hit;
                 mk(Op::Sort { input: Box::new(p), keys: keys.clone() }, rows, cost, None)
@@ -221,9 +295,14 @@ impl<'a> Planner<'a> {
     }
 
     fn plan_values(&mut self, slots: &[Slot], rows: &[Vec<TermId>], ctx: Ctx) -> Plan {
+        let (est, cost) = self.values_estimate(slots, rows, ctx.bound());
+        mk(Op::Values { slots: slots.to_vec(), rows: rows.to_vec() }, est, cost, None)
+    }
+
+    /// Rows and cost of one open of a VALUES block with `bound` slots bound: rows per distinct
+    /// value of the most selective bound slot.
+    fn values_estimate(&self, slots: &[Slot], rows: &[Vec<TermId>], bound: SlotSet) -> (f64, f64) {
         let n = rows.len() as f64;
-        // With seeded slots: rows per distinct value of the most selective seeded slot.
-        let bound = ctx.bound();
         let mut est = n;
         for (i, s) in slots.iter().enumerate() {
             if bound.contains(*s) {
@@ -233,12 +312,16 @@ impl<'a> Planner<'a> {
                 est = est.min(n / vals.len().max(1) as f64);
             }
         }
-        let op = Op::Values { slots: slots.to_vec(), rows: rows.to_vec() };
-        mk(op, est, n * self.row_copy(), None)
+        (est, n * self.row_copy())
     }
 
     fn plan_path(&mut self, g: GraphSel, s: PatTerm, path: &PathPlan, o: PatTerm, ctx: Ctx) -> Plan {
-        let bound = ctx.bound();
+        let (rows, cost) = self.path_estimate(g, s, path, o, ctx.bound());
+        mk(Op::Path { g, s, path: path.clone(), o }, rows, cost, None)
+    }
+
+    /// Rows and cost of one open of a property path with `bound` slots bound.
+    fn path_estimate(&self, g: GraphSel, s: PatTerm, path: &PathPlan, o: PatTerm, bound: SlotSet) -> (f64, f64) {
         let is_bound = |t: PatTerm| match t {
             PatTerm::Const(_) => true,
             PatTerm::Slot(x) => bound.contains(x),
@@ -249,8 +332,7 @@ impl<'a> Planner<'a> {
                 rows *= self.card.named_count();
             }
         }
-        let cost = 2.0 * self.costs.seek_random + rows * 3.0 * self.costs.scan_row;
-        mk(Op::Path { g, s, path: path.clone(), o }, rows, cost, None)
+        (rows, 2.0 * self.costs.seek_random + rows * 3.0 * self.costs.scan_row)
     }
 
     /// `GRAPH ?g { P }` that was not pushed: GraphNames for an empty P, otherwise GraphLoop.
@@ -273,10 +355,6 @@ impl<'a> Planner<'a> {
         let ctx = ctx.unseeded();
         let topk = |this: &mut Self, x: &Logical, keys: &[OrderKey], k: u64| -> Result<Plan> {
             let p = this.plan(x, ctx)?;
-            let bound = this.lp.props(x).certain.union(ctx.bound());
-            for key in keys {
-                this.note_exists(&key.expr, bound);
-            }
             let n = p.est_rows;
             let cost = p.est_cost_ns + n * (k.max(2) as f64).log2() * this.costs.sort_row_log + n * this.costs.decode_hit;
             Ok(mk(Op::TopK { input: Box::new(p), keys: keys.to_vec(), k }, n.min(k as f64), cost, None))
@@ -303,6 +381,31 @@ impl<'a> Planner<'a> {
         let rows = (p.est_rows - offset as f64).max(0.0).min(limit.map_or(f64::INFINITY, |l| l as f64));
         let (cost, sorted) = (p.est_cost_ns, p.sorted_by);
         Ok(mk(Op::Slice { input: Box::new(p), offset, limit }, rows, cost, sorted))
+    }
+}
+
+/// Narrow `hints[id]` to the slots bound wherever plan `p` (opened with seed `seeded`, inside an
+/// EXISTS evaluation substituting `subst`) evaluates `EXISTS #id`: the certain slots of the rows
+/// the expression sees, the seeded slots they carry and the substituted ones. The EXISTS plan is
+/// then planned with those slots as substitution hints (index choice only).
+fn exists_hints(p: &Plan, seeded: SlotSet, subst: SlotSet, hints: &mut [Option<SlotSet>]) {
+    let exprs = node_exprs(p);
+    if exprs.iter().any(|e| e.contains_exists()) {
+        let pp = PlanProps::new(&[]);
+        // The rows an expression of `p` is evaluated on: the input's, or the merged rows of an
+        // OPTIONAL (whose filter is the only expression a join holds).
+        let bound = input_seeds(p, seeded)
+            .into_iter()
+            .map(|(c, s)| pp.props(c).certain.union(carried(c, s)))
+            .fold(subst, |acc, b| acc.union(b));
+        for ExistsId(id) in exprs.into_iter().flat_map(expr::exists_ids) {
+            if let Some(h) = hints.get_mut(id as usize) {
+                *h = Some(h.map_or(bound, |h| h.intersect(bound)));
+            }
+        }
+    }
+    for (c, s) in input_seeds(p, seeded) {
+        exists_hints(c, s, subst, hints);
     }
 }
 
@@ -343,11 +446,14 @@ pub(crate) fn plan_query(
     }
     // EXISTS patterns: parents (higher ids) before the patterns nested in them, so every
     // evaluation context is known when a pattern is planned.
+    let mut hints = vec![None; rw.exists.len()];
+    exists_hints(&root, SlotSet::EMPTY, SlotSet::EMPTY, &mut hints);
     let mut exists: Vec<Plan> = vec![mk(Op::Empty, 0.0, 0.0, None); rw.exists.len()];
     for id in (0..rw.exists.len()).rev() {
-        let subst = planner.exists_hint[id].unwrap_or(SlotSet::EMPTY);
+        let subst = hints[id].unwrap_or(SlotSet::EMPTY);
         let ctx = Ctx { seeded: SlotSet::EMPTY, subst, in_exists: true };
         exists[id] = planner.plan(&rw.exists[id], ctx)?;
+        exists_hints(&exists[id], SlotSet::EMPTY, subst, &mut hints);
     }
     drop(planner);
     let mut plan = QueryPlan {

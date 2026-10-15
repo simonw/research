@@ -144,8 +144,8 @@ fn decode_batches_point_and_merge_paths() {
     }
     let after = db.shared().dict_counters();
     assert_eq!(after.decode_merge_scans, before.decode_merge_scans + 1);
-    // Every distinct miss once, plus the (flushed) xsd:double datatype row once.
-    assert_eq!(after.decode_db_rows - before.decode_db_rows, distinct.len() as u64 + 1);
+    // Every distinct miss once; the xsd:double datatype is a well-known row (no I/O).
+    assert_eq!(after.decode_db_rows - before.decode_db_rows, distinct.len() as u64);
     // Now everything is cached: no further reads.
     let out2 = decode_all(&db, &want);
     assert_eq!(out, out2);
@@ -221,9 +221,10 @@ fn caches_survive_writes_but_not_dict_gen_or_schema_changes() {
     let (terms, ids) = make_terms(&db, 40);
     db.shared().validate_epoch().unwrap();
     decode_all(&db, &ids);
-    // 40 terms plus the xsd:double datatype row of the TYPED ones.
+    // 40 terms; the xsd:double datatype of the TYPED ones is a well-known row, served
+    // without the cache.
     let cached = db.shared().decode_cache.borrow().len();
-    assert_eq!(cached, 41);
+    assert_eq!(cached, 40);
     // Writes by another connection (dictionary and unrelated tables) keep the cache.
     other.store.intern(iri("http://ex/from-other").as_ref().into()).unwrap();
     other.conn.execute_batch("CREATE TABLE IF NOT EXISTS unrelated(x); INSERT INTO unrelated VALUES (1);").unwrap();
@@ -233,7 +234,7 @@ fn caches_survive_writes_but_not_dict_gen_or_schema_changes() {
     decode_all(&db, &ids);
     other.conn.execute_batch("INSERT INTO unrelated VALUES (3)").unwrap();
     db.shared().validate_epoch().unwrap();
-    assert_eq!(db.shared().decode_cache.borrow().len(), 41);
+    assert_eq!(db.shared().decode_cache.borrow().len(), 40);
     // A dict_gen bump (vacuum by another connection) flushes.
     other.conn.execute_batch("UPDATE rdf_meta SET value=value+1 WHERE key='dict_gen'").unwrap();
     db.shared().validate_epoch().unwrap();

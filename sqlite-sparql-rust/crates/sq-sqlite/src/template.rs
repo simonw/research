@@ -215,11 +215,12 @@ impl StmtKey {
     }
 }
 
-/// Transaction-control statements (pooled per nesting depth, §8.6 rule R3).
+/// Savepoint statements (pooled per nesting depth, §8.6 rule R3).
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TxnOp {
     SavepointRead,
     ReleaseRead,
+    RollbackRead,
     SavepointWrite,
     ReleaseWrite,
     RollbackWrite,
@@ -230,6 +231,7 @@ impl TxnOp {
         match self {
             TxnOp::SavepointRead => format!("SAVEPOINT sq_r{depth}"),
             TxnOp::ReleaseRead => format!("RELEASE sq_r{depth}"),
+            TxnOp::RollbackRead => format!("ROLLBACK TO sq_r{depth}"),
             TxnOp::SavepointWrite => format!("SAVEPOINT sq_w{depth}"),
             TxnOp::ReleaseWrite => format!("RELEASE sq_w{depth}"),
             TxnOp::RollbackWrite => format!("ROLLBACK TO sq_w{depth}"),
@@ -265,6 +267,15 @@ pub enum Fixed {
     ClearNamed,
     ClearAll,
     QuadCountCapped,
+    MetaAdd,
+    /// Plain `ROLLBACK`: ends a transaction that a scope's savepoint started.
+    Rollback,
+    /// A statement SQLite treats as a possible writer that changes nothing: `DROP TABLE IF
+    /// EXISTS` of a name nobody can create (`sqlite_` is reserved) compiles to
+    /// `OP_JournalMode` (query; clears `readOnly`) plus a read `OP_Transaction`, against any
+    /// schema, and unlike a PRAGMA it does not expire itself. Stepped while an interrupt is
+    /// pending, it makes SQLite roll back the whole transaction (see `scope`).
+    Abort,
     /// `QuadInsert` for `QUAD_INSERT_BATCH` rows at once (bulk paths).
     QuadInsertMany,
     /// `TermInsert` for `TERM_INSERT_BATCH` rows at once (loader).
@@ -337,6 +348,13 @@ impl Fixed {
             Fixed::ClearNamed => "DELETE FROM main.rdf_quad WHERE g<>0",
             Fixed::ClearAll => "DELETE FROM main.rdf_quad",
             Fixed::QuadCountCapped => "SELECT count(*) FROM (SELECT 1 FROM main.rdf_quad LIMIT ?1)",
+            // Upsert: counters that §2.1's defaults do not create (`loaded_since_analyze`).
+            Fixed::MetaAdd => {
+                "INSERT INTO main.rdf_meta(key, value) VALUES (?1, ?2) \
+                 ON CONFLICT(key) DO UPDATE SET value=value+excluded.value"
+            }
+            Fixed::Rollback => "ROLLBACK",
+            Fixed::Abort => "DROP TABLE IF EXISTS main.sqlite_sparqlite_abort",
         }
     }
 }

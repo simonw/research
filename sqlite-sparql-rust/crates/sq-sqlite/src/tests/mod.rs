@@ -17,6 +17,7 @@ mod eqp;
 mod loader;
 mod maint;
 mod perf;
+mod review;
 mod scope;
 mod writer;
 

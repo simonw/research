@@ -6,6 +6,10 @@
 //! * `seek` with `m >= 2` key columns: the `seek_cols = m` row-value variant;
 //! * a forward `seek` from a positioned statement first steps up to `GALLOP` rows (the
 //!   galloping threshold G of the SQL path) before re-seeking.
+//!
+//! A `seek` / `rebind` / step that fails (e.g. preparing a not yet pooled variant while an
+//! interrupt is pending) leaves the cursor `Failed`: `fill` reports an error, never a silent
+//! end of the scan, until a later `seek` / `rebind` positions it again.
 use std::ffi::c_int;
 use std::ops::Bound;
 use std::rc::Rc;
@@ -25,6 +29,9 @@ enum State {
     Fresh,
     Running,
     Done,
+    /// The last `seek` / `rebind` (or a step) failed: `fill` reports an error until the
+    /// cursor is positioned again.
+    Failed { interrupted: bool },
 }
 
 /// Effective inclusive lower bound of the first free column; None = empty range.
@@ -108,17 +115,32 @@ impl SqlCursor {
     }
 
     /// Leases (once) the statement of slot `i` (0 = base, i = m - 1 for m seek columns).
-    fn stmt(&mut self, i: usize) -> Result<&mut Lease> {
+    fn lease(&mut self, i: usize) -> Result<()> {
         if self.stmts[i].is_none() {
             let key = if i == 0 { self.key } else { self.key.seek_variant(i as u8 + 1) };
             self.stmts[i] = Some(self.pool.lease(PoolKey::Scan(key))?);
         }
-        Ok(self.stmts[i].as_mut().expect("leased above"))
+        Ok(())
     }
 
-    /// Resets the active statement (if it may be mid-step) and switches to slot `i`.
-    /// Invariant: every statement other than the active one is reset, and the active one is
-    /// reset whenever `state == Fresh`, so after this call slot `i` needs no further reset.
+    /// The active statement; leased whenever `state` is `Fresh` or `Running`.
+    #[inline]
+    fn active_stmt(stmts: &mut [Option<Lease>; 4], active: usize) -> Result<&mut Lease> {
+        stmts[active].as_mut().ok_or_else(|| Error::internal("SqlCursor: active statement is not leased"))
+    }
+
+    /// Records a failed positioning or step (see `State::Failed`).
+    fn fail(&mut self, e: Error) -> Error {
+        self.state = State::Failed { interrupted: matches!(e, Error::Interrupted) };
+        self.pending = false;
+        self.has_prev = false;
+        e
+    }
+
+    /// Resets the active statement (if it may be mid-step) and switches to slot `i`, which
+    /// must be leased. Invariant: every statement other than the active one is reset, and
+    /// the active one is reset whenever `state == Fresh`, so after this call slot `i` needs
+    /// no further reset.
     fn switch_to(&mut self, i: usize) {
         if (self.active != i || self.state != State::Fresh)
             && let Some(s) = self.stmts[self.active].as_mut()
@@ -151,12 +173,19 @@ impl SqlCursor {
     /// Positions the base statement at the range start, or at `max(lower, key0)` for a
     /// 1-column seek.
     fn position_base(&mut self, key0: Option<i64>) -> Result<()> {
+        self.try_position_base(key0).map_err(|e| self.fail(e))
+    }
+
+    fn try_position_base(&mut self, key0: Option<i64>) -> Result<()> {
         self.empty = self.compute_empty();
-        self.switch_to(0);
         if self.empty {
+            self.switch_to(0);
             self.state = State::Done;
             return Ok(());
         }
+        // Lease before switching, so a failure leaves no un-leased active slot behind.
+        self.lease(0)?;
+        self.switch_to(0);
         let params = self.key.params();
         let lower_v = match self.lower {
             Bound::Included(v) | Bound::Excluded(v) => v,
@@ -170,9 +199,8 @@ impl SqlCursor {
         };
         let upper = (params.upper != 0).then(|| (params.upper, self.upper_value()));
         let n = self.prefix_len();
-        let prefix = self.prefix;
-        let st = self.stmt(0)?;
-        Self::bind_prefix_and_upper(&prefix[..n], upper, st)?;
+        let st = Self::active_stmt(&mut self.stmts, 0)?;
+        Self::bind_prefix_and_upper(&self.prefix[..n], upper, st)?;
         if params.lower != 0 {
             st.bind_i64(params.lower, l)?;
         }
@@ -181,19 +209,24 @@ impl SqlCursor {
 
     /// Positions the `m`-column row-value variant at `max(key, (lower, MIN, …))`.
     fn position_seek(&mut self, key: &[TermId]) -> Result<()> {
+        self.try_position_seek(key).map_err(|e| self.fail(e))
+    }
+
+    fn try_position_seek(&mut self, key: &[TermId]) -> Result<()> {
         let m = key.len();
-        self.switch_to(m - 1);
         let Some(lo) = lower_incl(self.lower) else {
+            self.switch_to(self.active);
             self.state = State::Done;
             return Ok(());
         };
+        self.lease(m - 1)?;
+        self.switch_to(m - 1);
         let variant = self.key.seek_variant(m as u8);
         let params = variant.params();
         let upper = (params.upper != 0).then(|| (params.upper, self.upper_value()));
         let n = self.prefix_len();
-        let prefix = self.prefix;
-        let st = self.stmt(m - 1)?;
-        Self::bind_prefix_and_upper(&prefix[..n], upper, st)?;
+        let st = Self::active_stmt(&mut self.stmts, m - 1)?;
+        Self::bind_prefix_and_upper(&self.prefix[..n], upper, st)?;
         let below = key[0].0 < lo;
         for (i, k) in key.iter().enumerate() {
             let v = match (below, i) {
@@ -210,7 +243,7 @@ impl SqlCursor {
     #[inline]
     fn step_into_cur(&mut self) -> Result<bool> {
         let w = self.width;
-        let st = self.stmts[self.active].as_mut().expect("active statement is leased");
+        let st = Self::active_stmt(&mut self.stmts, self.active)?;
         match st.step() {
             Ok(true) => {
                 for i in 0..w {
@@ -223,10 +256,7 @@ impl SqlCursor {
                 self.state = State::Done;
                 Ok(false)
             }
-            Err(e) => {
-                self.state = State::Done;
-                Err(e)
-            }
+            Err(e) => Err(self.fail(e)),
         }
     }
 }
@@ -249,6 +279,13 @@ impl QuadCursor for SqlCursor {
 
     fn fill(&mut self, out: &mut Vec<TermId>, max_rows: usize) -> Result<usize> {
         self.counters.fills += 1;
+        if let State::Failed { interrupted } = self.state {
+            return Err(if interrupted {
+                Error::Interrupted
+            } else {
+                Error::Invalid("SqlCursor::fill after a failed seek/rebind/step: reposition the cursor first".into())
+            });
+        }
         if max_rows == 0 || (self.state == State::Done && !self.pending) {
             return Ok(0);
         }
@@ -261,7 +298,7 @@ impl QuadCursor for SqlCursor {
             n = 1;
         }
         if self.state != State::Done {
-            let st = self.stmts[self.active].as_mut().expect("active statement is leased");
+            let st = Self::active_stmt(&mut self.stmts, self.active)?;
             while n < max_rows {
                 match st.step() {
                     Ok(true) => {
@@ -274,10 +311,7 @@ impl QuadCursor for SqlCursor {
                         self.state = State::Done;
                         break;
                     }
-                    Err(e) => {
-                        self.state = State::Done;
-                        return Err(e);
-                    }
+                    Err(e) => return Err(self.fail(e)),
                 }
             }
             if self.state != State::Done {

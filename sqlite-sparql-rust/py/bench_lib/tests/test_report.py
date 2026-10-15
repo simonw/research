@@ -142,10 +142,10 @@ class MarkdownTest(unittest.TestCase):
         md = render_markdown(r)
         self.assertEqual(md.count("sparql_init() failed: x"), 1)  # one note for the engine
         self.assertIn("- sparqlite-baseline error: ExtensionError: sparql_init() failed: x", md)
-        self.assertIn("- sparqlite-native error (Q1/count, Q1/full, Q3/count, Q3/full): "
+        self.assertIn("- sparqlite-native error (Q1/count, Q3/count, Q1/full, Q3/full): "
                       "not run: ExtensionError: building failed: parse error", md)
         load = next(line for line in md.splitlines() if line.startswith("| social |"))
-        self.assertIn("**error**", load)
+        self.assertIn("| **error** | **error** | 1.50 s | n/a |", load)
 
     def test_checks_table(self):
         line = self.row("| Q1 title Q1", "### Result checks")

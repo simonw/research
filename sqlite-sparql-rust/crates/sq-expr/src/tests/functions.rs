@@ -133,6 +133,35 @@ fn bnode_with_string_is_stable_within_a_row() {
     assert_eq!(all.len(), 6, "fresh blank nodes for every solution");
 }
 
+/// BNODE(str) across a projected sub-select: the inner blank nodes are ordinary values of the
+/// outer solutions (they tell them apart), while the outer expressions chained on one outer
+/// solution share their blank nodes.
+#[test]
+fn bnode_with_string_lineage_across_a_sub_select() {
+    let mut h = Harness::new();
+    let inner = h.compile("BNODE(\"k\")");
+    let outer = h.compile("BNODE(\"a\")");
+    let outer2 = h.compile("BNODE(\"a\")");
+    let (s_v, s_b1, s_b2) = (h.low.slot("v") as usize, h.low.slot("b1") as usize, h.low.slot("b2") as usize);
+    let mut generated = vec![];
+    for v in ["1", "2", "3"] {
+        let v = h.term(v);
+        let mut row = h.row(&[("v", v)]);
+        row.resize(s_b2.max(s_b1) + 1, TermId::UNBOUND);
+        let k = h.env.with(|cx| inner.eval(&row, cx, true)).unwrap().unwrap();
+        row[s_b1] = k;
+        // Projection drops ?v; the outer query then binds ?b2 twice on the same solution.
+        row[s_v] = TermId::UNBOUND;
+        let a = h.env.with(|cx| outer.eval(&row, cx, true)).unwrap().unwrap();
+        row[s_b2] = a;
+        let again = h.env.with(|cx| outer2.eval(&row, cx, true)).unwrap().unwrap();
+        assert_eq!(a, again, "same outer solution, same label");
+        generated.extend([k, a]);
+    }
+    let distinct: std::collections::HashSet<_> = generated.iter().collect();
+    assert_eq!(distinct.len(), generated.len(), "distinct blank nodes per solution");
+}
+
 #[test]
 fn term_tests() {
     let mut h = Harness::new();
@@ -375,6 +404,14 @@ fn regex_and_replace() {
             ("REPLACE(\"abracadabra\", \".*?\", \"$1\")", "ERROR"),
             ("REPLACE(\"abc\", \"b\", \"$\")", "ERROR"),
             ("REPLACE(\"abc\", \"b\", \"x\"@en)", "ERROR"),
+            // `q`: pattern and replacement are both literal.
+            ("REPLACE(\"a.b.c\", \".\", \"$0\", \"q\")", r#""a$0b$0c""#),
+            ("REPLACE(\"a.b\", \".\", \"[$0]\")", r#""[a][.][b]""#),
+            // A top-level alternation: `^Mr|Dr` is `(^Mr)|(Dr)`.
+            ("REGEX(\"Dr Who\", \"^Mr|Dr\")", r#""true"^^xsd:boolean"#),
+            ("REGEX(\"Mr Who\", \"^Mr|Dr\")", r#""true"^^xsd:boolean"#),
+            ("REGEX(\"A Mr\", \"^Mr|Dr\")", r#""false"^^xsd:boolean"#),
+            ("REGEX(\"a&b\", \"^a[&]b$\")", r#""true"^^xsd:boolean"#),
         ],
     );
     // Dynamic patterns (from variables) go through the per-execution cache.

@@ -206,6 +206,8 @@ struct Eval<'a> {
     env: &'a mut TestEnv,
     triples: &'a [[TermId; 3]],
     width: usize,
+    /// Slots of user variables (blank-node pattern variables are hidden).
+    visible: Vec<Slot>,
 }
 
 impl Eval<'_> {
@@ -381,7 +383,7 @@ impl Eval<'_> {
                             .with(|cx| {
                                 for m in &members {
                                     match arg {
-                                        None => acc.add_row(m, cx)?,
+                                        None => acc.add_row(m, &self.visible, cx)?,
                                         Some(e) => {
                                             let v = e.eval(m, cx, true)?;
                                             acc.add(v, cx)?
@@ -622,7 +624,8 @@ fn run_test(tc: &TestCase) -> Outcome {
         Err(e) => return Outcome::Skip(e),
     };
     let vars = lower.low.vars.clone();
-    let mut ev = Eval { env: &mut env, triples: &triples, width: vars.len().max(1) };
+    let visible = (0..vars.len()).filter(|i| !vars[*i].starts_with("_:")).map(|i| i as Slot).collect();
+    let mut ev = Eval { env: &mut env, triples: &triples, width: vars.len().max(1), visible };
     let rows = ev.run(&plan);
     match expected {
         Expected::Boolean(b) => {

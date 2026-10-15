@@ -7,8 +7,13 @@
 //!   subtraction (`[a-z-[aeiou]]`). XPath's `\s` and `\w` and its non-dot-all `.` (which also
 //!   excludes `\r`) are translated to their exact XPath definitions.
 //! * Constant patterns are compiled once; dynamic (pattern, flags) pairs are cached in the
-//!   execution's `ValueCache`. Anchored literal prefixes and literal patterns are checked with
-//!   plain string operations before (or instead of) running the automaton.
+//!   execution's `ValueCache`. Anchored literal prefixes and literal patterns (a single
+//!   top-level branch only) are checked with plain string operations before (or instead of)
+//!   running the automaton.
+//! * XSD character classes have no set operators: `&` and `~` are escaped so the `regex`
+//!   crate never reads `&&` / `~~` as intersection / symmetric difference; `--` is an error.
+//! * REPLACE replacement strings are prepared once per (regex, replacement) pair when both
+//!   are constant.
 use std::sync::Arc;
 
 use regex::{Regex, RegexBuilder};
@@ -40,6 +45,16 @@ pub struct CompiledRegex {
     plan: Plan,
     /// `q` flag: REPLACE's replacement string is literal too.
     literal: bool,
+    /// The pattern matches the empty string: REPLACE with it is an error (FORX0003).
+    matches_empty: bool,
+}
+
+/// A REPLACE replacement string prepared for one compiled regex: `$N` references translated
+/// to `${N}` (capped by the regex's group count), or kept literal under the `q` flag.
+#[derive(Debug)]
+pub struct Replacement {
+    text: Box<str>,
+    literal: bool,
 }
 
 impl CompiledRegex {
@@ -54,17 +69,28 @@ impl CompiledRegex {
         }
     }
 
-    /// fn:replace. None = error (the pattern matches the empty string, or the replacement
-    /// string is invalid).
-    pub fn replace(&self, text: &str, replacement: &str) -> Option<String> {
-        if self.re.is_match("") {
+    /// Prepares a replacement string for [`CompiledRegex::replace`]. None = invalid
+    /// replacement (FORX0004).
+    pub fn prepare_replacement(&self, replacement: &str) -> Option<Replacement> {
+        if self.literal {
+            return Some(Replacement { text: replacement.into(), literal: true });
+        }
+        let text = translate_replacement(replacement, self.re.captures_len() - 1)?;
+        Some(Replacement { text: text.into(), literal: false })
+    }
+
+    /// fn:replace with a replacement prepared by this regex. None = error (the pattern matches
+    /// the empty string).
+    pub fn replace(&self, text: &str, replacement: &Replacement) -> Option<String> {
+        if self.matches_empty {
             return None;
         }
-        if self.literal {
-            return Some(self.re.replace_all(text, regex::NoExpand(replacement)).into_owned());
-        }
-        let repl = translate_replacement(replacement, self.re.captures_len() - 1)?;
-        Some(self.re.replace_all(text, repl.as_str()).into_owned())
+        let out = if replacement.literal {
+            self.re.replace_all(text, regex::NoExpand(&replacement.text))
+        } else {
+            self.re.replace_all(text, &*replacement.text)
+        };
+        Some(out.into_owned())
     }
 }
 
@@ -118,8 +144,14 @@ fn translate(pattern: &str, f: Flags) -> Option<String> {
                     match chars.next()? {
                         ']' => break,
                         '\\' => translate_escape(chars.next()?, &mut out, true)?,
-                        '-' if chars.peek() == Some(&'[') => return None,
+                        // Class subtraction `-[…]` is unsupported; `--` is not XSD syntax
+                        // (and would be set difference for the `regex` crate).
+                        '-' if matches!(chars.peek(), Some('[' | '-')) => return None,
                         '[' => out.push_str(r"\["),
+                        // XSD classes have no set operators: `&&` / `~~` would be
+                        // intersection / symmetric difference for the `regex` crate.
+                        '&' => out.push_str(r"\&"),
+                        '~' => out.push_str(r"\~"),
                         c => out.push(c),
                     }
                 }
@@ -176,7 +208,43 @@ fn translate_escape(c: char, out: &mut String, in_class: bool) -> Option<()> {
 
 const META: &[char] = &['\\', '.', '+', '*', '?', '(', ')', '|', '[', ']', '{', '}', '^', '$'];
 
-/// String-level plan for patterns that are (anchored) literals.
+/// True if `pattern` has a `|` outside every group and character class: `^abc|xyz` is
+/// `(^abc)|(xyz)`, so neither branch's literal prefix is required. Classes are skipped the
+/// way `translate` reads them (optional `^`, a leading `]` is literal, `\` escapes).
+fn has_top_level_alternation(pattern: &str) -> bool {
+    let mut depth = 0usize;
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '[' => {
+                chars.next_if_eq(&'^');
+                chars.next_if_eq(&']');
+                loop {
+                    match chars.next() {
+                        // Unterminated class: the pattern does not compile anyway.
+                        None => return false,
+                        Some(']') => break,
+                        Some('\\') => {
+                            chars.next();
+                        }
+                        Some(_) => {}
+                    }
+                }
+            }
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            '|' if depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// String-level plan for patterns that are (anchored) literals. Only a single top-level
+/// branch can take a shortcut.
 fn plan_for(pattern: &str, f: Flags) -> Plan {
     if f.i || f.x {
         return Plan::Regex;
@@ -187,7 +255,7 @@ fn plan_for(pattern: &str, f: Flags) -> Plan {
     if !pattern.contains(META) {
         return Plan::Contains(pattern.into());
     }
-    if f.m {
+    if f.m || has_top_level_alternation(pattern) {
         return Plan::Regex;
     }
     let Some(rest) = pattern.strip_prefix('^') else { return Plan::Regex };
@@ -221,7 +289,8 @@ pub fn compile(pattern: &str, flags: &str) -> Option<CompiledRegex> {
         .size_limit(SIZE_LIMIT)
         .build()
         .ok()?;
-    Some(CompiledRegex { re, plan: plan_for(pattern, f), literal: f.q })
+    let matches_empty = re.is_match("");
+    Some(CompiledRegex { re, plan: plan_for(pattern, f), literal: f.q, matches_empty })
 }
 
 /// Translates an XPath replacement string (`$N` group references, `\$` and `\\` escapes) into
@@ -270,25 +339,26 @@ pub fn translate_replacement(repl: &str, groups: usize) -> Option<String> {
     Some(out)
 }
 
-/// (pattern, flags).
-type RegexKey = (Box<str>, Box<str>);
-
-/// Per-execution cache of dynamically built regexes (`None` = invalid regex).
+/// Per-execution cache of dynamically built regexes (`None` = invalid regex), keyed
+/// pattern → flags so that a lookup borrows the row's strings (no allocation on a hit).
 #[derive(Default)]
 pub struct RegexCache {
-    map: FxHashMap<RegexKey, Option<Arc<CompiledRegex>>>,
+    map: FxHashMap<Box<str>, FxHashMap<Box<str>, Option<Arc<CompiledRegex>>>>,
+    len: usize,
 }
 
 impl RegexCache {
     pub fn get(&mut self, pattern: &str, flags: &str) -> Option<Arc<CompiledRegex>> {
-        if let Some(r) = self.map.get(&(pattern.into(), flags.into())) {
+        if let Some(r) = self.map.get(pattern).and_then(|by_flags| by_flags.get(flags)) {
             return r.clone();
         }
-        if self.map.len() >= CACHE_LIMIT {
+        if self.len >= CACHE_LIMIT {
             self.map.clear();
+            self.len = 0;
         }
         let r = compile(pattern, flags).map(Arc::new);
-        self.map.insert((pattern.into(), flags.into()), r.clone());
+        self.map.entry(pattern.into()).or_default().insert(flags.into(), r.clone());
+        self.len += 1;
         r
     }
 }
@@ -360,17 +430,67 @@ mod tests {
             ("^", "x"),
             ("^(a|b)", "b"),
             ("^ab{2}", "abb"),
+            // A top-level alternation means no branch's prefix is required.
+            ("^abc|xyz", "fooxyz"),
+            ("^abc|xyz", "abcd"),
+            ("^abc|xyz", "foo"),
+            ("^abc$|xyz", "xyz"),
+            ("^ab|z", "zzz"),
+            ("^abc|", "x"),
+            ("^z|c$", "abc"),
+            ("^a|^b", "b"),
+            ("^ab(c|d)", "abd"),
+            ("^ab(c|d)", "xabd"),
+            ("^a[|]b", "a|b"),
+            ("^a[|]b", "b"),
+            (r"^a\|b", "a|b"),
+            (r"^a\|b", "b"),
+            ("^a[]|]b", "b"),
         ];
-        for (p, t) in cases {
-            let r = compile(p, "").unwrap();
-            let raw = Regex::new(&translate(p, Flags::default()).unwrap()).unwrap();
-            assert_eq!(r.is_match(t), raw.is_match(t), "{p} on {t} (plan {:?})", r.plan);
+        for flags in ["", "s"] {
+            for (p, t) in cases {
+                let r = compile(p, flags).unwrap();
+                let f = parse_flags(flags).unwrap();
+                let raw = RegexBuilder::new(&translate(p, f).unwrap()).dot_matches_new_line(f.s).build().unwrap();
+                assert_eq!(r.is_match(t), raw.is_match(t), "{p} /{flags} on {t} (plan {:?})", r.plan);
+            }
         }
         assert!(matches!(compile("^abc", "").unwrap().plan, Plan::StartsWith(_)));
         assert!(matches!(compile("^abc$", "").unwrap().plan, Plan::Equals(_)));
         assert!(matches!(compile("^abc.*d", "").unwrap().plan, Plan::Prefix(_)));
+        assert!(matches!(compile("^ab(c|d)", "").unwrap().plan, Plan::Prefix(_)));
         assert!(matches!(compile("abc", "").unwrap().plan, Plan::Contains(_)));
         assert!(matches!(compile("abc", "i").unwrap().plan, Plan::Regex));
+        assert!(matches!(compile("^abc|xyz", "").unwrap().plan, Plan::Regex));
+        assert!(matches!(compile("^abc$|x", "").unwrap().plan, Plan::Regex));
+        assert!(matches!(compile("^a[|]b", "").unwrap().plan, Plan::Prefix(_)));
+    }
+
+    #[test]
+    fn top_level_alternation() {
+        assert!(has_top_level_alternation("a|b"));
+        assert!(has_top_level_alternation("^abc|"));
+        assert!(has_top_level_alternation("(a)|b"));
+        assert!(has_top_level_alternation("[]]|b"));
+        assert!(!has_top_level_alternation("(a|b)"));
+        assert!(!has_top_level_alternation("^ab(c|(d|e))f"));
+        assert!(!has_top_level_alternation(r"a\|b"));
+        assert!(!has_top_level_alternation("[|]"));
+        assert!(!has_top_level_alternation(r"[\]|]"));
+        assert!(!has_top_level_alternation("[^]|]"));
+    }
+
+    #[test]
+    fn class_set_operators_are_literal() {
+        assert_eq!(m("^[a&&b]$", "", "&"), Some(true));
+        assert_eq!(m("^[a&&b]$", "", "a"), Some(true));
+        assert_eq!(m("^[a&&b]$", "", "b"), Some(true));
+        assert_eq!(m("^[a~~b]$", "", "~"), Some(true));
+        assert_eq!(m("^[&]$", "", "&"), Some(true));
+        assert_eq!(m("a&&b", "", "xa&&by"), Some(true));
+        assert_eq!(m("^[a-c]$", "", "b"), Some(true));
+        assert_eq!(m("^[a-]$", "", "-"), Some(true));
+        assert!(compile("[a--b]", "").is_none());
     }
 
     #[test]
@@ -385,13 +505,23 @@ mod tests {
         assert_eq!(translate_replacement(r"\n", 1), None);
     }
 
+    fn replace(p: &str, f: &str, text: &str, repl: &str) -> Option<String> {
+        let r = compile(p, f)?;
+        r.replace(text, &r.prepare_replacement(repl)?)
+    }
+
     #[test]
     fn replace_semantics() {
-        let r = compile("(a)(b)?", "").unwrap();
-        assert_eq!(r.replace("xaby a", "[$1$2]").as_deref(), Some("x[ab]y [a]"));
-        assert_eq!(compile("a*", "").unwrap().replace("baaac", "x"), None);
-        assert_eq!(compile("o", "q").unwrap().replace("foo", "$0").as_deref(), Some("f$0$0"));
-        assert_eq!(compile("b", "i").unwrap().replace("aBc", "Z").as_deref(), Some("aZc"));
+        assert_eq!(replace("(a)(b)?", "", "xaby a", "[$1$2]").as_deref(), Some("x[ab]y [a]"));
+        assert_eq!(replace("a*", "", "baaac", "x"), None);
+        assert_eq!(replace("o", "q", "foo", "$0").as_deref(), Some("f$0$0"));
+        assert_eq!(replace("b", "i", "aBc", "Z").as_deref(), Some("aZc"));
+        assert_eq!(replace("(b)", "", "abc", "$1$"), None);
+        // One prepared replacement serves every row.
+        let r = compile("(o)", "").unwrap();
+        let prepared = r.prepare_replacement("[$1]").unwrap();
+        assert_eq!(r.replace("foo", &prepared).as_deref(), Some("f[o][o]"));
+        assert_eq!(r.replace("bar", &prepared).as_deref(), Some("bar"));
     }
 
     #[test]
@@ -400,7 +530,15 @@ mod tests {
         let a = c.get("a+", "").unwrap();
         let b = c.get("a+", "").unwrap();
         assert!(Arc::ptr_eq(&a, &b));
+        let ai = c.get("a+", "i").unwrap();
+        assert!(!Arc::ptr_eq(&a, &ai));
+        assert!(Arc::ptr_eq(&ai, &c.get("a+", "i").unwrap()));
         assert!(c.get("(", "").is_none());
         assert!(c.get("a", "z").is_none());
+        assert_eq!(c.len, 4);
+        for i in 0..CACHE_LIMIT {
+            c.get(&format!("x{i}"), "");
+        }
+        assert!(c.len <= CACHE_LIMIT);
     }
 }

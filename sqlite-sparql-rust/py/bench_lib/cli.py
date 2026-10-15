@@ -155,7 +155,7 @@ def run_benchmark(args: argparse.Namespace, datasets: list[tuple[str, str]],
                 f"({', '.join(c.query for c in result.mismatches())})")
         code = code or (0 if args.allow_mismatch else 1)
     if result.errors():
-        _stderr(f"FAILED: {len(result.errors())} cells raised errors "
+        _stderr(f"FAILED: {len(result.errors())} cells with errors "
                 f"({', '.join(sorted({m.where + ':' + m.query for m in result.errors()}))})")
         code = code or (0 if args.allow_errors else 1)
     if not args.quiet:

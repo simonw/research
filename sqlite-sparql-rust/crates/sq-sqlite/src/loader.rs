@@ -16,6 +16,7 @@ use rustc_hash::FxHashMap;
 use sq_core::codec::{self, FIRST_USER_ROW, WELL_KNOWN};
 use sq_core::{Error, Result, Tag, TermId};
 
+use crate::analyze::LOADED_SINCE_ANALYZE;
 use crate::dict::row_matches;
 use crate::keys::{KeyLike, KeyView, OwnedKey};
 use crate::raw::{RawDb, RawStmt};
@@ -73,8 +74,6 @@ const BULK_MIN_QUADS: usize = 100_000;
 const BULK_MIN_RATIO: f64 = 0.3;
 /// Re-analyze when the store grew by more than this fraction since `analyzed_quads`.
 const REANALYZE_GROWTH: f64 = 0.25;
-/// Below this load size relative to `analyzed_quads`, growth is not even measured.
-const REANALYZE_MEASURE_DIVISOR: u64 = 16;
 const BULK_SORT_THREADS: i64 = 4;
 /// Page-cache (= sorter run) size while bulk mode rebuilds the indexes.
 const BULK_SORT_RUN_BYTES: i64 = 16 << 20;
@@ -184,7 +183,7 @@ fn parse_into(enc: &mut Encoder<'_>, parser: oxrdfio::RdfParser, src: LoadSource
         // Processed batches go back to the parser thread, which frees them: deallocating in
         // the allocating thread is cheaper and keeps that work off the encoding thread.
         let (back_tx, back_rx) = mpsc::channel::<Vec<oxrdf::Quad>>();
-        let producer = scope.spawn(move || produce(parser, src, &tx, &back_rx));
+        let producer = scope.spawn(move || produce(parser, src, tx, &back_rx));
         let mut result = Ok(());
         for batch in rx.iter() {
             result = batch.and_then(|quads| {
@@ -207,11 +206,12 @@ fn parse_into(enc: &mut Encoder<'_>, parser: oxrdfio::RdfParser, src: LoadSource
 }
 
 /// Parser thread body: sends batches until the input ends, an error occurs (sent as the last
-/// item) or the receiver hangs up; frees the batches the encoder hands back.
+/// item) or the receiver hangs up; frees the batches the encoder hands back. `tx` is dropped
+/// before the final drain, which ends the encoder's loop and with it the return channel.
 fn produce(
     parser: oxrdfio::RdfParser,
     src: LoadSource<'_>,
-    tx: &mpsc::SyncSender<Batch>,
+    tx: mpsc::SyncSender<Batch>,
     back: &mpsc::Receiver<Vec<oxrdf::Quad>>,
 ) {
     fn pump<E: std::fmt::Display>(
@@ -236,17 +236,18 @@ fn produce(
             }
         }
         let _ = tx.send(Ok(batch));
-        back.iter().for_each(drop);
     }
     match src {
-        LoadSource::Bytes(bytes) => pump(parser.for_slice(bytes), tx, back),
+        LoadSource::Bytes(bytes) => pump(parser.for_slice(bytes), &tx, back),
         LoadSource::File(path) => match open_file(path) {
-            Ok(reader) => pump(parser.for_reader(reader), tx, back),
+            Ok(reader) => pump(parser.for_reader(reader), &tx, back),
             Err(e) => {
                 let _ = tx.send(Err(e));
             }
         },
     }
+    drop(tx);
+    back.iter().for_each(drop);
 }
 
 /// §2.3 step 5: bulk mode for large loads relative to the current store size.
@@ -302,6 +303,7 @@ fn insert_bulk(shared: &StorageShared, quads: &[[TermId; 4]]) -> Result<Option<u
             for (_, ddl) in &QUAD_INDEXES[..k] {
                 db.exec(ddl)?;
             }
+            shared.refresh_abort()?;
             return Ok(None);
         }
     }
@@ -323,26 +325,27 @@ fn insert_bulk(shared: &StorageShared, quads: &[[TermId; 4]]) -> Result<Option<u
         .and_then(|()| if capped { db.exec(&format!("PRAGMA main.cache_size={cache}")) } else { Ok(()) });
     let n = built?;
     restored?;
+    // CREATE INDEX expired every prepared statement (scope::Abort).
+    shared.refresh_abort()?;
     shared.forget_schema();
     Ok(Some(n))
 }
 
-/// §2.3 step 6: analyze on the first load, or when the store grew by more than 25% since
-/// `analyzed_quads`. Growth is only measured (capped count) for loads of at least 1/16 of
-/// the analyzed size, so small loads into big stores stay cheap.
+/// §2.3 step 6: analyze on the first load, or when loads added more than 25% of
+/// `analyzed_quads` since the last analyze. The running counter (`LOADED_SINCE_ANALYZE`,
+/// reset by analyze) makes the check O(1) however small each load is.
 fn should_analyze(shared: &StorageShared, quads_new: u64) -> Result<bool> {
     if quads_new == 0 {
         return Ok(false);
     }
-    let analyzed = shared.meta_get("analyzed_quads")?.unwrap_or(0).max(0) as u64;
-    if analyzed == 0 || quads_new as f64 > REANALYZE_GROWTH * analyzed as f64 {
+    let analyzed = shared.meta_get("analyzed_quads")?.unwrap_or(0).max(0);
+    if analyzed == 0 {
         return Ok(true);
     }
-    if quads_new * REANALYZE_MEASURE_DIVISOR < analyzed {
-        return Ok(false);
-    }
-    let threshold = (analyzed as f64 * (1.0 + REANALYZE_GROWTH)).floor() as i64;
-    Ok(count_quads_capped(shared, threshold + 1)? > threshold)
+    let quads_new = i64::try_from(quads_new).map_err(|_| Error::internal("load size overflows i64"))?;
+    shared.meta_add(LOADED_SINCE_ANALYZE, quads_new)?;
+    let loaded = shared.meta_get(LOADED_SINCE_ANALYZE)?.unwrap_or(0);
+    Ok(loaded as f64 > REANALYZE_GROWTH * analyzed as f64)
 }
 
 /// A load-local term map pre-seeded with the `codec::WELL_KNOWN` IRIs (fixed rows), so every
@@ -450,6 +453,7 @@ impl<'a> Encoder<'a> {
         if self.hash_index_dropped {
             self.shared.db().exec(TERM_HASH_INDEX_DDL)?;
             self.hash_index_dropped = false;
+            self.shared.refresh_abort()?;
         }
         Ok(())
     }

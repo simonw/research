@@ -4,6 +4,7 @@ use sq_core::codec::{ENCODING_VERSION, SCHEMA_VERSION};
 use sq_core::{Result, Tag};
 
 use crate::raw::{RawDb, RawStmt};
+use crate::shared::StorageShared;
 
 /// Tables, created in this order by `sparql_init()`.
 pub(crate) const TABLES_DDL: &str = "
@@ -66,8 +67,10 @@ pub(crate) const QUAD_INDEXES: [(&str, &str); 8] = [
 pub(crate) const PK_INDEX: &str = "sqlite_autoindex_rdf_quad_1";
 const PK_COLUMNS_SQL: &str = "SELECT name FROM pragma_index_info('sqlite_autoindex_rdf_quad_1', 'main') ORDER BY seqno";
 
-pub(crate) const TABLES: [&str; 8] =
-    ["rdf_meta", "rdf_term", "rdf_quad", "rdf_graph", "rdf_stat_global", "rdf_stat_pred", "rdf_stat_po", "rdf_stat_cs"];
+/// Tables whose absence makes the store incompatible (they hold the data).
+pub(crate) const CORE_TABLES: [&str; 3] = ["rdf_meta", "rdf_term", "rdf_quad"];
+/// The registry and statistics tables: re-created by `ensure_schema` like a missing index.
+pub(crate) const AUX_TABLES: [&str; 5] = ["rdf_graph", "rdf_stat_global", "rdf_stat_pred", "rdf_stat_po", "rdf_stat_cs"];
 
 /// Public schema state (§4.4).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,7 +80,8 @@ pub enum SchemaState {
     Incompatible(String),
 }
 
-/// Detected state plus whether every index exists (else `ensure_schema` re-runs the DDL).
+/// Detected state plus whether every auxiliary table and index exists (else `ensure_schema`
+/// re-runs the idempotent DDL).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Detected {
     pub state: SchemaState,
@@ -121,7 +125,7 @@ pub(crate) fn detect(db: RawDb) -> Result<Detected> {
     if versions[1] != Some(ENCODING_VERSION) {
         return incompatible(format!("encoding_version {:?}, expected {ENCODING_VERSION}", versions[1]));
     }
-    if let Some(missing) = TABLES.iter().find(|t| !names.contains(**t)) {
+    if let Some(missing) = CORE_TABLES.iter().find(|t| !names.contains(**t)) {
         return incompatible(format!("table {missing} is missing"));
     }
     // The GSPO templates pin the primary key by its automatic index name (template::PK_FROM);
@@ -135,17 +139,24 @@ pub(crate) fn detect(db: RawDb) -> Result<Detected> {
     if pk != ["g", "s", "p", "o"] {
         return incompatible(format!("rdf_quad primary key {PK_INDEX} is {pk:?}, expected (g, s, p, o)"));
     }
-    let complete = names.contains("rdf_term_h") && QUAD_INDEXES.iter().all(|(n, _)| names.contains(*n));
+    let complete = names.contains("rdf_term_h")
+        && QUAD_INDEXES.iter().all(|(n, _)| names.contains(*n))
+        && AUX_TABLES.iter().all(|t| names.contains(*t));
     Ok(Detected { state: SchemaState::Ready { schema_version: SCHEMA_VERSION }, complete })
 }
 
-/// Runs the full idempotent DDL plus the WELL_KNOWN rows. The caller holds a write scope.
-pub(crate) fn create(db: RawDb) -> Result<()> {
+/// Runs the full idempotent DDL plus the WELL_KNOWN rows. The caller holds a write scope; the
+/// first CREATE TABLE takes its write lock. `CREATE INDEX` expires every prepared statement,
+/// so the scope's forced-rollback statement is refreshed after the DDL (`scope::Abort`).
+pub(crate) fn create(shared: &StorageShared) -> Result<()> {
+    let db = shared.db();
     db.exec(TABLES_DDL)?;
+    shared.refresh_abort()?;
     db.exec(TERM_HASH_INDEX_DDL)?;
     for (_, ddl) in QUAD_INDEXES {
         db.exec(ddl)?;
     }
+    shared.refresh_abort()?;
     db.exec(&meta_defaults_sql())?;
     let mut ins = RawStmt::prepare(
         db,

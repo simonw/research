@@ -94,12 +94,29 @@ fn bench_hot_paths() {
     b.filter(&mut h, "LANG(?x) = \"en\" (LangEq)", "LANG(?x) = \"en\"", &langs, &[]);
     b.filter(&mut h, "LANGMATCHES(LANG(?x), \"en\")", "LANGMATCHES(LANG(?x), \"en\")", &langs, &[]);
     b.filter(&mut h, "?x = \"abc string number 5\" (IdEq string)", "?x = \"abc string number 5\"", &strs, &[]);
+    // Constants absent from the store (TEMP ids): decided from the ids, no decode.
+    b.filter(&mut h, "?x != <absent> (IdEq, TEMP constant)", "?x != <http://example.org/absent>", &iris, &[]);
+    let in_absent = "?x IN (<http://example.org/r1>, <http://example.org/absent>)";
+    b.filter(&mut h, "?x IN (<r1>, <absent>) (InIds, TEMP constant)", in_absent, &iris, &[]);
+    b.filter(&mut h, "sameTerm(?x, <absent>)", "sameTerm(?x, <http://example.org/absent>)", &iris, &[]);
+    // Ordering a non-numeric id against a number: a type error decided from the tag.
+    b.filter(&mut h, "?x > 10 over IRIs (type error from tag)", "?x > 10", &iris, &[]);
+    b.filter(&mut h, "?x < 10.5 over strings (type error from tag)", "?x < 10.5", &strs, &[]);
+    // Intermediates that are never interned.
+    b.filter(&mut h, "xsd:int(?x) > 500 (derived-integer cast)", "xsd:int(?x) > 500", &ints, &[]);
+    b.filter(&mut h, "sameTerm(CONCAT(?x, \"!\"), ?y)", "sameTerm(CONCAT(?x, \"!\"), ?y)", &strs, &strs);
+    // Dynamic regex: (pattern, flags) cache hit per row.
+    let pats: Vec<TermId> = ["^abc string number 1", "number [0-9]5$", "9|8"].iter().map(|p| h.term(&format!("\"{p}\""))).collect();
+    b.filter(&mut h, "REGEX(?x, ?y) (dynamic pattern, cached)", "REGEX(?x, ?y)", &strs, &pats);
 
-    // BIND producing new terms (computed value → id).
-    for (name, expr, xs) in [
-        ("BIND(?x + 1) (inline result)", "?x + 1", &ints),
-        ("BIND(CONCAT(?x, \"!\")) (TEMP intern)", "CONCAT(?x, \"!\")", &strs),
-        ("BIND(UCASE(?x))", "UCASE(?x)", &strs),
+    // BIND producing new terms (computed value → id); `canonical` as an Extend would pass it.
+    for (name, expr, xs, canonical) in [
+        ("BIND(?x + 1) (inline result)", "?x + 1", &ints, false),
+        ("BIND(CONCAT(?x, \"!\")) (TEMP intern)", "CONCAT(?x, \"!\")", &strs, false),
+        ("BIND(UCASE(?x))", "UCASE(?x)", &strs, false),
+        ("BIND(REPLACE(?x, \"(num)ber\", \"$1\")) (prepared once)", "REPLACE(?x, \"(num)ber\", \"$1\")", &strs, false),
+        ("BIND(COALESCE(?u, \"no label\")) (TEMP constant)", "COALESCE(?u, \"no label available\")", &strs, true),
+        ("BIND(BNODE(?x)) (BNODE(str) scope)", "BNODE(?x)", &strs, true),
     ] {
         if !b.selected(name) {
             continue;
@@ -109,7 +126,7 @@ fn bench_hot_paths() {
         let start = Instant::now();
         h.env.with(|cx| {
             for r in rows.iter().cycle().take(b.rows) {
-                black_box(c.eval(r, cx, false).unwrap());
+                black_box(c.eval(r, cx, canonical).unwrap());
             }
         });
         b.report(name, start);

@@ -186,6 +186,10 @@ fn scope_stats(shared: &StorageShared, named: bool) -> Result<(ScopeStats, u64)>
     Ok((st, raw_rows))
 }
 
+/// `rdf_meta` counter of quads added by loads since the last analyze (§2.3 step 6). Created
+/// by the first load that needs it, so `sparql_init` writes exactly the §2.1 defaults.
+pub(crate) const LOADED_SINCE_ANALYZE: &str = "loaded_since_analyze";
+
 /// Computes, persists and returns the statistics; bumps `stats_gen`. The caller holds a
 /// write scope. Returns `(stats_gen, stats)`.
 pub(crate) fn analyze_in_scope(shared: &StorageShared) -> Result<(i64, Arc<Stats>)> {
@@ -257,6 +261,8 @@ fn persist(shared: &StorageShared, stats: &Stats) -> Result<()> {
         }
     }
     shared.meta_set("analyzed_quads", stats.analyzed_quads as i64)?;
+    // A no-op while the counter row does not exist yet (absent = 0).
+    shared.meta_set(LOADED_SINCE_ANALYZE, 0)?;
     shared.meta_bump("stats_gen")
 }
 

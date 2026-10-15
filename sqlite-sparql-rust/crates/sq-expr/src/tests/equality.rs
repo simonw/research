@@ -228,3 +228,69 @@ fn temp_ids_compare_by_term() {
     // A canonical result is requested: the pass-through TEMP id is re-interned.
     assert_eq!(h.eval("?x", &[("x", temp_iri)]), Some(iri));
 }
+
+/// `<` against numeric constants and numeric expressions (the IntCmp and `num` paths, which
+/// decide most type errors from tags without decoding), unary plus and arithmetic agree with
+/// the value-level definitions for inline, dictionary and TEMP ids of every value class.
+#[test]
+fn ordering_against_numbers_matches_value_semantics() {
+    use std::str::FromStr;
+
+    use crate::{Order, Value, compare_values, value_of};
+    use oxsdatatypes::{Decimal, Double};
+    use sq_core::eval_api::TermResolver;
+    let terms = [
+        "1", "\"01\"^^xsd:integer", "1.5", "\"1\"^^xsd:int", "\"1e0\"^^xsd:double", "\"NaN\"^^xsd:float",
+        "\"12.25\"^^xsd:float", "true", "\"1\"^^xsd:boolean", "\"abc\"", "\"a long simple literal\"", "\"\"",
+        "\"abc\"@en", "\"x\"^^xsd:integer", "\"300\"^^xsd:byte", "\"x\"^^<http://ex/t>", "<http://ex/a>", "_:b",
+        "\"2002-04-01T00:00:00Z\"^^xsd:dateTime", "\"2002-04-01\"^^xsd:date", "\"12:00:00\"^^xsd:time",
+        "\"P1Y\"^^xsd:yearMonthDuration", "\"99999999999999999999.5\"^^xsd:decimal",
+    ];
+    let mut h = Harness::new();
+    let mut ids: Vec<TermId> = terms.iter().map(|t| h.term(t)).collect();
+    let dups: Vec<TermId> = ids
+        .iter()
+        .filter(|id| id.is_dict())
+        .map(|id| {
+            let t = h.env.resolver.term(*id).unwrap();
+            h.env.resolver.temp((*t).clone())
+        })
+        .collect();
+    ids.extend(dups);
+    let constants = [
+        ("10", Value::Integer(10)),
+        ("10.5", Value::Decimal(Decimal::from_str("10.5").unwrap())),
+        ("\"1e1\"^^xsd:double", Value::Double(Double::from(10.0))),
+    ];
+    let mut bad = vec![];
+    for &x in &ids {
+        let vx = h.env.with(|cx| value_of(x, cx)).unwrap();
+        let shown = h.render(Some(x));
+        for (k, vk) in &constants {
+            let order = compare_values(&vx, vk);
+            let lt = order.map(|o| o == Order::Less);
+            let gt = order.map(|o| o == Order::Greater);
+            for (expr, want) in [
+                (format!("?x < {k}"), lt),
+                (format!("{k} > ?x"), lt),
+                (format!("?x > {k}"), gt),
+                (format!("{k} <= ?x"), order.map(|o| matches!(o, Order::Greater | Order::Equal))),
+            ] {
+                let got = h.ebv(&expr, &[("x", x)]);
+                if got != want {
+                    bad.push(format!("{expr} with ?x = {shown}: got {got:?} want {want:?}"));
+                }
+            }
+            // Arithmetic is an error exactly for non-numeric operands (NaN compares false).
+            let expr = format!("?x + 0 < {k}");
+            if h.ebv(&expr, &[("x", x)]).is_none() == vx.is_numeric() {
+                bad.push(format!("{expr} with ?x = {shown}"));
+            }
+        }
+        let plus = h.eval("+?x", &[("x", x)]);
+        if plus.is_some() != vx.is_numeric() {
+            bad.push(format!("+?x with ?x = {shown}: got {}", h.render(plus)));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}

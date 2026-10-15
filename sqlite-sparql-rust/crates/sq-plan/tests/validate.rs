@@ -189,6 +189,30 @@ fn rejects_corrupted_plans() {
 }
 
 #[test]
+fn rejects_seed_slots_read_from_rows_that_do_not_carry_them() {
+    // OPTIONAL { { SELECT ?a ... LIMIT 1 } ?a :knows ?v } under a BindJoin seeded with ?v: the
+    // LIMIT sub-select never receives the seed, so its rows have no ?v to pass on as a seed.
+    let st = social(30);
+    let text = "SELECT * { ?v :name \"Person 5\" \
+                OPTIONAL { { SELECT ?a { ?a :name \"Person 1\" } LIMIT 1 } ?a :knows ?v } }";
+    let q = plan(text, &st);
+    let (a, v) = (slot(&q, "a"), slot(&q, "v"));
+    let as_bind_join = |p: &mut Plan, seed: Vec<u16>| {
+        let Op::HashJoin { build, probe, kind: JoinKind::Inner, build_is_left, .. } = &p.op else { return false };
+        let (left, right) =
+            if *build_is_left { (build.clone(), probe.clone()) } else { (probe.clone(), build.clone()) };
+        if !matches!(left.op, Op::Slice { .. }) {
+            return false;
+        }
+        p.op = Op::BindJoin { left, right, seed, kind: JoinKind::Inner, sort_left: false, adaptive: true };
+        true
+    };
+    rejects(q.clone(), "seed read from a LIMIT sub-select", |p| as_bind_join(p, vec![a, v]));
+    // Without ?v in the seed list the right side would bind ?v freely: rejected as well.
+    rejects(q, "seeded slot missing from the seed list", |p| as_bind_join(p, vec![a]));
+}
+
+#[test]
 fn rejects_wrong_ids() {
     let st = social(10);
     let mut q = plan("SELECT * { ?x :age ?a FILTER(?a > 3) }", &st);

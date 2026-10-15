@@ -1,8 +1,8 @@
-//! Dictionary read paths (§4.3): `lookup` (inline -> no I/O; store bnode labels; LookupCache
-//! then a hash probe of `rdf_term_h` with exact compare) and `decode` (inline / bnode without
-//! I/O; DecodeCache; sorted, deduplicated misses fetched by pooled point lookups or, for large
-//! batches, one merge scan). Only rows admitted by the §4.4 rule enter the connection caches;
-//! negative lookups are never cached.
+//! Dictionary read paths (§4.3): `lookup` (inline, store bnode labels and well-known IRIs ->
+//! no I/O; LookupCache then a hash probe of `rdf_term_h` with exact compare) and `decode`
+//! (inline / bnode / well-known rows without I/O; DecodeCache; sorted, deduplicated misses
+//! fetched by pooled point lookups or, for large batches, one merge scan). Only rows admitted
+//! by the §4.4 rule enter the connection caches; negative lookups are never cached.
 use std::sync::Arc;
 
 use sq_core::codec::{self, bnode_label, decode_inline};
@@ -41,7 +41,9 @@ impl StorageShared {
         }
         let Some(view) = KeyView::of(t) else { return Ok(None) };
         if !self.tables_present()? {
-            return Ok(None);
+            // Before sparql_init only the well-known IRIs exist: their ids are fixed, and
+            // codec::inline_datatype hands them out without any dictionary access.
+            return Ok(if view.tag == Tag::Iri { well_known_iri(view.lex) } else { None });
         }
         self.lookup_key(&view)
     }
@@ -114,6 +116,8 @@ impl StorageShared {
                     Arc::new(decode_inline(id).ok_or_else(|| Error::internal(format!("invalid inline id {id:?}")))?)
                 } else if id.tag() == Tag::BNode && id.is_storable() {
                     Arc::new(Term::BNode(bnode_label(id).into()))
+                } else if let Some(t) = self.well_known_term(id) {
+                    t.clone()
                 } else if id.is_dict() {
                     match cache.get(id.0) {
                         Some(t) => t.clone(),
@@ -161,6 +165,10 @@ impl StorageShared {
             for r in rows.iter().filter(|r| r.id.tag() == Tag::Typed) {
                 let dt = TermId(r.dt);
                 if ids.binary_search(&dt).is_ok() || cached_dt.iter().any(|(d, _)| *d == dt) {
+                    continue;
+                }
+                if let Some(t) = self.well_known_term(dt) {
+                    cached_dt.push((dt, t.clone()));
                     continue;
                 }
                 match cache.get(dt.0) {

@@ -49,11 +49,55 @@ pub enum Value {
     IllTyped { lex: Arc<str>, datatype: Arc<str> },
 }
 
-/// Lazy value: `Id` keeps the lexical form for STR/DATATYPE/sameTerm.
+/// Lazy value: `Id` keeps the lexical form for STR/DATATYPE/sameTerm. Computed results stay
+/// unresolved (`V`, `Typed`) until an id is actually required (`id_of_val`), so FILTER and
+/// ORDER BY intermediates never grow the execution's TempDict.
 #[derive(Clone, Debug)]
 pub enum Val {
     Id(TermId),
+    /// A computed value; its term is the canonical term of the value (`Value::to_term`).
     V(Value),
+    /// A computed typed literal whose term is not the canonical term of its value: a
+    /// derived-integer cast (`xsd:int("05")` is `"5"^^xsd:int`, value 5) or STRDT with a
+    /// derived datatype or a non-canonical lexical form (`STRDT("05", xsd:integer)`).
+    /// `value` is the value of that literal (a valid value of `datatype`).
+    Typed {
+        value: Value,
+        datatype: XsdType,
+        /// The lexical form; None = the canonical form of `value`.
+        lex: Option<Arc<str>>,
+    },
+}
+
+impl Val {
+    /// The value of a computed `Val` (None for `Id`, which needs decoding).
+    pub fn computed_value(&self) -> Option<&Value> {
+        match self {
+            Val::Id(_) => None,
+            Val::V(v) | Val::Typed { value: v, .. } => Some(v),
+        }
+    }
+
+    /// The RDF term of a computed `Val` (None for `Id`, which needs the resolver).
+    pub fn computed_term(&self) -> Option<Term> {
+        match self {
+            Val::Id(_) => None,
+            Val::V(v) => Some(v.to_term()),
+            Val::Typed { value, datatype, lex } => Some(Term::Literal(Literal {
+                lex: lex.clone().unwrap_or_else(|| value.lexical().into()),
+                datatype: datatype.iri().into(),
+                lang: None,
+            })),
+        }
+    }
+
+    /// Lexical form of a `Typed` literal.
+    pub(crate) fn typed_lexical<'a>(value: &'a Value, lex: &'a Option<Arc<str>>) -> Cow<'a, str> {
+        match lex {
+            Some(l) => Cow::Borrowed(l),
+            None => value.lexical(),
+        }
+    }
 }
 
 impl From<Num> for Value {
@@ -301,12 +345,13 @@ fn decimal_inline_id(d: Decimal) -> Option<TermId> {
 const DEFAULT_LIMIT: usize = 1 << 17;
 
 /// Per-execution decoded-value cache (also holds the dynamic regex cache and the
-/// `BNODE(str)` scope). Bounded: it is cleared when it reaches its entry limit.
+/// `BNODE(str)` scope). Bounded: the decoded values are cleared when they reach the entry
+/// limit; the `BNODE(str)` scope is bounded in bytes by two generations.
 pub struct ValueCache {
     map: FxHashMap<TermId, Value>,
     limit: usize,
     pub(crate) regexes: crate::regex::RegexCache,
-    pub(crate) bnodes: crate::eval::BNodeScope,
+    pub(crate) bnodes: crate::bnode::BNodeScope,
 }
 
 impl Default for ValueCache {
@@ -382,7 +427,7 @@ pub fn value_of(id: TermId, cx: &mut EvalCtx) -> Result<Value> {
 pub fn value_of_val(v: Val, cx: &mut EvalCtx) -> Result<Value> {
     match v {
         Val::Id(id) => value_of(id, cx),
-        Val::V(v) => Ok(v),
+        Val::V(v) | Val::Typed { value: v, .. } => Ok(v),
     }
 }
 
@@ -407,9 +452,21 @@ pub fn id_of_value(v: &Value, cx: &mut EvalCtx, canonical: bool) -> Result<TermI
     cx.resolver.intern(&v.to_term(), canonical)
 }
 
+/// Inline id of a computed value, when its term has one (None for `Id`).
+pub fn inline_id_of_val(v: &Val) -> Option<TermId> {
+    match v {
+        Val::Id(_) => None,
+        Val::V(v) => inline_id_of_value(v),
+        Val::Typed { value, datatype, lex } => {
+            codec::encode_inline_literal(&Val::typed_lexical(value, lex), datatype.iri(), None)
+        }
+    }
+}
+
 /// Id of a lazy value. A pass-through TEMP id is re-interned when a canonical id is required
 /// (it may come from a slot the planner allowed to stay non-canonical); TEMP blank nodes are
-/// canonical by construction.
+/// canonical by construction, and so are TEMP query constants (`CompiledExpr::eval` returns
+/// those without calling this). Computed values are interned here, and only here.
 pub fn id_of_val(v: Val, cx: &mut EvalCtx, canonical: bool) -> Result<TermId> {
     match v {
         Val::Id(id) if canonical && id.is_temp() && id.temp_tag() != Tag::BNode => {
@@ -418,6 +475,16 @@ pub fn id_of_val(v: Val, cx: &mut EvalCtx, canonical: bool) -> Result<TermId> {
         }
         Val::Id(id) => Ok(id),
         Val::V(v) => id_of_value(&v, cx, canonical),
+        Val::Typed { value, datatype, lex } => {
+            let lex = Val::typed_lexical(&value, &lex);
+            match codec::encode_inline_literal(&lex, datatype.iri(), None) {
+                Some(id) => Ok(id),
+                None => {
+                    let t = Term::Literal(Literal { lex: lex.into(), datatype: datatype.iri().into(), lang: None });
+                    cx.resolver.intern(&t, canonical)
+                }
+            }
+        }
     }
 }
 
@@ -426,6 +493,7 @@ pub fn kind_of_val(v: &Val) -> Kind {
     match v {
         Val::Id(id) => id.kind(),
         Val::V(v) => v.kind(),
+        Val::Typed { .. } => Kind::Literal,
     }
 }
 

@@ -5,20 +5,21 @@
 use std::sync::Arc;
 
 use oxsdatatypes::{DayTimeDuration, Double, TimezoneOffset};
-use rustc_hash::{FxHashMap, FxHashSet};
 use sq_core::codec::{self, RDF_LANG_STRING, RDF_LANG_STRING_IRI, XSD_STRING, XSD_STRING_IRI};
 use sq_core::{Kind, Literal, Result, Tag, Term, TermId};
 
 use crate::EvalCtx;
 use crate::cast::{Casted, cast};
-use crate::compare::{self, Order, ambiguous_identity, effective_tag, equals, same_term, same_term_ids};
+use crate::compare::{
+    self, Order, effective_tag, equals, equals_const, may_alias_const, same_term, same_term_const,
+};
 use crate::compile::{Builtin, CmpOp, CompiledExpr, ConstRegex, IntOp, Node, RegexSrc};
 use crate::numeric::{self, Num};
-use crate::regex::CompiledRegex;
+use crate::regex::{CompiledRegex, Replacement};
 use crate::sortkey::{SortKey, sort_key_val};
 use crate::strings::{self, StrArg};
-use crate::value::{Val, Value, id_of_val, is_present, kind_of_val, term_of_id, value_of, value_of_val};
-use crate::xsd::well_known_iri_id;
+use crate::value::{Val, Value, id_of_val, inline_value, is_present, kind_of_val, term_of_id, value_of, value_of_val};
+use crate::xsd::{XsdType, well_known_iri_id};
 
 /// Unwraps an `Option` inside `Result`: `None` (a SPARQL error) returns `Ok(None)`.
 macro_rules! tri {
@@ -46,10 +47,14 @@ const EMPTY_STR: TermId = TermId(Tag::ShortStr as i64);
 impl CompiledExpr {
     /// Ok(None) = SPARQL error or unbound; Err only for fatal errors (I/O, interrupt, memory).
     /// `canonical = true` returns the canonical id of the result (§4.3); pass-through
-    /// expressions (a variable, COALESCE, IF) return the argument's id unchanged.
+    /// expressions (a variable, a constant, COALESCE, IF) return the argument's id unchanged,
+    /// except that a TEMP id from a slot is re-interned. Only the result is interned:
+    /// intermediate values never reach the TempDict.
     pub fn eval(&self, row: &[TermId], cx: &mut EvalCtx, canonical: bool) -> Result<Option<TermId>> {
-        match eval(&self.root, row, cx, canonical)? {
+        match eval(&self.root, row, cx)? {
             None => Ok(None),
+            // A TEMP query constant is already canonical: no decode, no dictionary probe.
+            Some(Val::Id(id)) if self.is_temp_const(id) => Ok(Some(id)),
             Some(v) => id_of_val(v, cx, canonical).map(Some),
         }
     }
@@ -61,13 +66,13 @@ impl CompiledExpr {
 
     /// The result as a lazy value, without interning computed terms.
     pub fn eval_val(&self, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<Val>> {
-        eval(&self.root, row, cx, false)
+        eval(&self.root, row, cx)
     }
 
     /// ORDER BY key of the result; an error or unbound result gets the lowest key.
     /// Computed values are keyed without being interned.
     pub fn sort_key(&self, row: &[TermId], cx: &mut EvalCtx) -> Result<SortKey> {
-        match eval(&self.root, row, cx, false)? {
+        match eval(&self.root, row, cx)? {
             None => Ok(SortKey::lowest()),
             Some(v) => sort_key_val(&v, cx),
         }
@@ -102,12 +107,13 @@ fn operand(n: &Node, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<Val>> {
     match n {
         Node::Slot(s) => Ok(slot(row, *s).map(Val::Id)),
         Node::Const(id, _) => Ok(Some(Val::Id(*id))),
-        _ => eval(n, row, cx, false),
+        _ => eval(n, row, cx),
     }
 }
 
-/// Term evaluation of a node.
-pub(crate) fn eval(n: &Node, row: &[TermId], cx: &mut EvalCtx, canonical: bool) -> Result<Option<Val>> {
+/// Term evaluation of a node. Computed results stay lazy (`Val::V` / `Val::Typed`); ids are
+/// only assigned by `CompiledExpr::eval`.
+pub(crate) fn eval(n: &Node, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<Val>> {
     Ok(Some(match n {
         Node::Const(id, _) => Val::Id(*id),
         Node::Slot(s) => Val::Id(opt!(slot(row, *s))),
@@ -117,35 +123,47 @@ pub(crate) fn eval(n: &Node, row: &[TermId], cx: &mut EvalCtx, canonical: bool) 
             Val::V(opt!(numeric::arith(*op, x, y)).into())
         }
         Node::Neg(a) => Val::V(opt!(numeric::neg(tri!(num(a, row, cx)))).into()),
-        Node::Plus(a) => {
-            let v = tri!(eval(a, row, cx, false));
-            match v {
-                Val::Id(id) if matches!(id.tag(), Tag::Int | Tag::Decimal) => v,
-                v => Val::V(opt!(value_of_val(v, cx)?.as_num()).into()),
-            }
-        }
+        Node::Plus(a) => match tri!(eval(a, row, cx)) {
+            // Inline numerics are canonical: unary plus returns the operand itself.
+            v @ Val::Id(id) if matches!(id.tag(), Tag::Int | Tag::Decimal) => v,
+            Val::Id(id) => Val::V(tri!(num_of_id(id, cx)).into()),
+            v => Val::V(opt!(v.computed_value().and_then(Value::as_num)).into()),
+        },
         Node::If(c, a, b) => match test(c, row, cx)? {
             None => return Ok(None),
-            Some(true) => return eval(a, row, cx, canonical),
-            Some(false) => return eval(b, row, cx, canonical),
+            Some(true) => return eval(a, row, cx),
+            Some(false) => return eval(b, row, cx),
         },
         Node::Coalesce(list) => {
             for e in list {
-                if let Some(v) = eval(e, row, cx, canonical)? {
+                if let Some(v) = eval(e, row, cx)? {
                     return Ok(Some(v));
                 }
             }
             return Ok(None);
         }
-        Node::Replace { text, src, replacement } => {
+        Node::Replace { text, src, replacement, prepared } => {
             let text = tri!(string_arg(text, row, cx));
-            let repl = tri!(simple_string(replacement, row, cx));
             let re = tri!(regex(src, row, cx));
-            Val::V(text.with_same_tag(&opt!(re.replace(&text.s, &repl))))
+            let out = match prepared {
+                // Constant pattern, flags and replacement: the replacement is prepared once.
+                Some(cell) => {
+                    let r = match cell.get() {
+                        Some(r) => r,
+                        None => {
+                            let r = prepare_replacement(&re, replacement, row, cx)?;
+                            cell.get_or_init(|| r)
+                        }
+                    };
+                    re.replace(&text.s, opt!(r))
+                }
+                None => re.replace(&text.s, &tri!(prepare_replacement(&re, replacement, row, cx))),
+            };
+            Val::V(text.with_same_tag(&opt!(out)))
         }
         Node::Cast(t, a) => {
-            let v = tri!(eval(a, row, cx, false));
-            if *t == crate::xsd::XsdType::String
+            let v = tri!(eval(a, row, cx));
+            if *t == XsdType::String
                 && let Val::Id(id) = v
                 && matches!(id.tag(), Tag::ShortStr | Tag::Str)
             {
@@ -153,12 +171,10 @@ pub(crate) fn eval(n: &Node, row: &[TermId], cx: &mut EvalCtx, canonical: bool) 
             }
             match opt!(cast(*t, &value_of_val(v, cx)?)) {
                 Casted::V(v) => Val::V(v),
-                Casted::DerivedInteger(i, dt) => {
-                    Val::Id(cx.resolver.intern(&Term::Literal(Literal::typed(&i.to_string(), dt.iri())), canonical)?)
-                }
+                Casted::DerivedInteger(i, datatype) => Val::Typed { value: Value::Integer(i), datatype, lex: None },
             }
         }
-        Node::Call(b, args) => return call(*b, args, row, cx, canonical),
+        Node::Call(b, args) => return call(*b, args, row, cx),
         Node::Fail => return Ok(None),
         Node::Bound(_)
         | Node::Exists(_)
@@ -201,16 +217,24 @@ pub(crate) fn test(n: &Node, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<
                 _ => None,
             },
         },
-        Node::Equal(a, b) => {
-            let x = tri!(operand(a, row, cx));
-            let y = tri!(operand(b, row, cx));
-            equals(&x, &y, cx)?
-        }
-        Node::SameTerm(a, b) => {
-            let x = tri!(operand(a, row, cx));
-            let y = tri!(operand(b, row, cx));
-            Some(same_term(x, y, cx)?)
-        }
+        Node::Equal(a, b) => match (&**a, &**b) {
+            (x, Node::Const(c, _)) | (Node::Const(c, _), x) => equals_const(&tri!(operand(x, row, cx)), *c, cx)?,
+            _ => {
+                let x = tri!(operand(a, row, cx));
+                let y = tri!(operand(b, row, cx));
+                equals(&x, &y, cx)?
+            }
+        },
+        Node::SameTerm(a, b) => match (&**a, &**b) {
+            (x, Node::Const(c, _)) | (Node::Const(c, _), x) => {
+                Some(same_term_const(&tri!(operand(x, row, cx)), *c, cx)?)
+            }
+            _ => {
+                let x = tri!(operand(a, row, cx));
+                let y = tri!(operand(b, row, cx));
+                Some(same_term(x, y, cx)?)
+            }
+        },
         Node::Compare(op, a, b) if is_numeric_node(a) || is_numeric_node(b) => {
             // numeric vs non-numeric is a type error, exactly what `num` failing gives.
             let x = tri!(num(a, row, cx));
@@ -239,17 +263,19 @@ pub(crate) fn test(n: &Node, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<
             let x = opt!(slot(row, *s));
             if ids.contains(&x) {
                 Some(true)
-            } else {
+            } else if x.is_temp() {
                 // IRI constants: `=` is false for every other term (no error), except that a
-                // TEMP id may denote a dictionary IRI.
+                // TEMP row id may denote a dictionary IRI.
                 let mut found = false;
-                for c in ids.iter() {
-                    if ambiguous_identity(x, *c) && same_term_ids(x, *c, cx)? {
+                for c in ids.iter().filter(|c| may_alias_const(x, **c)) {
+                    if same_term_const(&Val::Id(x), *c, cx)? {
                         found = true;
                         break;
                     }
                 }
                 Some(found)
+            } else {
+                Some(false)
             }
         }
         Node::TagIs(a, kind) => Some(kind_of_val(&tri!(operand(a, row, cx))) == *kind),
@@ -272,13 +298,17 @@ pub(crate) fn test(n: &Node, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<
             let x = tri!(operand(a, row, cx));
             let mut error = false;
             for e in list {
-                match operand(e, row, cx)? {
-                    None => error = true,
-                    Some(y) => match equals(&x, &y, cx)? {
-                        Some(true) => return Ok(Some(true)),
-                        Some(false) => {}
-                        None => error = true,
+                let eq = match e {
+                    Node::Const(c, _) => equals_const(&x, *c, cx)?,
+                    e => match operand(e, row, cx)? {
+                        None => None,
+                        Some(y) => equals(&x, &y, cx)?,
                     },
+                };
+                match eq {
+                    Some(true) => return Ok(Some(true)),
+                    Some(false) => {}
+                    None => error = true,
                 }
             }
             if error { None } else { Some(false) }
@@ -299,7 +329,7 @@ pub(crate) fn test(n: &Node, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<
         | Node::Cast(..)
         | Node::Call(..)
         | Node::Fail => {
-            let v = tri!(eval(n, row, cx, false));
+            let v = tri!(eval(n, row, cx));
             compare::ebv(&v, cx)?
         }
     })
@@ -317,30 +347,35 @@ fn apply_cmp(op: CmpOp, o: Order) -> bool {
 }
 
 /// `?x = c` for an IRI or simple-literal constant `c`, decided from tags whenever possible.
+/// Only a TEMP row id against a dictionary constant may denote the constant's term (see
+/// `may_alias_const`); every other distinct id denotes a different term.
 fn id_eq(x: TermId, c: TermId, cx: &mut EvalCtx) -> Result<Option<bool>> {
     if x == c {
         return Ok(Some(true));
     }
-    if ambiguous_identity(x, c) {
-        return equals(&Val::Id(x), &Val::Id(c), cx);
+    if may_alias_const(x, c) {
+        return equals_const(&Val::Id(x), c, cx);
     }
     let c_is_iri = effective_tag(c) == Tag::Iri;
     Ok(match effective_tag(x) {
         // Typed literals may be Other / IllTyped: an error against a simple literal.
-        Tag::Typed if !c_is_iri => return equals(&Val::Id(x), &Val::Id(c), cx),
+        Tag::Typed if !c_is_iri => return equals_const(&Val::Id(x), c, cx),
         // Distinct canonical ids of IRIs / simple literals are distinct terms; every other
         // class is unequal to an IRI or a simple literal.
         _ => Some(false),
     })
 }
 
-/// Number of an id (inline integers without decoding).
+/// Number of an id. Inline numerics decode from the payload; only TYPED ids (dictionary or
+/// TEMP) can hold any other number, so every other tag is a type error with no decode.
 #[inline]
 fn num_of_id(id: TermId, cx: &mut EvalCtx) -> Result<Option<Num>> {
-    if let Some(i) = id.as_int() {
-        return Ok(Some(Num::Integer(i)));
-    }
-    Ok(value_of(id, cx)?.as_num())
+    Ok(match effective_tag(id) {
+        Tag::Int => id.as_int().map(Num::Integer),
+        Tag::Decimal => inline_value(id).and_then(|v| v.as_num()),
+        Tag::Typed => value_of(id, cx)?.as_num(),
+        _ => None,
+    })
 }
 
 /// Evaluates a node as a number. Arithmetic subtrees are evaluated directly on `Num`s,
@@ -356,13 +391,10 @@ fn num(n: &Node, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<Num>> {
             Ok(numeric::arith(*op, x, y))
         }
         Node::Neg(a) => Ok(numeric::neg(tri!(num(a, row, cx)))),
-        _ => {
-            let v = tri!(eval(n, row, cx, false));
-            match v {
-                Val::Id(id) => num_of_id(id, cx),
-                Val::V(v) => Ok(v.as_num()),
-            }
-        }
+        _ => match tri!(eval(n, row, cx)) {
+            Val::Id(id) => num_of_id(id, cx),
+            v => Ok(v.computed_value().and_then(Value::as_num)),
+        },
     }
 }
 
@@ -396,7 +428,7 @@ fn value_arg(n: &Node, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<Value>
     if let Node::Const(_, Some(v)) = n {
         return Ok(Some(v.clone()));
     }
-    let v = tri!(eval(n, row, cx, false));
+    let v = tri!(eval(n, row, cx));
     value_of_val(v, cx).map(Some)
 }
 
@@ -419,6 +451,11 @@ fn const_simple_string(id: TermId, cx: &mut EvalCtx) -> Result<Option<Arc<str>>>
         Value::Str(s) => Some(s),
         _ => None,
     })
+}
+
+/// Prepares the REPLACE replacement string for `re`. Ok(None) = error.
+fn prepare_replacement(re: &CompiledRegex, n: &Node, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<Replacement>> {
+    Ok(re.prepare_replacement(&tri!(simple_string(n, row, cx))))
 }
 
 fn build_const_regex(c: &ConstRegex, cx: &mut EvalCtx) -> Result<Option<Arc<CompiledRegex>>> {
@@ -450,39 +487,6 @@ fn regex(src: &RegexSrc, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<Arc<
             Ok(cx.values.regexes.get(&pattern, &flags))
         }
     }
-}
-
-/// `BNODE(str)` scope: the same string gives the same blank node within one solution row,
-/// across all expressions evaluated on it (e.g. several SELECT expressions), and a fresh one
-/// for every other row. Rows are identified by their content with the blank nodes created by
-/// `BNODE(str)` itself masked out, so a row extended by an earlier `BNODE(str)` binding still
-/// belongs to the same solution.
-#[derive(Default)]
-pub(crate) struct BNodeScope {
-    map: FxHashMap<(Box<[TermId]>, Arc<str>), TermId>,
-    generated: FxHashSet<TermId>,
-}
-
-/// Entries kept before the scope is reset (bounded memory on long streams).
-const BNODE_SCOPE_LIMIT: usize = 1 << 20;
-
-fn scoped_bnode(row: &[TermId], label: Arc<str>, cx: &mut EvalCtx) -> TermId {
-    let scope = &mut cx.values.bnodes;
-    let masked: Box<[TermId]> =
-        row.iter().map(|id| if scope.generated.contains(id) { TermId::UNBOUND } else { *id }).collect();
-    let key = (masked, label);
-    if let Some(id) = scope.map.get(&key) {
-        return *id;
-    }
-    if scope.map.len() >= BNODE_SCOPE_LIMIT {
-        scope.map.clear();
-        scope.generated.clear();
-    }
-    let id = cx.resolver.fresh_bnode();
-    let scope = &mut cx.values.bnodes;
-    scope.generated.insert(id);
-    scope.map.insert(key, id);
-    id
 }
 
 /// Timezone of a date/time value: outer None = not a date/time type.
@@ -549,14 +553,34 @@ pub(crate) fn str_of(v: Val, cx: &mut EvalCtx) -> Result<Option<Val>> {
             Value::Str(_) => Val::V(v),
             v => Val::V(Value::Str(v.lexical().into())),
         },
+        Val::Typed { value, lex, .. } => Val::V(Value::Str(match lex {
+            Some(lex) => lex,
+            None => value.lexical().into(),
+        })),
     }))
 }
 
+/// STRDT(lex, dt) for a datatype other than xsd:string / rdf:langString: the literal keeps
+/// its exact lexical form and datatype. It is a plain computed value when that term is the
+/// canonical term of its value (or an unknown / ill-typed literal, which keeps its lexical
+/// form anyway), else a `Val::Typed`; neither is interned here.
+fn strdt(lex: Arc<str>, datatype: Arc<str>) -> Val {
+    let Some(t) = XsdType::from_iri(&datatype) else {
+        return Val::V(Value::Other { lex, datatype });
+    };
+    let value = Value::from_literal(&Literal { lex: lex.clone(), datatype, lang: None });
+    if matches!(value, Value::IllTyped { .. }) || (value.xsd_type() == Some(t) && *value.lexical() == *lex) {
+        Val::V(value)
+    } else {
+        Val::Typed { value, datatype: t, lex: Some(lex) }
+    }
+}
+
 /// Builtin dispatch. Arguments are evaluated left to right; any argument error is an error.
-fn call(b: Builtin, args: &[Node], row: &[TermId], cx: &mut EvalCtx, canonical: bool) -> Result<Option<Val>> {
+fn call(b: Builtin, args: &[Node], row: &[TermId], cx: &mut EvalCtx) -> Result<Option<Val>> {
     macro_rules! arg {
         ($i:expr) => {
-            tri!(eval(&args[$i], row, cx, false))
+            tri!(eval(&args[$i], row, cx))
         };
     }
     macro_rules! value {
@@ -583,7 +607,7 @@ fn call(b: Builtin, args: &[Node], row: &[TermId], cx: &mut EvalCtx, canonical: 
             },
             Val::V(Value::Iri(_) | Value::BNode(_)) => return Ok(None),
             Val::V(Value::LangStr { lang, .. }) => Val::V(Value::Str(lang)),
-            Val::V(_) => Val::Id(EMPTY_STR),
+            Val::V(_) | Val::Typed { .. } => Val::Id(EMPTY_STR),
         },
         Builtin::LangMatches => {
             let tag = tri!(simple_string(&args[0], row, cx));
@@ -602,6 +626,7 @@ fn call(b: Builtin, args: &[Node], row: &[TermId], cx: &mut EvalCtx, canonical: 
                 },
             },
             Val::V(v) => datatype_val(opt!(v.datatype_iri())),
+            Val::Typed { datatype, .. } => Val::Id(datatype.iri_id()),
         },
         Builtin::Iri => match arg!(0) {
             v @ Val::Id(id) if id.kind() == Kind::Iri => v,
@@ -622,7 +647,8 @@ fn call(b: Builtin, args: &[Node], row: &[TermId], cx: &mut EvalCtx, canonical: 
                 Val::Id(cx.resolver.fresh_bnode())
             } else {
                 let label = tri!(simple_string(&args[0], row, cx));
-                Val::Id(scoped_bnode(row, label, cx))
+                let EvalCtx { values, resolver, .. } = cx;
+                Val::Id(values.bnodes.get(row, &label, || resolver.fresh_bnode()))
             }
         }
         Builtin::Rand => Val::V(Value::Double(Double::from(random_f64(cx)))),
@@ -744,8 +770,7 @@ fn call(b: Builtin, args: &[Node], row: &[TermId], cx: &mut EvalCtx, canonical: 
             match &*dt {
                 XSD_STRING_IRI => Val::V(Value::Str(lex)),
                 RDF_LANG_STRING_IRI => return Ok(None),
-                // The exact lexical form and datatype are kept: intern the term.
-                _ => Val::Id(cx.resolver.intern(&Term::Literal(Literal { lex, datatype: dt, lang: None }), canonical)?),
+                _ => strdt(lex, dt),
             }
         }
         Builtin::IsNumeric => match arg!(0) {
@@ -754,7 +779,7 @@ fn call(b: Builtin, args: &[Node], row: &[TermId], cx: &mut EvalCtx, canonical: 
                 Tag::Typed => bool_val(value_of(id, cx)?.is_numeric()),
                 _ => bool_val(false),
             },
-            Val::V(v) => bool_val(v.is_numeric()),
+            v => bool_val(v.computed_value().is_some_and(Value::is_numeric)),
         },
     }))
 }

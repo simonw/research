@@ -18,7 +18,8 @@ use sq_core::TermId;
 
 use crate::expr;
 
-const ALL: SlotSet = SlotSet([u64::MAX; 4]);
+/// Every slot.
+pub(crate) const ALL: SlotSet = SlotSet([u64::MAX; 4]);
 
 fn not(s: SlotSet) -> SlotSet {
     ALL.minus(s)

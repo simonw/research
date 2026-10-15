@@ -32,7 +32,7 @@ fn query(root: Logical, width: usize) -> LoweredQuery {
 
 fn plan_of(q: &LoweredQuery, store: &MemStore, opts: &QueryOptions) -> QueryPlan {
     let named = named_graphs(q, store).unwrap();
-    let rw = rewrite::rewrite(q.root.clone(), q.exists.clone(), &named);
+    let rw = rewrite::rewrite(q.root.clone(), q.exists.clone(), &named).unwrap();
     let p = plan_query(q, rw, named, store, opts).unwrap();
     crate::validate(&p).unwrap();
     p
@@ -125,4 +125,116 @@ fn values_estimates_follow_seeds() {
     assert_eq!(seeded.est_rows, 1.0);
     let by_first = planner.plan_values(&[0, 1], &rows, Ctx { seeded: SlotSet::from_slots([0]), ..Ctx::default() });
     assert_eq!(by_first.est_rows, 5.0);
+}
+
+fn scan(s: u16, p: i64, o: u16) -> Plan {
+    let op = Op::Scan(sq_core::plan::ScanOp { pat: pat(s, p, o), order: sq_core::store::IndexOrder::Gpso, range: None });
+    mk(op, 10.0, 100.0, None)
+}
+
+fn set(slots: &[u16]) -> SlotSet {
+    SlotSet::from_slots(slots.iter().copied())
+}
+
+#[test]
+fn carried_follows_the_seed_contract() {
+    use sq_core::plan::JoinKind;
+    let s = set(&[0, 7]);
+    // Leaves merge the whole seed, never-seeded operators drop it, Project / Group keep their
+    // output slots only.
+    assert_eq!(carried(&scan(0, 1, 1), s), s);
+    assert_eq!(carried(&mk(Op::Unit, 1.0, 0.0, None), s), s);
+    let slice = mk(Op::Slice { input: Box::new(scan(0, 1, 1)), offset: 0, limit: Some(1) }, 1.0, 0.0, None);
+    assert_eq!(carried(&slice, s), SlotSet::EMPTY);
+    assert_eq!(carried(&mk(Op::GraphNames { slot: 0 }, 1.0, 0.0, None), s), SlotSet::EMPTY);
+    let project = mk(Op::Project { input: Box::new(scan(0, 1, 1)), slots: vec![0] }, 1.0, 0.0, None);
+    assert_eq!(carried(&project, s), set(&[0]));
+    // Union: what every branch keeps.
+    assert_eq!(carried(&mk(Op::Union(vec![scan(0, 1, 1), project.clone()]), 1.0, 0.0, None), s), set(&[0]));
+    // Inner joins keep either input's; outer joins the left one's only.
+    let hash = |kind| {
+        let op = Op::HashJoin {
+            build: Box::new(scan(0, 1, 1)),
+            probe: Box::new(slice.clone()),
+            keys: vec![0],
+            check: vec![],
+            kind,
+            build_is_left: false,
+        };
+        mk(op, 1.0, 0.0, None)
+    };
+    assert_eq!(carried(&hash(JoinKind::Inner), s), s);
+    assert_eq!(carried(&hash(JoinKind::Left { filter: None }), s), SlotSet::EMPTY);
+    // A BindJoin's right side sees its seed list only.
+    let bind = Op::BindJoin {
+        left: Box::new(project),
+        right: Box::new(scan(0, 2, 3)),
+        seed: vec![0],
+        kind: JoinKind::Inner,
+        sort_left: false,
+        adaptive: true,
+    };
+    assert_eq!(carried(&mk(bind, 1.0, 0.0, None), s), set(&[0]));
+}
+
+#[test]
+fn recost_reproduces_seeded_scan_estimates() {
+    let st = chain_store(4);
+    let q = query(Logical::Unit, 4);
+    let named = named_graphs(&q, &st).unwrap();
+    let opts = QueryOptions::default();
+    let mut planner = Planner::new(&st, &opts, &q.dataset, named.len(), &[], 4);
+    let p = pat(0, 2, 1);
+    let unseeded = planner.plan_scan(&p, Ctx::default()).unwrap();
+    for k in [set(&[0]), set(&[1]), set(&[0, 1])] {
+        let seeded = planner.plan_scan(&p, Ctx { seeded: k, ..Ctx::default() }).unwrap();
+        let (rows, cost) = planner.recost(&unseeded, SlotSet::EMPTY, k).unwrap();
+        assert_eq!((rows, cost), (seeded.est_rows, seeded.est_cost_ns), "{k:?}");
+    }
+    // A never-seeded operator keeps its estimates; a Union sums its branches.
+    let slice = mk(Op::Slice { input: Box::new(unseeded.clone()), offset: 0, limit: Some(2) }, 2.0, 50.0, None);
+    assert_eq!(planner.recost(&slice, SlotSet::EMPTY, set(&[0])).unwrap(), (2.0, 50.0));
+    let union = mk(Op::Union(vec![unseeded.clone(), unseeded.clone()]), 0.0, 0.0, None);
+    let one = planner.recost(&unseeded, SlotSet::EMPTY, set(&[0])).unwrap();
+    assert_eq!(planner.recost(&union, SlotSet::EMPTY, set(&[0])).unwrap(), (2.0 * one.0, 2.0 * one.1));
+}
+
+/// A group of six patterns over the shared slots 0..=3 and two fresh ones, joined with a UNION
+/// of two such groups per remaining level.
+fn nested_unions(level: u32, next: &mut u16) -> Logical {
+    let a = *next;
+    *next += 2;
+    let bgp = Logical::Bgp(vec![
+        pat(0, 0, a),
+        pat(a, 1, 1),
+        pat(1, 2, a + 1),
+        pat(2, 3, a + 1),
+        pat(3, 0, a),
+        pat(a + 1, 1, 2),
+    ]);
+    if level == 0 {
+        return bgp;
+    }
+    let (l, r) = (nested_unions(level - 1, next), nested_unions(level - 1, next));
+    Logical::Join(Box::new(bgp), Box::new(Logical::Union(Box::new(l), Box::new(r))))
+}
+
+#[test]
+fn opaque_units_are_planned_in_few_contexts() {
+    // The ordering search costs opaque units from estimates: a node is planned for its base
+    // context and once per planned context of its parent, not once per probed seed set (which
+    // was up to 2^4 here, at every level).
+    let st = chain_store(4);
+    let mut next = 4;
+    let root = nested_unions(3, &mut next);
+    let q = query(root, next as usize);
+    let named = named_graphs(&q, &st).unwrap();
+    let rw = rewrite::rewrite(q.root.clone(), q.exists.clone(), &named).unwrap();
+    let opts = QueryOptions::default();
+    let mut planner = Planner::new(&st, &opts, &q.dataset, named.len(), &rw.exists, q.vars.width());
+    planner.plan(&rw.root, Ctx::default()).unwrap();
+    // 15 groups and 7 unions; at most depth + 2 contexts each.
+    let (nodes, depth) = (22, 4);
+    assert!(planner.memo.len() <= nodes * (depth + 2), "{} plans", planner.memo.len());
+    crate::validate(&plan_of(&q, &st, &opts)).unwrap();
 }

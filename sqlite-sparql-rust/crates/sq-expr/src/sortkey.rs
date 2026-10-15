@@ -281,10 +281,19 @@ pub fn sort_key(id: TermId, cx: &mut EvalCtx) -> Result<SortKey> {
     Ok(SortKey(k))
 }
 
-/// Key of a lazy value.
+/// Key of a lazy value. Computed values are keyed without being interned; a `Typed` literal
+/// gets the key of its exact term (value, lexical form, datatype), as its id would.
 pub fn sort_key_val(v: &Val, cx: &mut EvalCtx) -> Result<SortKey> {
     match v {
         Val::Id(id) => sort_key(*id, cx),
         Val::V(v) => Ok(sort_key_value(v)),
+        Val::Typed { value, datatype, lex } => {
+            let mut k = Vec::with_capacity(64);
+            k.push(CLASS_LITERAL);
+            push_primary(&mut k, value);
+            push_str(&mut k, Val::typed_lexical(value, lex).as_bytes());
+            push_datatype(&mut k, datatype.iri());
+            Ok(SortKey(k))
+        }
     }
 }

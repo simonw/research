@@ -101,12 +101,15 @@ The default of `--products 7800` gives 1,004,103 triples.
 
 ### Measured on this machine (4 vCPU Xeon @ 2.8 GHz)
 
-| Command | Triples | Size | Time |
-|---|---:|---:|---:|
-| `gen_social.py --persons 200000` | 1,600,000 | 175.0 MB | 3.8 s |
-| `gen_social.py --persons 625000` | 5,000,000 | 549.8 MB | 13.0 s |
-| `gen_bsbm.py` (7800 products) | 1,004,103 | 146.9 MB | 3.1 s |
-| `gen_social.py --persons 10000` | 80,000 | 8.6 MB | 0.2 s |
+| Command | Triples | Size | SHA-256 (prefix) | Time |
+|---|---:|---:|---|---:|
+| `gen_social.py --persons 200000` | 1,600,000 | 175.0 MB | `b0c8f3a5adeb` | 3.3–3.8 s |
+| `gen_social.py --persons 625000` | 5,000,000 | 549.8 MB | `f55718e7a0c0` | 13.0 s |
+| `gen_bsbm.py` (7800 products) | 1,004,103 | 146.9 MB | `6586dcc57a51` | 2.5–3.1 s |
+| `gen_social.py --persons 10000` | 80,000 | 8.6 MB | `a6bc6da36ce2` | 0.1–0.2 s |
+
+The SHA-256 prefixes are those of the default seed (42). The benchmark records the full
+content hash of every dataset, so a run elsewhere can be checked against these.
 
 ## Queries
 
@@ -150,31 +153,42 @@ The row counts are from the validation run at 200K persons and 7800 products; th
 each COUNT is in parentheses. Q5's count comes from a direct computation over the file,
 because pyoxigraph does not finish it.
 
-### Reference timings (pyoxigraph and rdflib, validation run of 2026-10-15)
+### Reference timings (pyoxigraph and rdflib, validation runs of 2026-10-15)
 
 These were measured before the extension existed, with pyoxigraph 0.5.11 in its isolated
 worker. Each cell is the median ms of 5 runs after 1 warm-up, given as `count / full /
-json`. The data was social with 200K persons (1.6M triples, loaded in 6.0 s) and bsbm-lite
-with 7800 products (1.0M triples, loaded in 7.2 s). The timeout was 300 s.
+json`. The data was social with 200K persons (1.6M triples) and bsbm-lite with 7800
+products (1.0M triples). The timeout was 300 s.
+
+The machine was shared with concurrent cargo builds (load average 4–5 on 4 vCPUs), so
+repeated runs differ by up to about ±30%. Two examples:
+
+- Q1 count: 131 ms in the first run, 173 ms in the second.
+- Loading social: 6.0 s and 14.7 s.
+
+The table shows the second run, made with the current harness:
 
 | # | pyoxigraph | # | pyoxigraph |
 |---|---:|---|---:|
-| Q1 | 131 / 226 / 173 | Q10 | 2,793 / 2,859 / 2,762 |
-| Q2 | 30.9 / 50.6 / 43.0 | Q11 | 385 / 645 / 467 |
-| Q3 | 2,404 / 2,394 / 2,527 | Q12 | 254 / 204 / 184 |
-| Q4 | 0.19 / 0.20 / 0.28 | Q13 | 475 / 479 / 543 |
-| Q5 | timeout (> 300 s) | Q14 | 189 / 292 / 152 |
-| Q6 | 131 / 140 / 153 | Q15 | 0.08 / 0.09 / 0.09 |
-| Q7 | 163 / 172 / 179 | Q16 | 482 / 572 / 528 |
-| Q8 | 141 / 151 / 138 | Q17 | 92.1 / 90.1 / 87.7 |
-| Q9 | 2,665 / 2,211 / 2,314 | | |
+| Q1 | 173 / 256 / 242 | Q10 | 2,796 / 2,768 / 2,666 |
+| Q2 | 20.0 / 25.8 / 30.6 | Q11 | 329 / 530 / 461 |
+| Q3 | 2,261 / 2,297 / 2,318 | Q12 | 164 / 182 / 182 |
+| Q4 | 0.15 / 0.17 / 0.15 | Q13 | 418 / 342 / 314 |
+| Q5 | timeout (> 300 s) | Q14 | 138 / 171 / 164 |
+| Q6 | 141 / 135 / 163 | Q15 | 0.13 / 0.09 / 0.11 |
+| Q7 | 151 / 166 / 172 | Q16 | 452 / 430 / 467 |
+| Q8 | 179 / 131 / 128 | Q17 | 76.9 / 107 / 76.4 |
+| Q9 | 1,938 / 1,870 / 2,016 | | |
 
 Q5 is super-linear in pyoxigraph. Its OPTIONAL takes 1.0 s at 10K persons and 6.5 s at
 20K, so pyoxigraph never finishes it at 200K.
 
 On social with 10K persons (80K triples), pyoxigraph and rdflib agree on every query in all
-three modes. rdflib's count-mode times there range from 2.6 ms (Q15) to 25.8 s (Q5); its
-Q12 MINUS takes 10.6 s. pyoxigraph is 10–1,100× faster on that data.
+three modes.
+
+- rdflib's count-mode times there range from 4.4 ms (Q15) to 24.5 s (Q5).
+- Its Q12 MINUS takes 10.6 s.
+- pyoxigraph is 10–1,150× faster on that data.
 
 ## Engines and modes
 
@@ -406,7 +420,7 @@ $PY py/bench.py --self-test                                          # unit test
 cd py && $PY -m unittest discover -s bench_lib/tests -t . -v         # unit tests only
 ```
 
-The unit tests (107) cover:
+The unit tests (108) cover:
 
 - term parsing and canonicalisation, including the cross-engine surface forms seen in
   practice (end-of-day `24:00:00` included);

@@ -64,6 +64,8 @@ pub(crate) fn scan_sorted_by(pat: &QuadPat, order: IndexOrder, k: usize, dataset
 impl Planner<'_> {
     /// Plan a quad pattern unit (memoized per pattern and context).
     pub(crate) fn plan_scan(&mut self, pat: &QuadPat, ctx: Ctx) -> Result<Plan> {
+        let slots = SlotSet::from_slots(crate::props::pattern_slots(pat));
+        let ctx = Ctx { seeded: ctx.seeded.intersect(slots), subst: ctx.subst.intersect(slots), ..ctx };
         if let Some(p) = self.scan_memo.get(&(*pat, ctx)) {
             return Ok(p.clone());
         }
@@ -74,13 +76,19 @@ impl Planner<'_> {
 
     fn plan_scan_uncached(&mut self, pat: &QuadPat, ctx: Ctx) -> Result<Plan> {
         let bound = ctx.bound();
-        let cols = bound_columns(pat, bound);
-        let (order, k) = choose_order(cols);
-        let rows = self.card.pattern_rows(pat, bound)?;
-        let free = (4 - k) as f64;
-        let cost = self.costs.seek_random + rows * (self.costs.scan_row + free * self.costs.scan_col);
+        let (order, k) = choose_order(bound_columns(pat, bound));
+        let (rows, cost) = self.scan_estimate(pat, bound)?;
         let sorted = if ctx.in_exists { None } else { scan_sorted_by(pat, order, k, self.dataset) };
         Ok(mk(Op::Scan(ScanOp { pat: *pat, order, range: None }), rows, cost, sorted))
+    }
+
+    /// Rows and cost of one open of `pat` with `bound` slots bound: one seek, then the rows
+    /// with their free columns.
+    pub(crate) fn scan_estimate(&mut self, pat: &QuadPat, bound: SlotSet) -> Result<(f64, f64)> {
+        let (_, k) = choose_order(bound_columns(pat, bound));
+        let rows = self.card.pattern_rows(pat, bound)?;
+        let free = (4 - k) as f64;
+        Ok((rows, self.costs.seek_random + rows * (self.costs.scan_row + free * self.costs.scan_col)))
     }
 }
 

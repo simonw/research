@@ -179,10 +179,11 @@ def _load_table(result: RunResult) -> list[str]:
         if not any(q.dataset == ds.name for q in result.queries):
             continue
         row = [ds.name, f"{ds.triples:,}", f"{ds.bytes / 1e6:.1f}", f"`{ds.fingerprint[:12]}`"]
+        engine_status = {e.name: e.status for e in result.engines}
         for name, _ in columns:
             rec = next((r for r in result.loads if r.dataset == ds.name and r.engine == name), None)
-            if rec is None:
-                row.append("n/a")
+            if rec is None:  # the engine did not get past its probe
+                row.append(_STATUS_CELL.get(engine_status.get(name, UNAVAILABLE), "n/a"))
             elif rec.status != OK:
                 row.append(_STATUS_CELL.get(rec.status, rec.status))
             elif rec.info.shared_with:

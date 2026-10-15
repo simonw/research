@@ -41,7 +41,7 @@ impl SqliteStore {
         }
         self.0.forget_schema();
         let scope = self.write_scope(0)?;
-        schema::create(self.0.db())?;
+        schema::create(&self.0)?;
         scope.commit()?;
         self.0.forget_schema();
         match self.0.schema_state()? {

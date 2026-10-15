@@ -62,3 +62,10 @@ translating SPARQL to SQL text or running as an external client.
 - spargebra quirks that will affect us: `SELECT *` columns come out sorted alphabetically;
   `OPTIONAL { { P FILTER(F) } }` is simplified into a LeftJoin condition (dawg-optional-filter-005-not-
   simplified cannot pass); `TRUE`/`False` booleans and VALUES after CONSTRUCT..GROUP BY are rejected.
+- sq-expr (implement -> 2 review/fix rounds; reviewers found e.g. a REGEX literal-prefix fast path
+  that ignored top-level alternation, TEMP constants re-interned per row, BNODE(str) scoping): 97 tests,
+  W3C-driven expression tests over 16 directories all pass (8 only numeric-lenient: "3" vs "3.0").
+  20,000 random arithmetic/cast/compare expressions vs pyoxigraph: 97.8% raw agreement, 100% after
+  excluding documented pyoxigraph divergences (NaN comparisons error, ROUND half-away-from-zero,
+  oxsdatatypes decimal x*0 / 0/2.5 failing, STR canonicalising numerics...). Release micro-benchmarks:
+  `?x > 500` on inline ints 10 ns/row, IdEq 8.7 ns, REGEX with literal prefix 87 ns, SUM(int) 12 ns.

@@ -2,9 +2,12 @@
 //!
 //! The host evaluates the aggregate argument per row (with `canonical = true`, so DISTINCT can
 //! dedupe by id) and calls `add(Some(id))`, or `add(None)` when the argument is unbound or an
-//! error. COUNT(*) rows are added with `add_row` (or `add(None)`).
+//! error. COUNT(*) rows are added with `add_row(row, visible)` (or `add(None)`).
 //!
-//! * `COUNT(expr)` counts bound, non-error values; `COUNT(*)` counts rows.
+//! * `COUNT(expr)` counts bound, non-error values; `COUNT(*)` counts rows;
+//!   `COUNT(DISTINCT *)` counts distinct solutions, i.e. rows projected onto the group input's
+//!   user-visible in-scope variables (hidden slots such as blank-node pattern variables and
+//!   generated path middles are not part of a SPARQL solution).
 //! * SUM / AVG / MIN / MAX / GROUP_CONCAT: any error makes that aggregate unbound; the group
 //!   row is still produced (agg-err-01).
 //! * SUM follows numeric promotion; AVG = SUM / COUNT, a decimal division for integers and
@@ -16,7 +19,7 @@
 use oxsdatatypes::{Decimal, Double};
 use rustc_hash::FxHashSet;
 use sq_core::ir::{AggFunc, AggSpec};
-use sq_core::{Result, TermId};
+use sq_core::{Result, Slot, TermId};
 
 use crate::EvalCtx;
 use crate::numeric::{self, ArithOp, Num};
@@ -28,10 +31,13 @@ pub trait Accumulator {
     fn add(&mut self, v: Option<TermId>, cx: &mut EvalCtx) -> Result<()>;
     /// The aggregate value (`None` = unbound). Computed results get canonical ids.
     fn finish(&mut self, cx: &mut EvalCtx) -> Result<Option<TermId>>;
-    /// One input row of `COUNT(*)` / `COUNT(DISTINCT *)` (the full row in the global slot
-    /// layout). Other aggregates ignore the row and count it as `add(None)`.
-    fn add_row(&mut self, row: &[TermId], cx: &mut EvalCtx) -> Result<()> {
-        let _ = row;
+    /// One input row of `COUNT(*)` / `COUNT(DISTINCT *)`, in the global slot layout.
+    /// `visible` lists the slots of the group input's user-visible in-scope variables (what
+    /// `SELECT *` would project there: no blank-node pattern variables, spargebra-generated
+    /// path middles or out-of-scope renamed slots); `COUNT(DISTINCT *)` dedupes the row
+    /// projected onto them. Other aggregates ignore the row and count it as `add(None)`.
+    fn add_row(&mut self, row: &[TermId], visible: &[Slot], cx: &mut EvalCtx) -> Result<()> {
+        let _ = (row, visible);
         self.add(None, cx)
     }
 }
@@ -79,6 +85,7 @@ fn integer_id(n: u64) -> TermId {
 
 struct CountAll {
     count: u64,
+    /// COUNT(DISTINCT *): the distinct solutions seen (visible slots only).
     seen: Option<FxHashSet<Box<[TermId]>>>,
 }
 
@@ -87,10 +94,12 @@ impl Accumulator for CountAll {
         self.count += 1;
         Ok(())
     }
-    fn add_row(&mut self, row: &[TermId], cx: &mut EvalCtx) -> Result<()> {
+    fn add_row(&mut self, row: &[TermId], visible: &[Slot], cx: &mut EvalCtx) -> Result<()> {
         match &mut self.seen {
             Some(seen) => {
-                if seen.insert(row.into()) {
+                let solution: Box<[TermId]> =
+                    visible.iter().map(|s| row.get(*s as usize).copied().unwrap_or(TermId::UNBOUND)).collect();
+                if seen.insert(solution) {
                     self.count += 1;
                 }
                 Ok(())

@@ -223,3 +223,19 @@ fn read_scope_release_with_a_live_cursor() {
     drop(c);
     assert_eq!(db.shared().db().txn_state(), ffi::SQLITE_TXN_NONE);
 }
+
+#[test]
+fn zz_debug_forced_rollback() {
+    use crate::raw::RawStmt;
+    for sql in ["PRAGMA main.journal_mode", "UPDATE main.rdf_meta SET value=value WHERE key='write_gen'", "UPDATE main.rdf_meta SET value=value WHERE 0", "DELETE FROM main.rdf_graph WHERE 0"] {
+        let db = Db::mem();
+        let mut host = db.conn.prepare("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 10) SELECT x FROM c").unwrap();
+        let mut rows = host.query([]).unwrap();
+        assert!(rows.next().unwrap().is_some());
+        let mut abort = RawStmt::prepare(db.shared().db(), sql, true).unwrap();
+        db.conn.execute_batch("SAVEPOINT x; INSERT INTO rdf_graph VALUES (5)").unwrap();
+        db.shared().db().interrupt();
+        let r = abort.run();
+        eprintln!("{sql}: {r:?}, autocommit after {}", db.shared().db().autocommit());
+    }
+}

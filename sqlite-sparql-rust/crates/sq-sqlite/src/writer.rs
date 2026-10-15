@@ -63,6 +63,14 @@ impl StorageShared {
         st.run()
     }
 
+    /// Adds `delta` to a counter row, creating it (with `delta`) if absent.
+    pub(crate) fn meta_add(&self, key: &str, delta: i64) -> Result<()> {
+        let mut st = self.pool.lease_fixed(Fixed::MetaAdd)?;
+        st.bind_text(1, key)?;
+        st.bind_i64(2, delta)?;
+        st.run()
+    }
+
     pub(crate) fn meta_bump(&self, key: &str) -> Result<()> {
         let mut st = self.pool.lease_fixed(Fixed::MetaBump)?;
         st.bind_text(1, key)?;

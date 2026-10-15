@@ -23,7 +23,7 @@ use crate::{BulkMode, LoadOptions, LoadSource};
 
 const PERSONS: usize = 142_000; // ~1.0M triples
 /// Micro-benchmarks report the best of this many rounds (the machine is shared).
-const ROUNDS: usize = 3;
+const ROUNDS: usize = 5;
 
 fn best_of(rounds: usize, mut f: impl FnMut() -> f64) -> f64 {
     (0..rounds).map(|_| f()).fold(f64::MAX, f64::min)

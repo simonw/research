@@ -31,17 +31,39 @@ fn count() {
     assert_eq!(run(&mut h, AggFunc::Count, true, &[Some("1"), None, Some("1"), Some("1.0")]), r#""2"^^xsd:integer"#);
     assert_eq!(run(&mut h, AggFunc::Count, false, &[]), r#""0"^^xsd:integer"#);
     assert_eq!(run(&mut h, AggFunc::CountAll, false, &[None, None]), r#""2"^^xsd:integer"#);
-    // COUNT(DISTINCT *) dedupes whole rows.
+    // COUNT(DISTINCT *) dedupes whole solutions.
     let (a, b) = (h.term("<http://example.org/a>"), h.term("<http://example.org/b>"));
-    let mut acc = accumulator(&spec(AggFunc::CountAll, true));
     let rows = [[a, b], [a, b], [b, a], [a, TermId::UNBOUND]];
+    assert_eq!(count_rows(&mut h, true, &rows, &[0, 1]), 3);
+    assert_eq!(count_rows(&mut h, false, &rows, &[0, 1]), 4);
+}
+
+/// COUNT(*) / COUNT(DISTINCT *) over rows with the given visible slots.
+fn count_rows(h: &mut Harness, distinct: bool, rows: &[[TermId; 2]], visible: &[sq_core::Slot]) -> i64 {
+    let mut acc = accumulator(&spec(AggFunc::CountAll, distinct));
     let out = h.env.with(|cx| {
-        for r in &rows {
-            acc.add_row(r, cx)?;
+        for r in rows {
+            acc.add_row(r, visible, cx)?;
         }
         acc.finish(cx)
     });
-    assert_eq!(out.unwrap(), TermId::from_int(3));
+    out.expect("fatal").and_then(TermId::as_int).expect("integer")
+}
+
+/// COUNT(DISTINCT *) counts distinct solutions: a hidden slot (here slot 1, a blank-node
+/// pattern variable of `?s :p []`) is not part of the solution and must not split it.
+#[test]
+fn count_distinct_star_ignores_hidden_slots() {
+    let mut h = Harness::new();
+    let s1 = h.term("<http://example.org/s1>");
+    let s2 = h.term("<http://example.org/s2>");
+    let (b1, b2) = (h.env.resolver.bnode(), h.env.resolver.bnode());
+    let rows = [[s1, b1], [s1, b2], [s2, b1]];
+    assert_eq!(count_rows(&mut h, true, &rows, &[0]), 2);
+    assert_eq!(count_rows(&mut h, true, &rows, &[0, 1]), 3);
+    assert_eq!(count_rows(&mut h, false, &rows, &[0]), 3);
+    // No visible variable: every row is the empty solution.
+    assert_eq!(count_rows(&mut h, true, &rows, &[]), 1);
 }
 
 #[test]

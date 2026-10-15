@@ -4,7 +4,7 @@ mod common;
 
 use common::*;
 use sq_core::ir::{GraphSel, PatTerm, QueryForm};
-use sq_core::plan::{JoinKind, JoinPolicy, Op, Plan, QueryOptions};
+use sq_core::plan::{JoinKind, JoinPolicy, Op, Plan, QueryOptions, QueryPlan};
 
 fn is_scan_with_graph(op: &Op, pred: impl Fn(GraphSel) -> bool) -> bool {
     matches!(op, Op::Scan(s) if pred(s.pat.g))
@@ -327,4 +327,28 @@ fn exists_decorrelation_follows_the_exact_conditions() {
     let q = "SELECT * { ?x a :C1 FILTER (EXISTS { ?x :knows ?y FILTER NOT EXISTS { ?y :age 3 } } || false) }";
     let p = plan_with(q, &st, &hash);
     assert_eq!(count_ops(&p, |o| matches!(o, Op::HashJoin { kind: JoinKind::Semi | JoinKind::Anti, .. })), 0);
+    // A MINUS whose right side mentions a correlated slot: substitution reaches it (and drops
+    // the slot from the domain test), a join does not, so the EXISTS stays correlated under
+    // every policy; a MINUS on other slots does not matter.
+    let semi = |p: &QueryPlan| {
+        count_ops(p, |o| {
+            matches!(
+                o,
+                Op::HashJoin { kind: JoinKind::Semi | JoinKind::Anti, .. }
+                    | Op::BindJoin { kind: JoinKind::Semi | JoinKind::Anti, .. }
+                    | Op::NestedLoop { kind: JoinKind::Semi | JoinKind::Anti, .. }
+            )
+        })
+    };
+    for opts in [&hash, &bind] {
+        for q in [
+            "SELECT * { ?x a :C1 FILTER NOT EXISTS { ?x :knows ?y MINUS { ?x :age ?a } } }",
+            "SELECT * { ?x a :C1 FILTER EXISTS { ?x :knows ?y \
+               { ?x :city ?c MINUS { ?x :age ?a } } UNION { ?y :age ?b } } }",
+        ] {
+            assert_eq!(semi(&plan_with(q, &st, opts)), 0, "{q}");
+        }
+        let q = "SELECT * { ?x a :C1 FILTER EXISTS { ?x :knows ?y MINUS { ?y :age ?a } } }";
+        assert_eq!(semi(&plan_with(q, &st, opts)), 1, "{q}");
+    }
 }

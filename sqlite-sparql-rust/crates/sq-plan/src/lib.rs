@@ -71,7 +71,7 @@ pub fn lower_pattern(
 /// Rewrite and plan a lowered query (spec §7.1 steps 3-5); validated in debug builds.
 pub fn optimize(q: LoweredQuery, store: &dyn QuadStore, opts: &QueryOptions) -> Result<QueryPlan> {
     let named = physical::named_graphs(&q, store)?;
-    let rewritten = rewrite::rewrite(q.root.clone(), q.exists.clone(), &named);
+    let rewritten = rewrite::rewrite(q.root.clone(), q.exists.clone(), &named)?;
     let plan = physical::plan_query(&q, rewritten, named, store, opts)?;
     if cfg!(debug_assertions) {
         validate(&plan)?;
