@@ -3,6 +3,10 @@ name = "sq-expr"
 edition.workspace = true
 version.workspace = true
 
+[features]
+# Exposes `sq_expr::testing` (TermResolver / ExistsEval test doubles) to other crates' tests.
+testing = []
+
 [dependencies]
 sq-core = { workspace = true }
 oxrdf = { workspace = true }
@@ -18,3 +22,5 @@ rustc-hash = { workspace = true }
 
 [dev-dependencies]
 sq-core = { workspace = true, features = ["testing"] }
+oxrdfio = { workspace = true }
+sparesults = { workspace = true }

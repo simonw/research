@@ -1,0 +1,13 @@
+# Q5: OPTIONAL with a type check inside
+# dataset: social
+# Every :C3 person, with the :C4 persons they know (unbound when there are none).
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX : <http://example.org/social/>
+SELECT ?x ?y
+WHERE {
+  ?x rdf:type :C3 .
+  OPTIONAL {
+    ?x :knows ?y .
+    ?y rdf:type :C4 .
+  }
+}

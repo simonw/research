@@ -1,0 +1,3 @@
+# W3C SPARQL tests expected to fail, one test IRI per line (anything after the IRI and
+# lines starting with '#' are comments). sq-w3c exits 1 when a failing test is not listed
+# here, and reports listed tests that now pass.

@@ -1,0 +1,13 @@
+# Q12: MINUS
+# dataset: social
+# :C5 persons who know no other :C5 person (?x is shared, so MINUS = NOT EXISTS here).
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX : <http://example.org/social/>
+SELECT ?x
+WHERE {
+  ?x rdf:type :C5 .
+  MINUS {
+    ?x :knows ?y .
+    ?y rdf:type :C5 .
+  }
+}

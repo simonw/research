@@ -1,102 +1,60 @@
 //! sq-expr: SPARQL value model, expression compiler/evaluator, builtins, casts, `=` matrix,
 //! EBV, ORDER BY sort keys and aggregate accumulators. See docs/SPEC.md §6.
-#![allow(unused_variables, dead_code)]
-use std::sync::Arc;
+//!
+//! * [`compile`] turns an `sq_core::ir::Expr` into a [`CompiledExpr`] (constants resolved,
+//!   regexes compiled once, fast paths selected); [`CompiledExpr::eval`] / [`CompiledExpr::ebv`]
+//!   evaluate it on a row of term ids. SPARQL errors are `Ok(None)`; `Err` is fatal.
+//! * Values are decoded lazily ([`Val`]): inline ids decode from their payload with no I/O,
+//!   other ids through the [`ValueCache`] and the host's `TermResolver`.
+//! * Computed results get canonical lexical forms and inline ids when encodable, so
+//!   sameTerm ⇔ id equality holds for computed terms too.
+//! * [`sort_key`] gives the total ORDER BY / MIN / MAX order (§6.5), [`accumulator`] the
+//!   aggregates (§6.7).
+#![forbid(unsafe_code)]
 
-use rustc_hash::FxHashMap;
-use sq_core::eval_api::{ExistsEval, TempDict, TermResolver};
-use sq_core::ir::{AggSpec, Expr};
-use sq_core::{Result, TermId};
+mod aggregate;
+mod cast;
+mod compare;
+mod compile;
+mod eval;
+mod numeric;
+mod regex;
+mod sortkey;
+mod strings;
+mod value;
+mod xsd;
 
-/// Decoded value (cached per TermId in `ValueCache`).
-#[derive(Clone, Debug)]
-pub enum Value {
-    Iri(Arc<str>),
-    BNode(Arc<str>),
-    Str(Arc<str>),
-    LangStr { lex: Arc<str>, lang: Arc<str> },
-    Boolean(bool),
-    Integer(i64),
-    Decimal(oxsdatatypes::Decimal),
-    Float(oxsdatatypes::Float),
-    Double(oxsdatatypes::Double),
-    DateTime(oxsdatatypes::DateTime),
-    Date(oxsdatatypes::Date),
-    Time(oxsdatatypes::Time),
-    GYear(oxsdatatypes::GYear),
-    GYearMonth(oxsdatatypes::GYearMonth),
-    GMonth(oxsdatatypes::GMonth),
-    GMonthDay(oxsdatatypes::GMonthDay),
-    GDay(oxsdatatypes::GDay),
-    Duration(oxsdatatypes::Duration),
-    YearMonthDuration(oxsdatatypes::YearMonthDuration),
-    DayTimeDuration(oxsdatatypes::DayTimeDuration),
-    /// Unknown datatype.
-    Other { lex: Arc<str>, datatype: Arc<str> },
-    /// Known XSD datatype, invalid lexical form (incl. facets, e.g. "300"^^xsd:byte).
-    IllTyped { lex: Arc<str>, datatype: Arc<str> },
-}
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
-/// Lazy value: `Id` keeps the lexical form for STR/DATATYPE/sameTerm.
-#[derive(Clone, Debug)]
-pub enum Val {
-    Id(TermId),
-    V(Value),
-}
+#[cfg(test)]
+mod tests;
 
-/// Per-execution decoded-value cache.
-#[derive(Default)]
-pub struct ValueCache {
-    map: FxHashMap<TermId, Value>,
-}
-impl ValueCache {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
+use sq_core::eval_api::{ExistsEval, TermResolver};
 
+pub use aggregate::{Accumulator, accumulator};
+pub use compare::{Order, compare, compare_values, ebv, ebv_value, equals, equals_values, same_term, same_term_ids};
+pub use compile::{CompiledExpr, compile};
+pub use numeric::Num;
+pub use sortkey::{SortKey, sort_key, sort_key_val, sort_key_value};
+pub use value::{
+    Val, Value, ValueCache, id_of_val, id_of_value, inline_id_of_value, inline_value, is_present, term_of_id,
+    term_of_value, value_of,
+};
+pub use xsd::{XsdType, well_known_iri_id};
+
+/// Everything an evaluation needs from its host (one per execution, or per batch).
 pub struct EvalCtx<'a> {
+    /// Decodes ids and interns computed terms (store dictionary + caches + TempDict).
     pub resolver: &'a mut dyn TermResolver,
+    /// EXISTS / NOT EXISTS callback.
     pub exists: &'a mut dyn ExistsEval,
+    /// Per-execution decoded-value cache.
     pub values: &'a mut ValueCache,
+    /// NOW() (fixed for the whole query).
     pub now: oxsdatatypes::DateTime,
+    /// Base IRI for IRI()/URI().
     pub base_iri: Option<&'a str>,
+    /// RAND(), UUID(), STRUUID().
     pub rng: &'a mut dyn rand::RngCore,
-}
-
-/// Tree with pre-encoded/pre-parsed constants, compiled regexes and fast paths.
-pub struct CompiledExpr {
-    _p: (),
-}
-
-pub fn compile(e: &Expr, temps: &TempDict) -> Result<CompiledExpr> {
-    todo!()
-}
-
-impl CompiledExpr {
-    /// Ok(None) = SPARQL error or unbound; Err only for fatal errors (I/O, interrupt, memory).
-    pub fn eval(&self, row: &[TermId], cx: &mut EvalCtx, canonical: bool) -> Result<Option<TermId>> {
-        todo!()
-    }
-    pub fn ebv(&self, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<bool>> {
-        todo!()
-    }
-}
-
-/// Lexicographic, total ORDER BY key (§6.5). Internal representation is private to sq-expr.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-pub struct SortKey(Vec<u8>);
-
-/// UNBOUND/ERROR -> lowest.
-pub fn sort_key(id: TermId, cx: &mut EvalCtx) -> Result<SortKey> {
-    todo!()
-}
-
-pub trait Accumulator {
-    fn add(&mut self, v: Option<TermId>, cx: &mut EvalCtx) -> Result<()>;
-    fn finish(&mut self, cx: &mut EvalCtx) -> Result<Option<TermId>>;
-}
-
-pub fn accumulator(spec: &AggSpec) -> Box<dyn Accumulator> {
-    todo!()
 }

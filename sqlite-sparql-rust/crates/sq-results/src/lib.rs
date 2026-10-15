@@ -1,50 +1,38 @@
-//! sq-results: SPARQL JSON/XML/CSV/TSV (sparesults), N-Triples/N-Quads/Turtle (oxrdfio),
-//! native SQL value mapping (§8.4) and per-row SPARQL-JSON. Depends only on sq-core.
-#![allow(unused_variables, dead_code)]
-use std::sync::Arc;
+//! sq-results: result serialization for sparqlite (docs/SPEC.md §8.4, §11, §12.1).
+//!
+//! * SELECT / ASK: SPARQL 1.1 JSON, XML, CSV and TSV via sparesults ([`write_solutions`],
+//!   [`write_boolean`]);
+//! * CONSTRUCT / DESCRIBE: N-Triples, N-Quads (default graph) and Turtle via oxrdfio
+//!   ([`write_triples`]);
+//! * the native SQL value mapping of §8.4 ([`sql_native`]);
+//! * the per-row SPARQL-JSON bindings object ([`solution_json`]).
+//!
+//! Writers consume only the [`SolutionSource`](sq_core::eval_api::SolutionSource) /
+//! [`TripleSource`](sq_core::eval_api::TripleSource) traits of sq-core, so the native executor
+//! and the baseline SQL translator share one output path. They pull rows in batches of
+//! [`BATCH_ROWS`](sq_core::BATCH_ROWS), decode each batch with one call and serialize from
+//! borrowed terms: nothing is allocated per row.
 
-use sq_core::eval_api::{SolutionSource, TripleSource};
-use sq_core::term::Term;
-use sq_core::Result;
+mod convert;
+mod format;
+mod json;
+mod native;
+mod solutions;
+mod triples;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ResultFormat {
-    Json,
-    Xml,
-    Csv,
-    Tsv,
-    NTriples,
-    NQuads,
-    Turtle,
-}
-impl ResultFormat {
-    pub fn parse(s: &str) -> Result<Self> {
-        todo!()
-    }
-}
+#[cfg(test)]
+mod tests;
 
-pub fn write_solutions(src: &mut dyn SolutionSource, fmt: ResultFormat, w: &mut dyn std::io::Write) -> Result<()> {
-    todo!()
-}
-pub fn write_boolean(b: bool, fmt: ResultFormat, w: &mut dyn std::io::Write) -> Result<()> {
-    todo!()
-}
-pub fn write_triples(src: &mut dyn TripleSource, fmt: ResultFormat, w: &mut dyn std::io::Write) -> Result<()> {
-    todo!()
-}
+pub use format::ResultFormat;
+pub use json::{append_solution_json, append_term_json, solution_json};
+pub use native::{sql_native, SqlNative};
+pub use solutions::{write_boolean, write_solutions};
+pub use triples::write_triples;
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum SqlNative {
-    Null,
-    Int(i64),
-    Real(f64),
-    Text(String),
-}
-/// §8.4
-pub fn sql_native(t: Option<&Term>) -> SqlNative {
-    todo!()
-}
-/// SPARQL-JSON bindings object for one row.
-pub fn solution_json(vars: &[String], row: &[Option<Arc<Term>>]) -> String {
-    todo!()
+/// Size of the output buffer placed in front of the caller's writer (the sparesults and
+/// oxrdfio serializers issue many small unbuffered writes).
+const OUTPUT_BUFFER_BYTES: usize = 64 * 1024;
+
+fn io_error(e: std::io::Error) -> sq_core::Error {
+    sq_core::Error::Internal(format!("I/O error while writing results: {e}"))
 }

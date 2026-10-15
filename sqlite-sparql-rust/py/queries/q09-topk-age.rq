@@ -1,0 +1,11 @@
+# Q9: ORDER BY DESC(?age) ?x LIMIT 10
+# dataset: social
+# ordered: true
+# Top-k over an integer property; ?x breaks ties so the order is total.
+PREFIX : <http://example.org/social/>
+SELECT ?x ?age
+WHERE {
+  ?x :age ?age .
+}
+ORDER BY DESC(?age) ?x
+LIMIT 10

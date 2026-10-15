@@ -1,0 +1,8 @@
+# Q15: point lookup :p123 ?p ?o
+# dataset: social
+# All eight triples of one subject.
+PREFIX : <http://example.org/social/>
+SELECT ?p ?o
+WHERE {
+  :p123 ?p ?o .
+}

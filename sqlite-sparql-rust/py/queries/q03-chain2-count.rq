@@ -1,0 +1,9 @@
+# Q3: chain-2 COUNT
+# dataset: social
+# Friends of friends; always 9 x persons solutions because every out-degree is 3.
+PREFIX : <http://example.org/social/>
+SELECT (COUNT(*) AS ?count)
+WHERE {
+  ?a :knows ?b .
+  ?b :knows ?c .
+}

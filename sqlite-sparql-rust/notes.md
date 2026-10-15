@@ -50,3 +50,15 @@ translating SPARQL to SQL text or running as an external client.
   `sparqlite 0.1.0 (SQLite 3.45.1)`.
 - Added spareval as an OPTIONAL dependency of tools/sq-w3c only (`--backend reference`) so the W3C
   harness itself can be validated before our engine exists. It is never linked into the extension.
+
+### Wave 1 results
+- sq-results + tools/sq-w3c (pipeline: implement -> adversarial review, no blocking findings): the W3C
+  runner finds 938 tests (sparql11: 331 query + 94 update + 3 CSV + others; sparql10: 288 — the 289th is
+  deliberately not in mf:entries). 639 runnable, 299 skipped (syntax tests, entailment, service...).
+  Validated against spareval as a *reference backend*: 612/639 pass (597 exact + 15 numeric-lenient);
+  the 27 failures were triaged as genuine spareval/spargebra divergences (GRAPH scoping, zero-length
+  paths, xsd:date, BNODE(str) reuse...) and listed in tools/sq-w3c/reference_divergences.txt.
+  The reviewer mutation-tested the comparator (14 kinds of output corruption) — all detected.
+- spargebra quirks that will affect us: `SELECT *` columns come out sorted alphabetically;
+  `OPTIONAL { { P FILTER(F) } }` is simplified into a LeftJoin condition (dawg-optional-filter-005-not-
+  simplified cannot pass); `TRUE`/`False` booleans and VALUES after CONSTRUCT..GROUP BY are rejected.

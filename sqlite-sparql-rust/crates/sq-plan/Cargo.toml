@@ -13,3 +13,5 @@ smallvec = { workspace = true }
 [dev-dependencies]
 sq-core = { workspace = true, features = ["testing"] }
 sq-memstore = { workspace = true }
+oxttl = { workspace = true }
+oxrdfio = { workspace = true }

@@ -8,4 +8,7 @@ sq-core = { workspace = true }
 sparesults = { workspace = true }
 oxrdfio = { workspace = true }
 oxrdf = { workspace = true }
+
+[dev-dependencies]
 serde_json = { workspace = true }
+oxttl = { workspace = true }

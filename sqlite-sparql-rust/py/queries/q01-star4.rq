@@ -1,0 +1,12 @@
+# Q1: star-4 (class + age + city + name)
+# dataset: social
+# A subject star with one constant object (10% of the persons are :C3).
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX : <http://example.org/social/>
+SELECT ?x ?a ?c ?n
+WHERE {
+  ?x rdf:type :C3 ;
+     :age ?a ;
+     :city ?c ;
+     :name ?n .
+}

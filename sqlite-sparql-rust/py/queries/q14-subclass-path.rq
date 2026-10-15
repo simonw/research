@@ -1,0 +1,10 @@
+# Q14: ?x rdf:type/rdfs:subClassOf* bsbm:Product
+# dataset: bsbm
+# Every product, found through the 4-level type hierarchy (one row per product).
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX bsbm: <http://example.org/bsbm/vocabulary/>
+SELECT ?x
+WHERE {
+  ?x rdf:type/rdfs:subClassOf* bsbm:Product .
+}
