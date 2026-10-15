@@ -347,11 +347,10 @@ round measured decode cache hits at 40–160 ns/term).
 
 ## Limitations and known gaps
 
-- **Failing test.** At the time of writing, `review_btree::review_rejected_snapshot_releases_the_stale_page_cache`
-  fails (130 passed, 1 failed in debug). When the data version changes and the new snapshot is
-  rejected (for example after `PRAGMA journal_mode=WAL`), `BtreeReader::snapshot` records the
-  rejection but does not clear the page cache. Up to `page_cache_mb` of dead pages stay
-  allocated until the next accepted snapshot or `clear_page_cache()`. They are never served.
+- **Lazy cache release.** When the data version changes, the page cache of the superseded snapshot
+  is released by the next `BtreeReader::snapshot()` call that sees the new version (the next
+  cursor open or reposition), whether the new snapshot is accepted or rejected (for example
+  after `PRAGMA journal_mode=WAL`). Until then the dead pages stay allocated; they are never served.
 - **Where the B-tree reader runs.** Only rollback-journal file databases with a private cache.
   WAL, `:memory:` and temp databases, shared-cache connections, and the connection's own write
   transactions always use SQL cursors. `ReaderMode::Btree` currently behaves like `Auto`.
