@@ -58,7 +58,10 @@ A literal with a language tag becomes a language-tagged literal. A literal whose
 **3. One format enum, two families.** `ResultFormat` covers both result families. Each writer
 checks the family before it reads anything from the source, and a format from the wrong family
 returns `Error::Invalid`. `solutions_format()` and `graph_format()` map a format to the
-sparesults or oxrdfio format, or to `None`.
+sparesults or oxrdfio format, or to `None`. They return `Option<sparesults::QueryResultsFormat>`
+and `Option<oxrdfio::RdfFormat>`, and `sq-results` re-exports neither crate. A caller that uses
+these methods needs its own `sparesults` or `oxrdfio` dependency, at the workspace pins
+`=0.3.4` and `=0.2.6`.
 
 | Format | `parse` names (ASCII case and surrounding whitespace ignored) | `media_type()` |
 |---|---|---|
@@ -86,17 +89,23 @@ What the golden tests pin down for each format:
 **4. The source contract is enforced, not assumed.** The writers handle several cases
 explicitly:
 
-- The internal `TermId::ERROR` group-key sentinel is rewritten to `UNBOUND` before `decode`,
-  so an error-valued GROUP BY key is written as unbound (SPEC §3 tag table, §5.3).
+- In `write_solutions` only, the internal `TermId::ERROR` group-key sentinel is rewritten to
+  `UNBOUND` before `decode`, so an error-valued GROUP BY key is written as unbound (SPEC §3 tag
+  table, §5.3). `write_triples` passes ids to `decode` unchanged.
 - When there are zero projected variables (`SELECT * {}`), the writer writes one empty solution
   per row and makes no `decode` call.
 - These contract violations return `Error::Internal`:
-  - `ids.len() != rows * width`;
+  - `ids.len() != rows * width` after `next_rows`;
+  - `next_triples` returning a count that differs from the number of triples it appended;
   - a `decode` call that returns the wrong number of terms;
   - a triple with an unbound position, a literal subject or a non-IRI predicate;
   - a projected variable name that `oxrdf::Variable::new` rejects.
 - Errors from the source (for example `Error::Interrupted`) are passed on unchanged.
 - An I/O error becomes `Error::Internal("I/O error while writing results: …")`.
+- One part of the contract is assumed, not checked. The `TripleSource` trait doc in `sq-core`
+  says a source yields a set of triples, already deduplicated, in first-seen order.
+  `write_triples` does no deduplication and writes duplicates as given, so a new `TripleSource`
+  or a test fake must deduplicate itself.
 
 **5. Per-row SPARQL-JSON (`json.rs`).** `sparql_rows` has a `json` column (SPEC §8.3), and
 building a full sparesults document for every row would be wasteful. So `solution_json`,
@@ -122,8 +131,10 @@ returns `Null`, `Int(i64)`, `Real(f64)` or `Text(String)`:
 - The 13 integer types (`integer`, `long`, `int`, `short`, `byte`, the `unsigned*` types and
   the `*Integer` sign types) become INTEGER when the value parses as an `i64` and lies within
   the type's range. Otherwise they become TEXT.
-- `decimal`, `float` and `double` become REAL. `INF`, `+INF`, `-INF` and `NaN` are accepted;
-  `inf` and `Infinity` are not.
+- `decimal`, `float` and `double` become REAL. For `float` and `double`, `INF`, `+INF`, `-INF`
+  and `NaN` are accepted, and `inf`, `Infinity` and `nan` are not. `decimal` accepts only an
+  optional sign and digits with an optional `.` fraction (`[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)`, no
+  exponent), so `"INF"^^xsd:decimal` and `"1e5"^^xsd:decimal` become TEXT.
 - A `boolean` of `true` or `1` becomes 1, and `false` or `0` becomes 0.
 - Every other type becomes lexical TEXT, including dates, times and durations.
 
