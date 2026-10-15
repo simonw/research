@@ -1,0 +1,27 @@
+[package]
+name = "sq-w3c"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+sq-core = { workspace = true }
+sq-api = { workspace = true }
+sq-sqlite = { workspace = true }
+sq-engine = { workspace = true }
+sq-plan = { workspace = true }
+sq-memstore = { workspace = true }
+sq-oracle = { workspace = true }
+sq-results = { workspace = true }
+rusqlite = { workspace = true }
+oxrdf = { workspace = true }
+oxttl = { workspace = true }
+oxrdfio = { workspace = true }
+sparesults = { workspace = true }
+spargebra = { workspace = true }
+serde_json = { workspace = true }
+rustc-hash = { workspace = true }
+spareval = { workspace = true, optional = true }
+
+[features]
+default = ["reference"]
+reference = ["dep:spareval"]

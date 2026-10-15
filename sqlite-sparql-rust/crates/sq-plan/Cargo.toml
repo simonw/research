@@ -1,0 +1,15 @@
+[package]
+name = "sq-plan"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+sq-core = { workspace = true }
+oxrdf = { workspace = true }
+spargebra = { workspace = true }
+rustc-hash = { workspace = true }
+smallvec = { workspace = true }
+
+[dev-dependencies]
+sq-core = { workspace = true, features = ["testing"] }
+sq-memstore = { workspace = true }

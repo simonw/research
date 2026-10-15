@@ -1,0 +1,10 @@
+[package]
+name = "sq-sqlgen"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+sq-core = { workspace = true }
+
+[dev-dependencies]
+sq-core = { workspace = true, features = ["testing"] }

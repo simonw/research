@@ -1,0 +1,10 @@
+target/
+**/target/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+__pycache__/
+.pytest_cache/
+/data/
+w3c-report.json

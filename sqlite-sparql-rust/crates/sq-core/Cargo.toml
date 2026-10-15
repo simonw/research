@@ -1,0 +1,16 @@
+[package]
+name = "sq-core"
+edition.workspace = true
+version.workspace = true
+
+[features]
+default = []
+testing = []   # exposes sq_core::testing (cursor conformance suite, random data)
+
+[dependencies]
+oxrdf = { workspace = true }
+spargebra = { workspace = true }
+thiserror = { workspace = true }
+rustc-hash = { workspace = true }
+xxhash-rust = { workspace = true }
+

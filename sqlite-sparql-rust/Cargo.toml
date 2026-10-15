@@ -1,0 +1,51 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "tools/*"]
+exclude = ["ext"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+rust-version = "1.85"
+
+[workspace.dependencies]
+oxrdf = "=0.3.4"
+spargebra = "=0.4.7"          # default features only: NO sparql-12, sep-0002, sep-0006
+oxttl = "=0.2.4"
+oxrdfio = "=0.2.6"
+sparesults = "=0.3.4"
+oxsdatatypes = "=0.2.3"       # XSD datatype library (not an evaluator); allowed
+oxiri = "0.2.11"
+thiserror = "2"
+rustc-hash = "2"
+smallvec = "1"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+regex = "1"
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"
+rand = "0.9"
+serde_json = "1"
+# Reference evaluator used ONLY by tools/sq-w3c --backend reference to validate the test harness.
+spareval = { version = "=0.2.7", default-features = false }
+# Links the SYSTEM libsqlite3 (3.45.1 = the Python host). NEVER add "bundled" or "modern_sqlite".
+rusqlite = { version = "=0.40.2", default-features = false, features = ["functions", "vtab"] }
+sq-core = { path = "crates/sq-core" }
+sq-memstore = { path = "crates/sq-memstore" }
+sq-sqlite = { path = "crates/sq-sqlite" }
+sq-expr = { path = "crates/sq-expr" }
+sq-plan = { path = "crates/sq-plan" }
+sq-exec = { path = "crates/sq-exec" }
+sq-oracle = { path = "crates/sq-oracle" }
+sq-results = { path = "crates/sq-results" }
+sq-sqlgen = { path = "crates/sq-sqlgen" }
+sq-engine = { path = "crates/sq-engine" }
+sq-api = { path = "crates/sq-api" }
+
+[profile.release]
+debug = 1
+panic = "unwind"              # we catch_unwind at every FFI boundary
+lto = "thin"
+
+[profile.dev]
+opt-level = 1                 # tests over 100K-quad fixtures are unbearably slow at opt-level 0

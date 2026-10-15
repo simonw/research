@@ -1,0 +1,22 @@
+[package]
+name = "sq-api"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+sq-core = { workspace = true }
+sq-engine = { workspace = true }
+sq-sqlite = { workspace = true }
+sq-sqlgen = { workspace = true }
+sq-results = { workspace = true }
+sq-plan = { workspace = true }
+sq-exec = { workspace = true }
+rusqlite = { workspace = true }
+serde_json = { workspace = true }
+oxrdf = { workspace = true }
+oxrdfio = { workspace = true }
+spargebra = { workspace = true }
+rustc-hash = { workspace = true }
+
+[dev-dependencies]
+sq-core = { workspace = true, features = ["testing"] }

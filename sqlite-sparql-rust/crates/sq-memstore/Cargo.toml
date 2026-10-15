@@ -1,0 +1,12 @@
+[package]
+name = "sq-memstore"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+sq-core = { workspace = true }
+oxrdf = { workspace = true }
+rustc-hash = { workspace = true }
+
+[dev-dependencies]
+sq-core = { workspace = true, features = ["testing"] }

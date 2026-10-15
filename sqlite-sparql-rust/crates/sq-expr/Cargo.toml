@@ -1,0 +1,20 @@
+[package]
+name = "sq-expr"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+sq-core = { workspace = true }
+oxrdf = { workspace = true }
+spargebra = { workspace = true }
+oxsdatatypes = { workspace = true }
+oxiri = { workspace = true }
+regex = { workspace = true }
+md-5 = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
+rustc-hash = { workspace = true }
+
+[dev-dependencies]
+sq-core = { workspace = true, features = ["testing"] }

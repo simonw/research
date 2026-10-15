@@ -1,0 +1,11 @@
+[package]
+name = "sq-results"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+sq-core = { workspace = true }
+sparesults = { workspace = true }
+oxrdfio = { workspace = true }
+oxrdf = { workspace = true }
+serde_json = { workspace = true }

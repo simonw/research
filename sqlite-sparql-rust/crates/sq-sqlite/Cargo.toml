@@ -1,0 +1,15 @@
+[package]
+name = "sq-sqlite"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+sq-core = { workspace = true }
+rusqlite = { workspace = true }
+oxrdf = { workspace = true }
+oxrdfio = { workspace = true }
+rustc-hash = { workspace = true }
+
+[dev-dependencies]
+sq-core = { workspace = true, features = ["testing"] }
+sq-memstore = { workspace = true }

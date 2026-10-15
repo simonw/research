@@ -1,0 +1,17 @@
+[package]
+name = "sq-exec"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+sq-core = { workspace = true }
+sq-expr = { workspace = true }
+oxrdf = { workspace = true }
+oxsdatatypes = { workspace = true }
+rustc-hash = { workspace = true }
+smallvec = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+sq-core = { workspace = true, features = ["testing"] }
+sq-memstore = { workspace = true }

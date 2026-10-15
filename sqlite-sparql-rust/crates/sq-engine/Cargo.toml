@@ -1,0 +1,20 @@
+[package]
+name = "sq-engine"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+sq-core = { workspace = true }
+sq-plan = { workspace = true }
+sq-exec = { workspace = true }
+sq-expr = { workspace = true }
+sq-results = { workspace = true }
+oxrdf = { workspace = true }
+oxrdfio = { workspace = true }
+spargebra = { workspace = true }
+rustc-hash = { workspace = true }
+
+[dev-dependencies]
+sq-core = { workspace = true, features = ["testing"] }
+sq-memstore = { workspace = true }
+sq-oracle = { workspace = true }

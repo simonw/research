@@ -24,3 +24,29 @@ translating SPARQL to SQL text or running as an external client.
 - W3C test suite: HTTPS tarball from codeload is blocked by the proxy, but `git clone --sparse` of
   github.com/w3c/rdf-tests works. sparql/sparql11 has 331 QueryEvaluationTests + 94 UpdateEvaluationTests;
   sparql/sparql10 has 289 QueryEvaluationTests. (Kept outside the repo in the scratchpad.)
+
+### Design panel (workflow: 3 architects -> 3 judges -> synthesis)
+- Architects: speed / correctness / engineering angles. Judge totals: correctness 21, engineering 19, speed 18.5.
+- Synthesized spec is committed at docs/SPEC.md (3,850 lines) with the decision log in docs/DECISIONS.md.
+- Key decisions: one `rdf_quad(g,s,p,o)` WITHOUT ROWID table with 4 graph-first covering orders
+  (GSPO pk + GPSO/GPOS/GOSP) + 4 partial g-last orders for named graphs + a tiny partial
+  `rdf_gpox` index for exact integer range pushdown; 64-bit ids with a 4-bit LOW tag and inline
+  int/bool/decimal/dateTime/date/short-string literals; pull-based batched executor over
+  `QuadCursor`s backed by pooled persistent prepared statements; planner with bind/hash/merge
+  joins and a "SqlJoin" hybrid that hands selective index-nested-loop chains to SQLite's VDBE in
+  OUR join order (CROSS JOIN + INDEXED BY).
+- Measured by the panel on this machine: pinned scan 105-140 ns/row; point probe ~1 us inside a
+  held read txn vs 7-8 us without (=> always hold a read transaction); SQLite's own NLJ ~0.55
+  us/probe; chain-2 merge join 144-172 ms vs SQLite's join 360-650 ms.
+
+### WP0 (lead)
+- Cargo workspace: crates/{sq-core, sq-memstore, sq-sqlite, sq-expr, sq-plan, sq-exec, sq-oracle,
+  sq-results, sq-sqlgen, sq-engine, sq-api}, tools/{sq-w3c, sq-bench}, ext/ (separate workspace so
+  rusqlite's `loadable_extension` never unifies with the native test builds that link the system
+  libsqlite3 3.45.1 — same version Python loads into).
+- sq-core copied from the synthesizer's verified prototype; all other crates are `todo!()` stubs with
+  the spec §11 signatures; sq-memstore implemented by me (passes the cursor conformance suite).
+- ext builds (400 KB), `cargo tree` gate shows no `bundled`, Python loads it: `sparql_version()` ->
+  `sparqlite 0.1.0 (SQLite 3.45.1)`.
+- Added spareval as an OPTIONAL dependency of tools/sq-w3c only (`--backend reference`) so the W3C
+  harness itself can be validated before our engine exists. It is never linked into the extension.

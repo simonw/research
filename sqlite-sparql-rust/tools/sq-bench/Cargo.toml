@@ -1,0 +1,10 @@
+[package]
+name = "sq-bench"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+sq-core = { workspace = true }
+sq-api = { workspace = true }
+rusqlite = { workspace = true }
+oxrdfio = { workspace = true }
