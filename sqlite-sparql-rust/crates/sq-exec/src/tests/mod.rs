@@ -19,6 +19,7 @@ use sq_memstore::MemStore;
 
 use crate::{ExecCaches, Execution};
 
+mod bench;
 mod construct;
 mod exists;
 mod graphs;

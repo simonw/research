@@ -88,3 +88,16 @@ translating SPARQL to SQL text or running as an external client.
 - Found during WP2: `NOT INDEXED` does NOT pin the primary key of a WITHOUT ROWID table on SQLite
   3.45 — the planner still chose rdf_gpso/rdf_gosp. Fixed in sq-core: GSPO now renders as
   `INDEXED BY sqlite_autoindex_rdf_quad_1`.
+- sq-plan (implement -> 2 review/fix rounds): lowering of every spargebra construct, §7.2 props,
+  rewrites (GRAPH push/loop, filter placement, sameTerm seeding, Count, TopK, EXISTS decorrelation
+  under §7.3.4), bounded-count + stats cardinality, left-deep DP (<= 12 units, bounded at 6000 steps,
+  greedy beyond), BindJoin/HashJoin/NestedLoop choice, validate(), explain. All 921 W3C .rq files
+  (101 rejected by spargebra) planned & validated: 5,532 plans under 4 option sets. Reviewers found
+  plans that validate() rejected (seeded OPTIONAL groups), a non-equivalent EXISTS decorrelation when
+  the EXISTS contains a MINUS, a GRAPH ?g push that returned extra rows (`GRAPH ?g {?s :p ?o OPTIONAL
+  {?o :q ?g}}`), DP time cliffs. The planner author wrote down a precise "seed propagation contract"
+  that the executor must follow; I appended it to the executor's work package mid-flight so its
+  reviewers enforce it.
+- Tightened vs spec: the GRAPH ?g push rule (spec's `?g ∈ certain(P')` test accepts 3 non-equivalent
+  cases: VALUES ?g inside the graph, UNIONs mixing graph-reading and non-reading branches, OPTIONAL
+  whose left side does not read the graph).

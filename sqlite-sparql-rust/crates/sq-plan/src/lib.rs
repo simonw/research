@@ -3,16 +3,17 @@
 //!
 //! Pipeline (`plan_query`): [`parse_query`] -> [`lower_query`] -> [`optimize`] ->
 //! [`validate()`] (debug builds). `optimize` runs, in order:
-//! * logical rewrites (`rewrite`): `GRAPH <c>` membership, GRAPH ?g push-or-loop, filter
-//!   placement and sameTerm seed constants;
-//! * physical planning (`physical`): join groups ordered by DP over connected subsets (greedy
-//!   beyond 12 units), BindJoin / HashJoin / NestedLoop per `JoinPolicy` and cost, OPTIONAL,
-//!   MINUS, EXISTS (correlated or decorrelated into Semi / Anti joins), TopK, Count, GraphLoop
-//!   / GraphNames, then pre-order ids and canonical flags.
+//! * logical rewrites (`rewrite`): `GRAPH <c>` membership, Empty propagation, GRAPH ?g
+//!   push-or-loop, filter placement and sameTerm seed constants;
+//! * physical planning (`physical`): join groups ordered by DP over connected subsets (up to
+//!   12 units and a bounded number of DP steps; greedy otherwise), BindJoin / HashJoin /
+//!   NestedLoop per `JoinPolicy` and cost, OPTIONAL, MINUS, EXISTS (correlated or decorrelated
+//!   into Semi / Anti joins), TopK, Count, GraphLoop / GraphNames, then pre-order ids and
+//!   canonical flags.
 //!
 //! Module map: `lower` (IR construction), `props` (certain / maybe / safe_inject),
-//! `rewrite::{graph, filter}`, `card` (cardinality), `physical::{join, scan, semi, finish}`,
-//! `validate`, `explain`.
+//! `rewrite::{graph, empty, filter}`, `card` (cardinality),
+//! `physical::{join, scan, semi, estimate, finish}`, `validate`, `explain`.
 mod card;
 mod explain;
 mod expr;

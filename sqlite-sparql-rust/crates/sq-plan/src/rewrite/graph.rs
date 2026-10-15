@@ -1,6 +1,7 @@
 //! GRAPH rewrites (spec §7.2 "GRAPH ?g push rule", "GRAPH \<c\>").
 //!
-//! * `GRAPH <c> { P }`: Empty when c is not a named graph of the dataset (even for an empty P);
+//! * `GRAPH <c> { P }`: Empty when c is not a named graph of the dataset (even for an empty P;
+//!   `rewrite::empty` then folds it into its ancestors);
 //!   otherwise P with every `Active` of its immediate scope (EXISTS patterns included) replaced
 //!   by `Const(c)`.
 //! * `GRAPH ?g { P }`: P′ = P with `Active` -> `Slot(g)` when that is provably equivalent to
@@ -9,11 +10,16 @@
 //!
 //! The push condition is the spec's (only Bgp / Path / Join / LeftJoin / Union / Filter /
 //! Extend / Values / nested Graph; no expression mentions ?g or contains EXISTS; no Extend
-//! targets ?g; ?g certain in P′), tightened to close three holes where "?g certain in P′" holds
+//! targets ?g; ?g certain in P′), tightened to close four holes where "?g certain in P′" holds
 //! but the pushed form is not equivalent: `VALUES ?g` inside the graph (binds ?g without
 //! ranging over named graphs), a UNION branch or nested `GRAPH <c>` binding ?g through a
-//! non-graph position, and an OPTIONAL whose left side does not read the graph while its right
-//! side does. Each node is classified as
+//! non-graph position, an OPTIONAL whose left side does not read the graph while its right
+//! side does, and an OPTIONAL whose right side binds ?g directly (through a non-graph position
+//! or a nested `GRAPH ?g`) while its left side does not certainly do so. In the last case, per
+//! graph G, a right row binding ?g to v ≠ G is still compatible with the left row, which then
+//! has a partner and is not kept on its own; the merged row is dropped by the final
+//! `⋈ {?g ↦ G}`, so the left row disappears, while the pushed form joins on ?g and keeps it.
+//! Each node is classified as
 //!   * `Indep`: does not read the active graph and never binds ?g;
 //!   * `GForm`: equivalent to ⋃_G eval_G(X) ⋈ {?g ↦ G} once pushed;
 //!   * `Bad`: anything else,
@@ -163,6 +169,7 @@ pub(crate) fn classify(l: &Logical, g: Slot, lp: &LogicalProps<'_>) -> Class {
             }
             match (classify(left, g, lp), classify(right, g, lp)) {
                 (Class::Bad, _) | (_, Class::Bad) | (Class::Indep, Class::GForm) => Class::Bad,
+                (Class::GForm, _) if direct(right, g).maybe && !direct(left, g).certain => Class::Bad,
                 (Class::GForm, _) => Class::GForm,
                 (Class::Indep, Class::Indep) => Class::Indep,
             }
@@ -208,6 +215,52 @@ pub(crate) fn classify(l: &Logical, g: Slot, lp: &LogicalProps<'_>) -> Class {
     }
 }
 
+/// Whether a pattern binds ?g (`g`) directly, i.e. other than through the graph position of
+/// a pattern reading the active graph: as a subject / predicate / object or path endpoint, or
+/// through a nested `GRAPH ?g` (still a `Graph` node, or already pushed: patterns whose graph
+/// is `Slot(g)`). Only meaningful for `Indep` / `GForm` nodes (anything else is `Bad`
+/// already).
+#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+struct Direct {
+    /// In some solution.
+    maybe: bool,
+    /// In every solution.
+    certain: bool,
+}
+
+impl Direct {
+    fn both(b: bool) -> Direct {
+        Direct { maybe: b, certain: b }
+    }
+}
+
+fn direct(l: &Logical, g: Slot) -> Direct {
+    let term = |t: &PatTerm| *t == PatTerm::Slot(g);
+    let graph = |gs: &GraphSel| *gs == GraphSel::Slot(g);
+    match l {
+        Logical::Bgp(pats) => Direct::both(pats.iter().any(|p| graph(&p.g) || term(&p.s) || term(&p.p) || term(&p.o))),
+        Logical::Path { g: gs, s, o, .. } => Direct::both(graph(gs) || term(s) || term(o)),
+        // `VALUES ?g` makes its node `Bad` anyway; conservative here.
+        Logical::Values { slots, .. } => Direct { maybe: slots.contains(&g), certain: false },
+        Logical::Graph { name: PatTerm::Slot(h), .. } if *h == g => Direct::both(true),
+        Logical::Join(a, b) => {
+            let (a, b) = (direct(a, g), direct(b, g));
+            Direct { maybe: a.maybe || b.maybe, certain: a.certain || b.certain }
+        }
+        Logical::LeftJoin { left, right, .. } => {
+            let (l, r) = (direct(left, g), direct(right, g));
+            Direct { maybe: l.maybe || r.maybe, certain: l.certain }
+        }
+        Logical::Union(a, b) => {
+            let (a, b) = (direct(a, g), direct(b, g));
+            Direct { maybe: a.maybe || b.maybe, certain: a.certain && b.certain }
+        }
+        Logical::Filter { input, .. } | Logical::Extend { input, .. } => direct(input, g),
+        // `Indep` nested graphs and leaves never bind ?g; other nodes are `Bad` (any answer).
+        _ => Direct::default(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,6 +296,25 @@ mod tests {
         };
         assert_eq!(class(&lj(&a, &values)), Class::GForm);
         assert_eq!(class(&lj(&values, &a)), Class::Bad);
+        // An OPTIONAL right side binding ?g directly (object position, nested GRAPH ?g) blocks
+        // the push unless the left side certainly binds ?g directly too.
+        let g_obj = active(PatTerm::Slot(0), c(2), PatTerm::Slot(G));
+        assert_eq!(class(&lj(&a, &g_obj)), Class::Bad);
+        let nested = Logical::Graph { name: PatTerm::Slot(G), input: Box::new(a.clone()) };
+        assert_eq!(class(&lj(&a, &nested)), Class::Bad);
+        let in_g = QuadPat { g: GraphSel::Slot(G), s: PatTerm::Slot(0), p: c(1), o: PatTerm::Slot(1) };
+        let pushed = Logical::Bgp(vec![in_g]);
+        assert_eq!(class(&pushed), Class::GForm);
+        assert_eq!(class(&lj(&a, &pushed)), Class::Bad, "a nested GRAPH ?g that was already pushed");
+        let g_subj = active(PatTerm::Slot(G), c(3), PatTerm::Slot(4));
+        assert_eq!(class(&lj(&g_subj, &g_obj)), Class::GForm);
+        assert_eq!(class(&lj(&Logical::Join(Box::new(a.clone()), Box::new(g_subj.clone())), &nested)), Class::GForm);
+        assert_eq!(class(&lj(&a, &lj(&g_subj, &a))), Class::Bad, "the right side binds ?g directly");
+        let maybe_g = Logical::Union(Box::new(g_subj.clone()), Box::new(a.clone()));
+        assert_eq!(class(&maybe_g), Class::GForm);
+        assert_eq!(class(&lj(&maybe_g, &g_obj)), Class::Bad, "the left side binds ?g directly only maybe");
+        // Inner joins distribute over the per-graph union: direct bindings are fine there.
+        assert_eq!(class(&Logical::Join(Box::new(a.clone()), Box::new(g_obj.clone()))), Class::GForm);
         let minus = Logical::Minus { left: Box::new(a.clone()), right: Box::new(a.clone()) };
         assert_eq!(class(&minus), Class::Bad);
         let bind_g = Logical::Extend { input: Box::new(a.clone()), slot: G, expr: Expr::Slot(0) };

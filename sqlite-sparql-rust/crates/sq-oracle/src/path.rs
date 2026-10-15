@@ -6,7 +6,9 @@
 //!
 //! * A link `:p`, `^path`, `path1/path2` and `path1|path2` follow the algebra literally: a
 //!   sequence is a join on a fresh middle variable followed by a projection, an alternative is
-//!   a union. Both keep duplicates.
+//!   a union. Both keep duplicates. The middle of a sequence is a *variable*: each operand is
+//!   evaluated with it free, so its zero-length matches range over `nodes(G)` and never fix it
+//!   to an endpoint constant that is not a node (`:zz (:p?/:q?) ?y` has no solution).
 //! * `path?`, `path*` and `path+` produce sets. `*` and `+` use the ALP procedure: a
 //!   depth-first walk with a visited set, which terminates on cycles.
 //! * Zero-length matches: a fixed endpoint matches itself even when it is not a node of the
@@ -14,6 +16,10 @@
 //!   active graph (`nodes(G)`: subjects and objects) matches itself.
 //! * A negated property set matches the (x, y) pairs linked by at least one predicate outside
 //!   the set: a set, because §18.4 defines it with an existential over the triples.
+use std::cell::RefCell;
+use std::ptr;
+use std::rc::Rc;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use sq_core::ir::PathPlan;
 use sq_core::{Result, TermId};
@@ -21,7 +27,7 @@ use sq_core::{Result, TermId};
 use crate::dataset::{Graph, GraphReader};
 
 /// An endpoint of a path pattern.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum End {
     Fixed(TermId),
     Free,
@@ -47,14 +53,37 @@ enum Dir {
     Backward,
 }
 
-pub(crate) struct PathEval<'a> {
-    pub(crate) reader: GraphReader<'a>,
-    pub(crate) graph: Graph<'a>,
+/// Which endpoint a [`Side`]-indexed operand is keyed on.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+enum Side {
+    Start,
+    End,
 }
 
-impl PathEval<'_> {
+/// The pairs of a path operand grouped by one endpoint: key -> the other endpoint, one entry
+/// per pair (duplicates kept).
+type Index = FxHashMap<TermId, Vec<TermId>>;
+
+/// A sequence operand evaluated once: (operand, its endpoints, the endpoint it is keyed on).
+/// The operand is identified by address; it is borrowed for the evaluator's lifetime.
+type OperandKey = (*const PathPlan, End, End, Side);
+
+/// Evaluates one property path pattern over one graph of the dataset.
+pub(crate) struct PathEval<'a> {
+    reader: GraphReader<'a>,
+    graph: Graph<'a>,
+    /// Sequence operands evaluated with their middle free, indexed on the middle. Inside a
+    /// closure the same operand is joined once per visited node; it is evaluated only once.
+    operands: RefCell<FxHashMap<OperandKey, Rc<Index>>>,
+}
+
+impl<'a> PathEval<'a> {
+    pub(crate) fn new(reader: GraphReader<'a>, graph: Graph<'a>) -> Self {
+        PathEval { reader, graph, operands: RefCell::default() }
+    }
+
     /// eval(Path(from, path, to)) as a bag of (x, y) pairs.
-    pub(crate) fn pairs(&self, path: &PathPlan, from: End, to: End) -> Result<Vec<(TermId, TermId)>> {
+    pub(crate) fn pairs(&self, path: &'a PathPlan, from: End, to: End) -> Result<Vec<(TermId, TermId)>> {
         Ok(match path {
             PathPlan::Pred(p) => {
                 let mut triples = Vec::new();
@@ -72,16 +101,27 @@ impl PathEval<'_> {
             }
             PathPlan::Inv(inner) => self.pairs(inner, to, from)?.into_iter().map(|(x, y)| (y, x)).collect(),
             PathPlan::Seq(first, second) => {
-                // Join(Path(X, first, ?v), Path(?v, second, Y)), projected onto X and Y.
-                let left = self.pairs(first, from, End::Free)?;
-                let mut ends: FxHashMap<TermId, Vec<TermId>> = FxHashMap::default();
+                // A = Join(eval(Path(X, first, V)), eval(Path(V, second, Y))) for a fresh
+                // variable V, then Project(A, Var(X, Y)), duplicates kept. V is free in BOTH
+                // operands: binding it to the other operand's value instead would turn it into
+                // a constant, and a constant matches itself through a zero-length step even
+                // when it is not in nodes(G). The operand on a fixed endpoint's side drives the
+                // join; the other one is evaluated once and indexed on V.
                 let mut out = Vec::new();
-                for (x, middle) in left {
-                    if !ends.contains_key(&middle) {
-                        let right = self.pairs(second, End::Fixed(middle), to)?;
-                        ends.insert(middle, right.into_iter().map(|(_, y)| y).collect());
+                if from.fixed().is_some() || to.fixed().is_none() {
+                    let right = self.operand(second, End::Free, to, Side::Start)?;
+                    for (x, v) in self.pairs(first, from, End::Free)? {
+                        if let Some(ys) = right.get(&v) {
+                            out.extend(ys.iter().map(|&y| (x, y)));
+                        }
                     }
-                    out.extend(ends[&middle].iter().map(|y| (x, *y)));
+                } else {
+                    let left = self.operand(first, from, End::Free, Side::End)?;
+                    for (v, y) in self.pairs(second, End::Free, to)? {
+                        if let Some(xs) = left.get(&v) {
+                            out.extend(xs.iter().map(|&x| (x, y)));
+                        }
+                    }
                 }
                 out
             }
@@ -100,6 +140,25 @@ impl PathEval<'_> {
         })
     }
 
+    /// eval(Path(from, path, to)) indexed on the endpoint `key`, memoized for this pattern.
+    fn operand(&self, path: &'a PathPlan, from: End, to: End, key: Side) -> Result<Rc<Index>> {
+        let memo_key = (ptr::from_ref(path), from, to, key);
+        if let Some(index) = self.operands.borrow().get(&memo_key) {
+            return Ok(Rc::clone(index));
+        }
+        let mut index = Index::default();
+        for (x, y) in self.pairs(path, from, to)? {
+            let (k, other) = match key {
+                Side::Start => (x, y),
+                Side::End => (y, x),
+            };
+            index.entry(k).or_default().push(other);
+        }
+        let index = Rc::new(index);
+        self.operands.borrow_mut().insert(memo_key, Rc::clone(&index));
+        Ok(index)
+    }
+
     /// eval(Path(X, ZeroLengthPath, Y)).
     fn zero_length(&self, from: End, to: End) -> Result<Vec<(TermId, TermId)>> {
         Ok(match (from, to) {
@@ -116,7 +175,7 @@ impl PathEval<'_> {
     }
 
     /// `path*` (`reflexive`) or `path+` as a set of pairs (§18.4 ZeroOrMorePath / OneOrMorePath).
-    fn closure(&self, path: &PathPlan, from: End, to: End, reflexive: bool) -> Result<Vec<(TermId, TermId)>> {
+    fn closure(&self, path: &'a PathPlan, from: End, to: End, reflexive: bool) -> Result<Vec<(TermId, TermId)>> {
         let mut out = Vec::new();
         let mut steps = Steps::default();
         match (from, to) {
@@ -147,7 +206,7 @@ impl PathEval<'_> {
     /// The nodes reachable from `start` by one or more steps of `path` (zero or more when
     /// `reflexive`), each once, in visit order: the ALP procedure of §18.4 with an explicit
     /// stack instead of recursion.
-    fn alp(&self, path: &PathPlan, start: TermId, reflexive: bool, dir: Dir, steps: &mut Steps) -> Result<Vec<TermId>> {
+    fn alp(&self, path: &'a PathPlan, start: TermId, reflexive: bool, dir: Dir, steps: &mut Steps) -> Result<Vec<TermId>> {
         let mut visited: FxHashSet<TermId> = FxHashSet::default();
         let mut order = Vec::new();
         let mut stack: Vec<TermId> =
@@ -165,7 +224,7 @@ impl PathEval<'_> {
 
     /// eval(n, path): the nodes one `path` step away from `n`, computed once per node for
     /// one closure evaluation.
-    fn step<'s>(&self, path: &PathPlan, n: TermId, dir: Dir, steps: &'s mut Steps) -> Result<&'s [TermId]> {
+    fn step<'s>(&self, path: &'a PathPlan, n: TermId, dir: Dir, steps: &'s mut Steps) -> Result<&'s [TermId]> {
         if !steps.contains_key(&n) {
             let next = match dir {
                 Dir::Forward => self.pairs(path, End::Fixed(n), End::Free)?.into_iter().map(|(_, y)| y).collect(),

@@ -5,40 +5,34 @@ use sq_expr::CompiledExpr;
 
 use super::{BoxOp, Operator};
 use crate::ctx::ExecCtx;
-use crate::rows::retain_from;
+use crate::rows::Pull;
 use crate::seed::{Seed, SeedBuf};
 
 pub(crate) struct Filter {
     input: BoxOp,
     expr: CompiledExpr,
     seed: SeedBuf,
+    pull: Pull,
 }
 
 impl Filter {
     pub fn new(input: BoxOp, expr: CompiledExpr, width: usize) -> Self {
-        Filter { input, expr, seed: SeedBuf::new(width) }
+        Filter { input, expr, seed: SeedBuf::new(width), pull: Pull::new(width) }
     }
 }
 
 impl Operator for Filter {
     fn open(&mut self, cx: &mut ExecCtx, seed: Option<Seed<'_>>) -> Result<()> {
         self.seed.set(seed);
+        self.pull.reset();
         self.input.open(cx, self.seed.full())
     }
 
     fn next(&mut self, cx: &mut ExecCtx, out: &mut Batch) -> Result<bool> {
-        loop {
-            if out.is_full() {
-                return Ok(true);
-            }
-            let start = out.len();
-            let more = self.input.next(cx, out)?;
-            let expr = &self.expr;
-            cx.with_eval(|ecx| retain_from(out, start, |row| Ok(expr.ebv(row, ecx)? == Some(true))))?;
-            if !more {
-                return Ok(false);
-            }
-        }
+        let expr = &self.expr;
+        self.pull.pump(cx, self.input.as_mut(), out, |cx, row| {
+            Ok(cx.with_eval(|ecx| expr.ebv(row, ecx))? == Some(true))
+        })
     }
 
     fn close(&mut self, cx: &mut ExecCtx) {

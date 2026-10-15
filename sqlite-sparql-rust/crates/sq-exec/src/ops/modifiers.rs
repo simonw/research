@@ -6,7 +6,7 @@ use sq_core::{BATCH_ROWS, Batch, Result, Slot, TermId};
 
 use super::{BoxOp, Operator};
 use crate::ctx::{Charge, ExecCtx};
-use crate::rows::retain_from;
+use crate::rows::{Pull, retain_from};
 use crate::seed::{Seed, SeedBuf};
 
 /// Keeps `slots`, resets every other slot to UNBOUND (inside an EXISTS pattern the substituted
@@ -71,7 +71,8 @@ enum Seen {
     Zero(bool),
     One(FxHashSet<TermId>),
     Two(FxHashSet<(TermId, TermId)>),
-    Many(FxHashSet<SmallVec<[TermId; 4]>>),
+    /// Keys are looked up through `scratch`; only new keys are stored (no per-row allocation).
+    Many(FxHashSet<SmallVec<[TermId; 4]>>, Vec<TermId>),
 }
 
 impl Seen {
@@ -80,7 +81,7 @@ impl Seen {
             0 => Seen::Zero(false),
             1 => Seen::One(FxHashSet::default()),
             2 => Seen::Two(FxHashSet::default()),
-            _ => Seen::Many(FxHashSet::default()),
+            _ => Seen::Many(FxHashSet::default(), Vec::with_capacity(n)),
         }
     }
 
@@ -91,8 +92,13 @@ impl Seen {
             Seen::Zero(any) => (!std::mem::replace(any, true), 0),
             Seen::One(s) => (s.insert(row[slots[0] as usize]), 16),
             Seen::Two(s) => (s.insert((row[slots[0] as usize], row[slots[1] as usize])), 24),
-            Seen::Many(s) => {
-                let k: SmallVec<[TermId; 4]> = slots.iter().map(|x| row[*x as usize]).collect();
+            Seen::Many(s, scratch) => {
+                scratch.clear();
+                scratch.extend(slots.iter().map(|x| row[*x as usize]));
+                if s.contains(&scratch[..]) {
+                    return (false, 0);
+                }
+                let k = SmallVec::from_slice(scratch);
                 let bytes = 48 + if k.spilled() { 8 * k.len() } else { 0 };
                 (s.insert(k), bytes)
             }
@@ -104,7 +110,7 @@ impl Seen {
             Seen::Zero(any) => *any = false,
             Seen::One(s) => *s = FxHashSet::default(),
             Seen::Two(s) => *s = FxHashSet::default(),
-            Seen::Many(s) => *s = FxHashSet::default(),
+            Seen::Many(s, _) => *s = FxHashSet::default(),
         }
     }
 }
@@ -115,13 +121,14 @@ pub(crate) struct Distinct {
     slots: Vec<Slot>,
     seen: Seen,
     seed: SeedBuf,
+    pull: Pull,
     charge: Charge,
 }
 
 impl Distinct {
     pub fn new(input: BoxOp, slots: Vec<Slot>, width: usize) -> Self {
         let seen = Seen::new(slots.len());
-        Distinct { input, slots, seen, seed: SeedBuf::new(width), charge: Charge::default() }
+        Distinct { input, slots, seen, seed: SeedBuf::new(width), pull: Pull::new(width), charge: Charge::default() }
     }
 }
 
@@ -129,30 +136,20 @@ impl Operator for Distinct {
     fn open(&mut self, cx: &mut ExecCtx, seed: Option<Seed<'_>>) -> Result<()> {
         self.seed.set(seed);
         self.seen.clear();
+        self.pull.reset();
         cx.release(&mut self.charge);
         self.input.open(cx, self.seed.full())
     }
 
     fn next(&mut self, cx: &mut ExecCtx, out: &mut Batch) -> Result<bool> {
-        loop {
-            if out.is_full() {
-                return Ok(true);
+        let (seen, slots, charge) = (&mut self.seen, &self.slots[..], &mut self.charge);
+        self.pull.pump(cx, self.input.as_mut(), out, |cx, row| {
+            let (new, bytes) = seen.insert(row, slots);
+            if new {
+                cx.charge(charge, bytes)?;
             }
-            let start = out.len();
-            let more = self.input.next(cx, out)?;
-            let (seen, slots, charge) = (&mut self.seen, &self.slots[..], &mut self.charge);
-            let sh = &cx.sh;
-            retain_from(out, start, |row| {
-                let (new, bytes) = seen.insert(row, slots);
-                if new {
-                    sh.charge(charge, bytes)?;
-                }
-                Ok(new)
-            })?;
-            if !more {
-                return Ok(false);
-            }
-        }
+            Ok(new)
+        })
     }
 
     fn close(&mut self, cx: &mut ExecCtx) {
@@ -169,12 +166,14 @@ pub(crate) struct Reduced {
     last: Vec<TermId>,
     has_last: bool,
     seed: SeedBuf,
+    pull: Pull,
 }
 
 impl Reduced {
     pub fn new(input: BoxOp, slots: Vec<Slot>, width: usize) -> Self {
         let n = slots.len();
-        Reduced { input, slots, last: vec![TermId::UNBOUND; n], has_last: false, seed: SeedBuf::new(width) }
+        let last = vec![TermId::UNBOUND; n];
+        Reduced { input, slots, last, has_last: false, seed: SeedBuf::new(width), pull: Pull::new(width) }
     }
 }
 
@@ -182,31 +181,22 @@ impl Operator for Reduced {
     fn open(&mut self, cx: &mut ExecCtx, seed: Option<Seed<'_>>) -> Result<()> {
         self.seed.set(seed);
         self.has_last = false;
+        self.pull.reset();
         self.input.open(cx, self.seed.full())
     }
 
     fn next(&mut self, cx: &mut ExecCtx, out: &mut Batch) -> Result<bool> {
-        loop {
-            if out.is_full() {
-                return Ok(true);
-            }
-            let start = out.len();
-            let more = self.input.next(cx, out)?;
-            let (slots, last, has_last) = (&self.slots, &mut self.last, &mut self.has_last);
-            retain_from(out, start, |row| {
-                let same = *has_last && slots.iter().zip(last.iter()).all(|(s, v)| row[*s as usize] == *v);
-                if !same {
-                    for (s, v) in slots.iter().zip(last.iter_mut()) {
-                        *v = row[*s as usize];
-                    }
-                    *has_last = true;
+        let (slots, last, has_last) = (&self.slots, &mut self.last, &mut self.has_last);
+        self.pull.pump(cx, self.input.as_mut(), out, |_, row| {
+            let same = *has_last && slots.iter().zip(last.iter()).all(|(s, v)| row[*s as usize] == *v);
+            if !same {
+                for (s, v) in slots.iter().zip(last.iter_mut()) {
+                    *v = row[*s as usize];
                 }
-                Ok(!same)
-            })?;
-            if !more {
-                return Ok(false);
+                *has_last = true;
             }
-        }
+            Ok(!same)
+        })
     }
 
     fn close(&mut self, cx: &mut ExecCtx) {

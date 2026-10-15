@@ -88,6 +88,80 @@ fn graph_const_membership() {
     assert_eq!(p.named_graphs.len(), 1);
 }
 
+/// Operators of the root plan only (EXISTS plans excluded).
+fn root_ops(p: &QueryPlan, pred: impl Fn(&Op) -> bool + Copy) -> usize {
+    fn walk(p: &Plan, pred: impl Fn(&Op) -> bool + Copy) -> usize {
+        usize::from(pred(&p.op)) + p.children().into_iter().map(|c| walk(c, pred)).sum::<usize>()
+    }
+    walk(&p.root, pred)
+}
+
+#[test]
+fn absent_graphs_fold_into_their_ancestors() {
+    let st = named_store();
+    let empty_root = |q: &str| {
+        for opts in [
+            QueryOptions::default(),
+            QueryOptions { join_policy: JoinPolicy::PreferHash, ..Default::default() },
+            QueryOptions { join_policy: JoinPolicy::PreferBind, ..Default::default() },
+        ] {
+            let p = plan_with(q, &st, &opts);
+            assert!(matches!(p.root.op, Op::Empty), "{q}\n{}", sq_plan::explain(&p, None));
+        }
+    };
+    // Join / OPTIONAL-left / MINUS-left / filtered groups / GRAPH ?g / keyed groups over Empty.
+    empty_root("SELECT * { ?x :p ?y GRAPH :absent { ?x :q ?z } OPTIONAL { ?x :r ?w } }");
+    empty_root("SELECT * { ?x :p ?y GRAPH :absent { ?x :q ?z } MINUS { ?x :r ?w } }");
+    empty_root("SELECT ?x { ?x :p ?y { ?y :q ?z GRAPH :absent { ?z :r ?w } FILTER(?x != ?z) } } ORDER BY ?x LIMIT 3");
+    empty_root("SELECT * { ?x :p ?y GRAPH ?x { GRAPH :absent { ?s ?p ?o } } }");
+    empty_root("SELECT ?x (COUNT(*) AS ?c) { GRAPH :absent { ?x ?p ?o } } GROUP BY ?x");
+    // FROM NAMED excludes :g2 although the store has it.
+    empty_root("SELECT * FROM NAMED :g1 { ?x :p ?y GRAPH :g2 { ?x :p ?z } }");
+    // EXISTS { Empty } is false.
+    empty_root("SELECT * { ?x :p ?y FILTER EXISTS { ?y :p ?z GRAPH :absent { ?z :q ?w } } }");
+
+    // The implicit group still yields its row: COUNT over nothing.
+    let p = plan("SELECT (COUNT(*) AS ?c) { GRAPH :absent { ?s ?p ?o } }", &st);
+    let count_of_empty = |o: &Op| matches!(o, Op::Count { input, .. } if matches!(input.op, Op::Empty));
+    assert_eq!(root_ops(&p, count_of_empty), 1, "{}", sq_plan::explain(&p, None));
+    // OPTIONAL / MINUS / UNION with an Empty side keep the other side only.
+    for q in [
+        "SELECT * { ?x :p ?y OPTIONAL { ?y :q ?z GRAPH :absent { ?z :r ?w } } }",
+        "SELECT * { ?x :p ?y MINUS { GRAPH :absent { ?x :p ?y } } }",
+        "SELECT * { { ?x :p ?y } UNION { GRAPH :absent { ?x :p ?y } } }",
+        // NOT EXISTS { Empty } is true: the conjunct goes, the other one stays.
+        "SELECT * { ?x :p ?y FILTER(NOT EXISTS { GRAPH :absent { ?x :p ?y } } && ?x != :a) }",
+    ] {
+        let p = plan(q, &st);
+        let scans = root_ops(&p, |o| matches!(o, Op::Scan(_)));
+        let others = root_ops(&p, |o| {
+            matches!(o, Op::Empty | Op::Union(_) | Op::Minus { .. })
+                || matches!(o, Op::BindJoin { .. } | Op::HashJoin { .. } | Op::NestedLoop { .. })
+        });
+        assert_eq!((scans, others), (1, 0), "{q}\n{}", sq_plan::explain(&p, None));
+    }
+    let p = plan("SELECT * { ?x :p ?y FILTER(NOT EXISTS { GRAPH :absent { ?x :p ?y } } && ?x != :a) }", &st);
+    let filter = nodes(&p).into_iter().find_map(|n| match &n.op {
+        Op::Filter { expr, .. } => Some(expr.clone()),
+        _ => None,
+    });
+    assert!(filter.is_some_and(|e| !e.contains_exists()), "{}", sq_plan::explain(&p, None));
+}
+
+#[test]
+fn optional_binding_the_graph_var_directly_is_evaluated_per_graph() {
+    let st = named_store();
+    // Per graph G, a right row binding ?g to an object v != G removes the left row (the merged
+    // row fails ?g = G): pushing ?g into the patterns would keep it.
+    let p = plan("SELECT * { GRAPH ?g { ?s :p ?o OPTIONAL { ?o :q ?g } } }", &st);
+    assert_eq!(count_ops(&p, |o| matches!(o, Op::GraphLoop { .. })), 1, "{}", sq_plan::explain(&p, None));
+    let p = plan("SELECT * { GRAPH ?g { ?s :p ?o OPTIONAL { GRAPH ?g { ?o :q ?z } } } }", &st);
+    assert_eq!(count_ops(&p, |o| matches!(o, Op::GraphLoop { .. })), 1, "{}", sq_plan::explain(&p, None));
+    // When the left side certainly binds ?g the same way, the join compares it: pushed.
+    let p = plan("SELECT * { GRAPH ?g { ?g :p ?o OPTIONAL { ?o :q ?g } } }", &st);
+    assert_eq!(count_ops(&p, |o| matches!(o, Op::GraphLoop { .. })), 0, "{}", sq_plan::explain(&p, None));
+}
+
 #[test]
 fn empty_graph_var_lists_graph_names() {
     let st = named_store();

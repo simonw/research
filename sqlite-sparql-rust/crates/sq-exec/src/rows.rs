@@ -128,6 +128,63 @@ pub(crate) fn push_merged(out: &mut Batch, left: &[TermId], right: &[TermId]) ->
     i
 }
 
+/// The private input batch of an operator that drops rows (Filter, Distinct, Reduced, Minus).
+/// Every input row is visited once. The number of rows requested from the input follows the
+/// free space of the output batch and doubles while nothing is emitted, so an EXISTS
+/// evaluation (whose batch has a single free row) stops its inputs early.
+pub(crate) struct Pull {
+    b: Batch,
+    pos: usize,
+    more: bool,
+}
+
+impl Pull {
+    pub fn new(width: usize) -> Self {
+        Pull { b: Batch::new(width), pos: 0, more: false }
+    }
+
+    /// Restarts on a freshly opened input.
+    pub fn reset(&mut self) {
+        self.b.clear();
+        self.pos = 0;
+        self.more = true;
+    }
+
+    /// Moves the input rows accepted by `keep` to `out` until `out` is full (true) or the
+    /// input is exhausted (false).
+    pub fn pump(
+        &mut self,
+        cx: &mut crate::ctx::ExecCtx,
+        input: &mut dyn crate::ops::Operator,
+        out: &mut Batch,
+        mut keep: impl FnMut(&mut crate::ctx::ExecCtx, &[TermId]) -> Result<bool>,
+    ) -> Result<bool> {
+        let mut ask = sq_core::BATCH_ROWS.saturating_sub(out.len()).max(1);
+        loop {
+            while self.pos < self.b.len() {
+                if out.is_full() {
+                    return Ok(true);
+                }
+                let row = self.b.row(self.pos);
+                self.pos += 1;
+                if keep(cx, row)? {
+                    out.push_row(row);
+                }
+            }
+            if out.is_full() {
+                return Ok(true);
+            }
+            if !self.more {
+                return Ok(false);
+            }
+            self.b.clear();
+            self.pos = 0;
+            self.more = input.next_limited(cx, &mut self.b, ask)?;
+            ask = (ask * 2).min(sq_core::BATCH_ROWS);
+        }
+    }
+}
+
 /// Pulls `op` into `b` (cleared first) until `b` is full or `op` is exhausted.
 /// Returns false once `op` is exhausted (the batch may still hold its last rows).
 pub(crate) fn refill(

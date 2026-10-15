@@ -241,9 +241,8 @@ impl Env {
     fn all_nodes(&mut self, cx: &mut ExecCtx, out: &mut Vec<TermId>) -> Result<()> {
         Self::distinct(cx, &mut self.nodes_s, S, &mut self.tmp, out)?;
         Self::distinct(cx, &mut self.nodes_o, O, &mut self.tmp, out)?;
-        out.sort_unstable();
-        out.dedup();
-        cx.charge(&mut self.charge, out.len() * 8)
+        sort_dedup(out);
+        Ok(())
     }
 
     fn charge_pairs(&mut self, cx: &ExecCtx, n: usize) -> Result<()> {
@@ -289,13 +288,11 @@ fn step(
     match path {
         CPath::Pred { fwd, bwd, by_s, by_o, edges } => {
             let reg = cx.active_graph().unwrap_or(TermId::UNBOUND);
-            if starts.len() > 64 {
-                if edges.is_none_or(|(g, _)| g != reg) {
-                    by_s.open(cx, None)?;
-                    let n = by_s.fast_count(cx).transpose()?;
-                    by_s.close(cx);
-                    *edges = Some((reg, n));
-                }
+            if starts.len() > 64 && edges.is_none_or(|(g, _)| g != reg) {
+                by_s.open(cx, None)?;
+                let n = by_s.fast_count(cx).transpose()?;
+                by_s.close(cx);
+                *edges = Some((reg, n));
             }
             let full_scan = matches!(edges, Some((g, Some(n))) if *g == reg
                 && starts.len() > 64 && starts.len() as f64 * env.seek_sorted > *n as f64 * env.scan_row);
@@ -453,7 +450,7 @@ fn candidates(path: &mut CPath, env: &mut Env, cx: &mut ExecCtx, start: bool, ou
         CPath::Star(_) | CPath::Opt(_) => env.all_nodes(cx, out)?,
     }
     sort_dedup(out);
-    cx.charge(&mut env.charge, out.len() * 8)
+    Ok(())
 }
 
 /// An endpoint at the start of an evaluation.
@@ -504,6 +501,9 @@ pub(crate) struct PathOp {
     /// Slots the pairs bind: the start and the end of each pair.
     bind_start: Option<Slot>,
     bind_end: Option<Slot>,
+    /// Memory of the start candidates of the current graph (`env.charge` holds the
+    /// temporaries of one evaluation step).
+    cand_charge: Charge,
 }
 
 impl PathOp {
@@ -532,6 +532,7 @@ impl PathOp {
             pp: 0,
             bind_start: None,
             bind_end: None,
+            cand_charge: Charge::default(),
         }
     }
 
@@ -574,6 +575,7 @@ impl PathOp {
         };
         let (s, o) = (self.end_of(self.s, graph), self.end_of(self.o, graph));
         cx.sh.release(&mut self.env.charge);
+        cx.sh.release(&mut self.cand_charge);
         self.pairs.clear();
         self.pp = 0;
         self.chunks = None;
@@ -598,6 +600,7 @@ impl PathOp {
             (End::Free(x), End::Free(y)) => {
                 let mut cands = Vec::new();
                 candidates(path, env, cx, true, &mut cands)?;
+                cx.charge(&mut self.cand_charge, cands.len() * 8)?;
                 self.bind_start = Some(x);
                 self.bind_end = (x != y).then_some(y);
                 self.chunks = Some(Chunks { cands, pos: 0, same: x == y });
@@ -654,6 +657,7 @@ impl PathOp {
         let same = ch.same;
         self.pairs.clear();
         self.pp = 0;
+        cx.sh.release(&mut self.env.charge);
         self.in_graph(cx, |me, cx| step(&mut me.path, &mut me.env, cx, Dir::Fwd, &starts, None, &mut me.pairs))?;
         if same {
             self.pairs.retain(|p| p.0 == p.1);
@@ -715,6 +719,7 @@ impl Operator for PathOp {
             }
             if !self.start_graph(cx)? {
                 cx.sh.release(&mut self.env.charge);
+                cx.sh.release(&mut self.cand_charge);
                 return Ok(false);
             }
         }
@@ -729,5 +734,6 @@ impl Operator for PathOp {
             s.close(cx);
         }
         cx.release(&mut self.env.charge);
+        cx.release(&mut self.cand_charge);
     }
 }

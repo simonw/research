@@ -61,6 +61,20 @@ fn cmp_keys(a: &[SortKey], b: &[SortKey], keys: &[SortSpec]) -> Ordering {
     Ordering::Equal
 }
 
+/// A raw INT id as an i64 whose ascending order is the requested direction.
+#[inline]
+fn directed_int(id: TermId, desc: bool) -> i64 {
+    if desc { !id.0 } else { id.0 }
+}
+
+/// The permutation that sorts `keys` (one key per row), ties in row order. Sorting compact
+/// (key, row) pairs keeps the comparisons cache-friendly.
+fn sorted_perm<K: Ord>(keys: impl Iterator<Item = K>) -> Vec<u32> {
+    let mut v: Vec<(K, u32)> = keys.zip(0u32..).collect();
+    v.sort_unstable();
+    v.into_iter().map(|(_, i)| i).collect()
+}
+
 fn all_int(row: &[TermId], slots: &[(Slot, bool)]) -> bool {
     slots.iter().all(|(s, _)| row[*s as usize].tag() == Tag::Int)
 }
@@ -118,12 +132,23 @@ impl Sort {
         }
         self.input.close(cx);
         let n = self.rows.len();
-        self.perm.clear();
-        self.perm.extend(0..n as u32);
         let rows = &self.rows;
-        match &self.slots {
+        cx.charge(&mut self.charge, n * 16)?;
+        // Ties keep the input order: every sort below breaks ties on the row index.
+        self.perm = match self.slots.as_deref() {
+            Some(&[(s, desc)]) if (0..n).all(|i| rows.row(i)[s as usize].tag() == Tag::Int) => {
+                sorted_perm((0..n).map(|i| directed_int(rows.row(i)[s as usize], desc)))
+            }
             Some(slots) if (0..n).all(|i| all_int(rows.row(i), slots)) => {
-                self.perm.sort_by(|a, b| cmp_ints(rows.row(*a as usize), rows.row(*b as usize), slots));
+                let k = slots.len();
+                let flat: Vec<i64> =
+                    (0..n).flat_map(|i| slots.iter().map(move |(s, d)| directed_int(rows.row(i)[*s as usize], *d))).collect();
+                let mut perm: Vec<u32> = (0..n as u32).collect();
+                perm.sort_unstable_by(|a, b| {
+                    let (x, y) = (*a as usize * k, *b as usize * k);
+                    flat[x..x + k].cmp(&flat[y..y + k]).then(a.cmp(b))
+                });
+                perm
             }
             _ => {
                 let k = self.keys.len();
@@ -137,12 +162,20 @@ impl Sort {
                 let bytes: usize = sk.iter().map(|s| s.as_bytes().len() + 24).sum();
                 cx.charge(&mut self.charge, bytes)?;
                 let keys = &self.keys;
-                self.perm.sort_by(|a, b| {
-                    let (a, b) = (*a as usize * k, *b as usize * k);
-                    cmp_keys(&sk[a..a + k], &sk[b..b + k], keys)
-                });
+                if let [key] = keys.as_slice() {
+                    let mut v: Vec<(SortKey, u32)> = sk.into_iter().zip(0u32..).collect();
+                    v.sort_unstable_by(|a, b| directed(a.0.cmp(&b.0), key.desc).then(a.1.cmp(&b.1)));
+                    v.into_iter().map(|(_, i)| i).collect()
+                } else {
+                    let mut perm: Vec<u32> = (0..n as u32).collect();
+                    perm.sort_unstable_by(|a, b| {
+                        let (x, y) = (*a as usize * k, *b as usize * k);
+                        cmp_keys(&sk[x..x + k], &sk[y..y + k], keys).then(a.cmp(b))
+                    });
+                    perm
+                }
             }
-        }
+        };
         self.built = true;
         Ok(())
     }
@@ -226,9 +259,8 @@ impl SortBySlot {
         self.input.close(cx);
         let k = self.key as usize;
         let rows = &self.rows;
-        self.perm.clear();
-        self.perm.extend(0..rows.len() as u32);
-        self.perm.sort_by_key(|i| rows.row(*i as usize)[k]);
+        cx.charge(&mut self.charge, rows.len() * 16)?;
+        self.perm = sorted_perm((0..rows.len()).map(|i| rows.row(i)[k]));
         self.built = true;
         Ok(())
     }

@@ -8,7 +8,7 @@ use sq_core::{Batch, Result, Slot};
 use super::hash_join::HashTable;
 use super::{BoxOp, Operator};
 use crate::ctx::ExecCtx;
-use crate::rows::retain_from;
+use crate::rows::Pull;
 use crate::seed::{Seed, SeedBuf};
 
 pub(crate) struct Minus {
@@ -22,6 +22,7 @@ pub(crate) struct Minus {
     seed: SeedBuf,
     built: bool,
     buf: Batch,
+    pull: Pull,
 }
 
 impl Minus {
@@ -38,6 +39,7 @@ impl Minus {
             seed: SeedBuf::new(width),
             built: false,
             buf: Batch::new(width),
+            pull: Pull::new(width),
         }
     }
 }
@@ -48,6 +50,7 @@ impl Operator for Minus {
         self.domain.clear();
         self.domain.extend(self.shared.iter().copied().filter(|s| !self.seed.is_subst(*s)));
         self.built = false;
+        self.pull.reset();
         self.left.open(cx, self.seed.full())
     }
 
@@ -59,29 +62,21 @@ impl Operator for Minus {
             self.right.close(cx);
             self.built = true;
         }
-        loop {
-            if out.is_full() {
-                return Ok(true);
-            }
-            let start = out.len();
-            let more = self.left.next(cx, out)?;
-            if self.table.len() > 0 && !self.domain.is_empty() {
-                let (table, domain) = (&self.table, &self.domain);
-                retain_from(out, start, |row| {
-                    let mut cur = table.start(row);
-                    while let Some(b) = table.next_match(row, &mut cur) {
-                        let r = table.rows.row(b as usize);
-                        if domain.iter().any(|s| row[*s as usize].is_bound() && r[*s as usize].is_bound()) {
-                            return Ok(false);
-                        }
-                    }
-                    Ok(true)
-                })?;
-            }
-            if !more {
-                return Ok(false);
-            }
+        if self.table.len() == 0 || self.domain.is_empty() {
+            // Nothing can be removed: stream the left rows.
+            return self.left.next(cx, out);
         }
+        let (table, domain) = (&self.table, &self.domain);
+        self.pull.pump(cx, self.left.as_mut(), out, |_, row| {
+            let mut cur = table.start(row);
+            while let Some(b) = table.next_match(row, &mut cur) {
+                let r = table.rows.row(b as usize);
+                if domain.iter().any(|s| row[*s as usize].is_bound() && r[*s as usize].is_bound()) {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        })
     }
 
     fn close(&mut self, cx: &mut ExecCtx) {

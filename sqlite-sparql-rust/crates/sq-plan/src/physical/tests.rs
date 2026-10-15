@@ -238,3 +238,15 @@ fn opaque_units_are_planned_in_few_contexts() {
     assert!(planner.memo.len() <= nodes * (depth + 2), "{} plans", planner.memo.len());
     crate::validate(&plan_of(&q, &st, &opts)).unwrap();
 }
+
+#[test]
+fn estimates_are_clamped() {
+    assert_eq!(clamp_est(f64::INFINITY), MAX_ESTIMATE);
+    assert_eq!(clamp_est(f64::NAN), MAX_ESTIMATE);
+    assert_eq!(clamp_est(-3.0), 0.0);
+    assert_eq!(clamp_est(12.5), 12.5);
+    let p = mk(Op::Unit, f64::INFINITY, f64::NAN, None);
+    assert_eq!((p.est_rows, p.est_cost_ns), (MAX_ESTIMATE, MAX_ESTIMATE));
+    // Saturated estimates stay comparable and finite through further arithmetic + clamping.
+    assert!(clamp_est(MAX_ESTIMATE * MAX_ESTIMATE + MAX_ESTIMATE).is_finite());
+}

@@ -1197,3 +1197,72 @@ fn review_physical_plans_match_naive_evaluation() {
         problems.iter().take(4).cloned().collect::<Vec<_>>().join("\n\n")
     );
 }
+
+// ------------------------------------------------------------------------------------------
+// GRAPH ?g bodies whose OPTIONAL sides bind ?g directly (subject / object position, nested
+// GRAPH ?g, possibly already pushed): per named graph G, a right row binding ?g to v ≠ G
+// removes the left row (the merged row fails ?g = G), which the pushed form would keep. The
+// push rule must leave these as GraphLoops (`rewrite::graph`, `direct`).
+// ------------------------------------------------------------------------------------------
+
+fn graph_pattern(r: &mut Rng) -> String {
+    let t = |r: &mut Rng| r.pick(&["?g", "?a", "?b", "?c", ":n0", ":g0", "?g", "?a"]).to_owned();
+    let p = r.pick(&[":p", ":q", ":r", ":p+", ":q?"]);
+    format!("{} {p} {} . ", t(r), t(r))
+}
+
+fn graph_body(r: &mut Rng, depth: u32) -> String {
+    let mut out = graph_pattern(r);
+    if r.chance(2) {
+        out.push_str(&graph_pattern(r));
+    }
+    if depth > 0 {
+        for _ in 0..1 + r.next() % 2 {
+            let inner = graph_body(r, depth - 1);
+            out.push_str(&match r.next() % 6 {
+                0 | 1 => format!("OPTIONAL {{ {inner} }} "),
+                2 => format!("OPTIONAL {{ GRAPH ?g {{ {inner} }} }} "),
+                3 => format!("GRAPH ?g {{ {inner} }} "),
+                4 => format!("{{ {inner} }} UNION {{ {} }} ", graph_pattern(r)),
+                _ => format!("OPTIONAL {{ {inner} FILTER(?a != ?b) }} "),
+            });
+        }
+    }
+    out
+}
+
+#[test]
+fn graph_var_bodies_match_naive_evaluation() {
+    let n: usize = std::env::var("REVIEW_N").ok().and_then(|s| s.parse().ok()).unwrap_or(1500);
+    let mut r = Rng(0x1234_5678_9ABC_DEF1);
+    let (mut problems, mut nonempty) = (Vec::new(), 0);
+    for i in 0..n {
+        let st = small_store(5000 + i as u64);
+        let ds = if r.chance(3) { "FROM :g0 FROM NAMED :g0 FROM NAMED :g1 " } else { "" };
+        let depth = 1 + (r.next() % 2) as u32;
+        let q = format!("SELECT * {ds}{{ GRAPH ?g {{ {} }} }}", graph_body(&mut r, depth));
+        for (name, opts) in policies() {
+            let Some((_, expected)) = reference(&st, &opts, &q) else { break };
+            if name == "auto" && !expected.is_empty() {
+                nonempty += 1;
+            }
+            match physical(&st, &q, &opts) {
+                Err(e) => problems.push(format!("[{name}] {q}\n   plan error: {e}")),
+                Ok((plan, got, v)) if got != expected || !v.is_empty() => problems.push(format!(
+                    "[{name}] {q}\n   expected {} rows, got {}; violations {v:?}\n{}",
+                    expected.len(),
+                    got.len(),
+                    sq_plan::explain(&plan, None)
+                )),
+                Ok(_) => {}
+            }
+        }
+    }
+    assert!(nonempty > n / 10, "generator degenerated: {nonempty} of {n} queries with rows");
+    assert!(
+        problems.is_empty(),
+        "{} problems; first ones:\n{}",
+        problems.len(),
+        problems.iter().take(3).cloned().collect::<Vec<_>>().join("\n\n")
+    );
+}

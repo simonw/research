@@ -4,14 +4,20 @@ use sq_core::batch::SlotSet;
 use sq_core::ir::{ExistsId, Expr, GraphSel, Logical, LoweredQuery, PatTerm, QueryForm, TemplateTerm};
 use sq_core::{Error, Result, Slot};
 
-/// Rejects IR the evaluator could not index safely: slots outside the variable table, VALUES
-/// rows of the wrong length and references to missing EXISTS patterns.
+/// Rejects IR the evaluator could not index safely or evaluate in finite time: slots outside
+/// the variable table, VALUES rows of the wrong length, references to missing EXISTS patterns
+/// and EXISTS patterns that reference themselves (directly or through other EXISTS patterns).
 pub(crate) fn validate(q: &LoweredQuery) -> Result<()> {
-    let check = Check { width: q.vars.width(), exists: q.exists.len() };
+    let mut check = Check { width: q.vars.width(), exists: q.exists.len(), refs: Vec::new() };
     check.logical(&q.root)?;
+    // refs[i]: the EXISTS patterns exists[i] references (not those nested inside them).
+    let mut refs = Vec::with_capacity(q.exists.len());
     for p in &q.exists {
+        check.refs.clear();
         check.logical(p)?;
+        refs.push(check.refs.clone());
     }
+    check_acyclic(&refs)?;
     match &q.form {
         QueryForm::Select(slots) | QueryForm::Describe(slots) => slots.iter().try_for_each(|s| check.slot(*s)),
         QueryForm::Ask => Ok(()),
@@ -22,9 +28,59 @@ pub(crate) fn validate(q: &LoweredQuery) -> Result<()> {
     }
 }
 
+/// Fails if the EXISTS reference graph (`refs[i]` = the patterns exists[i] references) has a
+/// cycle: evaluating such a pattern would recurse forever. A three-colour depth-first search
+/// with an explicit stack, so a long chain of nested EXISTS cannot overflow the call stack.
+fn check_acyclic(refs: &[Vec<ExistsId>]) -> Result<()> {
+    #[derive(Copy, Clone, PartialEq)]
+    enum Colour {
+        /// Not visited yet.
+        White,
+        /// On the current DFS path: reaching it again closes a cycle.
+        Grey,
+        /// Finished: every pattern it reaches is acyclic.
+        Black,
+    }
+    let mut colour = vec![Colour::White; refs.len()];
+    // (pattern, index of its next reference to follow)
+    let mut stack: Vec<(usize, usize)> = Vec::new();
+    for root in 0..refs.len() {
+        if colour[root] != Colour::White {
+            continue;
+        }
+        colour[root] = Colour::Grey;
+        stack.push((root, 0));
+        while let Some((node, next)) = stack.last_mut() {
+            let node = *node;
+            let Some(target) = refs[node].get(*next) else {
+                colour[node] = Colour::Black;
+                stack.pop();
+                continue;
+            };
+            *next += 1;
+            let target = target.0 as usize;
+            match colour[target] {
+                Colour::White => {
+                    colour[target] = Colour::Grey;
+                    stack.push((target, 0));
+                }
+                Colour::Grey => {
+                    return Err(Error::Invalid(format!(
+                        "sq-oracle: EXISTS #{node} references EXISTS #{target}, closing a reference cycle"
+                    )));
+                }
+                Colour::Black => {}
+            }
+        }
+    }
+    Ok(())
+}
+
 struct Check {
     width: usize,
     exists: usize,
+    /// The EXISTS ids referenced by the expressions checked so far.
+    refs: Vec<ExistsId>,
 }
 
 impl Check {
@@ -50,19 +106,19 @@ impl Check {
         }
     }
 
-    fn expr(&self, e: &Expr) -> Result<()> {
+    fn expr(&mut self, e: &Expr) -> Result<()> {
         let mut slots = Vec::new();
         e.slots(&mut slots);
         slots.into_iter().try_for_each(|s| self.slot(s))?;
-        let mut ids = Vec::new();
-        exists_ids(e, &mut ids);
-        match ids.into_iter().find(|id| id.0 as usize >= self.exists) {
+        let start = self.refs.len();
+        exists_ids(e, &mut self.refs);
+        match self.refs[start..].iter().find(|id| id.0 as usize >= self.exists) {
             Some(id) => Err(Error::Invalid(format!("sq-oracle: EXISTS #{} is not in the query", id.0))),
             None => Ok(()),
         }
     }
 
-    fn logical(&self, l: &Logical) -> Result<()> {
+    fn logical(&mut self, l: &Logical) -> Result<()> {
         match l {
             Logical::Unit | Logical::Empty | Logical::Service { .. } => Ok(()),
             Logical::Bgp(patterns) => patterns.iter().try_for_each(|p| {

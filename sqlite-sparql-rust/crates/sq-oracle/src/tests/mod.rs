@@ -8,6 +8,7 @@ mod forms;
 mod graphs;
 mod paths;
 mod patterns;
+mod review;
 
 use std::str::FromStr;
 use std::sync::Arc;

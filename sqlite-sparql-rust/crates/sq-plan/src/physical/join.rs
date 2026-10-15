@@ -99,11 +99,14 @@ impl<'l> Group<'l> {
     /// with the group's seed (connected to every prefix): bit masks for groups of at most
     /// [`MAX_DP_UNITS`] units.
     fn adjacency(&self) -> (Vec<usize>, usize) {
-        let touches = |a: SlotSet, j: usize| !a.intersect(self.units[j].props.maybe).is_empty();
-        let n = self.units.len();
-        let mask = |f: &dyn Fn(usize) -> bool| (0..n).filter(|&j| f(j)).fold(0usize, |m, j| m | 1 << j);
-        let adj = (0..n).map(|i| mask(&|j| j != i && touches(self.units[i].props.maybe, j))).collect();
-        (adj, mask(&|j| touches(self.ctx.seeded, j)))
+        // The units other than `skip` that may bind one of `slots`.
+        let touching = |slots: SlotSet, skip: Option<usize>| {
+            (0..self.units.len())
+                .filter(|&j| Some(j) != skip && !slots.intersect(self.units[j].props.maybe).is_empty())
+                .fold(0usize, |m, j| m | 1 << j)
+        };
+        let adj = (0..self.units.len()).map(|i| touching(self.units[i].props.maybe, Some(i))).collect();
+        (adj, touching(self.ctx.seeded, None))
     }
 }
 
@@ -173,9 +176,10 @@ pub(super) enum Mode {
 }
 
 /// A join input opened in some context: its estimates, the seeded slots (of the context it
-/// was opened with) its rows carry, and its plan (only when building).
+/// was opened with) its rows carry, and its plan (only when building; boxed so that the many
+/// probe-mode choices of the ordering search stay small).
 pub(super) struct Opened {
-    pub(super) plan: Option<Plan>,
+    pub(super) plan: Option<Box<Plan>>,
     pub(super) rows: f64,
     pub(super) cost: f64,
     pub(super) carried: SlotSet,
@@ -183,10 +187,11 @@ pub(super) struct Opened {
 
 impl Opened {
     fn planned(plan: Plan, seeded: SlotSet) -> Opened {
-        Opened { rows: plan.est_rows, cost: plan.est_cost_ns, carried: carried(&plan, seeded), plan: Some(plan) }
+        let (rows, cost, carried) = (plan.est_rows, plan.est_cost_ns, carried(&plan, seeded));
+        Opened { plan: Some(Box::new(plan)), rows, cost, carried }
     }
 
-    fn into_plan(self) -> Result<Plan> {
+    fn into_plan(self) -> Result<Box<Plan>> {
         self.plan.ok_or_else(|| Error::internal("a plan was built from an ordering-search estimate"))
     }
 }
@@ -265,7 +270,7 @@ fn cheaper(a: &Choice, b: &Choice) -> bool {
 
 /// The plan of `left ⋈ right` for a decided join.
 fn join_plan(left: Plan, ch: Choice, kind: JoinKind) -> Result<Plan> {
-    let (left, right) = (Box::new(left), Box::new(ch.right.into_plan()?));
+    let (left, right) = (Box::new(left), ch.right.into_plan()?);
     let op = match ch.algo {
         Algo::Bind { seed, sort_left } => {
             Op::BindJoin { left, right, seed: slot_list(seed), kind, sort_left, adaptive: true }
@@ -321,7 +326,8 @@ impl<'a> Planner<'a> {
         let mut g = Group::new(units, conj, ctx, &self.card);
         if g.units.is_empty() {
             let (own, certain, maybe) = (SlotSet::EMPTY, ctx.seeded, ctx.seeded);
-            let side = Side { plan: mk(Op::Unit, 1.0, 0.0, None), shape: Shape::of_input(1.0, 0.0, own, certain, maybe) };
+            let shape = Shape::of_input(1.0, 0.0, own, certain, maybe);
+            let side = Side { plan: mk(Op::Unit, 1.0, 0.0, None), shape };
             let mut applied = Bits::default();
             let side = self.apply_filters(&mut g, side, &mut applied, false)?;
             return Ok(self.apply_filters(&mut g, side, &mut applied, true)?.plan);
@@ -372,7 +378,13 @@ impl<'a> Planner<'a> {
     }
 
     /// `scan_estimate` of quad pattern unit `i` with `bound` slots bound, cached per group.
-    fn group_scan_estimate(&mut self, g: &mut Group<'_>, i: usize, pat: &QuadPat, bound: SlotSet) -> Result<(f64, f64)> {
+    fn group_scan_estimate(
+        &mut self,
+        g: &mut Group<'_>,
+        i: usize,
+        pat: &QuadPat,
+        bound: SlotSet,
+    ) -> Result<(f64, f64)> {
         let key = bound_columns(pat, bound).iter().enumerate().fold(0, |k, (c, b)| k | (*b as usize) << c);
         if let Some(e) = g.scan_est[i][key] {
             return Ok(e);
@@ -537,7 +549,7 @@ impl<'a> Planner<'a> {
     fn build_order(&mut self, g: &mut Group<'_>, order: &[usize]) -> Result<Plan> {
         let mut applied = Bits::default();
         let (opened, shape) = self.start_shape(g, order[0], Mode::Build)?;
-        let side = Side { plan: opened.into_plan()?, shape };
+        let side = Side { plan: *opened.into_plan()?, shape };
         let mut side = self.apply_filters(g, side, &mut applied, false)?;
         for &i in &order[1..] {
             let ch = self.join_choice(g, &side.shape, i, None, Mode::Build)?;
@@ -599,7 +611,8 @@ impl<'a> Planner<'a> {
                 }
                 None => {
                     let c = &g.conj[i];
-                    let (rows, cost) = (clamp_est(shape.rows * c.sel), clamp_est(shape.cost + shape.rows * EXPR_EVAL_NS));
+                    let rows = clamp_est(shape.rows * c.sel);
+                    let cost = clamp_est(shape.cost + shape.rows * EXPR_EVAL_NS);
                     if mode == Mode::Build {
                         steps.push(Step::Filter { expr: c.expr.clone(), rows, cost });
                     }
@@ -787,8 +800,7 @@ mod tests {
         // A chain of n units: every connected subset is an interval with at most two
         // neighbours; n(n-1) steps.
         let n = 12;
-        let adj: Vec<usize> =
-            (0..n).map(|i| (if i > 0 { 1 << (i - 1) } else { 0 }) | (if i + 1 < n { 1 << (i + 1) } else { 0 })).collect();
+        let adj: Vec<usize> = (0..n).map(|i| ((1 << i) >> 1 | (1 << i) << 1) & ((1 << n) - 1)).collect();
         assert_eq!(dp_steps(&adj, 0, usize::MAX), Some(n * (n - 1)));
         // Over the limit: None. A dense 12-unit group is not searched by DP.
         let all = (1usize << 12) - 1;

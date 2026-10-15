@@ -246,7 +246,7 @@ impl<'q> Evaluator<'q> {
         let mut out = Bag::new(self.width);
         let mut scratch = Vec::with_capacity(self.width);
         for (graph, graph_slot) in self.graphs_of(g, cx.seed, cx.active) {
-            let pairs = PathEval { reader: self.reader, graph }.pairs(path, from, to)?;
+            let pairs = PathEval::new(self.reader, graph).pairs(path, from, to)?;
             for (x, y) in pairs {
                 scratch.clear();
                 scratch.extend_from_slice(cx.seed);
