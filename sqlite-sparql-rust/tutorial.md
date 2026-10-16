@@ -341,7 +341,7 @@ SELECT count(*) FROM sparql_rows('SELECT * WHERE { ?s ?p ?o }');
 ├──────────┤
 │ 5        │
 └──────────┘
-Run Time: real 0.000 user 0.000151 sys 0.000000
+Run Time: real 0.000 user 0.000000 sys 0.000061
 ```
 
 The rest of this tutorial uses `.mode box`, with `.mode list` for long text.
@@ -619,7 +619,7 @@ wrote load.sql        -- then: cd tutorial/data && sqlite3 ../tutorial.db -cmd '
 sparql_init: schema version 1
 languages.ttl: 2126 new quads
 survey.trig: 287 new quads
-sparql_analyze: {"analyzed_quads":2413,"default_graph":{"characteristic_sets":87,"heavy_hitters":1,"objects":1173,"predicates":31,"subjects":299,"triples":2146},"ms":17,"named_graphs":{"characteristic_sets":5,"heavy_hitters":0,"objects":206,"predicates":10,"subjects":46,"triples":267}}
+sparql_analyze: {"analyzed_quads":2413,"default_graph":{"characteristic_sets":87,"heavy_hitters":1,"objects":1173,"predicates":31,"subjects":299,"triples":2146},"ms":2,"named_graphs":{"characteristic_sets":5,"heavy_hitters":0,"objects":206,"predicates":10,"subjects":46,"triples":267}}
 quads: 2413, dictionary terms: 928, named graphs: 3, job postings: 300
 ```
 
@@ -641,7 +641,8 @@ Pop-Location
 
 The 928 "dictionary terms" of the summaries are the dictionary rows that the data added (section
 6.5 explains the dictionary); `sparql_check()` in section 6.11 reports 963, because it also
-counts 35 built-in rows. Run `python3 tutorial/make_tutorial_data.py --help` for all options.
+counts 35 built-in rows. Run `python3 tutorial/make_tutorial_data.py --help` for all options, and
+for a third route that loads the files by hand, one at a time.
 
 ### 4.2 What is in it
 
@@ -3544,8 +3545,7 @@ SELECT
 ```
 
 They are ordinary scalar functions, so they work where SQL allows an expression, for example in
-`WHERE`, `CASE` or `UPDATE ... SET` (views and triggers stored in the database are a special
-case, see 6.9).
+`WHERE`, `CASE` or `UPDATE ... SET`, and in views and triggers (see 6.9).
 
 ### 6.5 Terms and ids
 
@@ -3635,6 +3635,21 @@ SELECT sparql_term_id('<http://example.org/pl/Rust>') AS rust,
 │ 29441 │         │ 32198           │          │
 └───────┴─────────┴─────────────────┴──────────┘
 ```
+
+A prefixed name is an error rather than NULL, because no `PREFIX` applies outside a SPARQL query.
+The message says what to write instead:
+
+```sql
+SELECT sparql_term_id('ex:Go');
+```
+
+```output
+Runtime error: sparql: invalid argument: not an N-Triples term: "ex:Go" (ex:Go is a prefixed name, and N-Triples has none: no PREFIX applies outside a SPARQL query, so write the full IRI in angle brackets: the namespace IRI that ex: stands for, followed by Go (if ex: is <http://example.org/>, that is <http://example.org/Go>))
+```
+
+In this tutorial `ex:` stands for `<http://example.org/pl/>`, so the term is
+`<http://example.org/pl/Go>`. For the standard prefixes `rdf:`, `rdfs:`, `xsd:` and `owl:` the
+message gives the full IRI itself.
 
 ### 6.6 Loading data: sparql_load and sparql_load_file
 
@@ -3978,24 +3993,50 @@ FROM language_years GROUP BY decade ORDER BY decade;
 └────────┴───────────┘
 ```
 
+The scalar functions of 6.4 work in stored views too:
+
+```sql
+PRAGMA trusted_schema;
+CREATE VIEW language_stats AS
+SELECT sparql_count('PREFIX ex: <http://example.org/pl/>
+                     SELECT ?lang WHERE { ?lang ex:firstAppeared ?year }') AS dated_languages,
+       sparql_value('PREFIX ex: <http://example.org/pl/>
+                     SELECT (MIN(?year) AS ?first) WHERE { ?lang ex:firstAppeared ?year }') AS earliest;
+SELECT * FROM language_stats;
+```
+
+```output
+┌────────────────┐
+│ trusted_schema │
+├────────────────┤
+│ 0              │
+└────────────────┘
+┌─────────────────┬──────────┐
+│ dated_languages │ earliest │
+├─────────────────┼──────────┤
+│ 93              │ 1955     │
+└─────────────────┴──────────┘
+```
+
 Things to know about stored (non-`temp`) views and `sparql_view` tables:
 
 - Any connection that uses them must load the extension first. Without it, only the objects that
   need it fail (`no such table: main.sparql_rows`, `no such module: sparql_view`); the rest of the
   database works normally.
-- SQLite does not let views and triggers stored in the database call functions that are not
-  marked as safe for that, unless the connection trusts its schema. The sqlite3 shell used here
-  starts with `PRAGMA trusted_schema` off, so a stored view that calls `sparql_query()`,
-  `sparql_value()` or `sparql_count()` fails with `unsafe use of sparql_value()`; `sparql_rows`
-  is marked safe and always works. Use `sparql_rows` in stored views, a `TEMP` view, or
-  `PRAGMA trusted_schema = ON` if you trust the database file.
+- With `PRAGMA trusted_schema` off, as in the sqlite3 shell used here (the `0` above), SQLite
+  lets views and triggers stored in the database call only functions that are marked as harmless
+  (`SQLITE_INNOCUOUS`). sparqlite marks every function that only reads that way: `sparql_rows`,
+  `sparql_query`, `sparql_value`, `sparql_count`, `sparql_ask`, `sparql_explain`, the
+  `sparql_term*` functions and the one-argument `sparql_config`. So stored views and triggers
+  can query the store whatever that setting says.
 - Functions that change data (`sparql_load`, `sparql_update`, `sparql_init`, ...) and
   `sparql_config` with two arguments are never allowed in stored views or triggers (`unsafe use
-  of sparql_update()`). Temporary views and triggers are created by the connection itself, and
-  SQLite allows them there.
+  of sparql_update()`, see 8.3). Temporary views and triggers are created by the connection
+  itself, and SQLite allows them there.
 
 ```sql
 DROP VIEW language_years;
+DROP VIEW language_stats;
 ```
 
 ### 6.10 Settings: sparql_config and sparql_status
@@ -4043,9 +4084,12 @@ SELECT key, value FROM sparql_status WHERE key LIKE 'config.%';
 
 The keys `engine`, `timeout_ms`, `max_memory_mb`, `union_default_graph`, `join_policy`,
 `reorder`, `probe_counts` and `probe_cap` can also be set for one call: in the `sparql_rows`
-options and as `sparql_view` arguments. The others (`decode_cache_mb`, `allow_files`, `reader`,
-`page_cache_mb`) are per connection only. The other rows of `sparql_status` count work done by
-this connection (`rows_emitted`, `terms_decoded`, cache hits, ...) and describe the last change:
+options and as `sparql_view` arguments. A limit set for one call can only make the connection's
+limit stricter: the smaller `timeout_ms` or `max_memory_mb` wins, and `"timeout_ms": 0` does not
+switch off a timeout set for the connection. The others (`decode_cache_mb`, `allow_files`,
+`reader`, `page_cache_mb`) are per connection only. The other rows of `sparql_status` count work
+done by this connection (`rows_emitted`, `terms_decoded`, cache hits, ...) and describe the last
+change:
 
 ```sql
 SELECT key, value FROM sparql_status
@@ -4086,7 +4130,7 @@ SELECT sparql_check();
 ```
 
 ```output
-{"analyzed_quads":2413,"default_graph":{"characteristic_sets":87,"heavy_hitters":1,"objects":1173,"predicates":31,"subjects":299,"triples":2146},"ms":25,"named_graphs":{"characteristic_sets":5,"heavy_hitters":0,"objects":206,"predicates":10,"subjects":46,"triples":267}}
+{"analyzed_quads":2413,"default_graph":{"characteristic_sets":87,"heavy_hitters":1,"objects":1173,"predicates":31,"subjects":299,"triples":2146},"ms":4,"named_graphs":{"characteristic_sets":5,"heavy_hitters":0,"objects":206,"predicates":10,"subjects":46,"triples":267}}
 ok: 963 terms, 2413 quads, 3 named graphs
 ```
 
@@ -4188,9 +4232,36 @@ A query that runs too long can be stopped three ways:
   For `sparql_rows` and `sparql_view`, the time counts from the start of the scan, including the
   time your SQL spends between rows.
 - **Interrupts.** Ctrl-C in the sqlite3 shell, and `sqlite3_interrupt()` (Python:
-  `connection.interrupt()`) from another thread, stop a running query. The functions report
-  `sparql: interrupted`; a `sparql_rows` or `sparql_view` scan stops with SQLite's own
-  `interrupted` error.
+  `connection.interrupt()`) from another thread, stop a running query with the error
+  `sparql: interrupted`. A `sparql_rows` or `sparql_view` scan whose rows arrive quickly may
+  instead stop with SQLite's own `interrupted`, when SQLite notices the interrupt between two rows
+  before sparqlite does. So a program should look for `interrupted` in the message. (Scans also
+  set the error code `SQLITE_INTERRUPT`; the scalar functions set the generic `SQLITE_ERROR`.)
+  Here a timer thread interrupts two queries that would run for hours:
+
+  <!-- verify: python -->
+  ```python
+  import sqlite3, threading
+
+  con = sqlite3.connect("tutorial/tutorial.db")
+  con.enable_load_extension(True)
+  con.load_extension("ext/target/release/libsparqlite")
+  con.enable_load_extension(False)
+
+  endless = "SELECT (COUNT(*) AS ?n) WHERE { ?a ?p ?b . ?c ?q ?d . ?e ?r ?f }"
+  for sql in ["SELECT sparql_count(?)", "SELECT v0 FROM sparql_rows(?)"]:
+      threading.Timer(0.5, con.interrupt).start()   # interrupt after half a second
+      try:
+          con.execute(sql, (endless,)).fetchall()
+      except sqlite3.OperationalError as e:
+          print(sql, "->", e)
+  ```
+
+  ```output
+  SELECT sparql_count(?) -> sparql: interrupted
+  SELECT v0 FROM sparql_rows(?) -> sparql: interrupted
+  ```
+
 - **`max_memory_mb`** caps the memory a single query may use for intermediate results. When it is
   exceeded the query stops with an error instead of exhausting the machine:
 
@@ -4245,10 +4316,11 @@ Runtime error: sparql: RDF parse error: Parser error at line 1 between columns 4
 ```
 
 The kinds of message: `syntax error` (query text), `RDF parse error` (data), `invalid argument`
-(a wrong format name, setting or argument), `query timeout`, `interrupted`, `memory budget
-exceeded`, `RDF store schema missing or incompatible`, `cannot modify the RDF store while a
-sparql_rows cursor is open`, and `SQLite error N: ...` for a problem reported by SQLite itself,
-such as `database is locked`. Section 8.3 explains the common ones.
+(a wrong format name, setting or argument), `unsupported` (`SERVICE`, or nesting too deep; see
+8.2 and 8.3), `query timeout`, `interrupted`, `memory budget exceeded`, `RDF store schema missing
+or incompatible`, `cannot modify the RDF store while a sparql_rows cursor is open`, and
+`SQLite error N: ...` for a problem reported by SQLite itself, such as `database is locked`.
+Section 8.3 explains the common ones.
 
 Finally, drop the view table from 6.7 (it would disappear anyway when the shell exits):
 
@@ -4283,12 +4355,12 @@ python3 tutorial/make_tutorial_data.py --people 100000 --db tutorial/people.db -
 wrote languages.ttl         2126 triples (94 languages, 117 people, 40 organisations)
 wrote survey.trig            287 quads   (FICTIONAL; 3 named graphs + their metadata)
 wrote job_postings.csv       300 rows    (FICTIONAL), and job_postings.sql
-wrote people.nt           836188 triples (SYNTHETIC; 100000 people, 3.5s)
+wrote people.nt           836188 triples (SYNTHETIC; 100000 people, 2.3s)
 note: the existing load.sql does not match these files (another --people setting or an older version of this script); add --emit-sql to rewrite it
 loaded sparqlite 0.1.0 (SQLite 3.45.1) from ext/target/release/libsparqlite.so
-  languages.ttl          2126 new quads  (0.02s)
+  languages.ttl          2126 new quads  (0.01s)
   survey.trig             287 new quads  (0.00s)
-  people.nt            836188 new quads  (7.09s)
+  people.nt            836188 new quads  (3.46s)
 summary: 838601 quads, 104506 dictionary terms, 3 named graphs, 94 languages, 300 job postings
 wrote tutorial/people.db
 ```
@@ -4361,7 +4433,7 @@ SELECT v0 AS language, v1 AS fans FROM sparql_rows('
 │ Java       │ 10709 │
 │ C#         │ 9969  │
 └────────────┴───────┘
-Run Time: real 0.023 user 0.015308 sys 0.000000
+Run Time: real 0.012 user 0.008067 sys 0.003837
 ```
 
 <!-- verify: ignore-timing -->
@@ -4388,7 +4460,7 @@ SELECT v0 AS friend, v1 AS born FROM sparql_rows('
 │ James Ivanova  │ 1969 │
 │ Rosa O'Brien   │ 1993 │
 └────────────────┴──────┘
-Run Time: real 0.001 user 0.000639 sys 0.000000
+Run Time: real 0.001 user 0.000203 sys 0.000303
 ```
 
 <!-- verify: ignore-timing -->
@@ -4406,7 +4478,7 @@ SELECT sparql_count('
 ├─────────────────────────────────────┤
 │ 14398                               │
 └─────────────────────────────────────┘
-Run Time: real 0.015 user 0.009763 sys 0.000768
+Run Time: real 0.008 user 0.004090 sys 0.004025
 ```
 
 Turning ids into values costs time, and sparqlite only does it for the columns you read.
@@ -4432,19 +4504,19 @@ SELECT sparql_count('
 ├───────────┤
 │ 100000    │
 └───────────┘
-Run Time: real 0.025 user 0.013159 sys 0.004282
+Run Time: real 0.013 user 0.011847 sys 0.000336
 ┌────────────────┐
 │ distinct_names │
 ├────────────────┤
 │ 3600           │
 └────────────────┘
-Run Time: real 0.070 user 0.069120 sys 0.000000
+Run Time: real 0.052 user 0.052079 sys 0.000000
 ┌────────────────┐
 │ distinct_names │
 ├────────────────┤
 │ 3600           │
 └────────────────┘
-Run Time: real 0.013 user 0.012777 sys 0.000000
+Run Time: real 0.008 user 0.008677 sys 0.000000
 ```
 
 So: aggregate and filter in SPARQL where you can, select only the variables you need, and read
@@ -4472,16 +4544,16 @@ SELECT sparql_explain('
 ```
 
 ```output
-#0 Project [?a ?c]                                  est=4.5e4 cost=104.7ms
-#1  MergeJoin key=?city gallop=10 check=[?c]        est=4.5e4 cost=104.7ms
-#2   SortBySlot ?city                               est=9.0e5 cost=103.0ms
-#3    MergeJoin key=?b gallop=10                    est=9.0e5 cost=46.1ms
-#4     SortBySlot ?b                                est=3.0e5 cost=32.3ms
-#5      MergeJoin key=?a gallop=10                  est=3.0e5 cost=14.8ms
+#0 Project [?a ?c]                                  est=2.0e5 cost=113.7ms
+#1  MergeJoin key=?c gallop=10 check=[?city]        est=2.0e5 cost=113.7ms
+#2   SortBySlot ?c                                  est=9.0e5 cost=104.6ms
+#3    MergeJoin key=?b gallop=10                    est=9.0e5 cost=47.7ms
+#4     SortBySlot ?b                                est=3.0e5 cost=32.7ms
+#5      MergeJoin key=?a gallop=10                  est=3.0e5 cost=15.2ms
 #6       Scan Gpso ?a <http://xmlns.com/foaf/0.1/knows> ?b (sorted ?a) est=3.0e5 cost=10.2ms
 #7       Scan Gpso ?a <http://example.org/pl/livesIn> ?city (sorted ?a) est=1.0e5 cost=3.4ms
 #8     Scan Gpso ?b <http://xmlns.com/foaf/0.1/knows> ?c (sorted ?b) est=3.0e5 cost=10.2ms
-#9   Scan Gpos ?c <http://example.org/pl/livesIn> ?city (sorted ?city) est=1.0e5 cost=3.4ms
+#9   Scan Gpso ?c <http://example.org/pl/livesIn> ?city (sorted ?c) est=1.0e5 cost=3.4ms
 ```
 
 How to read it:
@@ -4491,10 +4563,12 @@ How to read it:
 - `Scan Gpso ?a <...knows> ?b` reads one triple pattern from one of the store's indexes. The
   index name gives the column order: `Gpso` is graph, predicate, subject, object, so with the
   predicate fixed it returns the triples sorted by subject (`sorted ?a`).
-- Joins: `MergeJoin key=?x` merges two inputs that are both sorted by `?x`; `HashJoin keys=[...]`
-  builds a hash table from one input; `BindJoin seed=[?x]` looks up the right side once for each
-  row of the left side, with `?x` filled in (like an index nested-loop join). `SortBySlot`
-  re-sorts rows for a following merge join.
+- Joins: `MergeJoin key=?x` merges two inputs that are both sorted by `?x`; `check=[?y]` compares
+  another shared variable once `?x` matches, and `gallop=10` lets it skip ahead in the index after
+  10 rows without a match. `HashJoin keys=[...]` builds a hash table from one input;
+  `BindJoin seed=[?x]` looks up the right side once for each row of the left side, with `?x`
+  filled in (like an index nested-loop join). `SortBySlot` re-sorts rows for a following merge
+  join.
 - Other operators: `Project` (the `SELECT` list), `Distinct`, `Group` (`GROUP BY`), `TopK`
   (`ORDER BY` with `LIMIT`), `Extend` (`BIND` and expressions), `Filter`, `Union`, `LeftJoin`
   (`OPTIONAL`), `SqlJoin` (a chain of index lookups handed to SQLite as one SQL statement), and
@@ -4502,19 +4576,21 @@ How to read it:
 - `est` is the planner's estimate of the number of rows (`9.0e5` is 900,000) and `cost` its
   estimate of the time.
 
-This plan has a problem. The top join `MergeJoin key=?city ... check=[?c]` joins on the city
-alone and checks `?c` afterwards. About 900,000 rows come from below, and each city has thousands
-of inhabitants, so the merge compares each row with thousands of others. The estimate
-(`cost=104.7ms`) misses that, and the query takes about a minute. Turn the timer back on and try it, if you have
-the patience:
+So the engine reads everyone's friends and everyone's city (`#6` and `#7`, both sorted by `?a`)
+and merges them (`#5`), re-sorts by `?b` to add the friends' friends (`#3`), re-sorts by `?c`, and
+finally merges with the city of each `?c` (`#1`), keeping a row only when that city is `?a`'s.
 
+The last join could also have merged on `?city` and checked `?c`. That would be a poor choice:
+the 100,000 people live in only 20 cities (Tokyo alone has 22,664 of them), so a merge on `?city`
+would pair each of the 900,000 rows from below with every inhabitant of its city before checking
+`?c`, billions of comparisons. On `?c` each row meets just one city. The planner's cost model
+counts those comparisons, and that is how it picks the key. Run the query:
+
+<!-- verify: ignore-timing -->
 ```sql
 .timer on
-```
-
-<!-- verify: skip -->
-```sql
-SELECT count(*) FROM sparql_rows('
+.mode box --wordwrap on
+SELECT count(*) AS pairs FROM sparql_rows('
   PREFIX ex:   <http://example.org/pl/>
   PREFIX foaf: <http://xmlns.com/foaf/0.1/>
   SELECT ?a ?c WHERE { ?a foaf:knows ?b . ?b foaf:knows ?c .
@@ -4523,23 +4599,34 @@ SELECT count(*) FROM sparql_rows('
 ```
 
 ```output
-292595
-Run Time: real 54.876 user 54.030233 sys 0.054477
+┌────────┐
+│ pairs  │
+├────────┤
+│ 292595 │
+└────────┘
+Run Time: real 0.184 user 0.151594 sys 0.031396
 ```
 
-(That block is not re-run by the tutorial checker, because it takes a minute.) When a plan
-goes wrong you can steer the planner. `join_policy` forces a join algorithm, here for one call
-through the options of `sparql_rows`:
+**Steering the planner.** The setting `join_policy` makes the planner prefer one kind of join:
+`hash`, `bind` or `merge` (and `nosql` keeps it from handing chains of lookups to SQLite). Set it
+for one call in the options of `sparql_rows`, or for the connection with `sparql_config`. For
+this query the planner's own choice is already the fastest, so forcing the others shows what they
+would cost:
 
 <!-- verify: ignore-timing -->
 ```sql
-.mode box --wordwrap on
 SELECT count(*) AS pairs FROM sparql_rows('
   PREFIX ex:   <http://example.org/pl/>
   PREFIX foaf: <http://xmlns.com/foaf/0.1/>
   SELECT ?a ?c WHERE { ?a foaf:knows ?b . ?b foaf:knows ?c .
                        ?a ex:livesIn ?city . ?c ex:livesIn ?city . }
 ', '{"join_policy": "hash"}');
+SELECT count(*) AS pairs FROM sparql_rows('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT ?a ?c WHERE { ?a foaf:knows ?b . ?b foaf:knows ?c .
+                       ?a ex:livesIn ?city . ?c ex:livesIn ?city . }
+', '{"join_policy": "bind"}');
 ```
 
 ```output
@@ -4548,50 +4635,135 @@ SELECT count(*) AS pairs FROM sparql_rows('
 ├────────┤
 │ 292595 │
 └────────┘
-Run Time: real 0.446 user 0.401438 sys 0.030050
+Run Time: real 0.276 user 0.262410 sys 0.011781
+┌────────┐
+│ pairs  │
+├────────┤
+│ 292595 │
+└────────┘
+Run Time: real 0.873 user 0.866750 sys 0.000000
 ```
 
-From about a minute to well under a second. Other options are `"join_policy": "bind"` (1.8
-seconds here) and `"engine": "sql"`, the SQL translator of 6.12 (2.5 seconds here).
+The same answer, at different speeds: in the run shown, 0.28 seconds with hash joins and 0.87
+with bind joins, against 0.18 for the planner's plan. (`"engine": "sql"`, the SQL translator of
+6.12, needs about 1.5 seconds.) When a query of yours is slow, these settings are a quick way to
+find out whether another plan would do better.
 
 `sparql_explain(query, 'analyze')` runs the query and adds what actually happened to each line:
 `rows` produced, `opens` (how often the operator was started), `seeks` (index lookups) and `ms`
 (time spent in it, including its inputs). The last line gives the totals. `explain` uses the
-connection's settings, so set the policy with `sparql_config` this time:
+connection's settings, so set the policy with `sparql_config` this time. First the bind joins:
 
 <!-- verify: ignore-timing -->
 ```sql
 .timer off
 .mode list
-SELECT sparql_config('join_policy', 'hash');
+SELECT sparql_config('join_policy', 'bind');
 SELECT sparql_explain('
   PREFIX ex:   <http://example.org/pl/>
   PREFIX foaf: <http://xmlns.com/foaf/0.1/>
   SELECT ?a ?c WHERE { ?a foaf:knows ?b . ?b foaf:knows ?c .
                        ?a ex:livesIn ?city . ?c ex:livesIn ?city . }
 ', 'analyze');
-SELECT sparql_config('join_policy', 'auto');
 ```
 
 ```output
-hash
-#0 Project [?a ?c]                                  est=4.5e4 cost=336.7ms rows=292595 opens=1 seeks=0 ms=598.727
-#1  HashJoin keys=[?c ?city] build=right            est=4.5e4 cost=336.7ms rows=292595 opens=1 seeks=0 ms=594.154
-#2   Scan Gpso ?c <http://example.org/pl/livesIn> ?city (sorted ?c) est=1.0e5 cost=3.4ms rows=100000 opens=1 seeks=1 ms=4.086
-#3   HashJoin keys=[?b] build=right                 est=9.0e5 cost=200.4ms rows=903660 opens=1 seeks=0 ms=369.214
-#4    Scan Gpso ?b <http://xmlns.com/foaf/0.1/knows> ?c (sorted ?b) est=3.0e5 cost=10.2ms rows=299630 opens=1 seeks=1 ms=16.480
-#5    HashJoin keys=[?a] build=right                est=3.0e5 cost=75.7ms rows=299630 opens=1 seeks=0 ms=107.848
-#6     Scan Gpso ?a <http://example.org/pl/livesIn> ?city (sorted ?a) est=1.0e5 cost=3.4ms rows=100000 opens=1 seeks=1 ms=5.027
-#7     Scan Gpso ?a <http://xmlns.com/foaf/0.1/knows> ?b (sorted ?a) est=3.0e5 cost=10.2ms rows=299630 opens=1 seeks=1 ms=29.389
--- 292595 rows; planning 0.090 ms, execution 606.397 ms; decode hits 0, misses 0
-
-auto
+bind
+#0 Project [?a ?c]                                  est=2.0e5 cost=1.10s rows=292595 opens=1 seeks=0 ms=957.373
+#1  BindJoin seed=[?c ?city] sort_left adaptive     est=2.0e5 cost=1.10s rows=292595 opens=1 seeks=0 ms=956.635
+#2   BindJoin seed=[?b] sort_left adaptive          est=9.0e5 cost=472.8ms rows=903660 opens=1 seeks=0 ms=411.703
+#3    BindJoin seed=[?a] adaptive                   est=3.0e5 cost=45.0ms rows=299630 opens=1 seeks=0 ms=48.182
+#4     Scan Gpso ?a <http://xmlns.com/foaf/0.1/knows> ?b (sorted ?a) est=3.0e5 cost=10.2ms rows=299630 opens=1 seeks=1 ms=9.756
+#5     Scan Gpso ?a <http://example.org/pl/livesIn> ?city (sorted ?city) est=1 cost=1.3us rows=100000 opens=100000 seeks=100000 ms=13.667
+#6    Scan Gpso ?b <http://xmlns.com/foaf/0.1/knows> ?c (sorted ?c) est=3 cost=1.4us rows=872768 opens=291247 seeks=291247 ms=61.498
+#7   Scan Gpso ?c <http://example.org/pl/livesIn> ?city est=0.1 cost=1.3us rows=290081 opens=889110 seeks=889110 ms=99.306
+-- 292595 rows; planning 0.082 ms, execution 958.538 ms; decode hits 0, misses 0
 ```
 
-Comparing `est` with `rows` shows where the planner's estimates are off; here the final result
-has 292,595 rows against an estimate of 45,000. The other modes of `sparql_explain` are
-`algebra` (the query as parsed, in SPARQL algebra), `logical` (after sparqlite's rewrites),
-`sql` and `sqlplan` (the translator's SQL and SQLite's plan for it).
+A `BindJoin` starts its right input for each row from the left, except that rows arriving
+together with the same seed values share one start (`opens`), and each start is an index lookup
+(`seeks`): the city of every `?a` (`#5`, 100,000 lookups), the friends of every `?b` (`#6`,
+291,247) and every (`?c`, `?city`) pair (`#7`, 889,110). (`sort_left` sorts each batch of left
+rows by the seed first, so that equal seeds come together; `adaptive` lets the join switch to
+hashing if the left side turns out far larger than estimated.) On such an input `est` is per
+lookup and `rows` is the total. Each lookup is quick, but 1.3 million of them add up. The
+planner saw this coming: its estimate for this plan is `cost=1.10s` (line `#0`), against
+`cost=113.7ms` for its own choice. Now the planner's own plan:
+
+<!-- verify: ignore-timing -->
+```sql
+SELECT sparql_config('join_policy', 'auto');
+SELECT sparql_explain('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT ?a ?c WHERE { ?a foaf:knows ?b . ?b foaf:knows ?c .
+                       ?a ex:livesIn ?city . ?c ex:livesIn ?city . }
+', 'analyze');
+```
+
+```output
+auto
+#0 Project [?a ?c]                                  est=2.0e5 cost=113.7ms rows=292595 opens=1 seeks=0 ms=187.263
+#1  MergeJoin key=?c gallop=10 check=[?city]        est=2.0e5 cost=113.7ms rows=292595 opens=1 seeks=0 ms=186.612
+#2   SortBySlot ?c                                  est=9.0e5 cost=104.6ms rows=903660 opens=1 seeks=0 ms=170.059
+#3    MergeJoin key=?b gallop=10                    est=9.0e5 cost=47.7ms rows=903660 opens=1 seeks=0 ms=77.574
+#4     SortBySlot ?b                                est=3.0e5 cost=32.7ms rows=299630 opens=1 seeks=0 ms=54.783
+#5      MergeJoin key=?a gallop=10                  est=3.0e5 cost=15.2ms rows=299630 opens=1 seeks=0 ms=23.380
+#6       Scan Gpso ?a <http://xmlns.com/foaf/0.1/knows> ?b (sorted ?a) est=3.0e5 cost=10.2ms rows=299630 opens=1 seeks=1 ms=11.932
+#7       Scan Gpso ?a <http://example.org/pl/livesIn> ?city (sorted ?a) est=1.0e5 cost=3.4ms rows=100000 opens=1 seeks=1 ms=3.100
+#8     Scan Gpso ?b <http://xmlns.com/foaf/0.1/knows> ?c (sorted ?b) est=3.0e5 cost=10.2ms rows=298976 opens=1 seeks=24 ms=9.907
+#9   Scan Gpso ?c <http://example.org/pl/livesIn> ?city (sorted ?c) est=1.0e5 cost=3.4ms rows=99997 opens=1 seeks=2 ms=3.119
+-- 292595 rows; planning 0.133 ms, execution 192.511 ms; decode hits 0, misses 0
+```
+
+Every operator runs once (`opens=1`), and the scans read their indexes in order, seeking only to
+start and to skip ahead (the 24 seeks of `#8` are gallops). Most of the time goes into the two
+`SortBySlot` re-sorts. `ms` includes the inputs, so subtract: in the run shown, `#2` took 170 ms
+and its input `#3` 78 ms, so sorting 903,660 rows by `?c` took about 90 ms, and the sort by `?b`
+(`#4` minus `#5`) another 30, together two thirds of the 193 ms.
+
+Comparing `est` with `rows` shows where the planner's estimates are off. Here they are close: the
+result has 292,595 rows against an estimate of 200,000. An estimate that is off by a factor of ten
+or more on a large input is the usual cause of a poor plan; running `sparql_analyze()` (7.5) after
+large changes to the data is the first thing to try.
+
+**Join order.** The planner also chooses the order of the joins. With `reorder` set to 0 it joins
+the patterns in the order they are written instead, which shows why the order matters. Write the
+two `livesIn` patterns first:
+
+```sql
+SELECT sparql_config('reorder', 0);
+SELECT sparql_explain('
+  PREFIX ex:   <http://example.org/pl/>
+  PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+  SELECT ?a ?c WHERE { ?a ex:livesIn ?city . ?c ex:livesIn ?city .
+                       ?a foaf:knows ?b . ?b foaf:knows ?c . }
+');
+SELECT sparql_config('reorder', 1);
+```
+
+```output
+0
+#0 Project [?a ?c]                                  est=4.5e4 cost=187.91s
+#1  HashJoin keys=[?c ?b] build=right               est=4.5e4 cost=187.91s
+#2   Scan Gpso ?b <http://xmlns.com/foaf/0.1/knows> ?c (sorted ?b) est=3.0e5 cost=10.2ms
+#3   MergeJoin key=?a gallop=10                     est=1.5e9 cost=8.05s
+#4    HashJoin keys=[?city] build=right             est=5.0e8 cost=2.04s
+#5     Scan Gpso ?c <http://example.org/pl/livesIn> ?city (sorted ?c) est=1.0e5 cost=3.4ms
+#6     Scan Gpso ?a <http://example.org/pl/livesIn> ?city (sorted ?a) est=1.0e5 cost=3.4ms
+#7    Scan Gpso ?a <http://xmlns.com/foaf/0.1/knows> ?b (sorted ?a) est=3.0e5 cost=10.2ms
+
+1
+```
+
+The first join (`#4`) pairs everyone with everyone else in the same city, an estimated 500 million
+rows, and the planner puts the cost of the whole plan at about three minutes. (Run once for this
+tutorial, it took two and a half, against a fifth of a second for the order the planner chooses;
+the checker does not run it.)
+
+The other modes of `sparql_explain` are `algebra` (the query as parsed, in SPARQL algebra),
+`logical` (after sparqlite's rewrites), `sql` and `sqlplan` (the translator's SQL and SQLite's
+plan for it).
 
 ### 7.4 The B-tree reader
 
@@ -4632,28 +4804,28 @@ SELECT sparql_config('reader', 'auto');
 ├─────────────────────────────────────────────────────────┤
 │ 903660                                                  │
 └─────────────────────────────────────────────────────────┘
-Run Time: real 0.030 user 0.030117 sys 0.000000
+Run Time: real 0.023 user 0.022895 sys 0.000000
 ┌────────────────────────────────┐
 │ sparql_config('reader', 'sql') │
 ├────────────────────────────────┤
 │ sql                            │
 └────────────────────────────────┘
-Run Time: real 0.000 user 0.000055 sys 0.000000
+Run Time: real 0.000 user 0.000038 sys 0.000000
 ┌─────────────────────────────────────────────────────────┐
 │ sparql_value('PREFIX foaf: <http://xmlns.com/foaf/0.1/> │
 ├─────────────────────────────────────────────────────────┤
 │ 903660                                                  │
 └─────────────────────────────────────────────────────────┘
-Run Time: real 0.087 user 0.087013 sys 0.000000
+Run Time: real 0.062 user 0.053638 sys 0.008063
 ┌─────────────────────────────────┐
 │ sparql_config('reader', 'auto') │
 ├─────────────────────────────────┤
 │ auto                            │
 └─────────────────────────────────┘
-Run Time: real 0.000 user 0.000049 sys 0.000000
+Run Time: real 0.000 user 0.000039 sys 0.000001
 ```
 
-In the run shown, the direct reader took 30 ms and the SQL statements 87 ms; over several runs
+In the run shown, the direct reader took 23 ms and the SQL statements 62 ms; over several runs
 for this tutorial it was two to three times faster on such scans. For queries that mostly look up
 a few rows the difference is small. Check that it is in use:
 
@@ -4730,7 +4902,7 @@ SELECT sparql_analyze();
 ```
 
 ```output
-{"analyzed_quads":838601,"default_graph":{"characteristic_sets":89,"heavy_hitters":112,"objects":95982,"predicates":37,"subjects":100319,"triples":838334},"ms":622,"named_graphs":{"characteristic_sets":5,"heavy_hitters":0,"objects":206,"predicates":10,"subjects":46,"triples":267}}
+{"analyzed_quads":838601,"default_graph":{"characteristic_sets":89,"heavy_hitters":112,"objects":95982,"predicates":37,"subjects":100319,"triples":838334},"ms":254,"named_graphs":{"characteristic_sets":5,"heavy_hitters":0,"objects":206,"predicates":10,"subjects":46,"triples":267}}
 ```
 
 ### 7.6 SQLite settings
@@ -4758,7 +4930,9 @@ SELECT sparql_analyze();
 
 Arguments in brackets are optional. "Writer" functions change the database; they, and the
 two-argument `sparql_config`, can only be called from top-level SQL statements (and from TEMP
-views and triggers), never from views or triggers stored in the database.
+views and triggers), never from views, triggers or `CHECK` constraints stored in the database,
+and never from inside another sparqlite call (see 8.3). All other functions only read, and work
+anywhere, stored views and triggers included (6.9).
 
 | Function | Returns |
 |---|---|
@@ -4970,10 +5144,10 @@ Runtime error: sparql: invalid argument: this writer cannot run inside a stateme
 1
 ```
 
-**`unsafe use of sparql_update()`** (or another function): the function was used in a view,
-trigger or other schema object stored in the database. Writers are never allowed there; query
-functions such as `sparql_value()` are allowed only with `PRAGMA trusted_schema = ON`; `sparql_rows`
-always works. See [6.9](#69-saving-queries-as-views). TEMP views and triggers are not affected.
+**`unsafe use of sparql_update()`** (or another writer): the function was used in a view,
+trigger or other schema object stored in the database. Writers are never allowed there; TEMP
+views and triggers are not affected. Query functions such as `sparql_rows` and `sparql_value()`
+work in stored views and triggers too; see [6.9](#69-saving-queries-as-views).
 
 ```sql
 CREATE TABLE log(x);
@@ -4986,6 +5160,30 @@ INSERT INTO log VALUES (1);
 ```output
 Parse error: unsafe use of sparql_update()
 ```
+
+**`sparql_update refused: the definition of table ... names a sparqlite writer`**: SQLite does not
+stop a `CHECK` constraint stored in the database from calling a writer, so sparqlite does. While
+any table stored in the database names a writer in its definition, writers run only from a plain
+top-level `SELECT` that calls them by name (such as `SELECT sparql_update(...)`) while no other
+statement of the connection is running; anything else, including the `CHECK` itself, is refused:
+
+```sql
+CREATE TABLE notes(msg TEXT CHECK (sparql_update('INSERT DATA { <http://example.org/f> <http://example.org/p> "6" }') >= 0));
+INSERT INTO notes VALUES ('hello');
+DROP TABLE notes;
+```
+
+```output
+Runtime error: sparql: invalid argument: sparql_update refused: the definition of table main.notes names a sparqlite writer, and SQLite lets a CHECK constraint stored in a database call SQLITE_DIRECTONLY functions; while such a table is in main or an attached database, writers run only from a top-level SELECT that calls them by name, with no other statement of this connection running
+```
+
+**`sparqlite calls nest too deeply`**, **`sparql_update cannot run inside another sparqlite
+call`**: sparqlite reads and writes its `rdf_*` tables with ordinary SQL, so a trigger on one of
+them (or a view put in place of one) runs inside sparqlite's own work, and if it calls sparqlite
+again, the calls nest. A query function in a trigger on `rdf_quad` works, but writers never run
+nested, and more than 8 nested calls are refused before they can overflow the program's stack.
+Remove such triggers, and check that the database's `rdf_*` objects are sparqlite's own tables.
+(The "nests too deeply" error of 8.2, for query text nested too deeply, is a different limit.)
 
 **`no query solution`**: `sparql_rows` was used without a query (`SELECT * FROM sparql_rows`), or in
 a join where SQLite cannot work out the query text before scanning it.
