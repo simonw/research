@@ -184,6 +184,9 @@ execution's `TempDict`. Dictionary ids go to `store.dict()`, which is where sq-s
 its connection-level DecodeCache. The execution keeps no decoded-term map of its own on top of
 that cache. Such a map cost an insert and its rehashes for every distinct id, about 51M
 instructions of a 362M-instruction FILTER over 200K distinct names, and gave no hit there.
+Caveat: sq-sqlite only admits committed dictionary rows to its DecodeCache, so terms inserted by
+the current, still-open write transaction are read from the store again on every miss of the
+prefetch table and the `ValueCache` (correct, just slower inside large write transactions).
 sq-expr's `ValueCache` caches the values of repeated ids. `decode_batch` (result decoding)
 hands the dictionary ids of a whole batch to the store in one call, and the store sorts and
 deduplicates its misses. The one per-execution map left is the canonical-lookup map for
@@ -195,7 +198,11 @@ deduplicates its misses. The one per-execution map left is the canonical-lookup 
 dictionary ids of tag STR and LANG in those slots with one `Dictionary::decode` call
 (`Terms::prefetch`). The terms are kept aligned with the rows, and the operator announces each
 row it evaluates (`Terms::at_row`), so a lookup costs one id comparison and no hashing. The
-evaluation decodes exactly these ids anyway, so nothing extra is read. On a cold DecodeCache the
+evaluation decodes exactly these ids anyway, so a single prefetching operator reads nothing extra.
+`Terms` holds one prefetched table, though: when two prefetching operators are stacked (a Filter
+above an Extend that both read `?n`), each prefetches the same ids and replaces the other's table,
+so some ids are decoded twice and some lookups fall back to `decode_one` (correct, still faster
+than before the prefetch existed, but not optimal). On a cold DecodeCache the
 store reads the batch's misses in sorted order instead of one point read per row. With the
 prefetch switched on and off in one build, Q7 (REGEX over 200K names) took 237 ms instead of
 328 ms cold, and 80 ms instead of 91 ms warm. A lookup that misses falls back to `decode_one`. That happens for an id from another slot, or after an
