@@ -546,16 +546,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sq-bench"
-version = "0.1.0"
-dependencies = [
- "oxrdfio",
- "rusqlite",
- "sq-api",
- "sq-core",
-]
-
-[[package]]
 name = "sq-core"
 version = "0.1.0"
 dependencies = [

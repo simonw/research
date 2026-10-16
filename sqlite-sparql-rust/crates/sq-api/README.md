@@ -21,10 +21,10 @@ and a close hook so connections close fully. The same code runs in the loadable 
                                  sq-api      rusqlite 0.40.2 ("functions", "vtab"; system libsqlite3),
                                    |         spargebra, oxrdf, oxrdfio, oxsdatatypes, serde_json,
                                    |         rustc-hash, rand  (dev: sq-core with feature `testing`)
-          +------------------------+---------------------------+
-   ext/ (cdylib libsparqlite,   tools/sq-w3c (feature `sqlite`,   tools/sq-bench
-   own workspace, rusqlite      default on: `--backend sqlite`)   (declared dependency;
-   "loadable_extension")                                          the binary is a stub)
+          +------------------------+
+   ext/ (cdylib libsparqlite,   tools/sq-w3c (feature `sqlite`,
+   own workspace, rusqlite      default on: `--backend sqlite`)
+   "loadable_extension")
 ```
 
 What it takes from each sibling: `sq_engine::{prepare, explain, update_with, UpdateOptions}`;

@@ -44,7 +44,7 @@ pub struct Stats {
 }
 
 /// Cost model constants in nanoseconds, selected by the store's reader kind.
-/// Calibrated in WP-14 from `sq-bench micro`; these are the starting values.
+/// Starting values from the design measurements, adjusted by the benchmark-driven performance passes.
 #[derive(Clone, Debug)]
 pub struct CostConstants {
     /// Sequential scan cost per row (step + column_int64 per free column).

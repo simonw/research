@@ -25,7 +25,7 @@ describes it as frozen: after day 0, changes are additive-only and need lead rev
                                sq-core   (re-exports oxrdf, spargebra, FxHashMap, FxHashSet)
                                   |
    sq-memstore  sq-sqlite  sq-expr  sq-plan  sq-exec  sq-oracle  sq-results  sq-sqlgen
-   sq-engine  sq-api        tools/sq-bench        tools/sq-w3c (optional dependency)
+   sq-engine  sq-api        tools/sq-w3c (optional dependency)
 ```
 
 Every library crate in `crates/` depends on `sq-core`; `ext/` reaches it only through `sq-api`.
