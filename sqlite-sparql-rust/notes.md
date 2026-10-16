@@ -294,3 +294,27 @@ translating SPARQL to SQL text or running as an external client.
   - security: no high/medium — flags, CHECK-constraint guard, allow_files gate and generated SQL (only i64
     parameters) all held; lows: hostile dictionary terms printed unescaped in N-Triples/TSV/sparql_term,
     per-call probe_counts/probe_cap not clamped, sparql_check aborting on invalid UTF-8.
+- Audit fixes landed (583731a): non-IRI/cyclic TYPED datatypes refused on decode; `rdf_meta.db_id` (random) plus the
+  main file's identity (sqlite3_file address + method table) in the epoch, so caches flush after deserialize; the
+  nesting bound covers xNext/xColumn; N-Triples-syntax outputs check terms first; range checks on rows/bnodes;
+  `sparql_check` reports bad UTF-8; per-call probe limits clamped.
+
+### SQLite bug: eponymous virtual tables across sqlite3_deserialize
+- The storage auditor's deserialize test segfaulted inside SQLite when schema detection used
+  `pragma_index_info`. Reproduced standalone (repro/deserialize-eponymous/repro.py): on one connection, use any
+  eponymous vtab (`pragma_*`, `json_each`, our `sparql_rows`), `Connection.deserialize()`, then prepare a new
+  statement using one -> SIGSEGV on 3.45.1 for every case tried. My first Python repro missed it because the
+  statement cache re-used the old statement; `cached_statements=0` forces a fresh prepare.
+- gdb (3.45.1): sqlite3_prepare_v3 -> sqlite3GenerateColumnNames -> strlen. valgrind on rusqlite's bundled 3.53.2:
+  invalid 8-byte read in selectExpander/columnTypeImpl for every eponymous case (some happen not to crash);
+  `PRAGMA` statements clean. Same root cause as github.com/photostructure/sqlite-deserialize-repro (trunk
+  2026-10-02): sqlite3VtabEponymousTableInit stores the main Schema pointer once; deserialize frees it.
+- Fix on our side: every internal catalog read is a PRAGMA statement now (schema.rs, template.rs cookie,
+  btree/roots.rs layout checks, sq-api `table_naming_a_writer` database list). `sparql_rows` must stay eponymous
+  (TVF syntax), so the crash for user code that uses it before and after a deserialize is documented
+  (README limitations, sq-api README, tutorial) with the workaround: deserialize into a fresh connection or
+  before the first sparql_rows call (verified). Scalar functions are unaffected and answer from the new image.
+
+### Final gate (after the PRAGMA change)
+- 1,024 Rust tests passed / 0 failed (15 ignored); pytest 50 passed; W3C 636/639 on both the sqlite and mem
+  backends; build/allow-list gates pass; tutorial verifier 163 blocks, 0 failures.

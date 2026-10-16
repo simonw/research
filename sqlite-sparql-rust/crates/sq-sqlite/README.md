@@ -134,10 +134,14 @@ end of the scan. When the B-tree reader cannot serve a count (concept 8), `count
   recurse.
 - `check()` (`sparql_check`) reports rows whose `lex` or `lang` is not valid UTF-8 instead of
   failing with an internal error.
-- Known SQLite 3.45 issue: an eponymous `pragma_*` table-valued function used both before and
-  after `sqlite3_deserialize` replaces main can crash inside SQLite (stale schema pointer;
-  reproducible from plain Python). Schema detection and the epoch's cookie read therefore use
-  PRAGMA statements (`PRAGMA main.index_info`, `PRAGMA main.schema_version`).
+- Known SQLite bug: an eponymous virtual table (every `pragma_*` table-valued function,
+  `json_each`, ...) used both before and after `sqlite3_deserialize` replaces main can crash
+  inside SQLite while the next statement is prepared (stale schema pointer). It reproduces from
+  plain Python on 3.45.1 and on 3.53.2; see
+  [repro/deserialize-eponymous](../../repro/deserialize-eponymous/README.md). Every catalog read
+  in this crate is therefore a PRAGMA statement: schema detection (`PRAGMA main.index_info`),
+  the epoch's cookie (`PRAGMA main.schema_version`), and the B-tree reader's layout checks
+  (`PRAGMA main.table_xinfo` / `index_list` / `index_xinfo`).
 - Only rows `<= committed_max_row` enter the caches, and that bound is refreshed only outside
   a write transaction. A rolled-back term therefore never stays cached.
 

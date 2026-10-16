@@ -169,6 +169,8 @@ Supporting tools:
 
 - [tools/sq-w3c](tools/sq-w3c/) runs the W3C test suite.
 - [py/](py/) holds the benchmark and the pytest suite.
+- [repro/deserialize-eponymous](repro/deserialize-eponymous/README.md) reproduces a SQLite bug
+  that the final audit ran into (see Limitations).
 - [ext/](ext/) is the cdylib. It is a separate cargo workspace so that rusqlite's
   `loadable_extension` feature never mixes with the native test builds.
 
@@ -202,6 +204,12 @@ extensions; the tutorial covers Homebrew and the Windows file name.
 - The direct B-tree reader only serves rollback-journal file databases on a private-cache connection.
   WAL and in-memory databases use the (still fast) SQL cursors.
 - Small fixed per-query overhead of tens of microseconds, from planning plus snapshot validation.
+- A SQLite bug can crash the process during `sqlite3_deserialize` (Python `Connection.deserialize`)
+  if `sparql_rows`, like any eponymous virtual table (`json_each`, `pragma_*`), is used on the
+  connection both before and after the call. Deserialize into a fresh connection instead.
+  Reproduction and analysis are in
+  [repro/deserialize-eponymous](repro/deserialize-eponymous/README.md). sparqlite's own catalog
+  reads use `PRAGMA` statements, so its scalar functions are unaffected.
 - Only Linux was tested. Windows instructions in the tutorial are untested.
 
 ## How this was built
@@ -221,6 +229,16 @@ is in [notes.md](notes.md).
 4. **Performance.** Benchmark-driven passes added the B-tree range counts, direct dictionary reads,
    lazy sort keys and planner cost fixes, each re-measured and correctness-gated by an independent
    reviewer.
+5. **Final audit.** Four narrow auditors covered the FFI layer, the B-tree reader on hostile or
+   corrupt files, the virtual tables and their guards, and the SQL-surface security model. They
+   found:
+   - two high-severity bugs: a datatype cycle in a corrupt dictionary overflowed the stack, and
+     the caches survived `sqlite3_deserialize` swapping in another database;
+   - one medium: the nesting bound did not cover row fetches;
+   - a handful of lows.
+
+   All were fixed with regression tests. The audit also surfaced the SQLite deserialize crash
+   described under Limitations.
 
 Reviewers caught many real bugs, for example:
 

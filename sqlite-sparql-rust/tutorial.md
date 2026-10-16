@@ -152,6 +152,12 @@ Python 3.12 and newer also accept `con.load_extension(path, entrypoint="sqlite3_
 for a renamed file. Some Python builds cannot load extensions at all (macOS's system Python is
 one); `enable_load_extension` then fails with an `AttributeError`.
 
+If you use `con.deserialize(...)`, call it before the connection's first `sparql_rows` query, or
+deserialize into a new connection. A SQLite bug can crash the process when a table-valued function
+such as `sparql_rows` or `json_each` is used both before and after a deserialize
+([details](repro/deserialize-eponymous/README.md)). Scalar functions such as `sparql_query` are not
+affected.
+
 **Other programs.** Anything that can load SQLite extensions can use sparqlite. The extension
 registers its functions on one connection at a time, so every connection must load it. Two tools
 that were tried with this build: `sqlite-utils query tutorial/tutorial.db "SELECT ..."
