@@ -1,0 +1,8 @@
+# Q13: :p1 :knows+ ?y COUNT
+# dataset: social
+# Transitive closure from one person (set semantics: each reachable person once).
+PREFIX : <http://example.org/social/>
+SELECT (COUNT(*) AS ?count)
+WHERE {
+  :p1 :knows+ ?y .
+}

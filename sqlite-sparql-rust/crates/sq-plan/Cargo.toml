@@ -1,0 +1,23 @@
+[package]
+name = "sq-plan"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+sq-core = { workspace = true }
+oxrdf = { workspace = true }
+spargebra = { workspace = true }
+rustc-hash = { workspace = true }
+smallvec = { workspace = true }
+
+[dev-dependencies]
+sq-core = { workspace = true, features = ["testing"] }
+sq-memstore = { workspace = true }
+oxttl = { workspace = true }
+oxrdfio = { workspace = true }
+# End-to-end checks: plans executed on MemStore and SQLite stores against the oracle, and
+# EXPLAIN QUERY PLAN of SqlJoin statements.
+sq-sqlite = { workspace = true }
+sq-exec = { workspace = true }
+sq-oracle = { workspace = true }
+rusqlite = { workspace = true }

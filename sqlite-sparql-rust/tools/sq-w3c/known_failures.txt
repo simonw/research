@@ -1,0 +1,8 @@
+# W3C SPARQL tests expected to fail, one test IRI per line (anything after the IRI and
+# lines starting with '#' are comments). sq-w3c exits 1 when a failing test is not listed
+# here, and reports listed tests that now pass.
+
+# spargebra 0.4.7 parser divergences (no engine built on spargebra can pass these):
+http://www.w3.org/2001/sw/DataAccess/tests/data-r2/optional-filter/manifest#dawg-optional-filter-005-not-simplified  spargebra folds OPTIONAL {{ P FILTER(F) }} into the LeftJoin condition
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/bindings/manifest#values-construct-group-by  spargebra rejects VALUES after CONSTRUCT .. GROUP BY
+http://www.w3.org/2001/sw/DataAccess/tests/data-r2/expr-builtin/manifest#case-insensitive-booleans  spargebra rejects TRUE / False

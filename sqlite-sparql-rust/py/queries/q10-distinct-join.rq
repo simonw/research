@@ -1,0 +1,11 @@
+# Q10: DISTINCT over a join
+# dataset: social
+# (home city, friend's class) pairs: at most 10 x cities rows out of 3 x persons join rows.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX : <http://example.org/social/>
+SELECT DISTINCT ?c ?cls
+WHERE {
+  ?x :knows ?y .
+  ?x :city ?c .
+  ?y rdf:type ?cls .
+}

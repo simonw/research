@@ -1,0 +1,11 @@
+# Q11: UNION
+# dataset: social
+# Outgoing :knows of :C1 persons plus incoming :knows of :C2 persons.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX : <http://example.org/social/>
+SELECT ?x ?y
+WHERE {
+  { ?x rdf:type :C1 . ?x :knows ?y . }
+  UNION
+  { ?x rdf:type :C2 . ?y :knows ?x . }
+}

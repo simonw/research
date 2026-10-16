@@ -1,0 +1,18 @@
+# Q17: BSBM offers: price range + date filter + ORDER BY price LIMIT 10
+# dataset: bsbm
+# ordered: true
+# Prices mix xsd:decimal (some non-canonical, e.g. "12.50") and xsd:integer but never
+# compare equal across the two, and ?offer breaks ties, so the order is total.
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX bsbm: <http://example.org/bsbm/vocabulary/>
+SELECT ?offer ?price ?vendor ?product ?validTo
+WHERE {
+  ?offer bsbm:price ?price ;
+         bsbm:validTo ?validTo ;
+         bsbm:vendor ?vendor ;
+         bsbm:product ?product .
+  FILTER(?price >= 500 && ?price <= 1000)
+  FILTER(?validTo >= "2008-06-01T00:00:00"^^xsd:dateTime)
+}
+ORDER BY ?price ?offer
+LIMIT 10

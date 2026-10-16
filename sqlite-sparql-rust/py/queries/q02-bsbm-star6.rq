@@ -1,0 +1,16 @@
+# Q2: BSBM product star-6
+# dataset: bsbm
+# A six-pattern product star anchored on one popular feature.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX bsbm: <http://example.org/bsbm/vocabulary/>
+PREFIX inst: <http://example.org/bsbm/instances/>
+SELECT ?product ?type ?label ?producer ?n1 ?t1
+WHERE {
+  ?product bsbm:productFeature inst:ProductFeature3 ;
+           rdf:type ?type ;
+           rdfs:label ?label ;
+           bsbm:producer ?producer ;
+           bsbm:productPropertyNumeric1 ?n1 ;
+           bsbm:productPropertyTextual1 ?t1 .
+}

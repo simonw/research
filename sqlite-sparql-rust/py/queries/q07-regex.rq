@@ -1,0 +1,9 @@
+# Q7: REGEX on names
+# dataset: social
+# Case-insensitive anchored regular expression over every name.
+PREFIX : <http://example.org/social/>
+SELECT ?x ?n
+WHERE {
+  ?x :name ?n .
+  FILTER(REGEX(?n, "^person 1[0-9]*7$", "i"))
+}

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# The one command that runs every gate (docs/SPEC.md §1.7).
+# Usage: scripts/check.sh [quick]     (quick = Rust tests + ext build + gates only)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+# SCRATCH: a working directory outside the repository (build targets, venv, rdf-tests checkout).
+SCRATCH=${SCRATCH:-${TMPDIR:-/tmp}/sparqlite-scratch}
+VENV=${VENV:-$SCRATCH/venv}
+W3C=${W3C:-$SCRATCH/w3c/rdf-tests/sparql}   # the sparql/ directory of a w3c/rdf-tests checkout
+export SQ_W3C_DIR=${SQ_W3C_DIR:-$W3C}         # read by the W3C tests in sq-expr, sq-plan and sq-sqlgen
+export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$SCRATCH/targets/check}
+export CARGO_INCREMENTAL=0
+EXT_TARGET=${EXT_TARGET:-$SCRATCH/targets/ext}
+
+cargo test --workspace --release --no-fail-fast                                   # native, system libsqlite3 3.45.1
+CARGO_TARGET_DIR=$EXT_TARGET cargo build --release --manifest-path ext/Cargo.toml
+if CARGO_TARGET_DIR=$EXT_TARGET cargo tree --manifest-path ext/Cargo.toml -e features -i libsqlite3-sys | grep -E 'bundled|modern_sqlite'; then
+  echo "GATE FAILED: bundled/modern_sqlite leaked into the loadable extension" >&2; exit 1
+fi
+if grep -rnE 'total_changes64|is_interrupted|changes64|vtab_in\b|vtab_in_|rhs_value' crates/ ext/src tools/; then
+  echo "GATE FAILED: SQLite API outside the 3.34.1 loadable-extension allow-list" >&2; exit 1
+fi
+export SPARQLITE_EXT=$EXT_TARGET/release/libsparqlite
+[ "${1:-}" = quick ] && exit 0
+"$VENV/bin/python" -m pip install -q pytest >/dev/null 2>&1 || true
+"$VENV/bin/python" -m pytest py/tests -q
+cargo run --release -p sq-w3c -- --suite "$W3C" --backend sqlite --known-failures tools/sq-w3c/known_failures.txt
+cargo run --release -p sq-w3c -- --suite "$W3C" --backend mem    --known-failures tools/sq-w3c/known_failures.txt
+# Differential testing against the spec-transcribed oracle (sq-oracle) lives in crates/sq-engine/tests/differential.rs;
+# pyoxigraph cross-checks results at scale through the benchmark checksums (py/bench.py).

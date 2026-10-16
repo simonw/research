@@ -1,0 +1,10 @@
+# Q4: selective chain-3 from a constant
+# dataset: social
+# Three hops from :p123 (exactly 27 solutions, duplicates included).
+PREFIX : <http://example.org/social/>
+SELECT ?a ?b ?c
+WHERE {
+  :p123 :knows ?a .
+  ?a :knows ?b .
+  ?b :knows ?c .
+}

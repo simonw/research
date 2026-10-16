@@ -1,0 +1,23 @@
+[package]
+name = "sq-sqlgen"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+sq-core = { workspace = true }
+
+[dev-dependencies]
+sq-core = { workspace = true, features = ["testing"] }
+sq-plan = { workspace = true }
+sq-memstore = { workspace = true }
+sq-sqlite = { workspace = true }
+sq-expr = { workspace = true }
+rusqlite = { workspace = true }
+spareval = { workspace = true }
+spargebra = { workspace = true }
+oxrdf = { workspace = true }
+oxrdfio = { workspace = true }
+oxttl = { workspace = true }
+oxsdatatypes = { workspace = true }
+sparesults = { workspace = true }
+rand = { workspace = true }

@@ -1,0 +1,12 @@
+# Q8: GROUP BY + COUNT + ORDER BY DESC LIMIT 10
+# dataset: social
+# ordered: true
+# The ten most populous cities; ?c breaks ties so the order is total.
+PREFIX : <http://example.org/social/>
+SELECT ?c (COUNT(?x) AS ?n)
+WHERE {
+  ?x :city ?c .
+}
+GROUP BY ?c
+ORDER BY DESC(?n) ?c
+LIMIT 10

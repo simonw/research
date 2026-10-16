@@ -1,0 +1,7 @@
+# Q16: COUNT(*) {?s ?p ?o}
+# dataset: social
+# Size of the default graph.
+SELECT (COUNT(*) AS ?count)
+WHERE {
+  ?s ?p ?o .
+}

@@ -1,0 +1,1540 @@
+//! Phase-2 direct B-tree reader (§13): the conformance suite against `BtreeCursor` on file
+//! databases (page sizes 4K–64K, reserved bytes, named graphs, deletes + re-inserts, VACUUM),
+//! random operation sequences against a brute-force model, every fallback path (WAL, own
+//! write transaction, interleaved writes, data-version changes, unsupported records, corrupt
+//! pages), the kill switch, and cost / capability reporting.
+use std::collections::BTreeSet;
+use std::ops::Bound;
+
+use rusqlite::{Connection, ffi};
+use sq_core::stats::{BTREE_COSTS, SQL_CURSOR_COSTS};
+use sq_core::store::{Dictionary, IndexOrder, QuadCursor, QuadStore, QuadStoreWriter, ReaderKind, ScanSpec};
+use sq_core::testing::{Rng, cursor_conformance, expected_rows, random_id, random_quads};
+use sq_core::{Error, Tag, TermId};
+
+use super::{Db, TempPath, iri};
+use crate::btree::BtreeCursor;
+use crate::{ReaderMode, SqliteStore};
+
+/// A file database with `page_size` (and `reserved` bytes at the end of every page) holding
+/// `quads`.
+fn file_db(page_size: u32, reserved: u8, quads: &[[TermId; 4]]) -> Db {
+    let path = TempPath::new("bt");
+    let conn = Connection::open(&path.0).unwrap();
+    conn.execute_batch(&format!("PRAGMA page_size={page_size};")).unwrap();
+    if reserved > 0 {
+        let mut n = i32::from(reserved);
+        // SAFETY: valid connection; "main" is NUL-terminated; SQLITE_FCNTL_RESERVE_BYTES reads
+        // and writes one int through the argument. The database is still empty, so the
+        // reserve applies when the first page is written.
+        let rc = unsafe {
+            ffi::sqlite3_file_control(conn.handle(), c"main".as_ptr(), ffi::SQLITE_FCNTL_RESERVE_BYTES, (&raw mut n).cast())
+        };
+        assert_eq!(rc, ffi::SQLITE_OK);
+    }
+    let db = Db::with(conn, Some(path));
+    db.insert(quads);
+    db
+}
+
+/// Byte `at` of the database header, read from the file.
+fn header_byte(db: &Db, at: usize) -> u8 {
+    std::fs::read(&db.path.as_ref().unwrap().0).unwrap()[at]
+}
+
+fn last_fallback(db: &Db) -> String {
+    db.shared().status().into_iter().find(|(k, _)| k == "btree_last_fallback").map(|(_, v)| v).unwrap_or_default()
+}
+
+fn drain(cur: &mut dyn QuadCursor, max: usize) -> Vec<Vec<TermId>> {
+    let w = cur.width();
+    let mut buf = Vec::new();
+    let mut rows = 0;
+    loop {
+        let n = cur.fill(&mut buf, max).unwrap();
+        if n == 0 {
+            break;
+        }
+        rows += n;
+    }
+    assert_eq!(buf.len(), rows * w);
+    (0..rows).map(|i| buf[i * w..(i + 1) * w].to_vec()).collect()
+}
+
+fn all_quads(store: &SqliteStore) -> Vec<[TermId; 4]> {
+    let mut cur = store.cursor(&ScanSpec::new(IndexOrder::Gspo, &[])).unwrap();
+    drain(cur.as_mut(), 1024).into_iter().map(|r| [r[0], r[1], r[2], r[3]]).collect()
+}
+
+/// The conformance suite inside a read scope, asserting that every cursor was a B-tree
+/// cursor, that the B-tree reader answered every count, and that none fell back; then
+/// [`count_conformance`] on the same store.
+fn conformance_btree(db: &Db, quads: &[[TermId; 4]], seed: u64, iterations: usize) {
+    {
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        assert!(db.shared().btree_active(), "reader inactive: {}", last_fallback(db));
+        let before = db.shared().btree_counters();
+        cursor_conformance(&db.store, quads, seed, iterations);
+        let after = db.shared().btree_counters();
+        // One cursor and two counts (exact, capped) per order x prefix length x iteration.
+        assert_eq!(after.cursors - before.cursors, 45 * iterations as u64, "every cursor is a B-tree cursor");
+        assert_eq!(after.counts - before.counts, 90 * iterations as u64, "every count is a B-tree count");
+        assert_eq!(after.fallbacks, before.fallbacks, "unexpected fallback: {}", last_fallback(db));
+    }
+    count_conformance(db, quads, seed, iterations.max(2));
+}
+
+/// Number of rows of `spec`, by brute force (quads are distinct, so rows are too).
+fn brute_count(quads: &[[TermId; 4]], spec: &ScanSpec) -> u64 {
+    quads.iter().filter(|q| spec.matches(q)).count() as u64
+}
+
+/// Every bound shape on the first free column of a scan whose rows are `rows`: none, one
+/// side, both sides (inclusive and exclusive), values taken from the data and their
+/// neighbours, random values, the extremes, and contradicting bounds.
+fn bound_shapes(r: &mut Rng, rows: &[Vec<TermId>]) -> Vec<(Bound<i64>, Bound<i64>)> {
+    use Bound::{Excluded as Ex, Included as In, Unbounded as Un};
+    let pick = |r: &mut Rng| {
+        if rows.is_empty() || r.below(5) == 0 {
+            random_id(r, 60).0
+        } else {
+            rows[r.below(rows.len() as u64) as usize][0].0 + [0i64, 0, 0, 1, -1][r.below(5) as usize]
+        }
+    };
+    let (a, b) = (pick(r), pick(r));
+    let (lo, hi) = (a.min(b), a.max(b));
+    vec![
+        (Un, Un),
+        (In(lo), Un),
+        (Ex(lo), Un),
+        (Un, In(hi)),
+        (Un, Ex(hi)),
+        (In(lo), In(hi)),
+        (Ex(lo), Ex(hi)),
+        (In(lo), Ex(hi)),
+        (Ex(lo), In(hi)),
+        (In(hi), In(lo)),
+        (In(i64::MIN), In(i64::MAX)),
+        (Ex(i64::MIN), Ex(i64::MAX)),
+        (Ex(i64::MAX), Un),
+        (Un, Ex(i64::MIN)),
+    ]
+}
+
+/// `store.count(spec, cap)` on the B-tree reader against brute force: every order (the
+/// partial indexes included) and prefix length, prefixes from the data and absent ones, every
+/// bound shape of [`bound_shapes`], and caps below, at and above the count (`min(count,
+/// cap + 1)`). Every count must be answered by the reader, without a fallback.
+fn count_conformance(db: &Db, quads: &[[TermId; 4]], seed: u64, iterations: usize) {
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    assert!(db.shared().btree_active(), "reader inactive: {}", last_fallback(db));
+    let before = db.shared().btree_counters();
+    let mut r = Rng(seed.wrapping_mul(31) | 1);
+    let mut calls = 0u64;
+    for order in IndexOrder::ALL {
+        for prefix_len in 0..=4usize {
+            for _ in 0..iterations {
+                let mut prefix: Vec<TermId> = match quads.get(r.below(quads.len() as u64) as usize) {
+                    Some(q) => order.cols()[..prefix_len].iter().map(|c| q[*c as usize]).collect(),
+                    None => (0..prefix_len).map(|_| random_id(&mut r, 60)).collect(),
+                };
+                if prefix_len > 0 && r.below(6) == 0 {
+                    prefix[prefix_len - 1] = TermId(prefix[prefix_len - 1].0 + 16);
+                }
+                let base = ScanSpec::new(order, &prefix);
+                let shapes = if prefix_len < 4 {
+                    bound_shapes(&mut r, &expected_rows(quads, &base))
+                } else {
+                    vec![(Bound::Unbounded, Bound::Unbounded)]
+                };
+                for (lo, hi) in shapes {
+                    let spec = base.with_range(lo, hi);
+                    let n = brute_count(quads, &spec);
+                    let caps = [None, Some(0), Some(1), Some(n.saturating_sub(1)), Some(n), Some(n + 1), Some(r.below(2 * n + 2))];
+                    for cap in caps {
+                        let want = cap.map_or(n, |c| n.min(c + 1));
+                        assert_eq!(db.store.count(&spec, cap).unwrap(), want, "count({spec:?}, {cap:?})");
+                        calls += 1;
+                    }
+                }
+            }
+        }
+    }
+    let after = db.shared().btree_counters();
+    assert_eq!(after.counts - before.counts, calls, "every count is a B-tree count: {}", last_fallback(db));
+    assert_eq!(after.fallbacks, before.fallbacks, "unexpected fallback: {}", last_fallback(db));
+}
+
+/// Depth of the b-tree of `order` (root to leaf), through a full scan cursor.
+fn depth(db: &Db, order: IndexOrder) -> usize {
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    let shared = db.shared();
+    let cur = BtreeCursor::open(&shared.btree, &shared.pool, &ScanSpec::new(order, &[])).unwrap().unwrap();
+    cur.depth()
+}
+
+#[test]
+fn conformance_random_seeds_with_and_without_named_graphs() {
+    for (seed, named) in [(1u64, false), (3, true), (5, true), (7, false)] {
+        let q = random_quads(seed, 3000, named);
+        let db = file_db(4096, 0, &q);
+        conformance_btree(&db, &q, seed, 4);
+    }
+}
+
+/// 4K–64K pages; enough quads for interior pages at every size (64K pages hold ~3000 cells).
+#[test]
+fn conformance_page_sizes() {
+    for (page_size, n) in [(4096u32, 6000usize), (8192, 8000), (16384, 12_000), (65536, 25_000)] {
+        let q = random_quads(100 + u64::from(page_size), n, true);
+        let db = file_db(page_size, 0, &q);
+        let stored = u32::from(u16::from_be_bytes([header_byte(&db, 16), header_byte(&db, 17)]));
+        assert_eq!(stored, if page_size == 65536 { 1 } else { page_size }, "65536 is stored as 1");
+        for order in [IndexOrder::Gspo, IndexOrder::Gpos] {
+            assert!(depth(&db, order) >= 2, "page size {page_size}: {order:?} has no interior page");
+        }
+        conformance_btree(&db, &q, u64::from(page_size), 2);
+    }
+}
+
+#[test]
+fn conformance_with_reserved_bytes_per_page() {
+    for (page_size, reserved) in [(1024u32, 32u8), (4096, 200)] {
+        let q = random_quads(77, 5000, true);
+        let db = file_db(page_size, reserved, &q);
+        assert_eq!(header_byte(&db, 20), reserved, "the reserve applies to the new file");
+        assert!(depth(&db, IndexOrder::Gspo) >= 2);
+        conformance_btree(&db, &q, 77, 2);
+    }
+}
+
+#[test]
+fn conformance_after_deletes_reinserts_and_vacuum() {
+    let q = random_quads(41, 12_000, true);
+    let db = file_db(1024, 0, &q);
+    let del: Vec<_> = q.iter().copied().step_by(3).collect();
+    assert_eq!(db.remove(&del), del.len() as u64);
+    let re: Vec<_> = del.iter().copied().step_by(2).collect();
+    assert_eq!(db.insert(&re), re.len() as u64);
+    let del_set: BTreeSet<_> = del.iter().copied().collect();
+    let re_set: BTreeSet<_> = re.iter().copied().collect();
+    let want: Vec<_> = q.iter().copied().filter(|x| !del_set.contains(x) || re_set.contains(x)).collect();
+    conformance_btree(&db, &want, 41, 2);
+    // VACUUM rebuilds every b-tree (new root pages, schema cookie + 1).
+    let roots_before = db.shared().btree_counters().root_loads;
+    db.conn.execute_batch("VACUUM").unwrap();
+    conformance_btree(&db, &want, 42, 2);
+    assert!(db.shared().btree_counters().root_loads > roots_before, "VACUUM changes the schema cookie");
+    // Page splits and merges on a store that keeps changing between executions.
+    let mut r = Rng(99);
+    let mut model: BTreeSet<_> = want.into_iter().collect();
+    for round in 0..3 {
+        let extra = random_quads(1000 + round, 3000, true);
+        db.insert(&extra);
+        model.extend(extra);
+        let gone: Vec<_> = model.iter().copied().filter(|_| r.below(4) == 0).collect();
+        db.remove(&gone);
+        for x in &gone {
+            model.remove(x);
+        }
+        let now: Vec<_> = model.iter().copied().collect();
+        conformance_btree(&db, &now, 50 + round, 1);
+    }
+}
+
+#[test]
+fn the_whole_table_through_every_order() {
+    let q = random_quads(8, 20_000, true);
+    let db = file_db(1024, 0, &q);
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    for order in IndexOrder::ALL {
+        let spec = ScanSpec::new(order, &[]);
+        for max in [1, 7, 1024] {
+            let mut cur = db.store.cursor(&spec).unwrap();
+            assert_eq!(cur.counters().reader, ReaderKind::Btree);
+            assert_eq!(drain(cur.as_mut(), max), expected_rows(&q, &spec), "{order:?} max {max}");
+            assert_eq!(cur.counters().reader, ReaderKind::Btree);
+        }
+    }
+    assert_eq!(db.shared().btree_counters().fallbacks, 0, "{}", last_fallback(&db));
+}
+
+/// Page reads of the reader (page-cache hits and misses) so far.
+fn page_accesses(db: &Db) -> u64 {
+    let c = db.shared().btree_counters();
+    c.cache_hits + c.pages_read
+}
+
+/// Exact counts of whole b-trees, and capped counts that stop after the few pages they need:
+/// the leftmost leaf for a count from the start, one boundary path otherwise.
+#[test]
+fn whole_tree_counts_and_capped_counts_read_only_the_pages_they_need() {
+    let q = random_quads(10, 20_000, true);
+    let db = file_db(512, 0, &q);
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    for order in IndexOrder::ALL {
+        let spec = ScanSpec::new(order, &[]);
+        let n = brute_count(&q, &spec);
+        assert_eq!(db.store.count(&spec, None).unwrap(), n, "{order:?}");
+        let depth = depth(&db, order) as u64;
+        assert!(depth >= 2, "{order:?}: depth {depth}");
+        for cap in [0u64, 1, 5] {
+            let before = page_accesses(&db);
+            assert_eq!(db.store.count(&spec, Some(cap)).unwrap(), n.min(cap + 1));
+            // The leftmost path; one more leaf if the leftmost leaf holds fewer than cap + 1 rows.
+            let pages = page_accesses(&db) - before;
+            assert!(pages <= depth + 1, "{order:?} cap {cap}: {pages} pages, depth {depth}");
+        }
+        // A range in the middle of the b-tree: at most the two boundary paths for a small cap.
+        let rows = expected_rows(&q, &spec);
+        let mid = &rows[rows.len() / 3];
+        let spec = ScanSpec::new(order, &mid[..1]);
+        let before = page_accesses(&db);
+        assert_eq!(db.store.count(&spec, Some(0)).unwrap(), brute_count(&q, &spec).min(1));
+        let pages = page_accesses(&db) - before;
+        assert!(pages <= 2 * depth, "{order:?} mid-range cap 0: {pages} pages, depth {depth}");
+    }
+    assert_eq!(db.shared().btree_counters().fallbacks, 0, "{}", last_fallback(&db));
+}
+
+/// Ranges that start or end exactly at an entry, for every entry of every b-tree (interior
+/// cells included): the exact key, and inclusive / exclusive bounds at its last column and at
+/// its third column. The expected counts come from binary searches over the sorted keys.
+#[test]
+fn counts_of_ranges_starting_or_ending_at_every_entry() {
+    use Bound::{Excluded as Ex, Included as In, Unbounded as Un};
+    for (page_size, n) in [(512u32, 5000usize), (1024, 9000)] {
+        let q = random_quads(60 + u64::from(page_size), n, true);
+        let db = file_db(page_size, 0, &q);
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        let before = db.shared().btree_counters();
+        let mut calls = 0;
+        for order in IndexOrder::ALL {
+            let all = ScanSpec::new(order, &[]);
+            let mut keys: Vec<[i64; 4]> =
+                q.iter().filter(|x| all.matches(x)).map(|x| order.cols().map(|c| x[c as usize].0)).collect();
+            keys.sort_unstable();
+            // Rows with prefix `p` (length j) whose column j lies within (lo, hi).
+            let brute = |p: &[i64], lo: Bound<i64>, hi: Bound<i64>| -> u64 {
+                let j = p.len();
+                let below = |v: i64| match lo {
+                    In(l) => v < l,
+                    Ex(l) => v <= l,
+                    Un => false,
+                };
+                let not_above = |v: i64| match hi {
+                    In(h) => v <= h,
+                    Ex(h) => v < h,
+                    Un => true,
+                };
+                let a = keys.partition_point(|x| x[..j] < *p || (x[..j] == *p && below(x[j])));
+                let b = keys.partition_point(|x| x[..j] < *p || (x[..j] == *p && not_above(x[j])));
+                b.saturating_sub(a) as u64
+            };
+            for k in &keys {
+                let ids = k.map(TermId);
+                assert_eq!(db.store.count(&ScanSpec::new(order, &ids), None).unwrap(), 1, "{order:?} {k:?}");
+                calls += 1;
+                for j in [2usize, 3] {
+                    let v = k[j];
+                    for (lo, hi) in [(In(v), Un), (Ex(v), Un), (Un, In(v)), (Un, Ex(v)), (In(v), In(v))] {
+                        let spec = ScanSpec::new(order, &ids[..j]).with_range(lo, hi);
+                        let want = brute(&k[..j], lo, hi);
+                        assert_eq!(db.store.count(&spec, None).unwrap(), want, "{spec:?}");
+                        assert_eq!(db.store.count(&spec, Some(0)).unwrap(), want.min(1), "{spec:?}");
+                        calls += 2;
+                    }
+                }
+            }
+        }
+        let after = db.shared().btree_counters();
+        assert_eq!(after.counts - before.counts, calls, "{}", last_fallback(&db));
+        assert_eq!(after.fallbacks, before.fallbacks, "{}", last_fallback(&db));
+    }
+}
+
+/// Counts fall back to the VDBE exactly where cursors do: WAL and memory databases, no read
+/// transaction, the connection's own write transaction, the kill switch, and indexes whose
+/// layout the reader does not trust. The results never change.
+#[test]
+fn counts_fall_back_to_the_vdbe_where_cursors_do() {
+    let q = random_quads(35, 3000, true);
+    let check = |db: &Db, quads: &[[TermId; 4]], served: bool, what: &str| {
+        let before = db.shared().btree_counters().counts;
+        let mut calls = 0;
+        for order in IndexOrder::ALL {
+            for spec in [ScanSpec::new(order, &[]), ScanSpec::new(order, &[quads[7][order.cols()[0] as usize]])] {
+                let n = brute_count(quads, &spec);
+                assert_eq!(db.store.count(&spec, None).unwrap(), n, "{what} {spec:?}");
+                assert_eq!(db.store.count(&spec, Some(3)).unwrap(), n.min(4), "{what} {spec:?}");
+                calls += 2;
+            }
+        }
+        let served_now = db.shared().btree_counters().counts - before;
+        assert_eq!(served_now, if served { calls } else { 0 }, "{what}: {}", last_fallback(db));
+    };
+    // WAL.
+    let path = TempPath::new("wal-count");
+    let conn = Connection::open(&path.0).unwrap();
+    conn.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(())).unwrap();
+    let wal = Db::with(conn, Some(path));
+    wal.insert(&q);
+    {
+        let _read = wal.store.read_scope(0).unwrap();
+        wal.shared().validate_epoch().unwrap();
+        check(&wal, &q, false, "WAL");
+    }
+    // Memory.
+    let mem = Db::mem();
+    mem.insert(&q);
+    {
+        let _read = mem.store.read_scope(0).unwrap();
+        mem.shared().validate_epoch().unwrap();
+        check(&mem, &q, false, "memory");
+    }
+    let db = file_db(1024, 0, &q);
+    // No read transaction (autocommit, no statement running).
+    assert_eq!(db.shared().db().txn_state(), ffi::SQLITE_TXN_NONE);
+    check(&db, &q, false, "no read transaction");
+    {
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        check(&db, &q, true, "read scope");
+        db.shared().set_reader(ReaderMode::Sql);
+        check(&db, &q, false, "kill switch");
+        db.shared().set_reader(ReaderMode::Auto);
+        check(&db, &q, true, "switched on again");
+    }
+    // The connection's own write transaction sees its uncommitted writes.
+    db.conn.execute_batch("BEGIN").unwrap();
+    let extra = random_quads(36, 400, true);
+    {
+        let ws = db.store.write_scope(0).unwrap();
+        db.store.insert(&mut extra.clone()).unwrap();
+        ws.commit().unwrap();
+    }
+    let mut all: Vec<_> = q.iter().chain(&extra).copied().collect();
+    all.sort();
+    all.dedup();
+    assert_eq!(db.shared().db().txn_state(), ffi::SQLITE_TXN_WRITE);
+    check(&db, &all, false, "own write transaction");
+    db.conn.execute_batch("ROLLBACK").unwrap();
+    // An index layout the reader does not read: that order counts in the VDBE, others do not.
+    db.conn.execute_batch("DROP INDEX rdf_gpso; CREATE INDEX rdf_gpso ON rdf_quad(g, p, s DESC, o);").unwrap();
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    let before = db.shared().btree_counters().counts;
+    let spec = ScanSpec::new(IndexOrder::Gpso, &[]);
+    assert_eq!(db.store.count(&spec, None).unwrap(), brute_count(&q, &spec));
+    assert_eq!(db.shared().btree_counters().counts, before);
+    let spec = ScanSpec::new(IndexOrder::Gpos, &[]);
+    assert_eq!(db.store.count(&spec, Some(10)).unwrap(), 11);
+    assert_eq!(db.shared().btree_counters().counts, before + 1);
+}
+
+/// A long count polls for interrupts (every 1024 pages): with `sqlite3_interrupt` pending
+/// while a statement runs, it fails with `Error::Interrupted`, like the VDBE count.
+#[test]
+fn long_counts_notice_interrupts() {
+    let q = random_quads(37, 40_000, true);
+    let db = file_db(512, 0, &q);
+    let mut held = db.conn.prepare("SELECT g FROM rdf_quad").unwrap();
+    let mut rows = held.query([]).unwrap();
+    assert!(rows.next().unwrap().is_some());
+    let spec = ScanSpec::new(IndexOrder::Gspo, &[]);
+    let counts = db.shared().btree_counters().counts;
+    assert_eq!(db.store.count(&spec, None).unwrap(), q.len() as u64);
+    assert_eq!(db.shared().btree_counters().counts, counts + 1, "{}", last_fallback(&db));
+    db.shared().db().interrupt();
+    assert!(matches!(db.store.count(&spec, None), Err(Error::Interrupted)));
+    drop(rows);
+    drop(held);
+    assert_eq!(db.store.count(&spec, Some(5)).unwrap(), 6);
+}
+
+fn random_bound(r: &mut Rng, rows: &[Vec<TermId>]) -> Bound<i64> {
+    let v = if rows.is_empty() || r.below(4) == 0 { random_id(r, 60).0 } else { rows[r.below(rows.len() as u64) as usize][0].0 };
+    match r.below(3) {
+        0 => Bound::Unbounded,
+        1 => Bound::Included(v),
+        _ => Bound::Excluded(v),
+    }
+}
+
+/// Random interleavings of fills, forward seeks (short ones within a leaf and long ones
+/// across leaves and interior cells), backward seeks and rebinds to random prefixes (mostly
+/// increasing, like sorted probes), checked after every operation against a brute-force model.
+#[test]
+fn random_operations_match_the_model() {
+    for (seed, named) in [(201u64, true), (202, false)] {
+        let quads = random_quads(seed, 15_000, named);
+        let db = file_db(1024, 0, &quads);
+        assert!(depth(&db, IndexOrder::Gspo) >= 3, "finger searches must climb several levels");
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        let mut r = Rng(seed * 7 + 1);
+        for order in IndexOrder::ALL {
+            for prefix_len in 0..=4u8 {
+                let pick_prefix = |r: &mut Rng| -> Vec<TermId> {
+                    let q = quads[r.below(quads.len() as u64) as usize];
+                    order.cols()[..prefix_len as usize].iter().map(|c| q[*c as usize]).collect()
+                };
+                for _ in 0..3 {
+                    let mut spec = ScanSpec::new(order, &pick_prefix(&mut r));
+                    if prefix_len < 4 && r.below(2) == 0 {
+                        let all = expected_rows(&quads, &spec);
+                        spec.lower = random_bound(&mut r, &all);
+                        spec.upper = random_bound(&mut r, &all);
+                    }
+                    let mut rows = expected_rows(&quads, &spec);
+                    let mut pos = 0usize;
+                    let mut cur = db.store.cursor(&spec).unwrap();
+                    assert_eq!(cur.counters().reader, ReaderKind::Btree);
+                    let w = cur.width();
+                    let mut log: Vec<String> = Vec::new();
+                    for _ in 0..60 {
+                        match r.below(7) {
+                            0..=2 => {
+                                let k = [1usize, 2, 5, 40, 300][r.below(5) as usize];
+                                let mut buf = Vec::new();
+                                let n = cur.fill(&mut buf, k).unwrap();
+                                let end = (pos + k).min(rows.len());
+                                log.push(format!("fill({k}) -> {n}"));
+                                assert_eq!(buf, rows[pos..end].concat(), "{spec:?} after {log:?}");
+                                pos = end;
+                            }
+                            3 | 4 if w > 0 => {
+                                let klen = 1 + r.below(w as u64) as usize;
+                                let key: Vec<TermId> = if rows.is_empty() || r.below(6) == 0 {
+                                    (0..klen).map(|_| random_id(&mut r, 60)).collect()
+                                } else {
+                                    let delta = [r.below(4) as i64, r.below(64) as i64, r.below(2000) as i64, -(r.below(50) as i64)][r.below(4) as usize];
+                                    let j = (pos as i64 + delta).clamp(0, rows.len() as i64 - 1) as usize;
+                                    let mut key = rows[j][..klen].to_vec();
+                                    if r.below(3) == 0 {
+                                        let last = key.len() - 1;
+                                        key[last] = TermId(key[last].0 + if r.below(2) == 0 { 1 } else { -1 });
+                                    }
+                                    key
+                                };
+                                cur.seek(&key).unwrap();
+                                log.push(format!("seek({key:?})"));
+                                pos = rows.partition_point(|row| row[..klen] < key[..]);
+                            }
+                            _ => {
+                                let p2 = pick_prefix(&mut r);
+                                let (lo, hi) = if prefix_len < 4 && r.below(2) == 0 {
+                                    let base = expected_rows(&quads, &ScanSpec::new(order, &p2));
+                                    (random_bound(&mut r, &base), random_bound(&mut r, &base))
+                                } else {
+                                    (Bound::Unbounded, Bound::Unbounded)
+                                };
+                                cur.rebind(&p2, lo, hi).unwrap();
+                                spec = ScanSpec::new(order, &p2).with_range(lo, hi);
+                                rows = expected_rows(&quads, &spec);
+                                pos = 0;
+                                log.push(format!("rebind({spec:?})"));
+                            }
+                        }
+                    }
+                    assert_eq!(cur.counters().reader, ReaderKind::Btree, "{spec:?}");
+                }
+            }
+        }
+        assert_eq!(db.shared().btree_counters().fallbacks, 0, "{}", last_fallback(&db));
+    }
+}
+
+/// Sorted probes (rebind to increasing prefixes, the index-nested-loop shape) and galloping
+/// seeks across a large b-tree, row for row against the model.
+#[test]
+fn sorted_probes_and_long_seeks() {
+    let p = TermId::from_dict(1100, Tag::Iri);
+    let mut quads = Vec::new();
+    for s in 0..3000i64 {
+        for o in 0..(1 + s % 4) {
+            quads.push([TermId::DEFAULT_GRAPH, TermId::from_dict(5000 + s, Tag::Iri), p, TermId::from_int(o * 7 - 3).unwrap()]);
+        }
+    }
+    let db = file_db(512, 0, &quads);
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    // Probes (g, s, p) through GSPO with increasing subjects, including absent ones.
+    let mut cur = db.store.cursor(&ScanSpec::new(IndexOrder::Gspo, &[TermId::DEFAULT_GRAPH, quads[0][1], p])).unwrap();
+    for s in (0..3100i64).step_by(3) {
+        let subject = TermId::from_dict(5000 + s, Tag::Iri);
+        cur.rebind(&[TermId::DEFAULT_GRAPH, subject, p], Bound::Unbounded, Bound::Unbounded).unwrap();
+        let got = drain(cur.as_mut(), 2);
+        let want: Vec<Vec<TermId>> = quads.iter().filter(|q| q[1] == subject).map(|q| vec![q[3]]).collect();
+        assert_eq!(got, want, "probe {s}");
+    }
+    // A merge-join-like walk: alternate short fills and seeks of growing distance.
+    let rows: Vec<Vec<TermId>> = quads.iter().map(|q| vec![q[1], q[3]]).collect();
+    let mut cur = db.store.cursor(&ScanSpec::new(IndexOrder::Gpso, &[TermId::DEFAULT_GRAPH, p])).unwrap();
+    let mut pos = 0;
+    let mut jump = 1;
+    while pos < rows.len() {
+        let key = &rows[pos][..1];
+        cur.seek(key).unwrap();
+        pos = rows.partition_point(|r| r[..1] < *key);
+        let mut buf = Vec::new();
+        let n = cur.fill(&mut buf, 2).unwrap();
+        let end = (pos + 2).min(rows.len());
+        assert_eq!(buf, rows[pos..end].concat());
+        assert_eq!(n, end - pos);
+        pos = end + jump;
+        jump = (jump * 3) % 997 + 1;
+    }
+    assert_eq!(cur.counters().reader, ReaderKind::Btree);
+    assert_eq!(db.shared().btree_counters().fallbacks, 0, "{}", last_fallback(&db));
+}
+
+#[test]
+fn width_zero_and_empty_ranges() {
+    let q = random_quads(9, 2000, true);
+    let db = file_db(1024, 0, &q);
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    let mut cur = db.store.cursor(&ScanSpec::new(IndexOrder::Gspo, &q[17])).unwrap();
+    assert_eq!(cur.counters().reader, ReaderKind::Btree);
+    let mut buf = Vec::new();
+    assert_eq!(cur.fill(&mut buf, 10).unwrap(), 1);
+    assert_eq!(cur.fill(&mut buf, 10).unwrap(), 0);
+    assert!(buf.is_empty());
+    assert!(cur.seek(&[TermId(1)]).is_err(), "key wider than the cursor");
+    let mut absent = q[17];
+    absent[3] = TermId(absent[3].0 + 16 * 1000);
+    cur.rebind(&absent, Bound::Unbounded, Bound::Unbounded).unwrap();
+    assert_eq!(cur.fill(&mut buf, 10).unwrap(), 0);
+    cur.rebind(&q[18], Bound::Unbounded, Bound::Unbounded).unwrap();
+    assert_eq!(cur.fill(&mut buf, 10).unwrap(), 1);
+    for (lo, hi) in [
+        (Bound::Excluded(i64::MAX), Bound::Unbounded),
+        (Bound::Unbounded, Bound::Excluded(i64::MIN)),
+        (Bound::Included(10), Bound::Included(9)),
+    ] {
+        let spec = ScanSpec::new(IndexOrder::Gpos, &[]).with_range(lo, hi);
+        let mut cur = db.store.cursor(&spec).unwrap();
+        assert_eq!(cur.fill(&mut buf, 100).unwrap(), 0);
+        cur.seek(&[TermId(5), TermId(5)]).unwrap();
+        assert_eq!(cur.fill(&mut buf, 100).unwrap(), 0);
+        // A rebind out of the empty range works again.
+        cur.rebind(&[], Bound::Unbounded, Bound::Unbounded).unwrap();
+        assert_eq!(drain(cur.as_mut(), 1024), expected_rows(&q, &ScanSpec::new(IndexOrder::Gpos, &[])));
+    }
+}
+
+// ---------------------------------------------------------------------- preconditions
+
+#[test]
+fn wal_databases_use_sql_cursors() {
+    let q = random_quads(13, 2000, true);
+    let path = TempPath::new("wal");
+    let conn = Connection::open(&path.0).unwrap();
+    conn.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(())).unwrap();
+    let db = Db::with(conn, Some(path));
+    db.insert(&q);
+    assert_eq!((header_byte(&db, 18), header_byte(&db, 19)), (2, 2));
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    assert!(!db.shared().btree_active());
+    assert_eq!(db.store.caps().reader, ReaderKind::SqlCursor);
+    let spec = ScanSpec::new(IndexOrder::Gpso, &[]);
+    let mut cur = db.store.cursor(&spec).unwrap();
+    assert_eq!(cur.counters().reader, ReaderKind::SqlCursor);
+    assert_eq!(drain(cur.as_mut(), 100), expected_rows(&q, &spec));
+    assert!(last_fallback(&db).contains("WAL"), "{}", last_fallback(&db));
+    assert_eq!(db.shared().btree_counters().cursors, 0);
+}
+
+#[test]
+fn memory_databases_and_missing_read_transactions_use_sql_cursors() {
+    let q = random_quads(14, 500, false);
+    let mem = Db::mem();
+    mem.insert(&q);
+    let _read = mem.store.read_scope(0).unwrap();
+    mem.shared().validate_epoch().unwrap();
+    assert!(!mem.shared().btree_active());
+    assert_eq!(mem.store.cursor(&ScanSpec::new(IndexOrder::Gspo, &[])).unwrap().counters().reader, ReaderKind::SqlCursor);
+    // A file database outside any read transaction (autocommit, no statement running).
+    let db = file_db(4096, 0, &q);
+    assert_eq!(db.shared().db().txn_state(), ffi::SQLITE_TXN_NONE);
+    let spec = ScanSpec::new(IndexOrder::Gspo, &[]);
+    let mut cur = db.store.cursor(&spec).unwrap();
+    assert_eq!(cur.counters().reader, ReaderKind::SqlCursor);
+    assert_eq!(drain(cur.as_mut(), 64), expected_rows(&q, &spec));
+}
+
+/// Shared-cache connections share one pager and one file lock, so a read transaction does not
+/// keep other connections of the cache out of the file. The reader detects the mode however
+/// it was requested (URI parameter or open flag) and declines; `cache=private` is served.
+#[test]
+fn shared_cache_connections_use_sql_cursors() {
+    use rusqlite::OpenFlags;
+    let q = random_quads(17, 1500, true);
+    let path = TempPath::new("shared");
+    {
+        let conn = Connection::open(&path.0).unwrap();
+        Db::with(conn, None).insert(&q);
+    }
+    let base = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_URI;
+    let p = path.0.display();
+    for (uri, flags, shared) in [
+        (format!("file:{p}?cache=shared"), base, true),
+        (format!("file:{p}"), base | OpenFlags::SQLITE_OPEN_SHARED_CACHE, true),
+        (format!("file:{p}?cache=private"), base, false),
+        (format!("file:{p}"), base | OpenFlags::SQLITE_OPEN_PRIVATE_CACHE, false),
+    ] {
+        let conn = Connection::open_with_flags(&uri, flags).unwrap();
+        let db = Db::with(conn, None);
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        assert_eq!(db.shared().btree_active(), !shared, "{uri} {flags:?}");
+        let want = if shared { ReaderKind::SqlCursor } else { ReaderKind::Btree };
+        assert_eq!(db.store.caps().reader, want, "{uri}");
+        for order in [IndexOrder::Gspo, IndexOrder::Psog] {
+            let spec = ScanSpec::new(order, &[]);
+            let mut cur = db.store.cursor(&spec).unwrap();
+            assert_eq!(cur.counters().reader, want, "{uri} {order:?}");
+            assert_eq!(drain(cur.as_mut(), 200), expected_rows(&q, &spec), "{uri} {order:?}");
+        }
+        if shared {
+            assert!(last_fallback(&db).contains("shared-cache"), "{}", last_fallback(&db));
+            assert_eq!(db.shared().btree_counters().cursors, 0);
+        }
+    }
+}
+
+#[test]
+fn own_write_transaction_uses_sql_cursors_and_sees_its_writes() {
+    let q = random_quads(15, 2000, true);
+    let db = file_db(4096, 0, &q);
+    db.conn.execute_batch("BEGIN").unwrap();
+    let extra = random_quads(16, 300, true);
+    {
+        let ws = db.store.write_scope(0).unwrap();
+        db.store.insert(&mut extra.clone()).unwrap();
+        ws.commit().unwrap(); // RELEASE inside BEGIN: still uncommitted
+    }
+    assert_eq!(db.shared().db().txn_state(), ffi::SQLITE_TXN_WRITE);
+    assert!(!db.shared().btree_active());
+    let mut all: Vec<_> = q.iter().chain(&extra).copied().collect();
+    all.sort();
+    all.dedup();
+    for order in IndexOrder::ALL {
+        let spec = ScanSpec::new(order, &[]);
+        let mut cur = db.store.cursor(&spec).unwrap();
+        assert_eq!(cur.counters().reader, ReaderKind::SqlCursor);
+        assert_eq!(drain(cur.as_mut(), 333), expected_rows(&all, &spec), "{order:?}");
+    }
+    db.conn.execute_batch("ROLLBACK").unwrap();
+}
+
+/// A scan that falls back mid-way (here: the connection starts a write transaction on an
+/// unrelated table between two fills) returns exactly the remaining rows, whatever the
+/// position: inside a leaf, at an interior cell, right after a seek, at the end.
+#[test]
+fn fallback_mid_scan_returns_exactly_the_remaining_rows() {
+    let q = random_quads(17, 8000, true);
+    let db = file_db(1024, 0, &q);
+    let mut r = Rng(17);
+    let mut graph = 900_000i64;
+    let mut expected_fallbacks = 0;
+    for order in IndexOrder::ALL {
+        for prefix_len in 0..=3usize {
+            for case in 0..6 {
+                db.conn.execute_batch("BEGIN; SELECT count(*) FROM rdf_quad;").unwrap();
+                assert_eq!(db.shared().db().txn_state(), ffi::SQLITE_TXN_READ);
+                let pick = q[r.below(q.len() as u64) as usize];
+                let prefix: Vec<TermId> = order.cols()[..prefix_len].iter().map(|c| pick[*c as usize]).collect();
+                let spec = ScanSpec::new(order, &prefix);
+                let rows = expected_rows(&q, &spec);
+                let mut cur = db.store.cursor(&spec).unwrap();
+                assert_eq!(cur.counters().reader, ReaderKind::Btree);
+                let mut got = Vec::new();
+                let first = r.below(rows.len() as u64 + 2) as usize;
+                let mut pos = 0;
+                if case % 2 == 1 && !rows.is_empty() {
+                    // Seek first, so that the fallback resumes at a seek target.
+                    let j = r.below(rows.len() as u64) as usize;
+                    cur.seek(&rows[j][..1]).unwrap();
+                    pos = rows.partition_point(|row| row[..1] < rows[j][..1]);
+                }
+                let n = cur.fill(&mut got, first).unwrap();
+                let w = cur.width();
+                assert_eq!(n, first.min(rows.len() - pos));
+                // Any write makes txn_state WRITE: the next fill must fall back.
+                graph += 16;
+                db.conn.execute(&format!("INSERT INTO rdf_graph(g) VALUES ({graph})"), []).unwrap();
+                let rest = drain(cur.as_mut(), [1, 3, 1024][case % 3]);
+                if n < rows.len() - pos || first == n {
+                    // The scan had not ended (or not noticed its end) before the write.
+                    assert_eq!(cur.counters().reader, ReaderKind::SqlCursor, "{spec:?}");
+                    expected_fallbacks += 1;
+                }
+                let mut all: Vec<Vec<TermId>> = got.chunks(w.max(1)).map(<[TermId]>::to_vec).collect();
+                if w == 0 {
+                    all = vec![vec![]; n];
+                }
+                all.extend(rest);
+                assert_eq!(all, rows[pos..].to_vec(), "{spec:?}, {first} rows before the fallback");
+                drop(cur);
+                db.conn.execute_batch("ROLLBACK").unwrap();
+            }
+        }
+    }
+    assert_eq!(db.shared().btree_counters().fallbacks, expected_fallbacks);
+    assert!(expected_fallbacks > 100);
+}
+
+/// An interleaved write by the same connection inside a user transaction: the rows returned
+/// before the write come from the reader, the rest from the SQL cursor, which sees the
+/// transaction's own changes after the last returned key.
+#[test]
+fn interleaved_write_inside_a_user_transaction() {
+    let q = random_quads(18, 6000, false);
+    let db = file_db(1024, 0, &q);
+    db.conn.execute_batch("BEGIN; SELECT count(*) FROM rdf_quad;").unwrap();
+    let spec = ScanSpec::new(IndexOrder::Gspo, &[]);
+    let mut cur = db.store.cursor(&spec).unwrap();
+    let mut first = Vec::new();
+    assert_eq!(cur.fill(&mut first, 1000).unwrap(), 1000);
+    let last: [TermId; 4] = first[first.len() - 4..].try_into().unwrap();
+    // Delete every 5th quad and insert new ones on both sides of the scan position.
+    let gone: Vec<_> = q.iter().copied().step_by(5).collect();
+    let added: Vec<[TermId; 4]> = random_quads(19, 2000, false).into_iter().filter(|x| !q.contains(x)).collect();
+    {
+        let ws = db.store.write_scope(0).unwrap();
+        db.store.remove(&mut gone.clone()).unwrap();
+        db.store.insert(&mut added.clone()).unwrap();
+        ws.commit().unwrap();
+    }
+    let rest = drain(cur.as_mut(), 500);
+    assert_eq!(cur.counters().reader, ReaderKind::SqlCursor);
+    let gone: BTreeSet<_> = gone.into_iter().collect();
+    let mut now: Vec<[TermId; 4]> = q.iter().copied().filter(|x| !gone.contains(x)).chain(added).collect();
+    now.sort();
+    now.dedup();
+    let want: Vec<Vec<TermId>> = now.iter().filter(|x| **x > last).map(|x| x.to_vec()).collect();
+    assert_eq!(rest, want);
+    let before: Vec<Vec<TermId>> = q[..1000].iter().map(|x| x.to_vec()).collect();
+    assert_eq!(first.chunks(4).map(<[TermId]>::to_vec).collect::<Vec<_>>(), before);
+    db.conn.execute_batch("COMMIT").unwrap();
+}
+
+/// The data version changes under a held read transaction (this connection commits while
+/// another of its statements keeps main open for reading): the next fill falls back, and a
+/// later rebind returns to the reader on the new snapshot.
+#[test]
+fn data_version_change_under_a_read_transaction() {
+    let q = random_quads(20, 4000, true);
+    let db = file_db(1024, 0, &q);
+    let mut held = db.conn.prepare("SELECT g FROM rdf_quad").unwrap();
+    let mut rows = held.query([]).unwrap();
+    assert!(rows.next().unwrap().is_some());
+    assert_eq!(db.shared().db().txn_state(), ffi::SQLITE_TXN_READ);
+    let spec = ScanSpec::new(IndexOrder::Gpos, &[]);
+    let mut cur = db.store.cursor(&spec).unwrap();
+    assert_eq!(cur.counters().reader, ReaderKind::Btree);
+    let mut first = Vec::new();
+    cur.fill(&mut first, 700).unwrap();
+    // An autocommit write commits even though `held` is still reading; main stays READ.
+    let extra = random_quads(21, 500, true);
+    db.insert(&extra);
+    assert_eq!(db.shared().db().txn_state(), ffi::SQLITE_TXN_READ);
+    let rest = drain(cur.as_mut(), 100);
+    assert_eq!(cur.counters().reader, ReaderKind::SqlCursor);
+    assert!(last_fallback(&db).contains("data version"), "{}", last_fallback(&db));
+    let mut now: Vec<_> = q.iter().chain(&extra).copied().collect();
+    now.sort();
+    now.dedup();
+    let all_now = expected_rows(&now, &spec);
+    let last = first[first.len() - 4..].to_vec();
+    let want: Vec<_> = all_now.iter().filter(|r| **r > last).cloned().collect();
+    assert_eq!(rest, want);
+    // The rebind re-validates: back on the reader, with a fresh page cache.
+    let flushes = db.shared().btree_counters().cache_flushes;
+    let g = now.iter().find(|x| x[0] != TermId::DEFAULT_GRAPH).unwrap()[0];
+    let spec2 = ScanSpec::new(IndexOrder::Gpos, &[g]);
+    let mut cur = db.store.cursor(&ScanSpec::new(IndexOrder::Gpos, &[TermId::DEFAULT_GRAPH])).unwrap();
+    let mut buf = Vec::new();
+    cur.fill(&mut buf, 3).unwrap();
+    db.insert(&random_quads(22, 50, true));
+    cur.fill(&mut buf, 3).unwrap();
+    assert_eq!(cur.counters().reader, ReaderKind::SqlCursor);
+    cur.rebind(&[g], Bound::Unbounded, Bound::Unbounded).unwrap();
+    assert_eq!(cur.counters().reader, ReaderKind::Btree);
+    let now = all_quads(&db.store);
+    assert_eq!(drain(cur.as_mut(), 64), expected_rows(&now, &spec2));
+    let c = db.shared().btree_counters();
+    assert!(c.resumes >= 1 && c.cache_flushes > flushes);
+    drop(rows);
+}
+
+/// Another connection commits between two executions (rollback journal, so it can only do so
+/// while no read lock is held): the data version changes and the page cache is flushed.
+#[test]
+fn commits_between_executions_invalidate_the_page_cache() {
+    let q = random_quads(23, 3000, true);
+    let db = file_db(1024, 0, &q);
+    let other = db.reopen();
+    let spec = ScanSpec::new(IndexOrder::Gspo, &[]);
+    let scan = |want: &[[TermId; 4]]| {
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        let mut cur = db.store.cursor(&spec).unwrap();
+        assert_eq!(cur.counters().reader, ReaderKind::Btree);
+        assert_eq!(drain(cur.as_mut(), 512), expected_rows(want, &spec));
+    };
+    scan(&q);
+    let c0 = db.shared().btree_counters();
+    scan(&q);
+    let c1 = db.shared().btree_counters();
+    assert_eq!(c1.pages_read, c0.pages_read, "second scan is served from the page cache");
+    assert!(c1.cache_hits > c0.cache_hits);
+    // Another connection changes the store.
+    let extra = random_quads(24, 400, true);
+    other.insert(&extra);
+    let gone: Vec<_> = q.iter().copied().step_by(7).collect();
+    other.remove(&gone);
+    let gone: BTreeSet<_> = gone.into_iter().collect();
+    let mut now: Vec<_> = q.iter().copied().chain(extra).filter(|x| !gone.contains(x)).collect();
+    now.sort();
+    now.dedup();
+    scan(&now);
+    let c2 = db.shared().btree_counters();
+    assert!(c2.cache_flushes > c1.cache_flushes && c2.pages_read > c1.pages_read);
+    // This connection's own commit, too.
+    let mine = random_quads(25, 100, false);
+    db.insert(&mine);
+    now.extend(mine);
+    now.sort();
+    now.dedup();
+    scan(&now);
+    assert!(db.shared().btree_counters().cache_flushes > c2.cache_flushes);
+}
+
+/// A cursor that outlives its read transaction continues on SQL (autocommit statements).
+#[test]
+fn cursor_outliving_its_read_scope() {
+    let q = random_quads(26, 3000, true);
+    let db = file_db(1024, 0, &q);
+    let spec = ScanSpec::new(IndexOrder::Psog, &[]);
+    let rows = expected_rows(&q, &spec);
+    let read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    let mut cur = db.store.cursor(&spec).unwrap();
+    let mut buf = Vec::new();
+    let n = cur.fill(&mut buf, 100).unwrap();
+    read.close().unwrap();
+    let mut got: Vec<Vec<TermId>> = buf.chunks(4).map(<[TermId]>::to_vec).collect();
+    assert_eq!(n, 100);
+    got.extend(drain(cur.as_mut(), 64));
+    assert_eq!(got, rows);
+    assert_eq!(cur.counters().reader, ReaderKind::SqlCursor);
+}
+
+/// A fallback whose SQL cursor cannot be prepared (an interrupt is pending while another
+/// statement runs) makes every later `fill` report the error, like a failed `SqlCursor`, never
+/// a silent end of the scan, until a `rebind` positions the cursor again.
+#[test]
+fn failed_fallback_keeps_reporting_until_repositioned() {
+    let q = random_quads(33, 3000, true);
+    let db = file_db(1024, 0, &q);
+    let mut held = db.conn.prepare("SELECT g FROM rdf_quad").unwrap();
+    let mut rows = held.query([]).unwrap();
+    assert!(rows.next().unwrap().is_some());
+    // Bound operators (Gt + Le) whose SQL template this connection never prepared.
+    let spec = ScanSpec::new(IndexOrder::Ospg, &[]).with_range(Bound::Excluded(i64::MIN), Bound::Included(i64::MAX - 1));
+    let mut cur = db.store.cursor(&spec).unwrap();
+    assert_eq!(cur.counters().reader, ReaderKind::Btree);
+    let mut buf = Vec::new();
+    assert_eq!(cur.fill(&mut buf, 10).unwrap(), 10);
+    let extra = random_quads(34, 10, true);
+    db.insert(&extra); // the data version changes; `held` keeps main READ
+    db.shared().db().interrupt();
+    assert!(matches!(cur.fill(&mut buf, 10), Err(Error::Interrupted)));
+    assert!(matches!(cur.fill(&mut buf, 10), Err(Error::Interrupted)), "the failure persists");
+    assert_eq!(cur.counters().reader, ReaderKind::Btree, "no SQL cursor could be opened");
+    drop(rows);
+    drop(held); // no statement runs any more: the interrupt is over
+    cur.rebind(&[], spec.lower, spec.upper).unwrap();
+    let mut now: Vec<_> = q.iter().chain(&extra).copied().collect();
+    now.sort();
+    now.dedup();
+    assert_eq!(drain(cur.as_mut(), 100), expected_rows(&now, &spec));
+}
+
+// ---------------------------------------------------------------------- unsupported / corrupt
+
+/// Plain-SQL writes can put non-integer values into rdf_quad. The reader falls back when it
+/// meets one (and stays on SQL for that cursor); results equal the SQL cursor's.
+#[test]
+fn non_integer_values_fall_back_to_sql() {
+    let q = random_quads(27, 3000, false);
+    let db = file_db(1024, 0, &q);
+    let s = q[1500][1].0;
+    db.conn.execute_batch(&format!("INSERT INTO rdf_quad VALUES (0, {s}, 2.5, 7), (0, {s}, 'text', 7), (0, {s}, x'01', 7)")).unwrap();
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    let shared = db.shared();
+    for order in [IndexOrder::Gspo, IndexOrder::Gpso, IndexOrder::Gosp] {
+        let spec = ScanSpec::new(order, &[]);
+        let mut sql = crate::cursor::SqlCursor::open(shared.pool.clone(), &spec).unwrap();
+        let want = drain(&mut sql, 1024);
+        // Counts agree with the VDBE count whether the walk meets the odd records or not.
+        for spec in [spec, ScanSpec::new(order, &[TermId::DEFAULT_GRAPH]).with_range(Bound::Included(s - 1), Bound::Included(s + 1))] {
+            shared.set_reader(ReaderMode::Sql);
+            let (exact, capped) = (db.store.count(&spec, None).unwrap(), db.store.count(&spec, Some(100)).unwrap());
+            shared.set_reader(ReaderMode::Auto);
+            assert_eq!(db.store.count(&spec, None).unwrap(), exact, "{spec:?}");
+            assert_eq!(db.store.count(&spec, Some(100)).unwrap(), capped, "{spec:?}");
+        }
+        // The fallback may already happen while positioning at the start.
+        let mut cur = db.store.cursor(&spec).unwrap();
+        assert_eq!(drain(cur.as_mut(), 97), want, "{order:?}");
+        assert_eq!(cur.counters().reader, ReaderKind::SqlCursor);
+        // Structural fallbacks are sticky: a rebind stays on SQL.
+        cur.rebind(&[], Bound::Unbounded, Bound::Unbounded).unwrap();
+        assert_eq!(cur.counters().reader, ReaderKind::SqlCursor);
+    }
+    assert!(last_fallback(&db).starts_with("unsupported"), "{}", last_fallback(&db));
+}
+
+/// Index definitions that differ from §2.1 (other column order, DESC, another partial
+/// predicate) are never read directly.
+#[test]
+fn unexpected_index_layouts_are_read_through_sql() {
+    let q = random_quads(28, 2000, true);
+    let db = file_db(4096, 0, &q);
+    db.conn
+        .execute_batch(
+            "DROP INDEX rdf_gpso; CREATE INDEX rdf_gpso ON rdf_quad(g, p, s DESC, o);
+             DROP INDEX rdf_spog; CREATE INDEX rdf_spog ON rdf_quad(s, p, o, g) WHERE g>0;
+             DROP INDEX rdf_gpox; CREATE INDEX rdf_gpox ON rdf_quad(g, p, o, s) WHERE (o & 15) IN (5,8);",
+        )
+        .unwrap();
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    for (order, btree) in [(IndexOrder::Gpso, false), (IndexOrder::Gpox, true), (IndexOrder::Gspo, true)] {
+        let spec = ScanSpec::new(order, &[]);
+        let mut cur = db.store.cursor(&spec).unwrap();
+        let kind = if btree { ReaderKind::Btree } else { ReaderKind::SqlCursor };
+        assert_eq!(cur.counters().reader, kind, "{order:?}");
+        assert_eq!(drain(cur.as_mut(), 100), expected_rows(&q, &spec), "{order:?}");
+    }
+    // `g>0` does not imply the `g<>0` the SQL template states, so SQLite refuses the index;
+    // the reader must not read it either.
+    assert!(db.store.cursor(&ScanSpec::new(IndexOrder::Spog, &[])).is_err());
+    assert!(last_fallback(&db).contains("layout"), "{}", last_fallback(&db));
+    // Per-order reporting; a store that serves some orders through SQL is costed as SQL.
+    for order in IndexOrder::ALL {
+        let direct = !matches!(order, IndexOrder::Gpso | IndexOrder::Spog);
+        assert_eq!(db.shared().btree_serves(order), direct, "{order:?}");
+    }
+    assert!(!db.shared().btree_active());
+    assert_eq!(db.store.caps().reader, ReaderKind::SqlCursor);
+    assert_eq!(db.store.costs().scan_row, SQL_CURSOR_COSTS.scan_row);
+}
+
+/// Randomly damaged index pages: every scan either returns rows or reports an error (from
+/// SQLite, after the fallback), and never panics.
+#[test]
+fn corrupt_pages_never_panic() {
+    let q = random_quads(29, 6000, true);
+    let path = TempPath::new("corrupt-src");
+    {
+        let conn = Connection::open(&path.0).unwrap();
+        conn.execute_batch("PRAGMA page_size=1024;").unwrap();
+        let db = Db::with(conn, None);
+        db.insert(&q);
+    }
+    let pristine = std::fs::read(&path.0).unwrap();
+    let pages = pristine.len() / 1024;
+    let mut r = Rng(29);
+    let mut fallbacks = 0;
+    for round in 0..40 {
+        let mut bytes = pristine.clone();
+        // Damage a few pages (never page 1: SQLite would refuse to open the schema).
+        for _ in 0..1 + round % 4 {
+            let page = 1 + r.below(pages as u64 - 1) as usize;
+            let at = page * 1024 + r.below(1024) as usize;
+            match r.below(3) {
+                0 => bytes[at] ^= 1 << r.below(8),
+                1 => bytes[page * 1024..page * 1024 + 16].iter_mut().for_each(|b| *b = r.below(256) as u8),
+                _ => bytes[at] = 0xff,
+            }
+        }
+        let copy = TempPath::new("corrupt");
+        std::fs::write(&copy.0, &bytes).unwrap();
+        let conn = Connection::open(&copy.0).unwrap();
+        let store = super::store_for(&conn);
+        let Ok(read) = store.read_scope(0) else { continue };
+        if store.shared().validate_epoch().is_err() {
+            continue;
+        }
+        for order in IndexOrder::ALL {
+            // Counts walk the damaged b-trees too (or fall back to the VDBE count).
+            let _ = store.count(&ScanSpec::new(order, &[]), None);
+            let _ = store.count(&ScanSpec::new(order, &[]), Some(r.below(3000)));
+            let _ = store.count(&ScanSpec::new(order, &[q[r.below(q.len() as u64) as usize][order.cols()[0] as usize]]), None);
+            let Ok(mut cur) = store.cursor(&ScanSpec::new(order, &[])) else { continue };
+            let mut buf = Vec::new();
+            for _ in 0..100_000 {
+                match cur.fill(&mut buf, 256) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => buf.clear(),
+                }
+            }
+            let _ = cur.seek(&[TermId(12345)]);
+            let _ = cur.fill(&mut buf, 10);
+        }
+        fallbacks += store.shared().btree_counters().fallbacks;
+        drop(read);
+        drop(store);
+        drop(conn);
+    }
+    assert!(fallbacks > 0, "some damage must have been detected");
+}
+
+// ---------------------------------------------------------------------- configuration
+
+#[test]
+fn kill_switch_page_cache_budget_and_status() {
+    let q = random_quads(30, 5000, true);
+    let db = file_db(1024, 0, &q);
+    assert_eq!(ReaderMode::parse(" BTree ").unwrap(), ReaderMode::Btree);
+    assert_eq!(ReaderMode::parse("sql").unwrap().as_str(), "sql");
+    assert!(ReaderMode::parse("fast").is_err());
+    let shared = db.shared();
+    assert_eq!((shared.reader(), shared.page_cache_mb()), (ReaderMode::Auto, crate::DEFAULT_PAGE_CACHE_MB));
+    let _read = db.store.read_scope(0).unwrap();
+    shared.validate_epoch().unwrap();
+    let spec = ScanSpec::new(IndexOrder::Gspo, &[]);
+    shared.set_reader(ReaderMode::Sql);
+    assert!(!shared.btree_active());
+    assert_eq!(db.store.cursor(&spec).unwrap().counters().reader, ReaderKind::SqlCursor);
+    for mode in [ReaderMode::Btree, ReaderMode::Auto] {
+        shared.set_reader(mode);
+        assert!(shared.btree_active());
+        let mut cur = db.store.cursor(&spec).unwrap();
+        assert_eq!(cur.counters().reader, ReaderKind::Btree);
+        assert_eq!(drain(cur.as_mut(), 1024), expected_rows(&q, &spec));
+    }
+    // A 0 MB budget caches nothing (each cursor still pins its own path); 1 MB stays bounded.
+    for mb in [0u64, 1] {
+        shared.set_page_cache_mb(mb).unwrap();
+        shared.clear_page_cache().unwrap();
+        for order in IndexOrder::ALL {
+            let s = ScanSpec::new(order, &[]);
+            let mut cur = db.store.cursor(&s).unwrap();
+            assert_eq!(drain(cur.as_mut(), 300), expected_rows(&q, &s));
+        }
+        let status = shared.status();
+        let bytes: usize = status.iter().find(|(k, _)| k == "btree_cache_bytes").unwrap().1.parse().unwrap();
+        assert!(bytes <= (mb as usize) << 20, "{bytes} bytes cached with a {mb} MB budget");
+    }
+    let status = shared.status();
+    for key in ["reader", "page_cache_mb", "btree_cursors", "btree_pages_read", "btree_fallbacks", "btree_last_fallback"] {
+        assert!(status.iter().any(|(k, _)| k == key), "status lacks {key}");
+    }
+}
+
+/// The kill switch also applies to open cursors: their next call continues on SQL at the
+/// exact key, a rebind stays there while the switch is on, and returns to the reader after.
+#[test]
+fn kill_switch_moves_open_cursors_to_sql_at_the_exact_key() {
+    let q = random_quads(33, 4000, true);
+    let db = file_db(1024, 0, &q);
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    for order in [IndexOrder::Gspo, IndexOrder::Gpos, IndexOrder::Ospg] {
+        let spec = ScanSpec::new(order, &[]);
+        let want = expected_rows(&q, &spec);
+        // Fill: switched off between two fills.
+        let mut cur = db.store.cursor(&spec).unwrap();
+        assert_eq!(cur.counters().reader, ReaderKind::Btree);
+        let mut buf = Vec::new();
+        assert_eq!(cur.fill(&mut buf, 123).unwrap(), 123);
+        db.shared().set_reader(ReaderMode::Sql);
+        let mut got: Vec<Vec<TermId>> = buf.chunks(4).map(<[TermId]>::to_vec).collect();
+        got.extend(drain(cur.as_mut(), 77));
+        assert_eq!(got, want, "{order:?}");
+        assert_eq!(cur.counters().reader, ReaderKind::SqlCursor);
+        assert!(last_fallback(&db).contains("switched off"), "{}", last_fallback(&db));
+        cur.rebind(&[], Bound::Unbounded, Bound::Unbounded).unwrap();
+        assert_eq!(cur.counters().reader, ReaderKind::SqlCursor, "a rebind stays on SQL while switched off");
+        db.shared().set_reader(ReaderMode::Auto);
+        cur.rebind(&[], Bound::Unbounded, Bound::Unbounded).unwrap();
+        assert_eq!(cur.counters().reader, ReaderKind::Btree, "{}", last_fallback(&db));
+        // Seek: switched off between a fill and a seek.
+        assert_eq!(cur.fill(&mut buf, 5).unwrap(), 5);
+        db.shared().set_reader(ReaderMode::Sql);
+        let target = &want[want.len() / 2];
+        cur.seek(&target[..2]).unwrap();
+        assert_eq!(cur.counters().reader, ReaderKind::SqlCursor);
+        let from = want.iter().position(|r| r[..2] >= target[..2]).unwrap();
+        assert_eq!(drain(cur.as_mut(), 50), want[from..], "{order:?}");
+        db.shared().set_reader(ReaderMode::Auto);
+    }
+}
+
+#[test]
+fn costs_and_caps_follow_the_active_reader() {
+    let q = random_quads(31, 500, false);
+    let db = file_db(4096, 0, &q);
+    assert_eq!(db.store.caps().reader, ReaderKind::SqlCursor, "no read transaction yet");
+    assert_eq!(db.store.costs().scan_row, SQL_CURSOR_COSTS.scan_row);
+    {
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        assert_eq!(db.store.caps().reader, ReaderKind::Btree);
+        assert!(db.store.caps().sql);
+        assert_eq!(db.store.costs().scan_row, BTREE_COSTS.scan_row);
+        db.shared().set_reader(ReaderMode::Sql);
+        assert_eq!(db.store.caps().reader, ReaderKind::SqlCursor);
+        assert_eq!(db.store.costs().seek_sorted, SQL_CURSOR_COSTS.seek_sorted);
+        db.shared().set_reader(ReaderMode::Auto);
+    }
+    let mem = Db::mem();
+    let _read = mem.store.read_scope(0).unwrap();
+    mem.shared().validate_epoch().unwrap();
+    assert_eq!(mem.store.caps().reader, ReaderKind::SqlCursor);
+}
+
+/// Counts on every order of a small store (B-tree counts inside a read scope), and an absent
+/// schema still yields empty cursors and zero counts.
+#[test]
+fn counts_and_absent_schema() {
+    let path = TempPath::new("absent");
+    let conn = Connection::open(&path.0).unwrap();
+    conn.execute_batch("CREATE TABLE t(x); INSERT INTO t VALUES (1);").unwrap();
+    let store = super::store_for(&conn);
+    let read = store.read_scope(0).unwrap();
+    store.shared().validate_epoch().unwrap();
+    let mut cur = store.cursor(&ScanSpec::new(IndexOrder::Gspo, &[])).unwrap();
+    assert_eq!(drain(cur.as_mut(), 10), Vec::<Vec<TermId>>::new());
+    assert_eq!(store.count(&ScanSpec::new(IndexOrder::Gspo, &[]), None).unwrap(), 0);
+    assert!(!store.shared().btree_active());
+    drop(read);
+    drop(cur);
+    drop(store);
+    let q = random_quads(32, 1000, true);
+    let db = file_db(4096, 0, &q);
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    for order in IndexOrder::ALL {
+        let spec = ScanSpec::new(order, &[]);
+        assert_eq!(db.store.count(&spec, None).unwrap() as usize, expected_rows(&q, &spec).len());
+    }
+    assert_eq!(db.shared().btree_counters().counts, 9);
+}
+
+// ---------------------------------------------------------------------- dictionary rows
+
+/// A mix of dictionary terms: every tag, custom datatypes (TYPED rows whose datatype is a
+/// dictionary IRI), unicode, empty lexical forms, and long ones that spill to overflow pages.
+fn dictionary_terms(n: usize, long_every: usize) -> Vec<oxrdf::Term> {
+    use oxrdf::Literal;
+    (0..n)
+        .map(|i| -> oxrdf::Term {
+            if long_every > 0 && i % long_every == long_every / 2 {
+                // 600 bytes .. 70 KB: beyond `usable - 35` at every page size.
+                let len = [600usize, 1500, 5000, 9000, 70_000][(i / long_every) % 5];
+                return Literal::new_simple_literal(format!("{i}:{}", "ü".repeat(len / 2))).into();
+            }
+            match i % 7 {
+                0 => iri(&format!("http://ex.org/r/{i}")).into(),
+                1 => Literal::new_simple_literal(format!("plain string {i}")).into(),
+                2 => Literal::new_language_tagged_literal(format!("mot {i} é漢🙂"), ["fr", "en-gb", "de"][i % 3]).unwrap().into(),
+                3 => Literal::new_typed_literal(format!("{i}.5e0"), iri("http://www.w3.org/2001/XMLSchema#double")).into(),
+                4 => Literal::new_typed_literal(format!("v{i}"), iri(&format!("http://ex.org/dt/{}", i % 5))).into(),
+                5 => Literal::new_simple_literal(if i % 2 == 0 { String::new() } else { format!("{i}") }).into(),
+                _ => iri(&format!("http://ex.org/very/long/namespace/path/that/repeats/{i}#fragment")).into(),
+            }
+        })
+        .collect()
+}
+
+/// A file database with `page_size` holding `terms` (each the object of one quad, so that
+/// `vacuum_terms` keeps them).
+fn term_db(page_size: u32, pragmas: &str, terms: &[oxrdf::Term]) -> (Db, Vec<TermId>) {
+    let path = TempPath::new("terms");
+    let conn = Connection::open(&path.0).unwrap();
+    conn.execute_batch(&format!("PRAGMA page_size={page_size}; {pragmas}")).unwrap();
+    let db = Db::with(conn, Some(path));
+    let ws = db.store.write_scope(0).unwrap();
+    let p = db.store.intern(iri("http://ex.org/p").as_ref().into()).unwrap();
+    let ids: Vec<TermId> = terms.iter().map(|t| db.store.intern(t.as_ref()).unwrap()).collect();
+    let mut quads: Vec<[TermId; 4]> =
+        ids.iter().enumerate().map(|(i, o)| [TermId::DEFAULT_GRAPH, TermId::bnode(1 + i as i64), p, *o]).collect();
+    db.store.insert(&mut quads).unwrap();
+    ws.commit().unwrap();
+    (db, ids)
+}
+
+/// Decodes `ids` (cold: the caches are flushed first) in chunks of `chunk`, through `decode`
+/// or `decode_one`.
+fn decode_cold(db: &Db, ids: &[TermId], chunk: usize, one: bool) -> Vec<oxrdf::Term> {
+    db.shared().flush_dictionary_caches().unwrap();
+    let mut out = Vec::new();
+    if one {
+        out.extend(ids.iter().map(|id| db.store.decode_one(*id).unwrap()));
+    } else {
+        for c in ids.chunks(chunk) {
+            db.store.decode(c, &mut out).unwrap();
+        }
+    }
+    out.iter().map(|t| t.to_oxrdf()).collect()
+}
+
+/// Decode cache misses read `rdf_term` rows from the table b-tree pages, at every page size:
+/// the same terms as the SQL path, in any order, with duplicates, in batches of any size and
+/// one by one. Overflowing lexical forms are left to SQL; nothing falls back.
+#[test]
+fn decoded_rows_are_read_from_the_term_btree() {
+    for (page_size, n) in [(512u32, 3000usize), (1024, 4000), (4096, 6000), (65536, 20_000)] {
+        let terms = dictionary_terms(n, 97);
+        let (db, ids) = term_db(page_size, "", &terms);
+        // Distinct dictionary rows, and an upper bound of those that spill to overflow pages.
+        let dict: BTreeSet<TermId> = ids.iter().copied().filter(|id| id.is_dict()).collect();
+        let long = dict.iter().filter(|id| terms[ids.iter().position(|x| x == *id).unwrap()].to_string().len() >= 600).count() as u64;
+        let dict = dict.len() as u64;
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        let mut r = Rng(u64::from(page_size));
+        let mut order: Vec<usize> = (0..n).collect();
+        for i in (1..n).rev() {
+            order.swap(i, r.below(i as u64 + 1) as usize);
+        }
+        order.extend((0..n / 10).map(|_| r.below(n as u64) as usize));
+        let shuffled: Vec<TermId> = order.iter().map(|&i| ids[i]).collect();
+        let want: Vec<oxrdf::Term> = order.iter().map(|&i| terms[i].clone()).collect();
+        for (chunk, one) in [(usize::MAX, false), (1000, false), (7, false), (1, false), (1, true)] {
+            let before = db.shared().btree_counters();
+            let got = decode_cold(&db, &shuffled, chunk.min(shuffled.len()), one);
+            assert_eq!(got, want, "page size {page_size}, chunk {chunk}, one {one}");
+            let after = db.shared().btree_counters();
+            let direct = after.term_rows - before.term_rows;
+            // Every distinct row (plus the custom datatype IRIs of TYPED rows), but the long ones.
+            assert!(direct + long >= dict && direct <= dict + 5, "{page_size} {chunk}: {direct} of {dict} rows read directly, {long} long");
+            assert_eq!(after.fallbacks, before.fallbacks, "{}", last_fallback(&db));
+        }
+        // Cached rows are not read again.
+        let before = db.shared().btree_counters().term_rows;
+        let mut out = Vec::new();
+        db.store.decode(&shuffled, &mut out).unwrap();
+        assert_eq!(db.shared().btree_counters().term_rows, before);
+        // The SQL path agrees.
+        db.shared().set_reader(ReaderMode::Sql);
+        assert_eq!(decode_cold(&db, &shuffled, 500, false), want);
+        assert_eq!(db.shared().btree_counters().term_rows, before);
+        db.shared().set_reader(ReaderMode::Auto);
+    }
+}
+
+/// After deletes, `vacuum_terms` and `VACUUM` (rows removed, the table rebuilt with new
+/// pages), and in the connection's own write transaction (SQL path, nothing admitted to the
+/// cache): the right terms, and the same error as SQL for a row that no longer exists.
+#[test]
+fn decoded_rows_after_vacuum_and_inside_write_transactions() {
+    let terms = dictionary_terms(5000, 211);
+    let (db, ids) = term_db(1024, "", &terms);
+    // Decode everything one by one first: the reader keeps its last `rdf_term` path, which the
+    // rewrites below make stale.
+    {
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        assert_eq!(decode_cold(&db, &ids, 1, true), terms);
+    }
+    // Drop every third quad, then the unreferenced terms.
+    let p = db.store.lookup(iri("http://ex.org/p").as_ref().into()).unwrap().unwrap();
+    let gone: Vec<[TermId; 4]> =
+        (0..ids.len()).step_by(3).map(|i| [TermId::DEFAULT_GRAPH, TermId::bnode(1 + i as i64), p, ids[i]]).collect();
+    db.remove(&gone);
+    assert!(db.store.vacuum_terms().unwrap() > 1000);
+    db.conn.execute_batch("VACUUM").unwrap();
+    let kept: Vec<usize> = (0..ids.len()).filter(|i| i % 3 != 0).collect();
+    {
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        let want: Vec<oxrdf::Term> = kept.iter().map(|&i| terms[i].clone()).collect();
+        let kept_ids: Vec<TermId> = kept.iter().map(|&i| ids[i]).collect();
+        let before = db.shared().btree_counters().term_rows;
+        assert_eq!(decode_cold(&db, &kept_ids, 1, true), want);
+        assert_eq!(decode_cold(&db, &kept_ids, 300, false), want);
+        assert!(db.shared().btree_counters().term_rows > before);
+        // Another connection adds terms between two read scopes (new pages, new data version;
+        // rollback-journal mode keeps writers out while a read lock is held).
+        drop(_read);
+        let other = db.reopen();
+        let extra: Vec<oxrdf::Term> = (0..300).map(|i| iri(&format!("http://ex.org/extra/{i}")).into()).collect();
+        let extra_ids: Vec<TermId> = {
+            let ws = other.store.write_scope(0).unwrap();
+            other.shared().validate_epoch().unwrap();
+            let ids: Vec<TermId> = extra.iter().map(|t| other.store.intern(t.as_ref()).unwrap()).collect();
+            ws.commit().unwrap();
+            ids
+        };
+        drop(other);
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        assert_eq!(decode_cold(&db, &extra_ids, 1, true), extra);
+        assert_eq!(decode_cold(&db, &kept_ids, 1, true), want);
+        // A deleted row: the same internal error from both paths.
+        let deleted = ids[0];
+        db.shared().flush_dictionary_caches().unwrap();
+        let direct = db.store.decode_one(deleted).unwrap_err().to_string();
+        db.shared().set_reader(ReaderMode::Sql);
+        let sql = db.store.decode_one(deleted).unwrap_err().to_string();
+        db.shared().set_reader(ReaderMode::Auto);
+        assert_eq!(direct, sql);
+        assert!(direct.contains("unknown dictionary id"), "{direct}");
+    }
+    // Inside the connection's own write transaction: SQL, uncommitted rows never cached.
+    let ws = db.store.write_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    let fresh = db.store.intern(iri("http://ex.org/fresh").as_ref().into()).unwrap();
+    let before = db.shared().btree_counters().term_rows;
+    let mut out = Vec::new();
+    db.store.decode(&[fresh, ids[1]], &mut out).unwrap();
+    assert_eq!(out[0].to_oxrdf(), iri("http://ex.org/fresh").into());
+    assert_eq!(out[1].to_oxrdf(), terms[1]);
+    assert_eq!(db.shared().btree_counters().term_rows, before);
+    assert!(db.shared().decode_cache.borrow_mut().get(fresh.0).is_none());
+    drop(ws);
+}
+
+/// An `rdf_term` the reader does not trust is decoded through SQL. (UTF-16 databases are
+/// declined too, by the header's text encoding, but the store cannot initialize one at all:
+/// its schema detection reads TEXT columns as UTF-8 bytes.)
+#[test]
+fn unexpected_term_tables_use_sql() {
+    let terms = dictionary_terms(800, 0);
+    // An extra column: the layout check refuses the table.
+    let (db, ids) = term_db(4096, "", &terms);
+    db.conn.execute_batch("ALTER TABLE rdf_term ADD COLUMN note TEXT").unwrap();
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    assert_eq!(decode_cold(&db, &ids, 100, false), terms);
+    assert_eq!(db.shared().btree_counters().term_rows, 0);
+    assert!(last_fallback(&db).contains("rdf_term"), "{}", last_fallback(&db));
+}
+
+/// Damaged `rdf_term` pages: decoding returns the right terms (SQL takes over) or an error, and
+/// never panics.
+#[test]
+fn corrupt_term_pages_never_panic() {
+    let terms = dictionary_terms(4000, 151);
+    let path = TempPath::new("terms-corrupt-src");
+    let ids = {
+        let conn = Connection::open(&path.0).unwrap();
+        conn.execute_batch("PRAGMA page_size=1024;").unwrap();
+        let (db, ids) = {
+            let db = Db::with(conn, None);
+            let ws = db.store.write_scope(0).unwrap();
+            let ids: Vec<TermId> = terms.iter().map(|t| db.store.intern(t.as_ref()).unwrap()).collect();
+            ws.commit().unwrap();
+            (db, ids)
+        };
+        drop(db);
+        ids
+    };
+    let pristine = std::fs::read(&path.0).unwrap();
+    // The pages of rdf_term: table b-tree pages (the other table b-trees are tiny).
+    let table_pages: Vec<usize> = (1..pristine.len() / 1024).filter(|p| matches!(pristine[p * 1024], 0x05 | 0x0D)).collect();
+    assert!(table_pages.len() > 50);
+    let mut r = Rng(151);
+    let (mut fallbacks, mut direct, mut errors) = (0, 0, 0);
+    for round in 0..60 {
+        let mut bytes = pristine.clone();
+        for _ in 0..1 + round % 3 {
+            let page = table_pages[r.below(table_pages.len() as u64) as usize] * 1024;
+            match r.below(5) {
+                0 => bytes[page] = [0x02u8, 0x0A, 0x05, 0x0D, 0x00][r.below(5) as usize],
+                1 => bytes[page + 3..page + 5].copy_from_slice(&(r.below(65536) as u16).to_be_bytes()),
+                2 => bytes[page + 8..page + 12].copy_from_slice(&(r.below(1 << 20) as u32).to_be_bytes()),
+                3 => {
+                    let at = page + r.below(1024) as usize;
+                    bytes[at] ^= 1 << r.below(8);
+                }
+                _ => {
+                    let at = page + r.below(1024 - 16) as usize;
+                    bytes[at..at + 16].iter_mut().for_each(|b| *b = r.below(256) as u8);
+                }
+            }
+        }
+        let copy = TempPath::new("terms-corrupt");
+        std::fs::write(&copy.0, &bytes).unwrap();
+        let conn = Connection::open(&copy.0).unwrap();
+        let store = super::store_for(&conn);
+        let Ok(read) = store.read_scope(0) else { continue };
+        if store.shared().validate_epoch().is_err() {
+            continue;
+        }
+        let mut out = Vec::new();
+        for chunk in ids.chunks(r.below(900) as usize + 1) {
+            out.clear();
+            match store.decode(chunk, &mut out) {
+                Ok(()) => assert_eq!(out.len(), chunk.len()),
+                Err(_) => errors += 1,
+            }
+        }
+        for id in ids.iter().step_by(37) {
+            let _ = store.decode_one(*id);
+        }
+        let c = store.shared().btree_counters();
+        fallbacks += c.fallbacks;
+        direct += c.term_rows;
+        drop(read);
+        drop(store);
+        drop(conn);
+    }
+    assert!(fallbacks > 0 && direct > 0, "{fallbacks} fallbacks, {direct} rows read directly, {errors} errors");
+}
+
+/// The `rdf_term` path the reader keeps between calls belongs to one snapshot: after another
+/// connection deletes the last row (`vacuum_terms`) and interns a different term under the
+/// same row number, the next read sees the new term, not the old page.
+#[test]
+fn kept_term_path_is_dropped_when_the_snapshot_changes() {
+    let terms = dictionary_terms(2000, 0);
+    let (db, ids) = term_db(1024, "", &terms);
+    // An unreferenced last row.
+    let old_term: oxrdf::Term = oxrdf::Literal::new_simple_literal("the old term at the last row").into();
+    let old = {
+        let ws = db.store.write_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        let id = db.store.intern(old_term.as_ref()).unwrap();
+        ws.commit().unwrap();
+        id
+    };
+    {
+        let _read = db.store.read_scope(0).unwrap();
+        db.shared().validate_epoch().unwrap();
+        assert_eq!(decode_cold(&db, &[ids[5], old], 1, true), vec![terms[5].clone(), old_term]);
+    }
+    let other = db.reopen();
+    assert!(other.store.vacuum_terms().unwrap() >= 1);
+    let new_term: oxrdf::Term = oxrdf::Literal::new_simple_literal("a new term that reuses the row").into();
+    let new = {
+        let ws = other.store.write_scope(0).unwrap();
+        other.shared().validate_epoch().unwrap();
+        let id = other.store.intern(new_term.as_ref()).unwrap();
+        ws.commit().unwrap();
+        id
+    };
+    drop(other);
+    assert_eq!(new.dict_row(), old.dict_row(), "the row number is reused");
+    let _read = db.store.read_scope(0).unwrap();
+    db.shared().validate_epoch().unwrap();
+    let before = db.shared().btree_counters().term_rows;
+    assert_eq!(decode_cold(&db, &[new], 1, true), vec![new_term]);
+    assert_eq!(db.shared().btree_counters().term_rows, before + 1, "read directly");
+}

@@ -1,0 +1,9 @@
+# Q6: FILTER(?a > 90)
+# dataset: social
+# Selective integer range (about 0.7% of the persons).
+PREFIX : <http://example.org/social/>
+SELECT ?x ?a
+WHERE {
+  ?x :age ?a .
+  FILTER(?a > 90)
+}

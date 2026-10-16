@@ -1,0 +1,1267 @@
+{
+ "started": 1792115747.2328649,
+ "finished": 1792115769.10707,
+ "environment": {
+  "timestamp_utc": "2026-10-16T01:55:47+00:00",
+  "python": "3.13.16",
+  "platform": "Linux-6.18.44-fc-v114-x86_64-with-glibc2.39",
+  "cpu_model": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+  "cpu_count": 4,
+  "memory_bytes": 16874930176,
+  "sqlite_version": "3.45.1",
+  "pyoxigraph": "0.5.11",
+  "rdflib": "7.6.0",
+  "sparqlite": {
+   "requested": "$SCRATCH/targets/ext/release/libsparqlite",
+   "file": "$SCRATCH/targets/ext/release/libsparqlite.so",
+   "sha256": "23b8dd94a79be857",
+   "version": "sparqlite 0.1.0 (SQLite 3.45.1)",
+   "error": null,
+   "init_error": null,
+   "calls": {
+    "sparql_version": null,
+    "sparql_init": null,
+    "sparql_load_file": null,
+    "sparql_config": null,
+    "sparql_load": null,
+    "sparql_analyze": null,
+    "sparql_count": null,
+    "sparql_rows": null,
+    "sparql_rows_sql": null,
+    "sparql_query": null,
+    "sparql_count_sql": null,
+    "sparql_query_sql": null
+   },
+   "missing": []
+  },
+  "git_revision": "117d39281c88e4bec851fc76e135960c281bb644",
+  "git_harness_changes": [],
+  "harness_sha256": "91e26652b40e81b03ec777fff3348107e8d0d1fa1d66c1a027e791a29060b351"
+ },
+ "config": {
+  "modes": [
+   "count",
+   "full"
+  ],
+  "warmup": 1,
+  "repeat": 5,
+  "timeout_s": 120.0,
+  "cell_budget_s": 120.0,
+  "engine_settings": {
+   "work_dir": "$SCRATCH/work/benchFinal",
+   "ext_path": "$SCRATCH/targets/ext/release/libsparqlite",
+   "reuse_db": true,
+   "sqlite_load": "auto",
+   "full_columns": "terms",
+   "native_config": {
+    "reader": "sql"
+   },
+   "rdflib_max": 100000,
+   "timeout_s": 120.0,
+   "isolate": true,
+   "reference_count": "aggregate"
+  },
+  "argv": [
+   "py/bench.py",
+   "--social",
+   "$SCRATCH/data/social-200k.nt",
+   "--bsbm",
+   "$SCRATCH/data/bsbm-1m.nt",
+   "--engines",
+   "native",
+   "--modes",
+   "count,full",
+   "--native-config",
+   "reader=sql",
+   "--ext",
+   "$SCRATCH/targets/ext/release/libsparqlite",
+   "--work-dir",
+   "$SCRATCH/work/benchFinal",
+   "--reuse-db",
+   "--timeout",
+   "120",
+   "--out-md",
+   "$SCRATCH/work/benchFinal/results-sqlreader.md",
+   "--out-json",
+   "$SCRATCH/work/benchFinal/results-sqlreader.json"
+  ]
+ },
+ "engines": [
+  {
+   "name": "sparqlite-native",
+   "short": "native[reader=sql]",
+   "status": "ok",
+   "version": "sparqlite 0.1.0 (SQLite 3.45.1)",
+   "message": null
+  }
+ ],
+ "datasets": [
+  {
+   "name": "social",
+   "path": "$SCRATCH/data/social-200k.nt",
+   "triples": 1600000,
+   "bytes": 175023864,
+   "sha256": "b0c8f3a5adeb109fd62dafd1d6f61d5a144833a47b1cf2e83d1a0b92b205a14a"
+  },
+  {
+   "name": "bsbm",
+   "path": "$SCRATCH/data/bsbm-1m.nt",
+   "triples": 1004103,
+   "bytes": 146943085,
+   "sha256": "6586dcc57a51ec244afc01937e720aacb9932902e1f149897f65d5ffee5c8d1b"
+  }
+ ],
+ "queries": [
+  {
+   "id": "Q1",
+   "title": "star-4 (class + age + city + name)",
+   "dataset": "social",
+   "ordered": false,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q01-star4.rq",
+   "sha256": "796a0253d23bcc5f9dc5554286a1a74e43af7b8d35094a4970e217d90c86f888",
+   "text": "# Q1: star-4 (class + age + city + name)\n# dataset: social\n# A subject star with one constant object (10% of the persons are :C3).\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX : <http://example.org/social/>\nSELECT ?x ?a ?c ?n\nWHERE {\n  ?x rdf:type :C3 ;\n     :age ?a ;\n     :city ?c ;\n     :name ?n .\n}\n"
+  },
+  {
+   "id": "Q2",
+   "title": "BSBM product star-6",
+   "dataset": "bsbm",
+   "ordered": false,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q02-bsbm-star6.rq",
+   "sha256": "f37468a41d05a096e1ca85881d5132175c66b784cda07334d677308c6eed5b97",
+   "text": "# Q2: BSBM product star-6\n# dataset: bsbm\n# A six-pattern product star anchored on one popular feature.\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX bsbm: <http://example.org/bsbm/vocabulary/>\nPREFIX inst: <http://example.org/bsbm/instances/>\nSELECT ?product ?type ?label ?producer ?n1 ?t1\nWHERE {\n  ?product bsbm:productFeature inst:ProductFeature3 ;\n           rdf:type ?type ;\n           rdfs:label ?label ;\n           bsbm:producer ?producer ;\n           bsbm:productPropertyNumeric1 ?n1 ;\n           bsbm:productPropertyTextual1 ?t1 .\n}\n"
+  },
+  {
+   "id": "Q3",
+   "title": "chain-2 COUNT",
+   "dataset": "social",
+   "ordered": false,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q03-chain2-count.rq",
+   "sha256": "6b240661999c27b237ebc78bfd0f3c4d3a43bd54431d431e55b854cc0433596f",
+   "text": "# Q3: chain-2 COUNT\n# dataset: social\n# Friends of friends; always 9 x persons solutions because every out-degree is 3.\nPREFIX : <http://example.org/social/>\nSELECT (COUNT(*) AS ?count)\nWHERE {\n  ?a :knows ?b .\n  ?b :knows ?c .\n}\n"
+  },
+  {
+   "id": "Q4",
+   "title": "selective chain-3 from a constant",
+   "dataset": "social",
+   "ordered": false,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q04-chain3-const.rq",
+   "sha256": "4c753226d50b44894b4b8d280e84a3ed2672996d58300f35369faa4ca5def2ea",
+   "text": "# Q4: selective chain-3 from a constant\n# dataset: social\n# Three hops from :p123 (exactly 27 solutions, duplicates included).\nPREFIX : <http://example.org/social/>\nSELECT ?a ?b ?c\nWHERE {\n  :p123 :knows ?a .\n  ?a :knows ?b .\n  ?b :knows ?c .\n}\n"
+  },
+  {
+   "id": "Q5",
+   "title": "OPTIONAL with a type check inside",
+   "dataset": "social",
+   "ordered": false,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q05-optional.rq",
+   "sha256": "9ed8d27ba3d496ae6eac3fa2aee51786b8e59f4e6a88e0117a01411092a7fa05",
+   "text": "# Q5: OPTIONAL with a type check inside\n# dataset: social\n# Every :C3 person, with the :C4 persons they know (unbound when there are none).\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX : <http://example.org/social/>\nSELECT ?x ?y\nWHERE {\n  ?x rdf:type :C3 .\n  OPTIONAL {\n    ?x :knows ?y .\n    ?y rdf:type :C4 .\n  }\n}\n"
+  },
+  {
+   "id": "Q6",
+   "title": "FILTER(?a > 90)",
+   "dataset": "social",
+   "ordered": false,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q06-filter-range.rq",
+   "sha256": "fbb2eae8084bb3c718c544f7b3dcc946089474e74dac404264966a024c733ef0",
+   "text": "# Q6: FILTER(?a > 90)\n# dataset: social\n# Selective integer range (about 0.7% of the persons).\nPREFIX : <http://example.org/social/>\nSELECT ?x ?a\nWHERE {\n  ?x :age ?a .\n  FILTER(?a > 90)\n}\n"
+  },
+  {
+   "id": "Q7",
+   "title": "REGEX on names",
+   "dataset": "social",
+   "ordered": false,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q07-regex.rq",
+   "sha256": "b0e497d43b0b3498bf77379cf02aa0d8262bd01cf5725675e6eaf9fc05380718",
+   "text": "# Q7: REGEX on names\n# dataset: social\n# Case-insensitive anchored regular expression over every name.\nPREFIX : <http://example.org/social/>\nSELECT ?x ?n\nWHERE {\n  ?x :name ?n .\n  FILTER(REGEX(?n, \"^person 1[0-9]*7$\", \"i\"))\n}\n"
+  },
+  {
+   "id": "Q8",
+   "title": "GROUP BY + COUNT + ORDER BY DESC LIMIT 10",
+   "dataset": "social",
+   "ordered": true,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q08-groupby-top10.rq",
+   "sha256": "93af9ec0a89edc0b945a6d04e81bbfe8b784e8253b4255b822ed120960ac3494",
+   "text": "# Q8: GROUP BY + COUNT + ORDER BY DESC LIMIT 10\n# dataset: social\n# ordered: true\n# The ten most populous cities; ?c breaks ties so the order is total.\nPREFIX : <http://example.org/social/>\nSELECT ?c (COUNT(?x) AS ?n)\nWHERE {\n  ?x :city ?c .\n}\nGROUP BY ?c\nORDER BY DESC(?n) ?c\nLIMIT 10\n"
+  },
+  {
+   "id": "Q9",
+   "title": "ORDER BY DESC(?age) ?x LIMIT 10",
+   "dataset": "social",
+   "ordered": true,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q09-topk-age.rq",
+   "sha256": "909d13a480ae071b3efbc159344a801cc18a3d1c44604382aa0e11854e0e907c",
+   "text": "# Q9: ORDER BY DESC(?age) ?x LIMIT 10\n# dataset: social\n# ordered: true\n# Top-k over an integer property; ?x breaks ties so the order is total.\nPREFIX : <http://example.org/social/>\nSELECT ?x ?age\nWHERE {\n  ?x :age ?age .\n}\nORDER BY DESC(?age) ?x\nLIMIT 10\n"
+  },
+  {
+   "id": "Q10",
+   "title": "DISTINCT over a join",
+   "dataset": "social",
+   "ordered": false,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q10-distinct-join.rq",
+   "sha256": "32706d908433fffe3f379e272c251592d3cda97fc15a68043323fa2842746eb2",
+   "text": "# Q10: DISTINCT over a join\n# dataset: social\n# (home city, friend's class) pairs: at most 10 x cities rows out of 3 x persons join rows.\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX : <http://example.org/social/>\nSELECT DISTINCT ?c ?cls\nWHERE {\n  ?x :knows ?y .\n  ?x :city ?c .\n  ?y rdf:type ?cls .\n}\n"
+  },
+  {
+   "id": "Q11",
+   "title": "UNION",
+   "dataset": "social",
+   "ordered": false,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q11-union.rq",
+   "sha256": "098f8a4b2efacbdc1ea750925bdac8e455dd690300c157acf5b3164865432df6",
+   "text": "# Q11: UNION\n# dataset: social\n# Outgoing :knows of :C1 persons plus incoming :knows of :C2 persons.\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX : <http://example.org/social/>\nSELECT ?x ?y\nWHERE {\n  { ?x rdf:type :C1 . ?x :knows ?y . }\n  UNION\n  { ?x rdf:type :C2 . ?y :knows ?x . }\n}\n"
+  },
+  {
+   "id": "Q12",
+   "title": "MINUS",
+   "dataset": "social",
+   "ordered": false,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q12-minus.rq",
+   "sha256": "9ccb8cf4f8483739baf2a4016a161956b45d641f7eed190e103aeba19462c769",
+   "text": "# Q12: MINUS\n# dataset: social\n# :C5 persons who know no other :C5 person (?x is shared, so MINUS = NOT EXISTS here).\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX : <http://example.org/social/>\nSELECT ?x\nWHERE {\n  ?x rdf:type :C5 .\n  MINUS {\n    ?x :knows ?y .\n    ?y rdf:type :C5 .\n  }\n}\n"
+  },
+  {
+   "id": "Q13",
+   "title": ":p1 :knows+ ?y COUNT",
+   "dataset": "social",
+   "ordered": false,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q13-knows-plus-count.rq",
+   "sha256": "71d16c06a0c1ce36287610d66c4c4c82291bc1894f11940f2fb94fc3b13bf1e6",
+   "text": "# Q13: :p1 :knows+ ?y COUNT\n# dataset: social\n# Transitive closure from one person (set semantics: each reachable person once).\nPREFIX : <http://example.org/social/>\nSELECT (COUNT(*) AS ?count)\nWHERE {\n  :p1 :knows+ ?y .\n}\n"
+  },
+  {
+   "id": "Q14",
+   "title": "?x rdf:type/rdfs:subClassOf* bsbm:Product",
+   "dataset": "bsbm",
+   "ordered": false,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q14-subclass-path.rq",
+   "sha256": "e848a9fb87dc50e12f85e4ac5a838ee327e49fde81a3c98217a4f1bf65dc9f3a",
+   "text": "# Q14: ?x rdf:type/rdfs:subClassOf* bsbm:Product\n# dataset: bsbm\n# Every product, found through the 4-level type hierarchy (one row per product).\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX bsbm: <http://example.org/bsbm/vocabulary/>\nSELECT ?x\nWHERE {\n  ?x rdf:type/rdfs:subClassOf* bsbm:Product .\n}\n"
+  },
+  {
+   "id": "Q15",
+   "title": "point lookup :p123 ?p ?o",
+   "dataset": "social",
+   "ordered": false,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q15-point-lookup.rq",
+   "sha256": "98747ced950a053eda892f51cc00a06dfc035836f37cd20c398c4b1f723ff806",
+   "text": "# Q15: point lookup :p123 ?p ?o\n# dataset: social\n# All eight triples of one subject.\nPREFIX : <http://example.org/social/>\nSELECT ?p ?o\nWHERE {\n  :p123 ?p ?o .\n}\n"
+  },
+  {
+   "id": "Q16",
+   "title": "COUNT(*) {?s ?p ?o}",
+   "dataset": "social",
+   "ordered": false,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q16-count-all.rq",
+   "sha256": "4dcbfe01f01ccb227b1d2cdef95adb2f31a3fdc91d2ad83d62a75c9b5b115de6",
+   "text": "# Q16: COUNT(*) {?s ?p ?o}\n# dataset: social\n# Size of the default graph.\nSELECT (COUNT(*) AS ?count)\nWHERE {\n  ?s ?p ?o .\n}\n"
+  },
+  {
+   "id": "Q17",
+   "title": "BSBM offers: price range + date filter + ORDER BY price LIMIT 10",
+   "dataset": "bsbm",
+   "ordered": true,
+   "path": "/home/user/research/sqlite-sparql-rust/py/queries/q17-bsbm-offers.rq",
+   "sha256": "8618a201d9cb17c312fb10a27723ee8c0872a23553f101c560b294feb807d58d",
+   "text": "# Q17: BSBM offers: price range + date filter + ORDER BY price LIMIT 10\n# dataset: bsbm\n# ordered: true\n# Prices mix xsd:decimal (some non-canonical, e.g. \"12.50\") and xsd:integer but never\n# compare equal across the two, and ?offer breaks ties, so the order is total.\nPREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\nPREFIX bsbm: <http://example.org/bsbm/vocabulary/>\nSELECT ?offer ?price ?vendor ?product ?validTo\nWHERE {\n  ?offer bsbm:price ?price ;\n         bsbm:validTo ?validTo ;\n         bsbm:vendor ?vendor ;\n         bsbm:product ?product .\n  FILTER(?price >= 500 && ?price <= 1000)\n  FILTER(?validTo >= \"2008-06-01T00:00:00\"^^xsd:dateTime)\n}\nORDER BY ?price ?offer\nLIMIT 10\n"
+  }
+ ],
+ "loads": [
+  {
+   "dataset": "social",
+   "engine": "sparqlite-native",
+   "status": "ok",
+   "info": {
+    "seconds": 10.455047032000266,
+    "triples": 1600000,
+    "details": {
+     "load_mode": "file",
+     "load_s": 9.056969417000118,
+     "analyze_sql_s": 0.7601128910000625,
+     "sparql_analyze_s": 0.637964724000085,
+     "sparql_analyze": "{\"analyzed_quads\":1600000,\"default_graph\":{\"characteristic_sets\":1,\"heavy_hitters\":273,\"objects\":351155,\"predicates\":6,\"subjects\":200000,\"triples\":1600000},\"ms\":637,\"named_graphs\":{\"characteristic_sets\":0,\"heavy_hitters\":0,\"objects\":0,\"predicates\":0,\"subjects\":0,\"triples\":0}}",
+     "db_bytes": 129253376,
+     "reused": true
+    },
+    "shared_with": null
+   },
+   "message": null
+  },
+  {
+   "dataset": "bsbm",
+   "engine": "sparqlite-native",
+   "status": "ok",
+   "info": {
+    "seconds": 7.0784478339996895,
+    "triples": 1004103,
+    "details": {
+     "load_mode": "file",
+     "load_s": 6.124438704000113,
+     "analyze_sql_s": 0.5353907809999328,
+     "sparql_analyze_s": 0.4186183489996438,
+     "sparql_analyze": "{\"analyzed_quads\":1004103,\"default_graph\":{\"characteristic_sets\":29,\"heavy_hitters\":271,\"objects\":328924,\"predicates\":29,\"subjects\":131245,\"triples\":1004103},\"ms\":418,\"named_graphs\":{\"characteristic_sets\":0,\"heavy_hitters\":0,\"objects\":0,\"predicates\":0,\"subjects\":0,\"triples\":0}}",
+     "db_bytes": 90202112,
+     "reused": true
+    },
+    "shared_with": null
+   },
+   "message": null
+  }
+ ],
+ "measurements": [
+  {
+   "dataset": "social",
+   "query": "Q1",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 49.680652,
+   "times_ms": [
+    49.753452,
+    49.680652,
+    49.565536,
+    49.752718,
+    49.635254
+   ],
+   "warmup_ms": [
+    52.920755
+   ],
+   "rows": 20000,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q1",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 101.582459,
+   "times_ms": [
+    101.582459,
+    101.765274,
+    100.227802,
+    100.702073,
+    102.705751
+   ],
+   "warmup_ms": [
+    172.67814
+   ],
+   "rows": 20000,
+   "checksum": "20000:47293e8d1fc53e8e:f265996f",
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q3",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 182.384688,
+   "times_ms": [
+    182.384688,
+    183.406837,
+    181.726808,
+    181.735457,
+    182.942036
+   ],
+   "warmup_ms": [
+    203.63159
+   ],
+   "rows": 1,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q3",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 184.430529,
+   "times_ms": [
+    183.959883,
+    184.904525,
+    184.430529,
+    184.740208,
+    182.892831
+   ],
+   "warmup_ms": [
+    182.602112
+   ],
+   "rows": 1,
+   "checksum": "1:e0207630980d7637:a40c3d0f",
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q4",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 0.11344,
+   "times_ms": [
+    0.149431,
+    0.099167,
+    0.135017,
+    0.11344,
+    0.088957
+   ],
+   "warmup_ms": [
+    0.562236
+   ],
+   "rows": 27,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q4",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 0.139329,
+   "times_ms": [
+    0.214764,
+    0.139329,
+    0.140856,
+    0.131326,
+    0.124591
+   ],
+   "warmup_ms": [
+    0.415112
+   ],
+   "rows": 27,
+   "checksum": "27:f2cb5a35f9f267f7:2ee42fa2",
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q5",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 36.618769,
+   "times_ms": [
+    36.613682,
+    36.458765,
+    36.618769,
+    38.845653,
+    36.662445
+   ],
+   "warmup_ms": [
+    39.803367
+   ],
+   "rows": 20634,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q5",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 58.7259,
+   "times_ms": [
+    59.987298,
+    59.409005,
+    58.7259,
+    57.793546,
+    58.17998
+   ],
+   "warmup_ms": [
+    68.019408
+   ],
+   "rows": 20634,
+   "checksum": "20634:60e223ef0b21a5d8:36c70629",
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q6",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 0.299181,
+   "times_ms": [
+    0.389663,
+    0.29667,
+    0.290071,
+    0.322278,
+    0.299181
+   ],
+   "warmup_ms": [
+    0.843642
+   ],
+   "rows": 1393,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q6",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 2.214873,
+   "times_ms": [
+    2.644914,
+    2.309621,
+    2.149121,
+    2.064738,
+    2.214873
+   ],
+   "warmup_ms": [
+    5.887039
+   ],
+   "rows": 1393,
+   "checksum": "1393:7cb8da533ab46bfa:c7ff3f79",
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q7",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 96.16334,
+   "times_ms": [
+    101.580369,
+    95.101305,
+    94.627553,
+    96.885183,
+    96.16334
+   ],
+   "warmup_ms": [
+    342.279413
+   ],
+   "rows": 11111,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q7",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 130.680765,
+   "times_ms": [
+    130.680765,
+    130.143863,
+    130.839544,
+    129.83929,
+    172.785555
+   ],
+   "warmup_ms": [
+    201.226024
+   ],
+   "rows": 11111,
+   "checksum": "11111:2af49a4de13175e0:6167e6a4",
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q8",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 39.813775,
+   "times_ms": [
+    39.632241,
+    40.291994,
+    40.008058,
+    39.755033,
+    39.813775
+   ],
+   "warmup_ms": [
+    40.378096
+   ],
+   "rows": 10,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q8",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 39.805916,
+   "times_ms": [
+    39.712891,
+    40.105834,
+    39.805916,
+    39.777791,
+    39.830305
+   ],
+   "warmup_ms": [
+    39.875589
+   ],
+   "rows": 10,
+   "checksum": "10:c784467a37bf4f18:8029c88b",
+   "sequence": "10:dbdc5c7dd56f5c79",
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q9",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 33.325685,
+   "times_ms": [
+    32.577186,
+    32.498579,
+    34.017529,
+    33.325685,
+    33.680617
+   ],
+   "warmup_ms": [
+    33.053801
+   ],
+   "rows": 10,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q9",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 33.434796,
+   "times_ms": [
+    33.434796,
+    33.722563,
+    33.21474,
+    32.74648,
+    33.599279
+   ],
+   "warmup_ms": [
+    34.659999
+   ],
+   "rows": 10,
+   "checksum": "10:9cd7a7596d48a4bd:8f614c05",
+   "sequence": "10:a187f82919bb01b2",
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q10",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 310.139905,
+   "times_ms": [
+    278.616668,
+    328.171238,
+    310.139905,
+    299.788528,
+    385.899704
+   ],
+   "warmup_ms": [
+    355.083302
+   ],
+   "rows": 9999,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q10",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 304.546117,
+   "times_ms": [
+    285.716665,
+    343.497433,
+    291.560805,
+    304.546117,
+    327.525808
+   ],
+   "warmup_ms": [
+    365.919533
+   ],
+   "rows": 9999,
+   "checksum": "9999:50df37efdbc95ec2:37b84aef",
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q11",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 55.758659,
+   "times_ms": [
+    56.732539,
+    55.737057,
+    55.842018,
+    55.758659,
+    55.592098
+   ],
+   "warmup_ms": [
+    57.330896
+   ],
+   "rows": 127794,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q11",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 294.095323,
+   "times_ms": [
+    295.696162,
+    292.409597,
+    294.095323,
+    313.393087,
+    293.824729
+   ],
+   "warmup_ms": [
+    478.215129
+   ],
+   "rows": 127794,
+   "checksum": "127794:06fd246a13c4ce06:36c70629",
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q12",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 33.980331,
+   "times_ms": [
+    33.999934,
+    33.980331,
+    34.155492,
+    33.786797,
+    33.947084
+   ],
+   "warmup_ms": [
+    34.526601
+   ],
+   "rows": 14877,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q12",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 53.777755,
+   "times_ms": [
+    54.013352,
+    52.736909,
+    53.104418,
+    54.089427,
+    53.777755
+   ],
+   "warmup_ms": [
+    64.282801
+   ],
+   "rows": 14877,
+   "checksum": "14877:d274ef8848a93849:6743df4a",
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q13",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 266.779533,
+   "times_ms": [
+    266.657001,
+    268.111545,
+    267.329145,
+    265.262276,
+    266.779533
+   ],
+   "warmup_ms": [
+    301.953181
+   ],
+   "rows": 1,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q13",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 284.286082,
+   "times_ms": [
+    283.061428,
+    300.713263,
+    313.283834,
+    284.286082,
+    283.878872
+   ],
+   "warmup_ms": [
+    281.49512
+   ],
+   "rows": 1,
+   "checksum": "1:5f08c32f06b2a3c8:a40c3d0f",
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q15",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 0.060003,
+   "times_ms": [
+    0.092505,
+    0.059523,
+    0.048083,
+    0.0954,
+    0.060003
+   ],
+   "warmup_ms": [
+    0.345234
+   ],
+   "rows": 8,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q15",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 0.071229,
+   "times_ms": [
+    0.10029,
+    0.071229,
+    0.076289,
+    0.069565,
+    0.061569
+   ],
+   "warmup_ms": [
+    0.184538
+   ],
+   "rows": 8,
+   "checksum": "8:e2c391c76420fe04:5767b15e",
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q16",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 65.51231,
+   "times_ms": [
+    77.74931,
+    106.146338,
+    65.043305,
+    65.51231,
+    64.443808
+   ],
+   "warmup_ms": [
+    65.414236
+   ],
+   "rows": 1,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "social",
+   "query": "Q16",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 65.154694,
+   "times_ms": [
+    65.271361,
+    64.758931,
+    65.333327,
+    64.946172,
+    65.154694
+   ],
+   "warmup_ms": [
+    65.240716
+   ],
+   "rows": 1,
+   "checksum": "1:1635f2be009070d0:a40c3d0f",
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "bsbm",
+   "query": "Q2",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 6.870516,
+   "times_ms": [
+    6.870516,
+    6.898407,
+    6.839421,
+    6.704429,
+    7.002084
+   ],
+   "warmup_ms": [
+    8.173592
+   ],
+   "rows": 1606,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "bsbm",
+   "query": "Q2",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 13.098278,
+   "times_ms": [
+    13.202464,
+    13.022727,
+    13.098278,
+    12.929589,
+    21.740931
+   ],
+   "warmup_ms": [
+    18.524923
+   ],
+   "rows": 1606,
+   "checksum": "1606:e7d1208417db857a:b19a1bf6",
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "bsbm",
+   "query": "Q14",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 50.309023,
+   "times_ms": [
+    55.762304,
+    50.309023,
+    50.774173,
+    50.197172,
+    50.21251
+   ],
+   "warmup_ms": [
+    78.983197
+   ],
+   "rows": 7800,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "bsbm",
+   "query": "Q14",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 60.101429,
+   "times_ms": [
+    60.101429,
+    59.818192,
+    59.938492,
+    60.107144,
+    60.22979
+   ],
+   "warmup_ms": [
+    67.748912
+   ],
+   "rows": 7800,
+   "checksum": "7800:edc85e4d56773de5:6743df4a",
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "bsbm",
+   "query": "Q17",
+   "engine": "sparqlite-native",
+   "mode": "count",
+   "status": "ok",
+   "median_ms": 44.734237,
+   "times_ms": [
+    45.404052,
+    44.734237,
+    45.279884,
+    44.502365,
+    44.458802
+   ],
+   "warmup_ms": [
+    60.783904
+   ],
+   "rows": 10,
+   "checksum": null,
+   "sequence": null,
+   "message": null
+  },
+  {
+   "dataset": "bsbm",
+   "query": "Q17",
+   "engine": "sparqlite-native",
+   "mode": "full",
+   "status": "ok",
+   "median_ms": 46.757073,
+   "times_ms": [
+    47.134487,
+    47.147822,
+    46.757073,
+    46.596196,
+    46.421142
+   ],
+   "warmup_ms": [
+    47.237917
+   ],
+   "rows": 10,
+   "checksum": "10:cbc9c1d9be3fc526:791bb46c",
+   "sequence": "10:9740c0e1ab47be8c",
+   "message": null
+  }
+ ],
+ "checks": [
+  {
+   "dataset": "social",
+   "query": "Q1",
+   "status": "single",
+   "rows": 20000,
+   "checksum": "20000:47293e8d1fc53e8e:f265996f",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "social",
+   "query": "Q3",
+   "status": "single",
+   "rows": 1,
+   "checksum": "1:e0207630980d7637:a40c3d0f",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "social",
+   "query": "Q4",
+   "status": "single",
+   "rows": 27,
+   "checksum": "27:f2cb5a35f9f267f7:2ee42fa2",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "social",
+   "query": "Q5",
+   "status": "single",
+   "rows": 20634,
+   "checksum": "20634:60e223ef0b21a5d8:36c70629",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "social",
+   "query": "Q6",
+   "status": "single",
+   "rows": 1393,
+   "checksum": "1393:7cb8da533ab46bfa:c7ff3f79",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "social",
+   "query": "Q7",
+   "status": "single",
+   "rows": 11111,
+   "checksum": "11111:2af49a4de13175e0:6167e6a4",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "social",
+   "query": "Q8",
+   "status": "single",
+   "rows": 10,
+   "checksum": "10:c784467a37bf4f18:8029c88b",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "social",
+   "query": "Q9",
+   "status": "single",
+   "rows": 10,
+   "checksum": "10:9cd7a7596d48a4bd:8f614c05",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "social",
+   "query": "Q10",
+   "status": "single",
+   "rows": 9999,
+   "checksum": "9999:50df37efdbc95ec2:37b84aef",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "social",
+   "query": "Q11",
+   "status": "single",
+   "rows": 127794,
+   "checksum": "127794:06fd246a13c4ce06:36c70629",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "social",
+   "query": "Q12",
+   "status": "single",
+   "rows": 14877,
+   "checksum": "14877:d274ef8848a93849:6743df4a",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "social",
+   "query": "Q13",
+   "status": "single",
+   "rows": 1,
+   "checksum": "1:5f08c32f06b2a3c8:a40c3d0f",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "social",
+   "query": "Q15",
+   "status": "single",
+   "rows": 8,
+   "checksum": "8:e2c391c76420fe04:5767b15e",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "social",
+   "query": "Q16",
+   "status": "single",
+   "rows": 1,
+   "checksum": "1:1635f2be009070d0:a40c3d0f",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "bsbm",
+   "query": "Q2",
+   "status": "single",
+   "rows": 1606,
+   "checksum": "1606:e7d1208417db857a:b19a1bf6",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "bsbm",
+   "query": "Q14",
+   "status": "single",
+   "rows": 7800,
+   "checksum": "7800:edc85e4d56773de5:6743df4a",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  },
+  {
+   "dataset": "bsbm",
+   "query": "Q17",
+   "status": "single",
+   "rows": 10,
+   "checksum": "10:cbc9c1d9be3fc526:791bb46c",
+   "participants": [
+    "sparqlite-native/count",
+    "sparqlite-native/full"
+   ],
+   "details": []
+  }
+ ]
+}

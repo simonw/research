@@ -1,0 +1,15 @@
+[package]
+name = "sparqlite-ext"
+version = "0.1.0"
+edition = "2024"
+[lib]
+name = "sparqlite"
+crate-type = ["cdylib"]
+[workspace]
+[dependencies]
+sq-api = { path = "../crates/sq-api" }
+rusqlite = { version = "=0.40.2", default-features = false, features = ["loadable_extension", "functions", "vtab"] }
+[profile.release]
+panic = "unwind"
+lto = "fat"
+codegen-units = 1

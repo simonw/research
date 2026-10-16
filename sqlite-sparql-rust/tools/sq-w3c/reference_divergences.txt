@@ -1,0 +1,56 @@
+# Tests the REFERENCE backend (spareval 0.2.7 + spargebra 0.4.7) fails for reasons inside
+# those crates, not in the harness. Each one was checked against the test's data, query and
+# expected results. `sq-w3c --backend reference` treats this list as known failures (in
+# addition to --known-failures), so a harness regression shows up as an unexpected failure.
+# Format: one test IRI per line; '#' lines and anything after the IRI are comments.
+
+# --- spargebra parser (these also affect sq-plan, which lowers spargebra's algebra) ---
+# `OPTIONAL { { P FILTER(F) } }` is parsed as LeftJoin(_, P, F): the inner group is merged
+# before filter scoping (the "simplified" reading; SPARQL 1.1 keeps the group, so ?title is
+# unbound inside the FILTER and no price is ever joined).
+http://www.w3.org/2001/sw/DataAccess/tests/data-r2/optional-filter/manifest#dawg-optional-filter-005-not-simplified
+# Post-query VALUES after CONSTRUCT … GROUP BY is rejected ("expected [_]").
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/bindings/manifest#values-construct-group-by
+# Boolean keywords are matched case-sensitively (`TRUE`, `False` rejected).
+http://www.w3.org/2001/sw/DataAccess/tests/data-r2/expr-builtin/manifest#case-insensitive-booleans
+
+# --- spareval: GRAPH evaluation pushes the graph name into the inner patterns instead of
+# evaluating the inner pattern once per named graph (VALUES, sub-selects, aggregates, MINUS,
+# OPTIONAL and nested GRAPH inside GRAPH, and graphs outside FROM NAMED) ---
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/aggregates/manifest#agg-empty-group-count-graph
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/bindings/manifest#graph
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/bindings/manifest#graph-no-var
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/bindings/manifest#graph-from-named-1
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/bindings/manifest#graph-from-named-2
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/bindings/manifest#graph-from-named-3
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/negation/manifest#graph-minus
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/subquery/manifest#subquery15
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/subquery/manifest#subquery16
+http://www.w3.org/2001/sw/DataAccess/tests/data-r2/graph/manifest#graph-variable-scope
+http://www.w3.org/2001/sw/DataAccess/tests/data-r2/graph/manifest#graph-optional
+http://www.w3.org/2001/sw/DataAccess/tests/data-r2/graph/manifest#graph-nested-2
+http://www.w3.org/2001/sw/DataAccess/tests/data-r2/graph/manifest#graph-nested-3
+
+# --- spareval: zero-length paths from a constant on the empty dataset return no row ---
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/property-path/manifest#zero_or_more_set_start
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/property-path/manifest#zero_or_more_set_end
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/property-path/manifest#zero_or_one_set_start
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/property-path/manifest#zero_or_one_set_end
+
+# --- spareval: GROUP_CONCAT keeps a language tag shared by all values (the spec returns a
+# simple literal) ---
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/aggregates/manifest#agg-groupconcat-04
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/aggregates/manifest#agg-groupconcat-06
+
+# --- spareval: BNODE(str) returns the same blank node for equal strings across solutions
+# (the expected result needs 6 distinct blank nodes, spareval produces 2) ---
+http://www.w3.org/2009/sparql/docs/tests/data-sparql11/functions/manifest#bnode01
+
+# --- spareval: numeric literals are canonicalized on read, so STR("01"^^xsd:integer) = "1" ---
+http://www.w3.org/2001/sw/DataAccess/tests/data-r2/expr-builtin/manifest#dawg-str-1
+http://www.w3.org/2001/sw/DataAccess/tests/data-r2/expr-builtin/manifest#dawg-str-2
+
+# --- spareval without its `calendar-ext` feature (it would enable spargebra's sep-0002 for
+# the whole workspace, which must stay off): xsd:date comparisons are unsupported ---
+http://www.w3.org/2001/sw/DataAccess/tests/data-r2/open-world/manifest#date-2
+http://www.w3.org/2001/sw/DataAccess/tests/data-r2/open-world/manifest#date-3

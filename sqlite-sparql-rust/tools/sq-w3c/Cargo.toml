@@ -1,0 +1,41 @@
+[package]
+name = "sq-w3c"
+edition.workspace = true
+version.workspace = true
+description = "W3C SPARQL 1.0/1.1 test-suite runner for sparqlite (docs/SPEC.md §12.2)"
+
+[[bin]]
+name = "sq-w3c"
+path = "src/main.rs"
+
+[dependencies]
+oxrdf = { workspace = true }
+oxttl = { workspace = true }
+oxrdfio = { workspace = true }
+sparesults = { workspace = true }
+spargebra = { workspace = true }
+serde_json = { workspace = true }
+
+# Engines under test. They are optional so the harness keeps building (and its reference
+# backend keeps working) while those crates are being written.
+sq-core = { workspace = true, optional = true }
+sq-memstore = { workspace = true, optional = true }
+sq-engine = { workspace = true, optional = true }
+sq-results = { workspace = true, optional = true }
+sq-plan = { workspace = true, optional = true }
+sq-oracle = { workspace = true, optional = true }
+sq-api = { workspace = true, optional = true }
+rusqlite = { workspace = true, optional = true }
+spareval = { workspace = true, optional = true }
+oxiri = { workspace = true, optional = true }
+
+[features]
+default = ["reference", "mem", "sqlite", "oracle"]
+# spareval over an oxrdf::Dataset: validates the harness itself.
+reference = ["dep:spareval", "dep:oxiri"]
+# MemStore + sq-engine (load / query_to_string / update).
+mem = ["dep:sq-core", "dep:sq-memstore", "dep:sq-engine", "dep:sq-results"]
+# In-memory SQLite + sq_api::register, black-box through the SQL functions.
+sqlite = ["dep:sq-api", "dep:rusqlite"]
+# sq-oracle over a query lowered by sq-plan, on MemStore.
+oracle = ["dep:sq-core", "dep:sq-memstore", "dep:sq-plan", "dep:sq-oracle"]
