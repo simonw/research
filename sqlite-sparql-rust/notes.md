@@ -240,3 +240,17 @@ translating SPARQL to SQL text or running as an external client.
 - Gates after both lanes: all crate tests, long differential fuzz (2 seeds x 10,000 cases x 30 configs, 0
   mismatches), W3C sqlite backend 636/639.
 - Not met: tiny-query fixed overhead (Q4 0.073 ms vs baseline 0.042; planning a 3-pattern group ~23 us).
+
+### Round 2 (fixes surfaced by the tutorial) — interrupted by a container restart
+- planner lane: merge-join cost now pays for pre-check run products; multi-key join estimates combine
+  selectivities (entity keys multiply, attribute keys backed off). The tutorial's 100K-people query went
+  from ~47-55 s (MergeJoin key=?city check=[?c]) to 0.24 s CPU under join_policy=auto (hash plan: 0.37 s).
+- api lane: read-only functions are SQLITE_INNOCUOUS (stored views work with trusted_schema=off); reviewer
+  found that this let a hostile database file crash the host via unbounded re-entry -> nesting of
+  sparqlite calls is now bounded (8 levels / 384 KiB of stack); vtab interrupt messages carry "sparql:";
+  clearer sparql_term_id errors; DIRECTONLY docs corrected (TEMP schema exemption, CHECK constraints).
+- expr lane: Q7 REGEX 178 -> 65 ms warm (ValueCache only caches on second decode, tag-dispatched value
+  classes, batch prefetch of string slots per Filter/Extend batch, regex literal prefix/suffix pre-filter).
+- The container restarted mid-workflow: the expr lane's review and the tutorial re-sync were lost; the
+  uncommitted round-2 work in the tree survived, compiled warning-free, and was committed; a resume
+  workflow re-runs the expr review/fix, the tutorial re-sync and a combined gate.
