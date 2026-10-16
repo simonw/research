@@ -1,0 +1,4 @@
+# Rust build artifacts (hundreds of MB) — the built wheel is kept in wheels/
+target/
+Cargo.lock
+__pycache__/

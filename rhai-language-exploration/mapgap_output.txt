@@ -1,0 +1,7 @@
+=== max_map_size enforcement gap ===
+
+A) index-assign, return map directly: max_map_size=1000 but map has 200000 entries (662.18ms, peak +29560 KiB) -> LIMIT BYPASSED
+B) index-assign + a property-assign in the loop: STOPPED after 3.69ms -> Size of object map too large (line 1, position 60) (property assignment checks the whole map, index assignment does not)
+C) array push, max_array_size=1000: STOPPED after 922.50µs -> Size of array/BLOB too large (line 1, position 37) (enforced promptly)
+D) max_map_size + max_operations=100k: STOPPED after 38.79ms -> Too many operations (line 1, position 38) (operations budget is the real backstop)
+E) host-side engine.ensure_data_size_within_limits() on the result -> Size of object map too large (catches it, but only after the RAM was spent)
