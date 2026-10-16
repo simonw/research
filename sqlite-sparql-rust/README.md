@@ -1,5 +1,10 @@
 # sparqlite: SPARQL 1.1 inside SQLite, written in Rust
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 **sparqlite** is a SQLite loadable extension that stores RDF in ordinary SQLite tables and answers
 SPARQL 1.1 queries and updates with its own query engine. The engine runs inside the SQLite process
 and reads the data rows itself:

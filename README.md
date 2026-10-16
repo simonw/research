@@ -178,7 +178,11 @@ for dirname, _ in subdirs_with_dates:
             readme_path.write_text('\n'.join(new_lines))
 
 ]]]-->
-## 100 research projects
+## 101 research projects
+
+### [sparqlite: SPARQL 1.1 inside SQLite, written in Rust](https://github.com/simonw/research/tree/main/sqlite-sparql-rust#readme) (2026-10-16 01:58)
+
+sparqlite is a Rust-based SQLite loadable extension that stores RDF quads in ordinary SQLite tables and executes SPARQL 1.1 queries and updates natively inside the SQLite process. Its integer-encoded terms, covering indexes, cost-based planner, batched joins, and optional direct SQLite B-tree reader deliver 3.5× speedups over SQL translation in count mode and 2.8× when returning full results, while passing 636 of 639 applicable W3C evaluation tests and millions of differential-fuzz comparisons. The project includes a practical [tutorial](tutorial.md), a [W3C test runner](tools/sq-w3c/), and extensive benchmarks, though direct B-tree access is limited to rollback-journal databases and the implementation supports SPARQL 1.1 rather than SPARQL 1.2 or RDF-star. It is organized into modular Rust crates covering storage, planning, execution, expressions, results, testing, and the SQLite API.
 
 ### [Profiling web-edit with Python 3.15: flame graphs and source heatmaps](https://github.com/simonw/research/tree/main/python-3-15-web-edit-profiling#readme) (2026-10-12 16:58)
 
