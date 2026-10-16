@@ -16,6 +16,31 @@ use crate::raw::RawStmt;
 use crate::shared::StorageShared;
 use crate::template::Fixed;
 
+/// Largest dictionary row number (and blank-node counter) that fits a `TermId` payload:
+/// `(row << 4) | tag` must not lose high bits.
+pub(crate) const MAX_ID_PAYLOAD: i64 = (1 << 59) - 1;
+
+/// `TermId::from_dict` for a row number read from (or about to be written to) the database,
+/// which a damaged or hostile file may set to anything: rows outside `1..=2^59-1` would alias
+/// the id of another row.
+pub(crate) fn dict_id(row: i64, tag: Tag) -> Result<TermId> {
+    if (1..=MAX_ID_PAYLOAD).contains(&row) {
+        Ok(TermId::from_dict(row, tag))
+    } else {
+        Err(Error::Schema(format!("corrupt dictionary: row number {row} is out of range")))
+    }
+}
+
+/// `TermId::bnode` for a counter taken from `rdf_meta.next_bnode` (range-checked like
+/// [`dict_id`]).
+pub(crate) fn bnode_id(n: i64) -> Result<TermId> {
+    if (1..=MAX_ID_PAYLOAD).contains(&n) {
+        Ok(TermId::bnode(n))
+    } else {
+        Err(Error::Schema(format!("corrupt rdf_meta: next_bnode {n} is out of range")))
+    }
+}
+
 /// A batch switches from point lookups to a merge scan when it needs more than 1/20 of the
 /// committed dictionary rows.
 const MERGE_SCAN_DIVISOR: usize = 20;
@@ -91,7 +116,7 @@ impl StorageShared {
         st.bind_i64(1, h)?;
         while st.step()? {
             if row_matches(&st, 1, view, dt) {
-                return Ok(Some(TermId::from_dict(st.col_i64(0), view.tag)));
+                return dict_id(st.col_i64(0), view.tag).map(Some);
             }
         }
         Ok(None)
@@ -178,6 +203,16 @@ impl StorageShared {
             let mut cache = self.decode_cache.try_borrow_mut().map_err(|_| Error::Reentrant)?;
             for r in rows.iter().filter(|r| r.id.tag() == Tag::Typed) {
                 let dt = TermId(r.dt);
+                // Only an IRI row can be a datatype. Checking the tag before following the link
+                // bounds the recursion below at one level: IRI rows have no datatype of their
+                // own, so a damaged or hostile dictionary (TYPED -> TYPED cycles or chains)
+                // cannot recurse without end.
+                if dt.tag() != Tag::Iri {
+                    return Err(Error::Schema(format!(
+                        "corrupt dictionary: datatype {dt:?} of {:?} is not an IRI",
+                        r.id
+                    )));
+                }
                 if ids.binary_search(&dt).is_ok() || cached_dt.iter().any(|(d, _)| *d == dt) {
                     continue;
                 }

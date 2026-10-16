@@ -11,7 +11,7 @@ use sq_core::store::IndexOrder;
 use sq_core::term::Term;
 use sq_core::{Error, Result, Tag, TermId};
 
-use crate::btree::{BtreeCounters, BtreeReader, ReaderMode};
+use crate::btree::{BtreeCounters, BtreeReader, FileId, ReaderMode, main_file_identity};
 use crate::cache::ClockCache;
 use crate::keys::OwnedKey;
 use crate::pool::{PoolCounters, StmtPool};
@@ -88,8 +88,13 @@ pub struct StorageShared {
     pub(crate) lookup_cache: RefCell<ClockCache<(OwnedKey, TermId)>>,
     schema_cookie: Cell<Option<i64>>,
     schema: RefCell<Option<Detected>>,
-    /// `rdf_meta.dict_gen` the dictionary caches belong to (None = flush at next validation).
-    dict_gen: Cell<Option<i64>>,
+    /// `rdf_meta.dict_gen` and `rdf_meta.db_id` (random per store; NULL in stores created
+    /// before it existed) the dictionary caches belong to (None = flush at next validation).
+    /// The id tells apart databases whose small `dict_gen` counters happen to agree, e.g. a
+    /// main database replaced by `sqlite3_deserialize`.
+    dict_gen: Cell<Option<(i64, Option<i64>)>>,
+    /// Identity of the main database file the caches were filled from (`None` = none seen).
+    main_file: Cell<Option<FileId>>,
     /// Admission bound: only dictionary rows <= this (known committed) enter the caches.
     committed_max_row: Cell<i64>,
     stats: RefCell<StatsCache>,
@@ -120,6 +125,7 @@ impl StorageShared {
             schema_cookie: Cell::new(None),
             schema: RefCell::new(None),
             dict_gen: Cell::new(None),
+            main_file: Cell::new(None),
             committed_max_row: Cell::new(0),
             stats: RefCell::new(StatsCache::default()),
             open_scopes: Cell::new(0),
@@ -213,6 +219,14 @@ impl StorageShared {
     /// be safe.
     pub fn validate_epoch(&self) -> Result<SchemaState> {
         let writing = self.db.txn_state() == ffi::SQLITE_TXN_WRITE;
+        // A different main database file (`sqlite3_deserialize`, or anything else that swaps
+        // the pager) may carry the same schema cookie and `dict_gen`: treat it as a schema
+        // change, which re-detects and flushes everything derived from the old file.
+        let file = main_file_identity(self.db);
+        if self.main_file.get() != file {
+            self.schema_cookie.set(None);
+            self.main_file.set(file);
+        }
         let cookie = {
             let mut st = self.pool.lease_fixed(Fixed::SchemaCookie)?;
             if !st.step()? {
@@ -234,12 +248,18 @@ impl StorageShared {
             self.committed_max_row.set(0);
             return Ok(state);
         }
-        let (dict_gen, stats_gen, max_row, versions) = {
+        let (dict_gen, stats_gen, max_row, versions, db_id) = {
             let mut st = self.pool.lease_fixed(Fixed::Epoch)?;
             if !st.step()? {
                 return Err(Error::internal("epoch query returned no row"));
             }
-            (st.col_i64(0), st.col_i64(1), st.col_opt_i64(2).unwrap_or(0), (st.col_opt_i64(3), st.col_opt_i64(4)))
+            (
+                st.col_i64(0),
+                st.col_i64(1),
+                st.col_opt_i64(2).unwrap_or(0),
+                (st.col_opt_i64(3), st.col_opt_i64(4)),
+                st.col_opt_i64(5),
+            )
         };
         if versions != (Some(SCHEMA_VERSION), Some(ENCODING_VERSION)) {
             // Version rows edited behind our back: re-detect (-> Incompatible).
@@ -248,9 +268,12 @@ impl StorageShared {
             self.committed_max_row.set(0);
             return self.schema_state();
         }
-        if self.dict_gen.get() != Some(dict_gen) {
+        // Committed rows never disappear without a `dict_gen` bump (`vacuum_terms`), so a
+        // smaller committed maximum means the dictionary was replaced or edited behind our back.
+        let shrank = !writing && max_row < self.committed_max_row.get();
+        if self.dict_gen.get() != Some((dict_gen, db_id)) || shrank {
             self.flush_dictionary_epoch(writing)?;
-            self.dict_gen.set(Some(dict_gen));
+            self.dict_gen.set(Some((dict_gen, db_id)));
         }
         if !writing {
             self.committed_max_row.set(max_row);
@@ -478,7 +501,7 @@ impl StorageShared {
         let opt = |v: Option<i64>| v.map_or_else(|| "unknown".to_string(), |v| v.to_string());
         let mut rows = vec![
             ("schema_state".into(), schema),
-            ("dict_gen".into(), opt(self.dict_gen.get())),
+            ("dict_gen".into(), opt(self.dict_gen.get().map(|g| g.0))),
             ("stats_gen".into(), opt(stats_gen)),
             ("stats_loaded".into(), (stats_loaded as u8).to_string()),
             ("committed_max_row".into(), self.committed_max_row.get().to_string()),

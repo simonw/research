@@ -49,8 +49,12 @@ Terms are stored in `rdf_term(id, tag, lex, dt, lang, h)`. Dictionary row `r` is
 currently fill rows 1..=35. Rows up to 1023 are reserved, and user rows start at
 `FIRST_USER_ROW` (1024). Integers, booleans, short strings and similar values are inlined in the
 id and have no row; blank nodes are counter ids allocated from `rdf_meta.next_bnode`. `rdf_meta`
-holds `schema_version`/`encoding_version` (both 1) and the generation counters `write_gen`,
-`dict_gen` and `stats_gen`. `rdf_graph` is the named-graph registry, and the `rdf_stat_*` tables
+holds `schema_version`/`encoding_version` (both 1), the generation counters `write_gen`,
+`dict_gen` and `stats_gen`, and `db_id`, a random 64-bit store id written once by `sparql_init`
+(stores created before it existed have no row and read NULL). Row numbers and blank-node
+counters must lie in `1..=2^59-1` (the id payload); a damaged or hostile file holding anything
+else (rows, `max(id)`, `next_bnode`) gets `Error::Schema("corrupt ...")` wherever the value would
+become an id, instead of ids that alias other terms. `rdf_graph` is the named-graph registry, and the `rdf_stat_*` tables
 hold statistics. All internal SQL is qualified with `main.`.
 
 **2. One `StorageShared` per connection.** `StorageShared` (`src/shared.rs`) owns the statement
@@ -118,10 +122,22 @@ end of the scan. When the B-tree reader cannot serve a count (concept 8), `count
   cache hit without allocating and fetches a miss's one row without the batch bookkeeping.
 - `validate_epoch()` must run once per API entry, inside the entry's scope: the read scope for
   reads, the write scope for writes (open the write scope before the first read). It reads the
-  schema cookie, `dict_gen`, `stats_gen`, `max(id)` and the version rows. Skipping it on a
-  write lets `intern` return ids that another connection's `vacuum_terms` has deleted.
-- The caches are flushed only when `dict_gen` changes (bumped by `vacuum_terms`) or when the
-  schema changes. Ordinary writes do not flush them.
+  schema cookie, `dict_gen`, `stats_gen`, `max(id)`, `db_id` and the version rows. Skipping it
+  on a write lets `intern` return ids that another connection's `vacuum_terms` has deleted.
+- The caches are flushed only when `dict_gen` changes (bumped by `vacuum_terms`), when the
+  schema changes, when `db_id` changes, when the committed `max(id)` shrinks, or when the main
+  database file changes (its `sqlite3_file` address or VFS method table, from
+  `SQLITE_FCNTL_FILE_POINTER`: `sqlite3_deserialize`, Python's `Connection.deserialize`). A
+  new main file is treated like a schema change (re-detection). Ordinary writes do not flush.
+- Decode follows a TYPED row's `dt` only when it is an IRI id; any other `dt` (a TYPED row,
+  a cycle, a chain) is `Error::Schema("corrupt dictionary: ...")`, so damaged files cannot
+  recurse.
+- `check()` (`sparql_check`) reports rows whose `lex` or `lang` is not valid UTF-8 instead of
+  failing with an internal error.
+- Known SQLite 3.45 issue: an eponymous `pragma_*` table-valued function used both before and
+  after `sqlite3_deserialize` replaces main can crash inside SQLite (stale schema pointer;
+  reproducible from plain Python). Schema detection and the epoch's cookie read therefore use
+  PRAGMA statements (`PRAGMA main.index_info`, `PRAGMA main.schema_version`).
 - Only rows `<= committed_max_row` enter the caches, and that bound is refreshed only outside
   a write transaction. A rolled-back term therefore never stays cached.
 
@@ -345,6 +361,7 @@ integration-style tests are in `src/tests/`:
 | `btree.rs`, `review_btree.rs` | reader conformance at page sizes 4K–64K, reserved bytes, after VACUUM; WAL / memory / shared-cache / own-write fallbacks; mid-scan fallback at the exact key; kill switch; corrupt pages never panic; journal-mode and root-page changes under a positioned cursor. Counts: `count(spec, cap)` against brute force for every order, prefix length, bound shape and cap below, at and above the count, inside every conformance scenario (page sizes, reserved bytes, partial indexes, deletes, VACUUM); ranges that start or end exactly at every entry, interior cells included; capped counts read only the pages they need; counts fall back where cursors do; interrupts; damaged pages. Dictionary rows: decoded from the `rdf_term` pages at page sizes 512–64K, in any order, in batches and one by one, with overflowing lexical forms left to SQL; after `vacuum_terms` and VACUUM; the same error as SQL for a deleted row; the path kept between calls is dropped when another connection reuses a row number; SQL inside the own write transaction and for an unexpected table layout; damaged pages never panic |
 | `review_perf.rs` | review of the count walk and the direct dictionary reads against the VDBE / SQL paths: keys of every integer width and the i64 extremes, and non-integer keys (REAL in and out of the i64 range, TEXT, BLOB) written by plain SQL; counts after the connection's own commits, a rolled-back transaction whose pages spilled to the file, deleting every row, and with a zero page-cache budget; lexical forms straddling the table-leaf local limit (512 / 1024 with reserved bytes / 4096-byte pages); sparse rowids up to 2^59 and odd `rdf_term` records; `decode_one` against `decode` for every kind of id; the kept `rdf_term` path after the connection's own commit reuses a row number |
 | `dict.rs` | intern/lookup/decode round trips, point vs merge decode, cache admission and rollback, `dict_gen` / schema invalidation, hash collisions, exact DDL |
+| `audit_fixes.rs` (+ `tests/audit_ffi.rs`) | non-IRI / cyclic TYPED datatypes refused; caches follow a main database replaced by `sqlite3_deserialize` (with and without `db_id`); `db_id` random and stable; out-of-range rows, `max(id)` and `next_bnode` refused by lookup, intern, the loader and `fresh_bnode`; `check()` reports non-UTF-8 rows. Unit tests: `FileId` includes the method table, `term_row` refuses huge serial types, the close hook survives a borrowed pool map |
 | `scope.rs`, `review.rs` | savepoint nesting, pool limits and disarm-on-close, interrupts, busy commits, writing host statements, `busy_timeout`, re-analysis triggers |
 | `writer.rs`, `loader.rs` | random operations vs `MemStore`; every RDF format; bulk, incremental and chunked loads build identical tables; parse errors leave the store untouched |
 | `analyze.rs`, `maint.rs`, `eqp.rs` | stats equal `sq_memstore::compute_stats`; `check()` detects each broken invariant; `EXPLAIN QUERY PLAN` of every reachable `StmtKey` uses the expected covering index and never a temp B-tree |
@@ -434,7 +451,8 @@ round measured decode cache hits at 40–160 ns/term).
 - **§5.2.** Row-value seek templates omit `c(k) >= ?L`. The lower bound is folded into the bound
   row value instead, because SQLite 3.45 would otherwise scan from the start of the range.
 - **§4.4.** The epoch check is two pooled statements: the schema cookie, then the meta and
-  version rows. Well-known rows are always admissible and are decoded from a static table.
+  version rows (plus `db_id`), after a main-file identity check that needs no SQL. Well-known
+  rows are always admissible and are decoded from a static table.
 - **§8.6.** When the scope's savepoint started the transaction, undo uses a plain `ROLLBACK`
   (`RELEASE` after `ROLLBACK TO` could fail with `SQLITE_BUSY` and leak the lock). Interrupted
   write scopes (and read scopes that own the transaction or wrote) force a full rollback.

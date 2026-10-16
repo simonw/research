@@ -179,14 +179,19 @@ impl QuerySettings {
     }
 
     /// Per-call overrides may lower the connection's limits, never raise them: after applying
-    /// them, the stricter `timeout_ms` (0 = none) and `max_memory_mb` of `self` and `conn` win.
-    /// A `sparql_rows` call or `sparql_view` definition stored in someone else's database file
-    /// therefore cannot lift a limit the application set.
+    /// them, the stricter `timeout_ms` (0 = none), `max_memory_mb`, `probe_counts` and
+    /// `probe_cap` of `self` and `conn` win. A `sparql_rows` call or `sparql_view` definition
+    /// stored in someone else's database file therefore cannot lift a limit the application
+    /// set. The two probe limits matter because planning-time count probes run before the
+    /// `timeout_ms` deadline starts: their work stays bounded by the connection's
+    /// `probe_counts × probe_cap` rows.
     pub(crate) fn within_limits_of(&mut self, conn: &QuerySettings) {
         if conn.timeout_ms > 0 && (self.timeout_ms == 0 || self.timeout_ms > conn.timeout_ms) {
             self.timeout_ms = conn.timeout_ms;
         }
         self.max_memory_mb = self.max_memory_mb.min(conn.max_memory_mb);
+        self.probe_counts = self.probe_counts.min(conn.probe_counts);
+        self.probe_cap = self.probe_cap.min(conn.probe_cap);
     }
 
     /// Applies a JSON object of per-call overrides (`sparql_rows(query, opts)`).
@@ -470,5 +475,21 @@ mod tests {
         assert_eq!(call(r#"{"timeout_ms":0}"#, &conn(500, 1024)), (500, 1024));
         assert_eq!(call(r#"{"timeout_ms":200,"max_memory_mb":16}"#, &conn(500, 32)), (200, 16));
         assert_eq!(call(r#"{"engine":"sql"}"#, &conn(500, 32)), (500, 32));
+    }
+
+    /// A per-call `probe_counts` / `probe_cap` (a hostile stored view's opts) cannot raise the
+    /// planning-time probe work above the connection's settings; lowering still works.
+    #[test]
+    fn per_call_probe_limits_only_tighten() {
+        let conn = QuerySettings { probe_counts: 8, probe_cap: 500, ..QuerySettings::default() };
+        let call = |json: &str| {
+            let mut q = conn.clone();
+            q.apply_json(json).unwrap();
+            q.within_limits_of(&conn);
+            (q.probe_counts, q.probe_cap)
+        };
+        assert_eq!(call(r#"{"probe_cap":18446744073709551615,"probe_counts":4294967295}"#), (8, 500));
+        assert_eq!(call(r#"{"probe_cap":10,"probe_counts":2}"#), (2, 10));
+        assert_eq!(call(r#"{"probe_counts":0}"#), (0, 500));
     }
 }

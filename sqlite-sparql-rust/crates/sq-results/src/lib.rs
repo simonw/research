@@ -23,6 +23,7 @@ mod triples;
 #[cfg(test)]
 mod tests;
 
+pub use convert::check_ntriples_term;
 pub use format::ResultFormat;
 pub use json::{append_solution_json, append_term_json, solution_json};
 pub use native::{sql_native, SqlNative};

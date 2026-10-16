@@ -48,11 +48,11 @@ fn with_term<T>(st: &ConnState, ctx: &Context<'_>, f: impl FnOnce(&Term) -> Opti
 
 /// `sparql_term(id)`: N-Triples text.
 pub(super) fn term(st: &ConnState, ctx: &Context<'_>) -> Result<Option<String>> {
-    with_term(st, ctx, |t| {
-        let mut s = String::new();
-        write_ntriples(t, &mut s);
-        Some(s)
-    })
+    let Some(id) = id_arg(ctx)? else { return Ok(None) };
+    let Some(t) = decode(st, id)? else { return Ok(None) };
+    let mut s = String::new();
+    write_ntriples(&t, &mut s)?;
+    Ok(Some(s))
 }
 
 /// `sparql_term_value(id)`: native SQL value (§8.4).

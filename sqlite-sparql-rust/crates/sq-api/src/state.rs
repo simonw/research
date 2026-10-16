@@ -12,7 +12,8 @@
 //!    committed dictionary rows, statistics generation),
 //! 5. does its work and closes its scopes, reporting a failed `RELEASE` / `COMMIT`.
 //!
-//! Virtual-table scans follow it in `xFilter` only: no scope is ever held across a return to
+//! Virtual-table scans follow it in `xFilter` only (`xNext` / `xColumn` take a lightweight
+//! [`ConnState::step_entry`] that counts toward R8 below): no scope is ever held across a return to
 //! SQLite (a savepoint held between rows would take the connection out of autocommit mode, so
 //! the user's own statements would silently join it). The scan keeps its snapshot anyway:
 //! once `main`'s read transaction has started, SQLite keeps it while any statement of the
@@ -255,6 +256,26 @@ impl ConnState {
 
     /// Starts an API entry (R7, the nesting bound R8, re-arm, depth).
     pub(crate) fn enter(&self) -> Result<Entry<'_>> {
+        let depth = self.bound()?;
+        self.rearm();
+        self.depth.set(depth + 1);
+        Ok(Entry { st: self, depth })
+    }
+
+    /// A lightweight entry for the steps of an open virtual-table scan (`xNext`, `xColumn`):
+    /// R7 and the nesting bound R8 only — no re-arm, scope or epoch check (the scan keeps the
+    /// snapshot its `xFilter` entry validated). Those steps run sparqlite's SQL over `main`'s
+    /// `rdf_*` tables too (the next batch, dictionary decodes), so a schema object that calls
+    /// sparqlite again from there must count as nested; without this, each such call started
+    /// as an outermost entry and the chain was unbounded.
+    pub(crate) fn step_entry(&self) -> Result<Entry<'_>> {
+        let depth = self.bound()?;
+        self.depth.set(depth + 1);
+        Ok(Entry { st: self, depth })
+    }
+
+    /// R7 and R8 for a new entry: the current depth, or the refusal.
+    fn bound(&self) -> Result<u32> {
         let depth = self.depth.get();
         #[cfg(debug_assertions)]
         {
@@ -278,9 +299,7 @@ impl ConnState {
                 )));
             }
         }
-        self.rearm();
-        self.depth.set(depth + 1);
-        Ok(Entry { st: self, depth })
+        Ok(depth)
     }
 
     /// Refuses a `SQLITE_DIRECTONLY` function (writers, file access, the `sparql_config`

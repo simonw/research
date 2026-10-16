@@ -6,6 +6,7 @@ use sq_core::store::GraphTarget;
 use sq_core::{Error, Result, Tag, TermId};
 
 use crate::analyze::GROWTH_SINCE_ANALYZE;
+use crate::dict::{bnode_id, dict_id};
 use crate::keys::KeyView;
 use crate::raw::RawStmt;
 use crate::shared::StorageShared;
@@ -33,14 +34,23 @@ impl StorageShared {
         let dt = if view.tag == Tag::Typed { Some(self.intern_key(&KeyView::iri(&view.extra))?) } else { None };
         let row = self.next_dict_row()?;
         self.insert_term_row(row, view, dt, view.hash64())?;
-        Ok(TermId::from_dict(row, view.tag))
+        dict_id(row, view.tag)
     }
 
     /// `max(max(id) + 1, FIRST_USER_ROW)` (valid under the write lock).
     pub(crate) fn next_dict_row(&self) -> Result<i64> {
         let mut st = self.pool.lease_fixed(Fixed::TermMaxRow)?;
         st.step()?;
-        Ok(st.col_opt_i64(0).map_or(FIRST_USER_ROW, |m| (m + 1).max(FIRST_USER_ROW)))
+        let row = match st.col_opt_i64(0) {
+            None => FIRST_USER_ROW,
+            Some(m) => m
+                .checked_add(1)
+                .ok_or_else(|| Error::Schema(format!("corrupt dictionary: row number {m} is out of range")))?
+                .max(FIRST_USER_ROW),
+        };
+        // A row that cannot become a TermId is refused here, before anything is written.
+        dict_id(row, Tag::Iri)?;
+        Ok(row)
     }
 
     pub(crate) fn insert_term_row(&self, row: i64, view: &KeyView<'_>, dt: Option<TermId>, h: i64) -> Result<()> {
@@ -90,9 +100,11 @@ impl StorageShared {
     /// `QuadStoreWriter::fresh_bnode`: allocates from `rdf_meta.next_bnode`.
     pub(crate) fn fresh_bnode_id(&self) -> Result<TermId> {
         self.require_ready()?;
-        let n = self.meta_get("next_bnode")?.unwrap_or(1).max(1);
+        let n = self.meta_get("next_bnode")?.unwrap_or(1);
+        let id = bnode_id(n)?;
+        // `bnode_id` bounds n by 2^59 - 1, so n + 1 cannot overflow.
         self.meta_set("next_bnode", n + 1)?;
-        Ok(TermId::bnode(n))
+        Ok(id)
     }
 
     /// Runs a pooled single-quad statement over sorted, deduplicated quads; returns the

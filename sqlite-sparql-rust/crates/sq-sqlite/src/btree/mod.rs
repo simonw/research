@@ -33,6 +33,7 @@ mod terms;
 pub(crate) use count::count;
 pub(crate) use terms::{TermRow, read_terms};
 pub use cursor::BtreeCursor;
+pub(crate) use file::{FileId, identity as main_file_identity};
 pub use reader::{BtreeCounters, DEFAULT_PAGE_CACHE_MB, ReaderMode};
 pub(crate) use reader::BtreeReader;
 

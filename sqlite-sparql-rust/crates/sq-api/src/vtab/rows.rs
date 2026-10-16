@@ -246,7 +246,7 @@ impl RowsCursor {
                 Some(t) => {
                     let mut text = self.text.borrow_mut();
                     text.clear();
-                    write_ntriples(&t, &mut text);
+                    write_ntriples(&t, &mut text).into_sql()?;
                     ctx.set_result(&text.as_str())
                 }
                 None => ctx.set_result(&Null),
@@ -297,7 +297,10 @@ unsafe impl VTabCursor for RowsCursor {
         guard("sparql_rows xNext", || {
             self.st.debug_panic(PanicSite::Next);
             match self.scan.get_mut() {
-                Some(scan) => scan.stream.advance(&self.st).into_sql(),
+                Some(scan) => {
+                    let _step = self.st.step_entry().into_sql()?;
+                    scan.stream.advance(&self.st).into_sql()
+                }
                 None => Ok(()),
             }
         })
@@ -313,7 +316,7 @@ unsafe impl VTabCursor for RowsCursor {
     fn column(&self, ctx: &mut Context, i: c_int) -> rusqlite::Result<()> {
         guard("sparql_rows xColumn", || {
             self.st.debug_panic(PanicSite::Column);
-            let r = self.column_value(ctx, i);
+            let r = self.st.step_entry().into_sql().and_then(|_step| self.column_value(ctx, i));
             column_error(ctx, r)
         })
     }

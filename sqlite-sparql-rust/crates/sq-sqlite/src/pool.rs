@@ -96,11 +96,23 @@ impl StmtPool {
     /// when they are dropped.
     pub fn disarm_and_finalize(&self) {
         self.armed.set(false);
+        // No path holds these borrows across SQL today. Should one ever do so, the close hook
+        // must not panic: whatever it cannot take now is finalized by the next check-in.
+        self.finalize_idle();
+        if let Ok(mut lru) = self.sql_lru.try_borrow_mut() {
+            lru.last_use.clear();
+        }
+    }
+
+    /// Finalizes every idle statement, unless the map is borrowed (then nothing happens).
+    fn finalize_idle(&self) {
         // Take the map out first so no borrow is held while sqlite3_finalize runs.
-        let idle = std::mem::take(&mut *self.idle.borrow_mut());
+        let idle = match self.idle.try_borrow_mut() {
+            Ok(mut m) if !m.is_empty() => std::mem::take(&mut *m),
+            _ => return,
+        };
         let n: usize = idle.values().map(Vec::len).sum();
         drop(idle);
-        self.sql_lru.borrow_mut().last_use.clear();
         self.bump(|c| c.finalized += n as u64);
     }
 
@@ -200,6 +212,10 @@ impl StmtPool {
         }
         drop(stmt);
         self.bump(|c| c.finalized += 1);
+        if !self.armed.get() {
+            // Idle statements a disarm could not take (its borrow failed) go now.
+            self.finalize_idle();
+        }
     }
 }
 
@@ -231,5 +247,35 @@ impl Drop for Lease {
         if let (Some(key), Some(stmt)) = (self.key.take(), self.stmt.take()) {
             self.pool.check_in(key, stmt);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::*;
+
+    /// The close hook never panics on a borrowed idle map; the statements it could not take
+    /// are finalized by the next check-in of the disarmed pool.
+    #[test]
+    fn disarm_with_a_borrowed_map_does_not_panic() {
+        let conn = Connection::open_in_memory().unwrap();
+        // SAFETY: `conn` outlives the pool and every statement in this test.
+        let pool = StmtPool::new(unsafe { RawDb::from_ptr(conn.handle()) });
+        pool.arm();
+        drop(pool.lease_fixed(Fixed::Select1).unwrap());
+        assert_eq!(pool.idle_statements(), 1);
+        let lease = pool.lease_fixed(Fixed::SchemaCookie).unwrap();
+        {
+            let _held = pool.idle.borrow();
+            let _lru = pool.sql_lru.borrow_mut();
+            pool.disarm_and_finalize();
+        }
+        assert!(!pool.is_armed());
+        assert_eq!(pool.idle_statements(), 1);
+        drop(lease);
+        assert_eq!(pool.idle_statements(), 0);
+        assert_eq!(pool.leased_statements(), 0);
     }
 }

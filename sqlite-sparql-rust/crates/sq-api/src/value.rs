@@ -70,7 +70,9 @@ pub(crate) fn native(t: Option<&Term>) -> Native<'_> {
 }
 
 /// Appends the N-Triples form of `t` to `out` (identical to `Term::to_ntriples`).
-pub(crate) fn write_ntriples(t: &Term, out: &mut String) {
+pub(crate) fn write_ntriples(t: &Term, out: &mut String) -> Result<()> {
+    // A dictionary row of a hostile file is refused, not printed (`check_ntriples_term`).
+    sq_results::check_ntriples_term(t)?;
     // Writing into a String cannot fail.
     let _ = match t {
         Term::Iri(iri) => write!(out, "{}", oxrdf::NamedNodeRef::new_unchecked(iri)),
@@ -84,6 +86,7 @@ pub(crate) fn write_ntriples(t: &Term, out: &mut String) {
             write!(out, "{lit}")
         }
     };
+    Ok(())
 }
 
 /// The value of an `id*` / `__id` column: storable ids only (UNBOUND, TEMP and the ERROR
@@ -192,7 +195,7 @@ mod tests {
         let mut buf = String::new();
         for t in terms() {
             buf.clear();
-            write_ntriples(&t, &mut buf);
+            write_ntriples(&t, &mut buf).unwrap();
             assert_eq!(buf, t.to_ntriples());
             let parsed = parse_term(&buf).unwrap();
             assert_eq!(Term::from_oxrdf(parsed.as_ref()), t);

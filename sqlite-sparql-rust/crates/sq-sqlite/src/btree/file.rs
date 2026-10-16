@@ -16,10 +16,23 @@ use crate::raw::RawDb;
 
 const MAIN: &CStr = c"main";
 
-/// Identity (the address) of the main database's `sqlite3_file`. It is compared, never
-/// dereferenced.
+/// Identity of the main database's `sqlite3_file`: its address and the address of its method
+/// table (`pMethods`). It is compared, never dereferenced. The method table tells apart files
+/// of different VFSes that happen to be allocated at the same address (ABA: the main
+/// database replaced by `sqlite3_deserialize` can land on the freed `sqlite3_file` of the
+/// previous one).
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) struct FileId(usize);
+pub(crate) struct FileId(usize, usize);
+
+impl FileId {
+    fn of(file: *mut ffi::sqlite3_file) -> FileId {
+        // SAFETY: `file` was just returned by SQLite for this connection's main database and
+        // nothing between that call and this read calls back into SQLite, so it is live; only
+        // the `pMethods` pointer value is read, never what it points to.
+        let methods = unsafe { (*file).pMethods };
+        FileId(file as usize, methods as usize)
+    }
+}
 
 /// Why a page read failed.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -53,7 +66,7 @@ fn file_pointer(db: RawDb) -> Option<*mut ffi::sqlite3_file> {
 
 /// Identity of the main database file, `None` if SQLite reports none.
 pub(crate) fn identity(db: RawDb) -> Option<FileId> {
-    file_pointer(db).map(|f| FileId(f as usize))
+    file_pointer(db).map(FileId::of)
 }
 
 /// `SQLITE_FCNTL_DATA_VERSION` on `main`. It changes whenever the content of the database
@@ -78,7 +91,7 @@ pub(crate) fn data_version(db: RawDb) -> Option<u32> {
 /// SQLite still reports the file identified by `expected`.
 pub(crate) fn read_at(db: RawDb, expected: FileId, buf: &mut [u8], offset: u64) -> Result<(), ReadError> {
     let file = file_pointer(db).ok_or(ReadError::FileChanged)?;
-    if FileId(file as usize) != expected {
+    if FileId::of(file) != expected {
         return Err(ReadError::FileChanged);
     }
     let len = c_int::try_from(buf.len()).map_err(|_| ReadError::Io(ffi::SQLITE_IOERR))?;
@@ -95,5 +108,24 @@ pub(crate) fn read_at(db: RawDb, expected: FileId, buf: &mut [u8], offset: u64) 
         ffi::SQLITE_OK => Ok(()),
         ffi::SQLITE_IOERR_SHORT_READ => Err(ReadError::ShortRead),
         rc => Err(ReadError::Io(rc)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two files at the same address (a freed `sqlite3_file` reused by the next one, e.g.
+    /// after `sqlite3_deserialize`) are still told apart by their method tables.
+    #[test]
+    fn file_identity_includes_the_method_table() {
+        // SAFETY: an all-zero `sqlite3_io_methods` is valid (an int and `Option` fn pointers).
+        let methods: ffi::sqlite3_io_methods = unsafe { std::mem::zeroed() };
+        let mut file = ffi::sqlite3_file { pMethods: ptr::null() };
+        let closed = FileId::of(&raw mut file);
+        file.pMethods = &raw const methods;
+        let open = FileId::of(&raw mut file);
+        assert_ne!(closed, open);
+        assert_eq!(open, FileId::of(&raw mut file));
     }
 }

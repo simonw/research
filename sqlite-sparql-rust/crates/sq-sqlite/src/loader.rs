@@ -17,7 +17,7 @@ use sq_core::codec::{self, FIRST_USER_ROW, WELL_KNOWN};
 use sq_core::{Error, Result, Tag, TermId};
 
 use crate::analyze::GROWTH_SINCE_ANALYZE;
-use crate::dict::row_matches;
+use crate::dict::{bnode_id, dict_id, row_matches};
 use crate::keys::{KeyLike, KeyView, OwnedKey};
 use crate::raw::{RawDb, RawStmt};
 use crate::schema::{QUAD_INDEXES, TERM_HASH_INDEX_DDL};
@@ -399,7 +399,8 @@ struct Encoder<'a> {
 impl<'a> Encoder<'a> {
     fn new(shared: &'a StorageShared, limits: Limits) -> Result<Self> {
         let next_row = shared.next_dict_row()?;
-        let next_bnode = shared.meta_get("next_bnode")?.unwrap_or(1).max(1);
+        let next_bnode = shared.meta_get("next_bnode")?.unwrap_or(1);
+        bnode_id(next_bnode)?;
         let probe = next_row > FIRST_USER_ROW;
         // Appending to a dictionary that needs no probing: build the random-keyed hash index
         // once at the end instead of maintaining it per row.
@@ -426,11 +427,11 @@ impl<'a> Encoder<'a> {
         let g = match &q.graph_name {
             oxrdf::GraphName::DefaultGraph => TermId::DEFAULT_GRAPH,
             oxrdf::GraphName::NamedNode(n) => self.encode(n.as_ref().into())?,
-            oxrdf::GraphName::BlankNode(b) => self.bnode(b.as_str()),
+            oxrdf::GraphName::BlankNode(b) => self.bnode(b.as_str())?,
         };
         let s = match &q.subject {
             oxrdf::NamedOrBlankNode::NamedNode(n) => self.encode(n.as_ref().into())?,
-            oxrdf::NamedOrBlankNode::BlankNode(b) => self.bnode(b.as_str()),
+            oxrdf::NamedOrBlankNode::BlankNode(b) => self.bnode(b.as_str())?,
         };
         let p = self.encode(q.predicate.as_ref().into())?;
         let o = self.encode(q.object.as_ref())?;
@@ -457,14 +458,14 @@ impl<'a> Encoder<'a> {
         Ok(())
     }
 
-    fn bnode(&mut self, label: &str) -> TermId {
+    fn bnode(&mut self, label: &str) -> Result<TermId> {
         if let Some(id) = self.bnodes.get(label) {
-            return *id;
+            return Ok(*id);
         }
-        let id = TermId::bnode(self.next_bnode);
+        let id = bnode_id(self.next_bnode)?;
         self.next_bnode += 1;
         self.bnodes.insert(label.to_string(), id);
-        id
+        Ok(id)
     }
 
     fn encode(&mut self, t: oxrdf::TermRef<'_>) -> Result<TermId> {
@@ -472,7 +473,7 @@ impl<'a> Encoder<'a> {
             return Ok(id);
         }
         if let oxrdf::TermRef::BlankNode(b) = t {
-            return Ok(self.bnode(b.as_str()));
+            return self.bnode(b.as_str());
         }
         let view = KeyView::of(t).ok_or_else(|| Error::Unsupported(format!("cannot store term {t}")))?;
         self.encode_key(&view)
@@ -552,7 +553,7 @@ impl<'a> Encoder<'a> {
                 let mut found = TermId::UNBOUND;
                 while st.step()? {
                     if row_matches(&st, 1, &view, dt) {
-                        found = TermId::from_dict(st.col_i64(0), view.tag);
+                        found = dict_id(st.col_i64(0), view.tag)?;
                         break;
                     }
                 }
@@ -577,7 +578,7 @@ impl<'a> Encoder<'a> {
                 }
                 self.pending[i].dt = Some(d);
             }
-            self.pending[i].id = TermId::from_dict(self.next_row, self.pending[i].key.tag);
+            self.pending[i].id = dict_id(self.next_row, self.pending[i].key.tag)?;
             self.next_row += 1;
             fresh.push(i);
         }

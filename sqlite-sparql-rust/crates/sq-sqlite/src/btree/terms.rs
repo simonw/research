@@ -282,8 +282,9 @@ fn term_row(rec: &[u8]) -> Option<TermRow<'_>> {
         let (st, n) = varint(header, at).ok().filter(|_| at < hlen)?;
         at += n;
         let w = width(st)?;
-        let v = rec.get(body..body + w)?;
-        body += w;
+        let end = body.checked_add(w)?;
+        let v = rec.get(body..end)?;
+        body = end;
         Some((st, v))
     };
     let is_text = |st: u64| st >= 13 && st % 2 == 1;
@@ -459,6 +460,18 @@ mod tests {
         assert_eq!(int_value(6, &i64::MIN.to_be_bytes()), Some(i64::MIN));
         assert_eq!((int_value(8, &[]), int_value(9, &[])), (Some(0), Some(1)));
         assert_eq!(int_value(7, &[0; 8]), None);
+    }
+
+    /// A 9-byte serial type (width close to 2^63) for `lex`: the body offset arithmetic is
+    /// checked, so the record is refused (`None`) instead of overflowing on 32-bit targets.
+    #[test]
+    fn term_row_refuses_huge_serial_types() {
+        // header: len, id NULL, tag 1-byte int, lex = serial type u64::MAX (9 x 0xff)
+        let mut rec = vec![0u8, 0, 1];
+        rec.extend_from_slice(&[0xff; 9]);
+        rec[0] = rec.len() as u8;
+        rec.push(1); // tag body
+        assert!(term_row(&rec).is_none());
     }
 
     /// SQLite varint encoding of a non-negative value below 2^56.

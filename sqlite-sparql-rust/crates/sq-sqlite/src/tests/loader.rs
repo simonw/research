@@ -225,7 +225,7 @@ fn assert_same_tables(a: &Db, b: &Db) {
         "SELECT g FROM rdf_graph ORDER BY g",
         // write_gen / stats_gen / growth_since_analyze count write scopes, analyze runs and
         // writes, not content.
-        "SELECT key, value FROM rdf_meta WHERE key NOT IN ('write_gen', 'stats_gen', 'growth_since_analyze') ORDER BY key",
+        "SELECT key, value FROM rdf_meta WHERE key NOT IN ('write_gen', 'stats_gen', 'growth_since_analyze', 'db_id') ORDER BY key",
         "SELECT * FROM rdf_stat_global ORDER BY scope",
         "SELECT * FROM rdf_stat_pred ORDER BY scope, p",
         "SELECT * FROM rdf_stat_po ORDER BY scope, p, o",

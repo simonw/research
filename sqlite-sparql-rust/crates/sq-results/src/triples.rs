@@ -8,7 +8,7 @@ use sq_core::eval_api::TripleSource;
 use sq_core::term::Term;
 use sq_core::{Error, Result, TermId, BATCH_ROWS};
 
-use crate::convert::{predicate_ref, subject_ref, term_ref};
+use crate::convert::{check_ntriples_term, predicate_ref, subject_ref, term_ref};
 use crate::format::ResultFormat;
 use crate::{io_error, OUTPUT_BUFFER_BYTES};
 
@@ -71,6 +71,9 @@ pub fn write_triples(src: &mut dyn TripleSource, fmt: ResultFormat, w: &mut dyn 
             let [Some(s), Some(p), Some(o)] = spo else {
                 return Err(Error::internal("graph result contains a triple with an unbound position"));
             };
+            for t in [s, p, o] {
+                check_ntriples_term(t)?;
+            }
             let triple = TripleRef::new(subject_ref(s)?, predicate_ref(p)?, term_ref(o));
             serializer.serialize_triple(triple).map_err(io_error)?;
         }

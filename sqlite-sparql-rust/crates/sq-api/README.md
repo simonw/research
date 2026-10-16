@@ -116,7 +116,11 @@ file may make one of them a view, or give it a trigger, that calls sparqlite aga
 a nested entry once `MAX_ENTRY_DEPTH` (8) entries are active or more than `NESTED_STACK_BUDGET`
 (384 KiB) of stack lies between it and the outermost entry (rule R8): `sparql: unsupported:
 sparqlite calls nest too deeply ...`. Legitimate nesting is one level deep (a reader in a trigger
-on `rdf_quad`, fired by a writer's INSERT) and measures about 5 KiB.
+on `rdf_quad`, fired by a writer's INSERT) and measures about 5 KiB. The `xNext` / `xColumn` steps
+of an open `sparql_rows` / `sparql_view` scan (later 1024-row batches, on-demand decodes) also run
+sparqlite's SQL outside `xFilter`'s entry; they take a lightweight `step_entry()` (R7 + R8 only,
+no scope or epoch check), so a chain reached from there is bounded too (`tests/trust.rs`, a
+`rdf_term` view that calls `sparql_rows` for a row of the second batch).
 
 **8. Panic containment and errors** (`src/guard.rs`, `src/error.rs`). rusqlite catches panics in
 scalar and aggregate functions but not in virtual-table trampolines, so every vtab method body
@@ -144,7 +148,9 @@ pub fn register(conn: &rusqlite::Connection) -> rusqlite::Result<()>;
 pub fn version_string(sqlite_version: &str) -> String; // "sparqlite <ver> (SQLite <ver>)"
 ```
 
-Typical use, as in `tests/common/mod.rs` (calling `register` again replaces the state cleanly):
+Typical use, as in `tests/common/mod.rs`. Register once per connection: calling `register` (or
+loading the extension) again replaces the state, which resets `sparql_config` settings, and a
+scan still open from the old state is not counted by writers registered under the new one.
 
 ```rust
 let c = rusqlite::Connection::open_in_memory()?;
@@ -203,7 +209,7 @@ DESCRIBE give one row per triple with `vars` = `["subject","predicate","object"]
 constraint `xBestIndex` returns `false` and SQLite reports "no query solution". `opts` is a JSON
 object of per-call keys; `timeout_ms` and `max_memory_mb` there (and in `sparql_view` arguments)
 can only tighten the connection's limits: the stricter value wins, and `timeout_ms = 0` does not
-remove a connection timeout. `sparql_view` declares the projected variables as value columns, then
+remove a connection timeout. The same holds for `probe_counts` and `probe_cap`. `sparql_view` declares the projected variables as value columns, then
 hidden `<v>__term`, `<v>__id` and `opts`; it accepts per-call `key=value` arguments (the same keys
 as `sparql_rows` opts; a connection setting such as `allow_files` is refused) after the query and
 fails at `CREATE` on non-SELECT queries and column-name clashes. Without `temp.` the definition
@@ -297,7 +303,9 @@ Why the readers pass SQLite's test:
 3. **No unbounded resources beyond an ordinary query.** A SPARQL query can run for a long time,
    as a recursive CTE can. A stored view cannot change the limits the application set: the
    scalar functions take no options, and the per-call options of `sparql_rows` and `sparql_view`
-   can only lower `timeout_ms` and `max_memory_mb`, never raise or remove them. So a call obeys
+   can only lower `timeout_ms`, `max_memory_mb`, `probe_counts` and `probe_cap`, never raise or
+   remove them (planning-time count probes run before the `timeout_ms` deadline starts, so their
+   work stays bounded by the connection's `probe_counts × probe_cap`). So a call obeys
    the connection's `timeout_ms` and `sqlite3_interrupt`, its working memory (computed strings
    included) obeys `max_memory_mb`, request text is checked against the nesting budget before
    parsing, and a serialized result (`sparql_query`, `sparql_query_sql`) stops at the
@@ -461,8 +469,14 @@ report the stored id of a computed term instead of NULL for every TEMP id (§8.3
 despite R1's "no Mutex" (it never guards connection state and is never held while a statement
 steps). `reader=auto` uses the B-tree reader when its preconditions hold (§8.5 says `sql` in v1),
 and `page_cache_mb` is an extra key.
-`sparql_rows` opts also accept `probe_counts` / `probe_cap`. `sparql_term` also returns NULL for
-the ERROR sentinel, reserved tags and invalid inline ids, and errors on a dictionary id with no row.
+`sparql_rows` opts also accept `probe_counts` / `probe_cap` (clamped to the connection's values).
+`sparql_term` also returns NULL for the ERROR sentinel, reserved tags and invalid inline ids, and
+errors on a dictionary id with no row. Dictionary rows are not re-validated on decode, so every
+N-Triples-syntax output (`sparql_term`, `t*` / `__term` columns, `nt` / `nq` / `ttl`, `tsv`)
+checks the term first (`sq_results::check_ntriples_term`) and refuses an IRI with a character
+`IRIREF` forbids, a language tag outside `[a-zA-Z]+(-[a-zA-Z0-9]+)*` or an invalid blank node
+label: `sparql: invalid argument: the store holds a ... that is not valid RDF ...` (a hostile
+file cannot inject SPARQL through `sparql_term()`; JSON and XML escape and still work).
 `sparql_value` also answers ASK (0/1) and CONSTRUCT / DESCRIBE (the first triple's subject); §8.2
 only defines the first projected variable of the first row. Outside the §1.6 SQLite API
 allow-list, the crate also calls `sqlite3_next_stmt`, `sqlite3_stmt_busy` and

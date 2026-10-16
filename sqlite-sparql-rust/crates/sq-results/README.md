@@ -83,6 +83,12 @@ What the golden tests pin down for each format:
 - An ASK result in CSV or TSV is the bare word `true` or `false`, with no header and no trailing
   newline. This is how sparesults writes it.
 - N-Quads output is the triples in the default graph, byte for byte the same as N-Triples.
+- `check_ntriples_term` guards every N-Triples-syntax output (N-Triples, N-Quads, Turtle, TSV, and
+  `sparql_term` in `sq-api`): a term decoded from a hostile or corrupted database file whose IRI
+  holds a character `IRIREF` forbids (`<>"{}|^`\`, controls, space), whose language tag is not
+  `[a-zA-Z]+(-[a-zA-Z0-9]+)*` or whose blank node label is invalid is refused with
+  `Error::Invalid` ("... is not valid RDF ...") instead of being printed verbatim. Escaping with
+  `\uXXXX` would leave the IRI invalid, so the writers refuse. JSON, XML and CSV quote such text.
 - Turtle always declares the prefixes `rdf`, `rdfs` and `xsd` (`TURTLE_PREFIXES`), and lets
   oxrdfio group subjects with `;` and write `a` for `rdf:type`.
 

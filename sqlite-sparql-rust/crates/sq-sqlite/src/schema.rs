@@ -45,7 +45,7 @@ pub(crate) fn meta_defaults_sql() -> String {
         "INSERT OR IGNORE INTO main.rdf_meta(key, value) VALUES
   ('schema_version', {SCHEMA_VERSION}), ('encoding_version', {ENCODING_VERSION}),
   ('next_bnode', 1), ('write_gen', 0), ('dict_gen', 0), ('stats_gen', 0),
-  ('analyzed_quads', 0), ('created_by', 'sparqlite {}');",
+  ('analyzed_quads', 0), ('created_by', 'sparqlite {}'), ('db_id', random());",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -65,7 +65,11 @@ pub(crate) const QUAD_INDEXES: [(&str, &str); 8] = [
 
 /// Automatic index of rdf_quad's PRIMARY KEY (g,s,p,o) (the WITHOUT ROWID table B-tree).
 pub(crate) const PK_INDEX: &str = "sqlite_autoindex_rdf_quad_1";
-const PK_COLUMNS_SQL: &str = "SELECT name FROM pragma_index_info('sqlite_autoindex_rdf_quad_1', 'main') ORDER BY seqno";
+/// A PRAGMA statement (rows in seqno order: seqno, cid, name), not the `pragma_index_info`
+/// table-valued function: SQLite 3.45's eponymous pragma tables keep a pointer to the main
+/// schema they were first used with, and after `sqlite3_deserialize` replaces main, using
+/// such a table again can crash inside SQLite. Detection runs after every main-file change.
+const PK_COLUMNS_SQL: &str = "PRAGMA main.index_info('sqlite_autoindex_rdf_quad_1')";
 
 /// Tables whose absence makes the store incompatible (they hold the data).
 pub(crate) const CORE_TABLES: [&str; 3] = ["rdf_meta", "rdf_term", "rdf_quad"];
@@ -129,11 +133,11 @@ pub(crate) fn detect(db: RawDb) -> Result<Detected> {
         return incompatible(format!("table {missing} is missing"));
     }
     // The GSPO templates pin the primary key by its automatic index name (template::PK_FROM);
-    // WITHOUT ROWID primary keys are not listed in sqlite_schema, so ask pragma_index_info.
+    // WITHOUT ROWID primary keys are not listed in sqlite_schema, so ask PRAGMA index_info.
     let mut pk = Vec::new();
     let mut st = RawStmt::prepare(db, PK_COLUMNS_SQL, false)?;
     while st.step()? {
-        pk.push(st.col_str(0)?.to_string());
+        pk.push(st.col_str(2)?.to_string());
     }
     drop(st);
     if pk != ["g", "s", "p", "o"] {

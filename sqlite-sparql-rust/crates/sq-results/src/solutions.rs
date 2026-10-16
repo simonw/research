@@ -8,7 +8,7 @@ use sq_core::eval_api::SolutionSource;
 use sq_core::term::Term;
 use sq_core::{Error, Result, TermId, BATCH_ROWS};
 
-use crate::convert::term_ref;
+use crate::convert::{check_ntriples_term, term_ref};
 use crate::format::ResultFormat;
 use crate::{io_error, OUTPUT_BUFFER_BYTES};
 
@@ -36,6 +36,7 @@ pub fn write_solutions(src: &mut dyn SolutionSource, fmt: ResultFormat, w: &mut 
         .map_err(io_error)?;
 
     let xml = matches!(fmt, ResultFormat::Xml);
+    let tsv = matches!(fmt, ResultFormat::Tsv);
     let mut ids: Vec<TermId> = Vec::with_capacity(BATCH_ROWS * width);
     let mut terms: Vec<Option<Arc<Term>>> = Vec::with_capacity(BATCH_ROWS * width);
     loop {
@@ -77,6 +78,12 @@ pub fn write_solutions(src: &mut dyn SolutionSource, fmt: ResultFormat, w: &mut 
                     "a result value contains U+{:04X}, which XML 1.0 cannot represent; use the json, csv or tsv format",
                     c as u32
                 )));
+            }
+        }
+        if tsv {
+            // TSV writes terms in N-Triples syntax (CSV writes bare values, quoted as CSV).
+            for t in terms.iter().flatten() {
+                check_ntriples_term(t)?;
             }
         }
         for row in terms.chunks_exact(width) {

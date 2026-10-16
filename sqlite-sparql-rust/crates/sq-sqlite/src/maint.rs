@@ -1,4 +1,5 @@
 //! Maintenance: `sparql_vacuum_terms()`, `sparql_check()` and `EXPLAIN QUERY PLAN`.
+use std::ffi::c_int;
 use std::fmt::Write as _;
 
 use rustc_hash::FxHashMap;
@@ -90,9 +91,20 @@ const MAX_REPORTED: usize = 100;
 #[derive(PartialEq, Eq)]
 struct RowKey {
     tag: i64,
-    lex: String,
+    // Raw bytes: a damaged row need not be UTF-8 (reported by the row scan).
+    lex: Vec<u8>,
     dt: Option<i64>,
-    lang: Option<String>,
+    lang: Option<Vec<u8>>,
+}
+
+/// Text column `i` of a dictionary row, or `None` (after reporting the row) when it is not
+/// valid UTF-8: a damaged or hostile file is reported, not an internal error.
+fn utf8_col<'a>(p: &mut Problems, st: &'a RawStmt, i: c_int, row: i64, what: &str) -> Option<&'a str> {
+    let s = std::str::from_utf8(st.col_bytes(i)).ok();
+    if s.is_none() {
+        p.add(format!("row {row}: {what} is not valid UTF-8"));
+    }
+    s
 }
 
 struct Problems {
@@ -121,7 +133,10 @@ pub(crate) fn check(shared: &StorageShared) -> Result<String> {
     {
         let mut st = RawStmt::prepare(db, "SELECT id, lex FROM main.rdf_term WHERE tag=1", false)?;
         while st.step()? {
-            iris.insert(st.col_i64(0), st.col_str(1)?.to_string());
+            // A non-UTF-8 IRI is reported by the full row scan below.
+            if let Ok(lex) = std::str::from_utf8(st.col_bytes(1)) {
+                iris.insert(st.col_i64(0), lex.to_string());
+            }
         }
     }
     for (row, iri) in WELL_KNOWN {
@@ -137,8 +152,14 @@ pub(crate) fn check(shared: &StorageShared) -> Result<String> {
             terms += 1;
             let (row, tag_raw) = (st.col_i64(0), st.col_i64(1));
             rows.push((row, tag_raw));
-            let lex = st.col_str(2)?;
-            let (dt, lang, h) = (st.col_opt_i64(3), st.col_opt_str(4)?, st.col_i64(5));
+            let Some(lex) = utf8_col(&mut p, &st, 2, row, "lex") else { continue };
+            let lang = if st.col_is_null(4) {
+                None
+            } else {
+                let Some(lang) = utf8_col(&mut p, &st, 4, row, "lang") else { continue };
+                Some(lang)
+            };
+            let (dt, h) = (st.col_opt_i64(3), st.col_i64(5));
             if row > WELL_KNOWN.len() as i64 && row < FIRST_USER_ROW {
                 p.add(format!("row {row} is in the reserved range"));
             }
@@ -190,9 +211,9 @@ pub(crate) fn check(shared: &StorageShared) -> Result<String> {
             while by_h.step()? {
                 let key = RowKey {
                     tag: by_h.col_i64(1),
-                    lex: by_h.col_str(2)?.to_string(),
+                    lex: by_h.col_bytes(2).to_vec(),
                     dt: by_h.col_opt_i64(3),
-                    lang: by_h.col_opt_str(4)?.map(str::to_string),
+                    lang: (!by_h.col_is_null(4)).then(|| by_h.col_bytes(4).to_vec()),
                 };
                 if let Some((other, _)) = seen.iter().find(|(_, k)| *k == key) {
                     p.add(format!("rows {other} and {} hold the same term", by_h.col_i64(0)));

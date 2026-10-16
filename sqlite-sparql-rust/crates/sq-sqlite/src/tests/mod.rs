@@ -12,6 +12,7 @@ use sq_core::TermId;
 use crate::{RawDb, SqliteStore, StorageConfig, StorageShared};
 
 mod analyze;
+mod audit_fixes;
 mod btree;
 mod btree_perf;
 mod conformance;

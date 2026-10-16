@@ -289,8 +289,7 @@ fn constraint_id(
             let Ok(parsed) = parse_term(text) else { return Ok(None) };
             let term = Term::from_oxrdf(parsed.as_ref());
             let mut canonical = String::with_capacity(text.len());
-            write_ntriples(&term, &mut canonical);
-            if canonical != text {
+            if write_ntriples(&term, &mut canonical).is_err() || canonical != text {
                 return Ok(None);
             }
             match store.lookup(parsed.as_ref())? {
@@ -458,7 +457,7 @@ impl ViewCursor {
                     Some(t) => {
                         let mut text = self.text.borrow_mut();
                         text.clear();
-                        write_ntriples(&t, &mut text);
+                        write_ntriples(&t, &mut text).into_sql()?;
                         ctx.set_result(&text.as_str())
                     }
                     None => ctx.set_result(&Null),
@@ -492,7 +491,10 @@ unsafe impl VTabCursor for ViewCursor {
         guard("sparql_view xNext", || {
             self.st.debug_panic(PanicSite::Next);
             match self.scan.get_mut() {
-                Some(scan) => scan.stream.advance(&self.st).into_sql(),
+                Some(scan) => {
+                    let _step = self.st.step_entry().into_sql()?;
+                    scan.stream.advance(&self.st).into_sql()
+                }
                 None => Ok(()),
             }
         })
@@ -508,7 +510,7 @@ unsafe impl VTabCursor for ViewCursor {
     fn column(&self, ctx: &mut Context, i: c_int) -> rusqlite::Result<()> {
         guard("sparql_view xColumn", || {
             self.st.debug_panic(PanicSite::Column);
-            let r = self.column_value(ctx, i);
+            let r = self.st.step_entry().into_sql().and_then(|_step| self.column_value(ctx, i));
             column_error(ctx, r)
         })
     }

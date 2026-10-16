@@ -312,7 +312,9 @@ impl Fixed {
                 .get_or_init(|| multi_row_insert("INSERT OR IGNORE INTO main.rdf_quad(g,s,p,o)", 4, QUAD_INSERT_BATCH)),
             Fixed::TermInsertMany => TERM_MANY
                 .get_or_init(|| multi_row_insert("INSERT INTO main.rdf_term(id,tag,lex,dt,lang,h)", 6, TERM_INSERT_BATCH)),
-            Fixed::SchemaCookie => "SELECT schema_version FROM pragma_schema_version",
+            // A PRAGMA statement rather than `pragma_schema_version`: see schema::PK_COLUMNS_SQL
+            // (eponymous pragma tables and `sqlite3_deserialize`).
+            Fixed::SchemaCookie => "PRAGMA main.schema_version",
             // §4.4 epoch. The SQLite schema cookie is read by SchemaCookie first, so an absent
             // schema never makes this statement fail to prepare; the version rows are
             // re-checked because UPDATEs of rdf_meta do not change the cookie.
@@ -321,7 +323,8 @@ impl Fixed {
                  (SELECT value FROM main.rdf_meta WHERE key='stats_gen'), \
                  (SELECT max(id) FROM main.rdf_term), \
                  (SELECT value FROM main.rdf_meta WHERE key='schema_version'), \
-                 (SELECT value FROM main.rdf_meta WHERE key='encoding_version')"
+                 (SELECT value FROM main.rdf_meta WHERE key='encoding_version'), \
+                 (SELECT value FROM main.rdf_meta WHERE key='db_id')"
             }
             Fixed::Select1 => "SELECT 1",
             Fixed::TermByHash => "SELECT id, tag, lex, dt, lang FROM main.rdf_term INDEXED BY rdf_term_h WHERE h=?1",

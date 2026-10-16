@@ -263,6 +263,110 @@ fn a_view_that_calls_sparqlite_from_sparqlites_own_sql_fails_cleanly_on_a_2mib_s
     }
 }
 
+/// R8 also covers the steps of an open scan. `xNext` fetches the next 1024-row batch and
+/// decodes its terms outside any `xFilter` entry; a database whose `rdf_term` is a view that
+/// calls `sparql_rows` for one term found only in the second batch made every level of that
+/// chain look like an outermost entry, so it recursed until the host's stack overflowed. Each
+/// step now counts as an entry, and the chain stops at `MAX_ENTRY_DEPTH`. Child process: a
+/// regression would abort the test binary.
+#[test]
+fn a_nested_call_reached_from_a_scans_second_batch_fails_cleanly() {
+    const TEST: &str = "a_nested_call_reached_from_a_scans_second_batch_fails_cleanly";
+    const CHILD: &str = "SQ_API_TRUST_STEP_RECURSION_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let tail: Vec<&str> = stderr.lines().rev().take(12).collect();
+        assert!(out.status.success(), "child process: {:?}\n{}", out.status, tail.join("\n"));
+        return;
+    }
+    const Q: &str = "SELECT ?s WHERE { ?s ?p ?o } ORDER BY ?o";
+    let e = std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(move || {
+            let c = conn();
+            let mut ttl = String::new();
+            for i in 0..1100 {
+                ttl.push_str(&format!("<http://ex/s{i}> <http://ex/k> {i} .\n"));
+            }
+            assert_eq!(one_p::<i64, _>(&c, "SELECT sparql_load(?1)", [&ttl]), 1100);
+            // Without the hostile view, the scan runs past its first batch normally.
+            assert_eq!(one_p::<i64, _>(&c, "SELECT count(v0) FROM sparql_rows(?1)", [Q]), 1100);
+            c.execute_batch(&format!(
+                "ALTER TABLE rdf_term RENAME TO term_real;
+                 CREATE VIEW main.rdf_term(id, tag, lex, dt, lang, h) AS
+                   SELECT id, tag,
+                          CASE WHEN lex = 'http://ex/s1050'
+                               THEN lex || substr((SELECT group_concat(v0) FROM sparql_rows('{Q}')), 1, 0)
+                               ELSE lex END,
+                          dt, lang, h
+                   FROM term_real;"
+            ))
+            .unwrap();
+            untrusted(&c);
+            // The first batch (rows 1..=1024) does not reach the hostile row.
+            let first: String = one_p(&c, "SELECT v0 FROM sparql_rows(?1) LIMIT 1", [Q]);
+            assert_eq!(first, "http://ex/s0");
+            c.query_row("SELECT count(v0) FROM sparql_rows(?1)", [Q], |r| r.get::<_, Value>(0))
+                .map_err(|e| e.to_string())
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap_err();
+    assert!(e.contains("sparqlite calls nest too deeply"), "{e}");
+}
+
+/// Dictionary rows are not re-validated when decoded, so a hostile file could plant an IRI or
+/// language tag that N-Triples cannot represent and have `sparql_term`, the `__term` columns,
+/// N-Triples / Turtle and TSV print it verbatim (SPARQL injection for an application that
+/// splices `sparql_term()` into an update). Such terms are refused with one clear message in
+/// every N-Triples-syntax output; JSON and XML escape them and keep working.
+#[test]
+fn terms_planted_in_the_dictionary_are_not_printed_unescaped() {
+    let path = TempPath::new("planted-terms");
+    {
+        let c = Connection::open(&path.0).unwrap();
+        sq_api::register(&c).unwrap();
+        assert_eq!(one_p::<i64, _>(&c, "SELECT sparql_load(?1)", [DATA]), 13);
+        c.execute_batch(
+            "UPDATE rdf_term SET lex = 'http://ex/b> } ; DROP ALL ; INSERT DATA { <x' WHERE lex = 'http://ex/bob';
+             UPDATE rdf_term SET lang = 'en\"><script>' WHERE lang IS NOT NULL;",
+        )
+        .unwrap();
+    }
+    let c = Connection::open(&path.0).unwrap();
+    sq_api::register(&c).unwrap();
+    let bob = "SELECT ?o WHERE { <http://ex/alice> <http://ex/knows> ?o } ORDER BY ?o LIMIT 1";
+    let carol = "SELECT ?o WHERE { ?s <http://ex/name> ?o FILTER(lang(?o) != '') }";
+    let refused = |sql: &str, q: &str| {
+        let e = err(&c, sql, [q]);
+        assert!(e.contains("not valid RDF"), "{sql} / {q}: {e}");
+    };
+    for q in [bob, carol] {
+        refused("SELECT sparql_term(id0) FROM sparql_rows(?1)", q);
+        refused("SELECT t0 FROM sparql_rows(?1)", q);
+        refused("SELECT sparql_query(?1, 'tsv')", q);
+        // JSON and XML escape the text.
+        let json: String = one_p(&c, "SELECT sparql_query(?1, 'json')", [q]);
+        assert!(serde_json::from_str::<serde_json::Value>(&json).is_ok(), "{json}");
+        let _: String = one_p(&c, "SELECT sparql_query(?1, 'xml')", [q]);
+    }
+    for fmt in ["nt", "ttl", "nq"] {
+        let e = err(&c, "SELECT sparql_query('CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }', ?1)", [fmt]);
+        assert!(e.contains("not valid RDF"), "{fmt}: {e}");
+    }
+    // Untouched terms still print.
+    assert_eq!(
+        one::<String>(&c, "SELECT t0 FROM sparql_rows('SELECT ?o WHERE { <http://ex/alice> <http://ex/age> ?o }')"),
+        "\"30\"^^<http://www.w3.org/2001/XMLSchema#integer>"
+    );
+}
+
 /// The premise of `direct_guard`: SQLite (3.45.1) does not apply `SQLITE_DIRECTONLY` to CHECK
 /// constraints stored in a database file. A file from someone else can name a writer in a
 /// CHECK, which then runs inside every INSERT or UPDATE of that table and inside
