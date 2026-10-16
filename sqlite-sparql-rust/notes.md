@@ -281,3 +281,16 @@ translating SPARQL to SQL text or running as an external client.
   running workflow. Mitigation: commit after every step, keep workflows short, and split the final audit into
   four narrow auditors (sq-sqlite FFI; B-tree reader vs hostile/corrupt files; sq-api vtabs/guards/re-entrancy;
   SQL-surface security) told to report within ~20 minutes, with fixes as a separate short step.
+- Audit results (4 narrow auditors, ~8 min each):
+  - sqlite-ffi: HIGH — decoding a TYPED term follows its datatype id recursively with no depth bound, so a
+    hostile/corrupt rdf_term with a datatype cycle aborts the host via stack overflow (catch_unwind cannot
+    help); confirmed by crates/sq-sqlite/tests/audit_ffi.rs. Lows: unchecked row-number / next_bnode ranges.
+  - btree-hostile: no memory-safety/panic/loop/allocation issue in the page reader (depth caps, watermark,
+    bounds-checked slices); found a HIGH elsewhere: the dictionary decode cache survives
+    Connection.deserialize() swapping in another database (wrong IRIs returned) because the epoch was only
+    (schema_version, dict_gen). Lows: FileId ABA, 32-bit overflow in term_row.
+  - api-ffi: guards cover every vtab method and Drop; counters RAII-balanced; MEDIUM — the new nesting bound
+    did not cover xNext/xColumn stepping. Lows: double registration, panicking borrows in the close hook.
+  - security: no high/medium — flags, CHECK-constraint guard, allow_files gate and generated SQL (only i64
+    parameters) all held; lows: hostile dictionary terms printed unescaped in N-Triples/TSV/sparql_term,
+    per-call probe_counts/probe_cap not clamped, sparql_check aborting on invalid UTF-8.
