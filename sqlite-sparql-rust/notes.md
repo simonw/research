@@ -275,3 +275,9 @@ translating SPARQL to SQL text or running as an external client.
   1.93x (full); up to 69x (Q14) / 24x (Q16); slower only on the two sub-millisecond queries (0.58-0.67x,
   per-query snapshot validation overhead).
 - Load: 1.6M social triples 9.1 s + ANALYZE/sparql_analyze 1.4 s (pyoxigraph 8.8 s); bsbm 6.1 s (4.0 s).
+
+### Final audit
+- The container restarted three times in the final phase (roughly every 30-50 minutes), each time killing the
+  running workflow. Mitigation: commit after every step, keep workflows short, and split the final audit into
+  four narrow auditors (sq-sqlite FFI; B-tree reader vs hostile/corrupt files; sq-api vtabs/guards/re-entrancy;
+  SQL-surface security) told to report within ~20 minutes, with fixes as a separate short step.
