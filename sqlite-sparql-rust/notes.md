@@ -261,3 +261,17 @@ translating SPARQL to SQL text or running as an external client.
 - Combined gate after round 2: 1,009 Rust tests passed / 0 failed; pytest 50 passed; W3C sqlite backend
   636/639 (1.8 s) and mem backend 636/639; cargo-tree + allow-list gates pass; tutorial verifier 163 blocks,
   0 failures; long differential fuzz (fresh seed 4242) clean.
+
+### Final benchmark (quiet machine, load avg 1-2.6; bench-results/)
+- 17/17 queries: results identical across native, SQL baseline and pyoxigraph (checksums), both modes.
+- Geometric-mean speed-ups — count mode: native vs pyoxigraph 10.6x, native vs baseline 3.47x;
+  full mode (every result term materialised as a Python string): 6.57x and 2.75x.
+- Biggest: Q16 COUNT(*) 1.6M triples 1.24 ms (baseline 61, pyoxigraph 366; B-tree range count);
+  Q9 ORDER BY..LIMIT 10 9.6 ms (164 / 1508; lazy sort keys); Q6 range filter 2.1 ms (25 / 107; IntRange);
+  Q3 chain-2 count 50 ms (461 / 1855; factorized merge join); Q5 OPTIONAL 48 ms (111 / pyoxigraph >120 s).
+  Losses: Q4 tiny chain query (0.15-0.18 ms vs baseline 0.06-0.13), Q14 full mode (13.0 vs baseline 8.4 ms),
+  Q15 full mode vs pyoxigraph (0.12 vs 0.08 ms).
+- Direct B-tree page reader vs SQL cursors (same native engine, `reader=sql`): geomean 2.43x (count) and
+  1.93x (full); up to 69x (Q14) / 24x (Q16); slower only on the two sub-millisecond queries (0.58-0.67x,
+  per-query snapshot validation overhead).
+- Load: 1.6M social triples 9.1 s + ANALYZE/sparql_analyze 1.4 s (pyoxigraph 8.8 s); bsbm 6.1 s (4.0 s).
