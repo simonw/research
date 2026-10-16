@@ -315,7 +315,11 @@ fn trailing_literal(tail: &str) -> &str {
             let run = &body[i + 1..];
             if body[i..].starts_with('\\') {
                 let mut cs = run.chars();
-                cs.next();
+                // `\pL` / `\PN` are one-letter Unicode classes: the letter after the escape is part of
+                // the class, not a literal, so no suffix is required.
+                if matches!(cs.next(), Some('p' | 'P')) {
+                    return "";
+                }
                 cs.as_str()
             } else {
                 run
@@ -327,7 +331,9 @@ fn trailing_literal(tail: &str) -> &str {
 /// String-level plan for patterns that are (anchored) literals or have literal affixes. Only
 /// a single top-level branch can take a shortcut.
 fn plan_for(pattern: &str, f: Flags) -> Plan {
-    if f.x {
+    // Inline flag groups such as `(?i)`, `(?m)` or `(?x)` (passed through to the regex crate,
+    // not XPath syntax) change what a literal run means, so they disable every shortcut.
+    if f.x || pattern.contains("(?") {
         return Plan::Regex;
     }
     if f.q || !pattern.contains(META) {
