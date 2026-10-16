@@ -9,8 +9,8 @@ and reads the data rows itself:
   method and stops paying for the virtual machine on every row.
 
 It never translates a whole SPARQL query into one SQL string for SQLite's planner. A translator of
-that kind is included as a baseline to measure against, and the native engine beats it on 15 of the
-17 benchmark queries.
+that kind is included as a baseline to measure against. The native engine beats it on 16 of the 17
+benchmark queries when it only counts solutions, and on 14 of 17 when every result term is returned.
 
 ```sql
 sqlite> .load ./ext/target/release/libsparqlite
@@ -28,8 +28,8 @@ http://example.org/OCaml
 
 Start with the **[tutorial](tutorial.md)**. It covers installing the extension, using it from the
 `sqlite3` CLI, SPARQL from first principles, and the extension's SQL features. It comes with a
-[script](tutorial/make_tutorial_data.py) that builds a database of 94 real programming languages,
-their designers and influences.
+[script](tutorial/make_tutorial_data.py) that builds a database of 94 real computer languages (91
+programming and 3 query languages), their designers and influences.
 
 ## Results
 
@@ -57,7 +57,7 @@ their designers and influences.
 The machine was a 4-vCPU cloud VM with SQLite 3.45.1, measured quietly (median of 5 after a warm-up).
 Every engine's answers were cross-checked by checksum.
 
-| Geometric mean over 17 queries | vs SQL-translation baseline | vs pyoxigraph 0.5.11 |
+| Geometric mean speed-up | vs SQL-translation baseline (17 queries) | vs pyoxigraph 0.5.11 (16 queries; it timed out on Q5) |
 |---|---:|---:|
 | count mode (solutions counted inside the engine) | **3.5x faster** | **10.6x faster** |
 | full mode (every result term turned into a Python string) | **2.8x faster** | **6.6x faster** |
@@ -184,9 +184,14 @@ python3 tutorial/verify_tutorial.py --ext ext/target/release/libsparqlite.so
 
 `scripts/check.sh` expects:
 
-- the W3C test suite checked out from [w3c/rdf-tests](https://github.com/w3c/rdf-tests), via the `W3C`
-  variable;
-- a Python virtual environment with pytest, pyoxigraph and rdflib, via the `VENV` variable.
+- the `sparql/` directory of a [w3c/rdf-tests](https://github.com/w3c/rdf-tests) checkout, via the
+  `W3C` variable (for example `W3C=~/rdf-tests/sparql`). It also passes that directory to the
+  crate-level W3C tests as `SQ_W3C_DIR`;
+- a Python virtual environment, via the `VENV` variable (it installs pytest there if needed). The
+  benchmark in `py/` also needs pyoxigraph and rdflib in it.
+
+Both default to directories under `SCRATCH` (default `${TMPDIR:-/tmp}/sparqlite-scratch`), where the
+build targets go too.
 
 It requires SQLite 3.34.1 or later and was tested with 3.45.1. Apple's built-in `sqlite3` cannot load
 extensions; the tutorial covers Homebrew and the Windows file name.
@@ -204,12 +209,16 @@ extensions; the tutorial covers Homebrew and the Windows file name.
 - The direct B-tree reader only serves rollback-journal file databases on a private-cache connection.
   WAL and in-memory databases use the (still fast) SQL cursors.
 - Small fixed per-query overhead of tens of microseconds, from planning plus snapshot validation.
-- A SQLite bug can crash the process during `sqlite3_deserialize` (Python `Connection.deserialize`)
-  if `sparql_rows`, like any eponymous virtual table (`json_each`, `pragma_*`), is used on the
-  connection both before and after the call. Deserialize into a fresh connection instead.
-  Reproduction and analysis are in
-  [repro/deserialize-eponymous](repro/deserialize-eponymous/README.md). sparqlite's own catalog
-  reads use `PRAGMA` statements, so its scalar functions are unaffected.
+- A SQLite bug affects connections that have been deserialized into (`sqlite3_deserialize`, Python
+  `Connection.deserialize`). After the call, preparing a statement can crash the process if it uses
+  an eponymous virtual table that was already used on that connection. That covers `json_each`,
+  `pragma_*`, `sparql_rows` if you used it before, and `sparql_status` always, because the
+  extension connects it when it loads.
+  - **Workaround:** deserialize first, then load the extension.
+  - Reproduction and analysis are in
+    [repro/deserialize-eponymous](repro/deserialize-eponymous/README.md).
+  - sparqlite's own catalog reads use only `sqlite_schema` and `PRAGMA` statements, neither of
+    which is a virtual table, so its scalar functions are unaffected.
 - Only Linux was tested. Windows instructions in the tutorial are untested.
 
 ## How this was built
@@ -221,7 +230,8 @@ is in [notes.md](notes.md).
    SPARQL semantics, and SQLite engineering. Three judges scored the designs, and a synthesizer merged
    them into [docs/SPEC.md](docs/SPEC.md), with the decisions recorded in
    [docs/DECISIONS.md](docs/DECISIONS.md).
-2. **Shared contract.** I wrote the frozen `sq-core` crate and `todo!()` stubs for every other crate.
+2. **Shared contract.** The frozen `sq-core` crate came from the synthesizer's verified prototype, and
+   I added `todo!()` stubs for every other crate.
    Each crate was then built by its own agent pipeline: implement, adversarial review with failing
    tests as evidence, fix, repeated.
 3. **Integration.** The ground-truth oracle and a differential fuzzer tied the crates together. The W3C

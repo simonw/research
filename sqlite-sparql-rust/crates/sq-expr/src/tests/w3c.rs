@@ -6,7 +6,7 @@
 //! lenient pass accepts equal numeric values whose lexical forms differ).
 //!
 //! The suite lives outside the repository: set `SQ_W3C_DIR` to the `rdf-tests/sparql`
-//! directory (default: the scratchpad checkout). Without it the test is skipped.
+//! directory. Without it the test is skipped.
 //! Tests using features this harness does not implement (named graphs, property paths,
 //! EXISTS, SERVICE, CONSTRUCT/DESCRIBE, CSV/TTL result files) are skipped.
 use std::collections::HashMap;
@@ -25,8 +25,6 @@ use sq_core::{Slot, Term, TermId};
 use super::harness::{Lowering, compact, term_of};
 use crate::testing::TestEnv;
 use crate::{CompiledExpr, accumulator, compile};
-
-const DEFAULT_DIR: &str = "/tmp/claude-0/-home-user-research/82148577-c93b-5a93-8757-e7fe894ecb5e/scratchpad/w3c/rdf-tests/sparql";
 
 const DIRS: &[&str] = &[
     "sparql10/expr-builtin",
@@ -674,7 +672,10 @@ fn run_test(tc: &TestCase) -> Outcome {
 
 #[test]
 fn w3c_expression_tests() {
-    let root = PathBuf::from(std::env::var("SQ_W3C_DIR").unwrap_or_else(|_| DEFAULT_DIR.into()));
+    let Some(root) = std::env::var_os("SQ_W3C_DIR").map(PathBuf::from) else {
+        eprintln!("SQ_W3C_DIR is not set; skipping the W3C expression tests");
+        return;
+    };
     if !root.join("sparql11/functions/manifest.ttl").exists() {
         eprintln!("W3C test suite not found at {} (set SQ_W3C_DIR); skipping", root.display());
         return;

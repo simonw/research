@@ -240,7 +240,8 @@ impl TxnOp {
 }
 
 /// Fixed statements used by the dictionary, writer, epoch check and maintenance code.
-/// Internal SQL touches only `rdf_*` tables, `sqlite_schema` and `pragma_*` (rule R2).
+/// Internal SQL touches only `rdf_*` tables, `sqlite_schema` and PRAGMA statements (rule R2;
+/// never the eponymous `pragma_*` tables, see schema::PK_COLUMNS_SQL).
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Fixed {
     SchemaCookie,

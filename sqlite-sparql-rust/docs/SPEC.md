@@ -37,9 +37,10 @@ Measured ground truth for this machine (SQLite 3.45.1, 4 vCPU, ~1–1.4M triples
 
 ### 1.1 Repository conventions (from `/home/user/research/AGENTS.md`)
 - All work lives in **`/home/user/research/sqlite-sparql-rust/`**. Keep `notes.md` (an append-only log) and finish with a `README.md` report.
-- Commit only files we wrote. Never commit copies of fetched code: rdf-tests and crate sources stay outside the folder (rdf-tests is already at `/tmp/claude-0/-home-user-research/82148577-c93b-5a93-8757-e7fe894ecb5e/scratchpad/w3c/rdf-tests`).
+- `$SCRATCH` below is the development VM's scratch directory outside the repository (build targets, the Python venv, the rdf-tests checkout, generated data).
+- Commit only files we wrote. Never commit copies of fetched code: rdf-tests and crate sources stay outside the folder (rdf-tests is already at `$SCRATCH/w3c/rdf-tests`).
 - Binaries over 2 MB and `target/` are not committed. HTML demos, if any, are linked through `https://simonw.github.io/research/sqlite-sparql-rust/…`.
-- A verified copy of the `sq-core` crate (§10) and a prototype of the ext/close-hook/`col_used` plumbing are in `/tmp/claude-0/-home-user-research/82148577-c93b-5a93-8757-e7fe894ecb5e/scratchpad/synth/ws/`. Copy `crates/sq-core` from there verbatim.
+- A verified copy of the `sq-core` crate (§10) and a prototype of the ext/close-hook/`col_used` plumbing are in `$SCRATCH/synth/ws/`. Copy `crates/sq-core` from there verbatim.
 
 ### 1.2 Layout
 ```
@@ -218,8 +219,8 @@ Interrupt detection steps a pooled `SELECT 1`, which returns `SQLITE_INTERRUPT` 
 ### 1.7 `scripts/check.sh` (the one command CI runs)
 ```bash
 set -euo pipefail
-VENV=/tmp/claude-0/-home-user-research/82148577-c93b-5a93-8757-e7fe894ecb5e/scratchpad/venv
-W3C=/tmp/claude-0/-home-user-research/82148577-c93b-5a93-8757-e7fe894ecb5e/scratchpad/w3c/rdf-tests/sparql
+VENV=$SCRATCH/venv
+W3C=$SCRATCH/w3c/rdf-tests/sparql
 cargo test --workspace --release                                   # native, system libsqlite3 3.45.1
 cargo build --release --manifest-path ext/Cargo.toml               # ext/target/release/libsparqlite.so
 ! cargo tree --manifest-path ext/Cargo.toml -e features -i libsqlite3-sys | grep -E 'bundled|modern_sqlite'
@@ -1071,7 +1072,7 @@ Anything else returns `Error::Unsupported("baseline: …")`. The benchmark uses 
 
 ## 10. `sq-core`: complete source (FROZEN on day 0)
 
-Verified on this machine: `cargo test -p sq-core` gives 6 passed, and `cargo clippy --all-targets` gives 0 warnings. The verified copy is at `/tmp/claude-0/-home-user-research/82148577-c93b-5a93-8757-e7fe894ecb5e/scratchpad/synth/ws/crates/sq-core`. After day 0, changes are **additive only** and need lead review.
+Verified on this machine: `cargo test -p sq-core` gives 6 passed, and `cargo clippy --all-targets` gives 0 warnings. The verified copy is at `$SCRATCH/synth/ws/crates/sq-core`. After day 0, changes are **additive only** and need lead review.
 
 ### `crates/sq-core/Cargo.toml`
 ```toml

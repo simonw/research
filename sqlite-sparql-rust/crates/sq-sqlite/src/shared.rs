@@ -230,7 +230,7 @@ impl StorageShared {
         let cookie = {
             let mut st = self.pool.lease_fixed(Fixed::SchemaCookie)?;
             if !st.step()? {
-                return Err(Error::internal("pragma_schema_version returned no row"));
+                return Err(Error::internal("PRAGMA main.schema_version returned no row"));
             }
             st.col_i64(0)
         };

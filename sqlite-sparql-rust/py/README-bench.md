@@ -17,9 +17,11 @@ result.
 Everything runs with the project venv (Python 3.13, pyoxigraph 0.5.11, rdflib 7.6). Only the
 standard library is used apart from those two packages.
 
+`$SCRATCH` is any working directory outside the repository.
+
 ```bash
-PY=/tmp/claude-0/-home-user-research/82148577-c93b-5a93-8757-e7fe894ecb5e/scratchpad/venv/bin/python   # any Python >= 3.10 with pyoxigraph (+ rdflib) works
-DATA=/tmp/claude-0/-home-user-research/82148577-c93b-5a93-8757-e7fe894ecb5e/scratchpad/data            # generated data never goes into the repo
+PY=$SCRATCH/venv/bin/python   # any Python >= 3.10 with pyoxigraph (+ rdflib) works
+DATA=$SCRATCH/data            # generated data never goes into the repo
 ```
 
 ## Quick start

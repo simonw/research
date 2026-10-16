@@ -3,8 +3,8 @@
 //! statistics, under every join policy), checking the static-property invariants on every
 //! logical and physical node. Files spargebra rejects are skipped (syntax tests).
 //!
-//! The suite location is `$SQ_W3C_DIR` (default: the scratchpad checkout); the test is skipped
-//! with a note when it is absent.
+//! The suite location is `$SQ_W3C_DIR`; the test is skipped with a note when it is unset or
+//! absent.
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,13 +18,14 @@ use sq_core::{Error, TermId};
 use sq_memstore::MemStore;
 use sq_plan::{explain, explain_logical, lower_query, optimize, parse_query, plan_props, props, validate};
 
-const DEFAULT_SUITE: &str =
-    "/tmp/claude-0/-home-user-research/82148577-c93b-5a93-8757-e7fe894ecb5e/scratchpad/w3c/rdf-tests/sparql";
 const BASE: &str = "https://w3c.github.io/rdf-tests/sparql/";
 const QT: &str = "http://www.w3.org/2001/sw/DataAccess/tests/test-query#";
 
 fn suite_dir() -> Option<PathBuf> {
-    let dir = std::env::var("SQ_W3C_DIR").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(DEFAULT_SUITE));
+    let Some(dir) = std::env::var_os("SQ_W3C_DIR").map(PathBuf::from) else {
+        eprintln!("SQ_W3C_DIR is not set; skipping");
+        return None;
+    };
     if dir.join("sparql11").is_dir() {
         Some(dir)
     } else {

@@ -292,8 +292,8 @@ SQ_VALUE_DIFF_N=20000 SQ_VALUE_DIFF_OUT=/tmp/x.tsv cargo test -p sq-expr value_d
   for 25 expressions.
 - `w3c.rs` runs the query-evaluation tests of 16 expression-heavy W3C directories through a small
   nested-loop reference evaluator. Clone https://github.com/w3c/rdf-tests and set
-  `SQ_W3C_DIR=<clone>/sparql`. The built-in default is a scratchpad path that exists only on the
-  original dev VM. Anywhere else the test prints a note to stderr and passes without checking
+  `SQ_W3C_DIR=<clone>/sparql` (`scripts/check.sh` sets it from its `W3C` variable). Without it
+  the test prints a note to stderr and passes without checking
   anything, so a green `cargo test -p sq-expr` says nothing about W3C conformance unless
   `SQ_W3C_DIR` is set. The last run gave 291 passes, 8 lenient numeric passes (`"3"` against
   `"3.0"`), 2 skips (one named-graph test, one query spargebra cannot parse) and 0 failures. The

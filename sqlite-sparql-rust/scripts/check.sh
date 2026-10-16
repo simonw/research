@@ -3,9 +3,11 @@
 # Usage: scripts/check.sh [quick]     (quick = Rust tests + ext build + gates only)
 set -euo pipefail
 cd "$(dirname "$0")/.."
-SCRATCH=${SCRATCH:-/tmp/claude-0/-home-user-research/82148577-c93b-5a93-8757-e7fe894ecb5e/scratchpad}
+# SCRATCH: a working directory outside the repository (build targets, venv, rdf-tests checkout).
+SCRATCH=${SCRATCH:-${TMPDIR:-/tmp}/sparqlite-scratch}
 VENV=${VENV:-$SCRATCH/venv}
-W3C=${W3C:-$SCRATCH/w3c/rdf-tests/sparql}
+W3C=${W3C:-$SCRATCH/w3c/rdf-tests/sparql}   # the sparql/ directory of a w3c/rdf-tests checkout
+export SQ_W3C_DIR=${SQ_W3C_DIR:-$W3C}         # read by the W3C tests in sq-expr, sq-plan and sq-sqlgen
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$SCRATCH/targets/check}
 export CARGO_INCREMENTAL=0
 EXT_TARGET=${EXT_TARGET:-$SCRATCH/targets/ext}

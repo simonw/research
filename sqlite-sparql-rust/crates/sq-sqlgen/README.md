@@ -285,8 +285,8 @@ merge (a set) itself, because spareval keeps duplicate triples across FROM graph
 | `tests/review.rs`, `tests/review_round2.rs` | adversarial-review regressions: zero-length paths and GRAPH membership, float promotion, SQLite compile-time limits (wide BGP / IN / UNION, deep EXISTS), BIND growth, the parameter limit |
 | `tests/w3c.rs` | W3C SPARQL 1.0/1.1 query-evaluation tests whose query is inside the subset |
 
-`tests/w3c.rs` reads `$SQ_W3C_DIR` (default: a path in the dev VM's scratchpad) and passes with
-a note when the suite is missing; `tests/benchmark.rs` likewise skips without `py/queries`.
+`tests/w3c.rs` reads `$SQ_W3C_DIR` (no default; `scripts/check.sh` sets it) and passes with
+a note when it is unset or the suite is missing; `tests/benchmark.rs` likewise skips without `py/queries`.
 Tests that need an entailment regime other than simple entailment are reported, not asserted.
 
 ## Measured results

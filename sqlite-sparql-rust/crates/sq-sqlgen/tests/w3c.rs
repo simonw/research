@@ -5,8 +5,8 @@
 //! Tests that require an entailment regime (`sd:entailmentRegime` without `ent:Simple`) are
 //! outside the subset: the baseline, like the native engine, evaluates simple entailment.
 //!
-//! The suite is read from `$SQ_W3C_DIR` (default: the session scratchpad copy); the test is
-//! skipped with a note when it is absent. Run with `--nocapture` for the report.
+//! The suite is read from `$SQ_W3C_DIR`; the test is skipped with a note when it is unset or
+//! absent. Run with `--nocapture` for the report.
 mod common;
 
 use std::collections::{HashMap, HashSet};
@@ -17,10 +17,6 @@ use oxrdf::{Graph, NamedOrBlankNodeRef, TermRef, vocab::rdf};
 use oxrdfio::RdfFormat;
 use sparesults::{QueryResultsFormat, QueryResultsParser, SliceQueryResultsParserOutput};
 
-const DEFAULT_SUITE: &str = concat!(
-    "/tmp/claude-0/-home-user-research/82148577-c93b-5a93-8757-e7fe894ecb5e/scratchpad/",
-    "w3c/rdf-tests/sparql"
-);
 const SUITE_URL: &str = "https://w3c.github.io/rdf-tests/sparql/";
 const MF: &str = "http://www.w3.org/2001/sw/DataAccess/tests/test-manifest#";
 const QT: &str = "http://www.w3.org/2001/sw/DataAccess/tests/test-query#";
@@ -50,7 +46,7 @@ struct TestCase {
 }
 
 fn suite_dir() -> Option<PathBuf> {
-    let dir = std::env::var_os("SQ_W3C_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(DEFAULT_SUITE));
+    let dir = PathBuf::from(std::env::var_os("SQ_W3C_DIR")?);
     dir.join("sparql11").is_dir().then_some(dir)
 }
 

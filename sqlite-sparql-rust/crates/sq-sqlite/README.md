@@ -139,7 +139,7 @@ end of the scan. When the B-tree reader cannot serve a count (concept 8), `count
   inside SQLite while the next statement is prepared (stale schema pointer). It reproduces from
   plain Python on 3.45.1 and on 3.53.2; see
   [repro/deserialize-eponymous](../../repro/deserialize-eponymous/README.md). Every catalog read
-  in this crate is therefore a PRAGMA statement: schema detection (`PRAGMA main.index_info`),
+  in this crate therefore goes through `sqlite_schema` or a PRAGMA statement: schema detection (`PRAGMA main.index_info`),
   the epoch's cookie (`PRAGMA main.schema_version`), and the B-tree reader's layout checks
   (`PRAGMA main.table_xinfo` / `index_list` / `index_xinfo`).
 - Only rows `<= committed_max_row` enter the caches, and that bound is refreshed only outside

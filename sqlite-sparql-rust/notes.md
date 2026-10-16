@@ -305,7 +305,8 @@ translating SPARQL to SQL text or running as an external client.
   eponymous vtab (`pragma_*`, `json_each`, our `sparql_rows`), `Connection.deserialize()`, then prepare a new
   statement using one -> SIGSEGV on 3.45.1 for every case tried. My first Python repro missed it because the
   statement cache re-used the old statement; `cached_statements=0` forces a fresh prepare.
-- gdb (3.45.1): sqlite3_prepare_v3 -> sqlite3GenerateColumnNames -> strlen. valgrind on rusqlite's bundled 3.53.2:
+- gdb (3.45.1): inside sqlite3_prepare_v3 — sqlite3SchemaToIndex via sqlite3SelectPrep for most cases;
+  the sq-sqlite test's `SELECT name ... ORDER BY seqno` ended in sqlite3GenerateColumnNames -> strlen. valgrind on rusqlite's bundled 3.53.2:
   invalid 8-byte read in selectExpander/columnTypeImpl for every eponymous case (some happen not to crash);
   `PRAGMA` statements clean. Same root cause as github.com/photostructure/sqlite-deserialize-repro (trunk
   2026-10-02): sqlite3VtabEponymousTableInit stores the main Schema pointer once; deserialize frees it.
@@ -318,3 +319,17 @@ translating SPARQL to SQL text or running as an external client.
 ### Final gate (after the PRAGMA change)
 - 1,024 Rust tests passed / 0 failed (15 ignored); pytest 50 passed; W3C 636/639 on both the sqlite and mem
   backends; build/allow-list gates pass; tutorial verifier 163 blocks, 0 failures.
+
+### Final fact-check (3 independent reviewers) and fixes
+- README: "beats the baseline on 15 of 17" was wrong -> 16/17 in count mode, 14/17 in full mode (recomputed
+  from the JSON); the pyoxigraph geomean is over 16 queries (Q5 timed out); 94 computer languages = 91
+  programming + 3 query; sq-core came from the synthesizer's prototype; `W3C` must point at the `sparql/`
+  directory; check.sh's venv only needs pytest (the benchmark needs pyoxigraph/rdflib).
+- Deserialize docs: `sparql_status` is connected by `register()` at load (close hook), so after a deserialize it
+  is always at risk, not only `sparql_rows`. Verified under valgrind: load -> deserialize -> query sparql_status
+  gives 27 invalid reads; load -> deserialize -> sparql_query + first-time sparql_rows is clean; deserialize ->
+  load -> all three is clean. Recommended workaround is now "deserialize first, then load the extension".
+  On 3.53.2 which cases actually segfault differs between builds/runs (heap layout); valgrind flags all.
+- Hygiene: the session scratchpad path had leaked into scripts/check.sh, three W3C test defaults, docs/SPEC.md
+  and py/README-bench.md. The tests now read only `SQ_W3C_DIR` (skip when unset), check.sh defaults
+  `SCRATCH=${TMPDIR:-/tmp}/sparqlite-scratch` and exports `SQ_W3C_DIR=$W3C`, docs use `$SCRATCH`.

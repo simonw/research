@@ -460,14 +460,22 @@ Measured on the project's 4-vCPU dev VM, SQLite 3.45.1, release builds (author n
   (for the extension: when it is loaded into the connection), and is absent from `config.*`.
 - Plain-SQL writes to `rdf_quad` during an open scan are undefined; only sparqlite's own writers
   are refused while `open_cursors > 0`.
-- `sparql_rows` and `sparql_status` are eponymous virtual tables, so they share a SQLite bug
-  with `json_each` and the `pragma_*` functions: if one is used, `main` is then replaced by
-  `sqlite3_deserialize` (Python `Connection.deserialize`), and a statement using one is then
-  prepared on the same connection, SQLite can segfault during prepare, before any sparqlite
-  code runs ([repro/deserialize-eponymous](../../repro/deserialize-eponymous/README.md)).
-  Scalar functions are unaffected and answer from the new database. The writer guard lists
-  databases with `PRAGMA database_list` rather than `pragma_database_list` for this reason.
-  Workaround: deserialize into a fresh connection, or before the first `sparql_rows` call.
+- `sparql_rows` and `sparql_status` are eponymous virtual tables, so they share a SQLite bug with
+  `json_each` and the `pragma_*` functions
+  ([repro/deserialize-eponymous](../../repro/deserialize-eponymous/README.md)). The bug fires
+  when:
+  1. one of these tables has been used on a connection;
+  2. `sqlite3_deserialize` (Python `Connection.deserialize`) replaces `main`;
+  3. a statement using that table is then prepared on the same connection.
+
+  SQLite can then segfault during the prepare, before any sparqlite code runs. `register()`
+  connects `sparql_status` itself (the close hook), so after a deserialize, querying
+  `sparql_status` on that connection is always at risk. `sparql_rows` is at risk only if it was
+  used before.
+  - Scalar functions are unaffected and answer from the new database.
+  - The writer guard lists databases with `PRAGMA database_list` rather than
+    `pragma_database_list` for this reason.
+  - Workaround: deserialize first, then load the extension; valgrind shows that order clean.
 
 **Deviations from docs/SPEC.md §8 and §1.6** (the code is current): `xFilter` is a full read
 entry and opens a savepoint when `main` has no transaction (a `temp.` view), releasing it before
