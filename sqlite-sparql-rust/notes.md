@@ -254,3 +254,10 @@ translating SPARQL to SQL text or running as an external client.
 - The container restarted mid-workflow: the expr lane's review and the tutorial re-sync were lost; the
   uncommitted round-2 work in the tree survived, compiled warning-free, and was committed; a resume
   workflow re-runs the expr review/fix, the tutorial re-sync and a combined gate.
+- Round 2 completion (done by hand between restarts): the expr lane review found the regex literal
+  pre-filter ignored inline flag groups `(?i)`/`(?m)`/`(?x)` (REGEX silently false) and treated `\pL`'s class
+  letter as a literal suffix -> both now disable the pre-filter; stacked-prefetch and uncommitted-row cache
+  caveats documented. Tutorial re-synced (section 7.3 rewritten around the new plan).
+- Combined gate after round 2: 1,009 Rust tests passed / 0 failed; pytest 50 passed; W3C sqlite backend
+  636/639 (1.8 s) and mem backend 636/639; cargo-tree + allow-list gates pass; tutorial verifier 163 blocks,
+  0 failures; long differential fuzz (fresh seed 4242) clean.
