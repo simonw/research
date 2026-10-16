@@ -115,10 +115,12 @@ fn verify_term(db: RawDb) -> Result<Option<u32>> {
     let root = if st.step()? { st.col_i64(0) } else { return Ok(None) };
     drop(st);
     let Some(root) = u32::try_from(root).ok().filter(|r| *r >= 2) else { return Ok(None) };
-    let mut st = RawStmt::prepare(db, "SELECT name, upper(type), pk, hidden FROM pragma_table_xinfo('rdf_term', 'main') ORDER BY cid", false)?;
+    // PRAGMA statements here, not the eponymous `pragma_*` tables: see schema::PK_COLUMNS_SQL.
+    // Rows in cid order: cid, name, type, notnull, dflt_value, pk, hidden.
+    let mut st = RawStmt::prepare(db, "PRAGMA main.table_xinfo('rdf_term')", false)?;
     let mut cols = Vec::with_capacity(6);
     while st.step()? {
-        cols.push((st.col_str(0)?.to_string(), st.col_str(1)?.to_string(), st.col_i64(2), st.col_i64(3)));
+        cols.push((st.col_str(1)?.to_string(), st.col_str(2)?.to_ascii_uppercase(), st.col_i64(5), st.col_i64(6)));
     }
     drop(st);
     let columns_ok = cols.len() == TERM_COLUMNS.len()
@@ -127,8 +129,12 @@ fn verify_term(db: RawDb) -> Result<Option<u32>> {
         return Ok(None);
     }
     // A primary-key index means `id` is not the rowid (INTEGER PRIMARY KEY DESC, WITHOUT ROWID).
-    let mut st = RawStmt::prepare(db, "SELECT count(*) FROM pragma_index_list('rdf_term', 'main') WHERE origin = 'pk'", false)?;
-    let pk_index = st.step()? && st.col_i64(0) != 0;
+    // Rows: seq, name, unique, origin, partial.
+    let mut st = RawStmt::prepare(db, "PRAGMA main.index_list('rdf_term')", false)?;
+    let mut pk_index = false;
+    while st.step()? {
+        pk_index |= st.col_str(3)? == "pk";
+    }
     Ok((!pk_index).then_some(root))
 }
 
@@ -140,12 +146,12 @@ fn verify(db: RawDb, order: IndexOrder, rows: &[SchemaRow]) -> Result<Option<u32
     // Exactly the 4 order columns, ascending, all of them key columns (no auxiliary columns:
     // a rowid table's PK index would add the rowid, a table with more columns would add them).
     let index = if order == IndexOrder::Gspo { PK_INDEX } else { name };
-    let mut st =
-        RawStmt::prepare(db, "SELECT name, desc, key FROM pragma_index_xinfo(?1, 'main') ORDER BY seqno", false)?;
-    st.bind_text(1, index)?;
+    // A PRAGMA takes no bound parameters; `index` is one of our own (quote-free) names.
+    // Rows in seqno order: seqno, cid, name, desc, coll, key.
+    let mut st = RawStmt::prepare(db, &format!("PRAGMA main.index_xinfo('{index}')"), false)?;
     let mut cols = Vec::with_capacity(4);
     while st.step()? {
-        cols.push((st.col_opt_str(0)?.unwrap_or("").to_string(), st.col_i64(1), st.col_i64(2)));
+        cols.push((st.col_opt_str(2)?.unwrap_or("").to_string(), st.col_i64(3), st.col_i64(5)));
     }
     drop(st);
     let expected = order.cols().map(|c| COL_NAMES[c as usize]);
@@ -155,10 +161,16 @@ fn verify(db: RawDb, order: IndexOrder, rows: &[SchemaRow]) -> Result<Option<u32
         return Ok(None);
     }
     // Partial indexes must have exactly our predicate (as stored by CREATE INDEX), full ones none.
-    let mut st = RawStmt::prepare(db, "SELECT partial FROM pragma_index_list('rdf_quad', 'main') WHERE name = ?1", false)?;
-    st.bind_text(1, index)?;
-    let partial = if st.step()? { st.col_i64(0) != 0 } else { return Ok(None) };
+    // Rows: seq, name, unique, origin, partial.
+    let mut st = RawStmt::prepare(db, "PRAGMA main.index_list('rdf_quad')", false)?;
+    let mut partial = None;
+    while st.step()? {
+        if st.col_str(1)? == index {
+            partial = Some(st.col_i64(4) != 0);
+        }
+    }
     drop(st);
+    let Some(partial) = partial else { return Ok(None) };
     let term = order.sql_partial_term();
     let predicate_ok = if term.is_empty() {
         !partial

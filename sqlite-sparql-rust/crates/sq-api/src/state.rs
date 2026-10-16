@@ -387,9 +387,13 @@ impl ConnState {
         // SAFETY: a wrapper of this live connection that never closes it (`from_handle` is
         // not owning); it and its statements are dropped before this call returns.
         let conn = unsafe { rusqlite::Connection::from_handle(self.db.as_ptr()) }.map_err(failed)?;
+        // The PRAGMA statement rather than the eponymous `pragma_database_list` table: on
+        // SQLite 3.45.1 an eponymous pragma table used before and after `sqlite3_deserialize`
+        // crashes (see sq-sqlite `schema::detect`).
         let schemas: Vec<String> = {
-            let mut st = conn.prepare("SELECT name FROM pragma_database_list WHERE name <> 'temp'").map_err(failed)?;
-            st.query_map([], |r| r.get(0)).map_err(failed)?.collect::<rusqlite::Result<_>>().map_err(failed)?
+            let mut st = conn.prepare("PRAGMA database_list").map_err(failed)?;
+            let names = st.query_map([], |r| r.get::<_, String>(1)).map_err(failed)?;
+            names.filter(|n| !matches!(n, Ok(n) if n == "temp")).collect::<rusqlite::Result<_>>().map_err(failed)?
         };
         for schema in schemas {
             let sql = format!(
