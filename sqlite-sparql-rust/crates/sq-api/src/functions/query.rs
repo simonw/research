@@ -22,7 +22,7 @@ pub(super) fn query(st: &ConnState, ctx: &Context<'_>) -> Result<String> {
     let text = text_arg(ctx, 0, "query")?;
     let fmt = opt_text_arg(ctx, 1, "format")?.map(ResultFormat::parse).transpose()?;
     let settings = st.settings()?;
-    st.read_call(|| query::write_output(&mut query::prepare(st, text, &settings)?, fmt))
+    st.read_call(|| query::write_output(&mut query::prepare(st, text, &settings)?, fmt, st.length_limit()))
 }
 
 /// `sparql_ask(query)`: 1 if there is at least one solution (or triple).
@@ -108,7 +108,7 @@ pub(super) fn query_sql(st: &ConnState, ctx: &Context<'_>) -> Result<String> {
     let fmt = opt_text_arg(ctx, 1, "format")?.map(ResultFormat::parse).transpose()?;
     let mut settings = st.settings()?;
     settings.engine = EngineKind::Sql;
-    st.read_call(|| query::write_output(&mut query::prepare(st, text, &settings)?, fmt))
+    st.read_call(|| query::write_output(&mut query::prepare(st, text, &settings)?, fmt, st.length_limit()))
 }
 
 /// `sparql_count_sql(query)`: `SELECT count(*) FROM (<baseline SQL>)`.

@@ -93,7 +93,7 @@ fn ask_and_solution_source_shapes() {
 }
 
 #[test]
-fn decode_batches_dictionary_misses_and_handles_every_id_class() {
+fn decode_batches_dictionary_ids_and_handles_every_id_class() {
     let fx = Fx::new();
     let iri = fx.iri("a");
     let long = fx.lit("a long literal");
@@ -113,8 +113,10 @@ fn decode_batches_dictionary_misses_and_handles_every_id_class() {
     assert_eq!(&shown[6..8], &["UNDEF", "UNDEF"]);
     assert_eq!(shown[8], shown[0]);
     let prof = e.profile();
-    assert_eq!(prof.decode_misses, 3, "three distinct dictionary ids, one batch");
-    assert!(prof.decode_hits >= 4);
+    // The four dictionary ids (three distinct) go to the store in one call, which dedupes;
+    // inline, blank-node and TEMP ids decode locally and are not counted.
+    assert_eq!(prof.decode_misses, 4, "every dictionary id is requested from the store");
+    assert_eq!(prof.decode_hits, 0, "no prefetched batch");
     // TripleSource::decode is the same resolver.
     let mut out = Vec::new();
     TripleSource::decode(&mut e, &[iri], &mut out).unwrap();

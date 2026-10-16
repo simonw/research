@@ -163,6 +163,81 @@ impl CompiledExpr {
     pub(crate) fn is_temp_const(&self, id: TermId) -> bool {
         id.is_temp() && self.temp_consts.binary_search(&id).is_ok()
     }
+
+    /// Slots whose string the expression reads first on every row: the text of a REGEX or
+    /// REPLACE, or the first argument of a string function, reached from the root through
+    /// the operand each node evaluates first (`!`, the left operand of `&&`, `||`, `<`, `+`,
+    /// IN, the condition of IF, the first COALESCE argument, a cast's argument, the
+    /// non-constant side of `=` / sameTerm, nested string functions as in
+    /// `REGEX(LCASE(?n), ..)`). Evaluating the expression decodes such a slot's value before
+    /// anything can end the evaluation early, when it is a string literal: a STR, SHORTSTR or
+    /// LANG id (any other id is a type error decided from the tag) that the `ValueCache` does
+    /// not hold yet. A host evaluating a batch of rows can therefore decode the batch's
+    /// dictionary ids of tag STR and LANG in these slots in one store call, without decoding
+    /// anything the row-by-row evaluation would not.
+    pub fn string_slots(&self) -> Vec<sq_core::Slot> {
+        let mut out = Vec::new();
+        leading_strings(&self.root, &mut out);
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+}
+
+/// See [`CompiledExpr::string_slots`].
+fn leading_strings(n: &Node, out: &mut Vec<sq_core::Slot>) {
+    match n {
+        Node::Not(a)
+        | Node::And(a, _)
+        | Node::Or(a, _)
+        | Node::If(a, _, _)
+        | Node::Compare(_, a, _)
+        | Node::In(a, _)
+        | Node::Arith(_, a, _)
+        | Node::Neg(a)
+        | Node::Plus(a)
+        | Node::Cast(_, a)
+        | Node::LangMatchesConst { arg: a, .. } => leading_strings(a, out),
+        // `=` and sameTerm evaluate the non-constant side of a constant comparison first.
+        Node::Equal(a, b) | Node::SameTerm(a, b) => match (&**a, &**b) {
+            (Node::Const(..), x) => leading_strings(x, out),
+            (x, _) => leading_strings(x, out),
+        },
+        Node::Coalesce(list) => {
+            if let Some(a) = list.first() {
+                leading_strings(a, out);
+            }
+        }
+        Node::Regex { text, .. } | Node::Replace { text, .. } => string_operand(text, out),
+        Node::Call(
+            Builtin::Concat
+            | Builtin::SubStr
+            | Builtin::StrLen
+            | Builtin::UCase
+            | Builtin::LCase
+            | Builtin::EncodeForUri
+            | Builtin::Contains
+            | Builtin::StrStarts
+            | Builtin::StrEnds
+            | Builtin::StrBefore
+            | Builtin::StrAfter,
+            args,
+        ) => {
+            if let Some(a) = args.first() {
+                string_operand(a, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// An operand read with `string_arg`: a slot is decoded right away; anything else is
+/// evaluated first.
+fn string_operand(n: &Node, out: &mut Vec<sq_core::Slot>) {
+    match n {
+        Node::Slot(s) => out.push(*s),
+        n => leading_strings(n, out),
+    }
 }
 
 impl std::fmt::Debug for CompiledExpr {

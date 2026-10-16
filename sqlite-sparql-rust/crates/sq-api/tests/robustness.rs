@@ -59,6 +59,98 @@ fn interrupt_stops_a_streaming_scan_and_the_baseline() {
     assert_eq!(one::<i64>(&c, "SELECT sparql_count('SELECT * WHERE { ?s ?p ?o }')"), 300);
 }
 
+/// Never yields a row: a scan of it spends all its time inside sparqlite's own fetch.
+const NEVER: &str =
+    "SELECT * WHERE { ?a ?p ?b . ?c ?q ?d . ?e ?r ?f FILTER(CONCAT(STR(?b), STR(?d), STR(?f)) = \"never\") }";
+
+/// 90,000 rows, then a branch that never yields one: the interrupt lands in `xNext`.
+const FLOW_THEN_NEVER: &str = "SELECT * WHERE { { ?a ?p ?b . ?c ?q ?d } UNION \
+    { ?e ?r ?f . ?g ?s ?h . ?i ?t ?j FILTER(CONCAT(STR(?f), STR(?h), STR(?j)) = \"never\") } }";
+
+/// Runs `sql`, interrupted from another thread after 300 ms; returns the error.
+fn interrupted(c: &Connection, sql: &str, p: &[&str]) -> rusqlite::Error {
+    let t = interrupt_after(c, 300);
+    let e = c.query_row(sql, rusqlite::params_from_iter(p), |r| r.get::<_, i64>(0)).unwrap_err();
+    t.join().unwrap();
+    e
+}
+
+fn assert_sparql_interrupt(e: &rusqlite::Error, what: &str) {
+    assert_eq!(e.sqlite_error_code(), Some(rusqlite::ErrorCode::OperationInterrupted), "{what}: {e}");
+    assert_eq!(e.to_string(), "sparql: interrupted", "{what}");
+}
+
+/// A scan reports an interrupt that sparqlite notices (planning, fetching a batch, decoding a
+/// column) like the scalar functions do, `sparql: interrupted`, and keeps `SQLITE_INTERRUPT`.
+#[test]
+fn an_interrupted_scan_says_sparql_interrupted_with_sqlite_interrupt() {
+    let c = big();
+    let quoted = |q: &str| format!("'{}'", q.replace('\'', "''"));
+    c.execute_batch(&format!(
+        "CREATE VIRTUAL TABLE temp.never USING sparql_view({});
+         CREATE VIRTUAL TABLE temp.never_sql USING sparql_view({}, engine=sql);
+         CREATE VIRTUAL TABLE temp.flow USING sparql_view({});",
+        quoted(NEVER),
+        quoted(NEVER),
+        quoted(FLOW_THEN_NEVER)
+    ))
+    .unwrap();
+    // xFilter: the first batch never fills.
+    let e = interrupted(&c, "SELECT count(*) FROM sparql_rows(?1)", &[NEVER]);
+    assert_sparql_interrupt(&e, "sparql_rows xFilter");
+    let e = interrupted(&c, "SELECT count(*) FROM sparql_rows(?1, '{\"engine\":\"sql\"}')", &[NEVER]);
+    assert_sparql_interrupt(&e, "sparql_rows xFilter, baseline engine");
+    assert_sparql_interrupt(&interrupted(&c, "SELECT count(*) FROM never", &[]), "sparql_view xFilter");
+    assert_sparql_interrupt(&interrupted(&c, "SELECT count(*) FROM never_sql", &[]), "sparql_view xFilter, sql");
+    // xNext: batches flowed before the interrupt.
+    let flowing =
+        [("SELECT count(*) FROM sparql_rows(?1)", &[FLOW_THEN_NEVER][..]), ("SELECT count(*) FROM flow", &[])];
+    for (sql, p) in flowing {
+        let rows = status_i64(&c, "rows_emitted");
+        assert_sparql_interrupt(&interrupted(&c, sql, p), sql);
+        assert!(status_i64(&c, "rows_emitted") - rows >= 1024, "{sql}: interrupted in xNext");
+    }
+    assert_eq!(status_i64(&c, "open_cursors"), 0);
+}
+
+/// An interrupt that an `xColumn` call notices (here the dictionary probe behind an `id*` /
+/// `__id` column of a computed term) keeps `SQLITE_INTERRUPT` too: rusqlite's column error
+/// path would report `SQLITE_ERROR`.
+#[test]
+fn an_interrupt_noticed_in_xcolumn_keeps_sqlite_interrupt() {
+    let c = big();
+    let h = c.get_interrupt_handle();
+    c.create_scalar_function("interrupt_now", 0, rusqlite::functions::FunctionFlags::SQLITE_UTF8, move |_| {
+        h.interrupt();
+        Ok(1i64)
+    })
+    .unwrap();
+    const COMPUTED: &str = "SELECT ?c WHERE { ?s ?p ?o BIND(CONCAT(STR(?o), \" is a computed long string\") AS ?c) }";
+    c.execute_batch(&format!("CREATE VIRTUAL TABLE temp.computed USING sparql_view('{COMPUTED}')")).unwrap();
+    for (sql, p) in [
+        ("SELECT interrupt_now(), id0 FROM sparql_rows(?1)", &[COMPUTED][..]),
+        ("SELECT interrupt_now(), c__id FROM computed", &[]),
+    ] {
+        let e = c.query_row(sql, rusqlite::params_from_iter(p), |r| r.get::<_, Option<i64>>(1)).unwrap_err();
+        assert_sparql_interrupt(&e, sql);
+        // Nothing is left interrupted.
+        assert_eq!(one::<i64>(&c, "SELECT count(*) FROM computed"), 300);
+    }
+}
+
+/// Rows flowing: whichever side notices the interrupt first reports it. SQLite's own check
+/// between rows (the VDBE loop) says `interrupted`, sparqlite's `sparql: interrupted`; the
+/// code is SQLITE_INTERRUPT either way.
+#[test]
+fn an_interrupted_flowing_scan_always_reports_sqlite_interrupt() {
+    let c = big();
+    for sql in ["SELECT count(*) FROM sparql_rows(?1)", "SELECT max(v0) FROM sparql_rows(?1)"] {
+        let e = interrupted(&c, sql, &[ENDLESS]);
+        assert_eq!(e.sqlite_error_code(), Some(rusqlite::ErrorCode::OperationInterrupted), "{sql}: {e}");
+        assert!(["sparql: interrupted", "interrupted"].contains(&e.to_string().as_str()), "{sql}: {e}");
+    }
+}
+
 #[test]
 fn timeout_ms_bounds_a_query() {
     let c = big();
@@ -73,6 +165,40 @@ fn timeout_ms_bounds_a_query() {
         .query_row("SELECT count(*) FROM sparql_rows(?1, '{\"timeout_ms\": 50}')", [ENDLESS], |r| r.get::<_, i64>(0))
         .unwrap_err();
     assert!(e.to_string().contains("timeout"), "{e}");
+}
+
+/// Per-call options may lower the connection's limits, never raise or remove them: a
+/// `sparql_rows` call or `sparql_view` table stored in a database file from someone else
+/// cannot lift a limit the application set.
+#[test]
+fn per_call_options_cannot_lift_the_connection_limits() {
+    let c = big();
+    c.query_row("SELECT sparql_config('timeout_ms', 100)", [], |_| Ok(())).unwrap();
+    c.execute_batch(&format!(
+        "CREATE VIRTUAL TABLE temp.endless USING sparql_view('{ENDLESS}', timeout_ms=600000)"
+    ))
+    .unwrap();
+    for (sql, opts) in [
+        ("SELECT count(*) FROM sparql_rows(?1, ?2)", "{\"timeout_ms\": 0}"),
+        ("SELECT count(*) FROM sparql_rows(?1, ?2)", "{\"timeout_ms\": 600000, \"engine\": \"sql\"}"),
+        ("SELECT count(*) FROM endless WHERE ?1 IS NOT NULL AND ?2 IS NOT NULL", ""),
+        ("SELECT count(*) FROM endless WHERE opts = ?2 AND ?1 IS NOT NULL", "{\"timeout_ms\": 0}"),
+    ] {
+        let start = Instant::now();
+        let e = c.query_row(sql, [ENDLESS, opts], |r| r.get::<_, i64>(0)).unwrap_err();
+        assert!(e.to_string().contains("sparql: query timeout"), "{sql} {opts}: {e}");
+        assert!(start.elapsed() < Duration::from_secs(20), "{sql} {opts}");
+    }
+    c.query_row("SELECT sparql_config('timeout_ms', 0)", [], |_| Ok(())).unwrap();
+    c.query_row("SELECT sparql_config('max_memory_mb', 1)", [], |_| Ok(())).unwrap();
+    let e = c
+        .query_row(
+            "SELECT count(*) FROM sparql_rows(?1, '{\"max_memory_mb\": 4096}')",
+            ["SELECT DISTINCT ?a ?c ?e WHERE { ?a ?p ?b . ?c ?q ?d . ?e ?r ?f }"],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap_err();
+    assert!(e.to_string().contains("memory budget exceeded (1 MB)"), "{e}");
 }
 
 #[test]

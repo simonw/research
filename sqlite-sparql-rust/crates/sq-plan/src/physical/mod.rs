@@ -367,16 +367,12 @@ impl<'a> Planner<'a> {
     }
 
     /// Cost of `Op::Count` over `p`: the executor's fast path when `p` has one (§7.3.6), else
-    /// iterating its rows. A factorized merge produces none of its output rows (their cost is
-    /// the per-row term of the join's estimate, see `choice` and `star`).
+    /// iterating its rows. A factorized merge produces none of its output rows and buffers none
+    /// of its runs (their cost is in the join's estimate, see `choice` and `star`).
     fn count_cost(&self, p: &Plan) -> f64 {
         match count_fast_path(p, self.dataset) {
             Some(FastCount::Scan) => self.costs.seek_random + p.est_rows * self.costs.vdbe_count_row,
-            Some(FastCount::Merge) => (p.est_cost_ns - p.est_rows * self.row_copy()).max(0.0),
-            Some(FastCount::Star) => {
-                let k = factorized_inputs(p);
-                (p.est_cost_ns - p.est_rows * self.star_row_cost(k)).max(0.0)
-            }
+            Some(FastCount::Merge | FastCount::Star) => (p.est_cost_ns - self.count_free(p)).max(0.0),
             None => p.est_cost_ns + p.est_rows * self.costs.row_copy_per_slot,
         }
     }
@@ -510,16 +506,6 @@ pub(crate) fn count_fast_path(p: &Plan, dataset: &DatasetSpec) -> Option<FastCou
         Op::StarMerge { check, .. } if check.is_empty() => Some(FastCount::Star),
         Op::Extend { input, .. } | Op::Project { input, .. } => count_fast_path(input, dataset),
         _ => None,
-    }
-}
-
-/// The number of inputs of the StarMerge a count is factorized over (through Extend and
-/// Project, as [`count_fast_path`] looks).
-fn factorized_inputs(p: &Plan) -> usize {
-    match &p.op {
-        Op::StarMerge { inputs, .. } => inputs.len(),
-        Op::Extend { input, .. } | Op::Project { input, .. } => factorized_inputs(input),
-        _ => 1,
     }
 }
 

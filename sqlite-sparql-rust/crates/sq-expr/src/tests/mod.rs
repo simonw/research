@@ -5,6 +5,7 @@ mod harness;
 
 mod aggregates;
 mod bench;
+mod decoding;
 mod equality;
 mod functions;
 mod interning;

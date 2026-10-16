@@ -315,8 +315,11 @@ pub(crate) fn test(n: &Node, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<
         }
         Node::Regex { text, src } => {
             let text = tri!(string_arg(text, row, cx));
-            let re = tri!(regex(src, row, cx));
-            Some(re.is_match(&text.s))
+            match src {
+                // Borrowed from the node: no reference count traffic per row.
+                RegexSrc::Const(c) => Some(opt!(const_regex(c, cx)?).is_match(&text.s)),
+                RegexSrc::Dynamic { .. } => Some(tri!(regex(src, row, cx)).is_match(&text.s)),
+            }
         }
         Node::Const(..)
         | Node::Slot(_)
@@ -432,14 +435,40 @@ fn value_arg(n: &Node, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<Value>
     value_of_val(v, cx).map(Some)
 }
 
+/// Evaluates a string argument to a value. An id that cannot hold a string literal gives
+/// `None` (a type error) without being decoded: only STR and SHORTSTR ids hold simple /
+/// xsd:string literals and only LANG ids language-tagged ones (`codec::dict_tag`,
+/// `TempDict::intern`). `lang` says whether language-tagged strings are accepted.
+#[inline]
+fn tagged_value_arg(n: &Node, row: &[TermId], cx: &mut EvalCtx, lang: bool) -> Result<Option<Value>> {
+    match n {
+        Node::Const(_, Some(v)) => Ok(Some(v.clone())),
+        Node::Slot(s) => string_value_of(opt!(slot(row, *s)), cx, lang),
+        n => match tri!(eval(n, row, cx)) {
+            Val::Id(id) => string_value_of(id, cx, lang),
+            Val::V(v) | Val::Typed { value: v, .. } => Ok(Some(v)),
+        },
+    }
+}
+
+/// The value of a string id (STR, SHORTSTR and, if `lang`, LANG); None for any other id.
+#[inline]
+fn string_value_of(id: TermId, cx: &mut EvalCtx, lang: bool) -> Result<Option<Value>> {
+    match effective_tag(id) {
+        Tag::Str | Tag::ShortStr => value_of(id, cx).map(Some),
+        Tag::Lang if lang => value_of(id, cx).map(Some),
+        _ => Ok(None),
+    }
+}
+
 /// Evaluates a node as a string literal (simple, xsd:string or language-tagged).
 fn string_arg(n: &Node, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<StrArg>> {
-    Ok(StrArg::from_value(tri!(value_arg(n, row, cx))))
+    Ok(StrArg::from_value(tri!(tagged_value_arg(n, row, cx, true))))
 }
 
 /// Evaluates a node as a simple literal / xsd:string.
 fn simple_string(n: &Node, row: &[TermId], cx: &mut EvalCtx) -> Result<Option<Arc<str>>> {
-    Ok(match tri!(value_arg(n, row, cx)) {
+    Ok(match tri!(tagged_value_arg(n, row, cx, false)) {
         Value::Str(s) => Some(s),
         _ => None,
     })
@@ -465,6 +494,16 @@ fn build_const_regex(c: &ConstRegex, cx: &mut EvalCtx) -> Result<Option<Arc<Comp
         None => "".into(),
     };
     Ok(crate::regex::compile(&pattern, &flags).map(Arc::new))
+}
+
+/// The compiled regex of a constant pattern, compiled on first use. Ok(None) = invalid.
+#[inline]
+fn const_regex<'a>(c: &'a ConstRegex, cx: &mut EvalCtx) -> Result<Option<&'a CompiledRegex>> {
+    if let Some(r) = c.cell.get() {
+        return Ok(r.as_deref());
+    }
+    let r = build_const_regex(c, cx)?;
+    Ok(c.cell.get_or_init(|| r).as_deref())
 }
 
 /// The compiled regex of a REGEX / REPLACE call (constant: compiled once; dynamic: cached

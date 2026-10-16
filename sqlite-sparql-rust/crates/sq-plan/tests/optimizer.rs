@@ -641,3 +641,115 @@ fn left_joins_keep_left_order_for_merges_above() {
     let left_join = nodes(&p).into_iter().find(|n| is_left_join(&n.op)).unwrap();
     assert_eq!(left_join.sorted_by, Some(slot(&p, "x")), "{}", sq_plan::explain(&p, None));
 }
+
+/// The joins of a plan that merge on `key` alone while checking other shared slots.
+fn merges_checking_others(p: &QueryPlan, key: u16) -> usize {
+    count(p, |o| match o {
+        Op::MergeJoin { key: k, check, .. } | Op::StarMerge { key: k, check, .. } => *k == key && !check.is_empty(),
+        _ => false,
+    })
+}
+
+/// A join on two keys of which one has few values (spec §7.5 MergeJoin): the last pattern of
+/// `?a :knows ?b . ?b :knows ?c . ?a :livesIn ?city . ?c :livesIn ?city` shares ?c and ?city
+/// with the prefix. A merge on ?city alone compares every prefix row with the whole run of its
+/// city (|L| × |R| / cities pairs) before it checks ?c: the tutorial's 100K-person version of
+/// that plan ran 55 s against 0.25 s. The planner pays for those pairs, so it merges on the
+/// selective key (checking the city) or hashes on both keys; PreferMerge picks the selective
+/// key. The estimate of the two-key join backs the keys off instead of multiplying them, which
+/// stays near the truth when friends of friends tend to live in the same city (independent keys
+/// underestimate it 5.7× with 20 cities). Before the fix, PreferMerge merged on ?city here, and
+/// Auto did from about 33K people on (where hash tables leave L2: see the next test).
+#[test]
+fn many_to_many_merges_pay_for_their_run_products() {
+    let rows = "SELECT ?a ?c { ?a :knows ?b . ?b :knows ?c . ?a :livesIn ?city . ?c :livesIn ?city }";
+    let counted = "SELECT (COUNT(*) AS ?n) { ?a :knows ?b . ?b :knows ?c . ?a :livesIn ?city . ?c :livesIn ?city }";
+    for cities in [4, 20] {
+        let ttl = city_ttl(4_000, cities);
+        let mem = sq_memstore::MemStore::new();
+        load_ttl(&mem, &ttl, None);
+        mem.analyze();
+        let db = Sqlite::new();
+        db.load(&ttl, None);
+        db.store.analyze().unwrap();
+        let expected_rows = oracle(&lower(rows, &mem), &mem).unwrap();
+        let expected_count = oracle(&lower(counted, &mem), &mem).unwrap();
+        let actual = expected_rows.len() as f64;
+        let stores: [(&str, Rc<dyn QuadStore>); 2] =
+            [("mem", Rc::new(mem.clone())), ("sqlite", Rc::new(db.store.clone()))];
+        for (name, st) in stores {
+            for policy in [JoinPolicy::Auto, JoinPolicy::NoSql, JoinPolicy::PreferMerge] {
+                for (q, expected) in [(rows, &expected_rows), (counted, &expected_count)] {
+                    let opts = with(policy);
+                    let p = plan_on(q, &*st, &opts);
+                    let text = sq_plan::explain(&p, None);
+                    let tag = format!("[{name} {cities} cities {policy:?}] {q}\n{text}");
+                    assert_eq!(merges_checking_others(&p, slot(&p, "city")), 0, "{tag}");
+                    // The group's top join, within 2× of the 15.6K (4 cities) or 10.3K rows.
+                    let top = nodes(&p).into_iter().find(|n| is_join(&n.op)).expect("a join");
+                    assert!(top.est_rows > actual / 2.0 && top.est_rows < actual * 2.0, "{actual} rows: {tag}");
+                    assert_eq!(&execute(Rc::clone(&st), p, &opts).unwrap(), expected, "{tag}");
+                }
+            }
+        }
+    }
+}
+
+/// [`many_to_many_merges_pay_for_their_run_products`] where Auto went wrong: with 40K people,
+/// a hash table of the 40K `:livesIn` rows uses the `_large` constants, which made the sort-
+/// based merges look cheaper, and the merge on ?city (2.6e8 pairs) looked cheapest of them.
+#[test]
+fn auto_avoids_merging_on_a_low_cardinality_key_at_scale() {
+    let rows = "SELECT ?a ?c { ?a :knows ?b . ?b :knows ?c . ?a :livesIn ?city . ?c :livesIn ?city }";
+    let mem = sq_memstore::MemStore::new();
+    load_ttl(&mem, &city_ttl(40_000, 20), None);
+    mem.analyze();
+    let st: Rc<dyn QuadStore> = Rc::new(mem.clone());
+    let hash_plan = plan_with(rows, &mem, &with(JoinPolicy::PreferHash));
+    let hashed = execute(Rc::clone(&st), hash_plan, &Default::default()).unwrap();
+    for costs in [sq_core::stats::MEMORY_COSTS, sq_core::stats::BTREE_COSTS, sq_core::stats::SQL_CURSOR_COSTS] {
+        mem.set_costs(costs);
+        let p = plan_with(rows, &mem, &QueryOptions::default());
+        let text = sq_plan::explain(&p, None);
+        assert_eq!(merges_checking_others(&p, slot(&p, "city")), 0, "{text}");
+        assert_eq!(execute(Rc::clone(&st), p, &QueryOptions::default()).unwrap().len(), hashed.len(), "{text}");
+    }
+}
+
+/// The largest buffer of a plan in bytes as the executor charges it (8 bytes per slot plus
+/// about 24 per row): SortBySlot enforcers and hash tables (their build side).
+fn largest_buffer(p: &QueryPlan) -> f64 {
+    let row = p.width() as f64 * 8.0 + 24.0;
+    nodes(p)
+        .into_iter()
+        .filter_map(|n| match &n.op {
+            Op::SortBySlot { input, .. } => Some(input.est_rows * row),
+            Op::HashJoin { build, .. } => Some(build.est_rows * row),
+            _ => None,
+        })
+        .fold(0.0, f64::max)
+}
+
+/// A SortBySlot enforcer or a hash table estimated over `max_memory_mb` would stop the query
+/// ("memory budget exceeded"), so the planner takes a plan whose buffers fit when there is one
+/// (here: bind joins and merges of index-sorted scans), and the plan still runs.
+#[test]
+fn buffers_over_the_memory_budget_are_avoided() {
+    let q = "SELECT ?a ?c { ?a :knows ?b . ?b :knows ?c . ?a :livesIn ?city . ?c :livesIn ?city }";
+    let mem = sq_memstore::MemStore::new();
+    load_ttl(&mem, &city_ttl(20_000, 20), None);
+    mem.analyze();
+    let st: Rc<dyn QuadStore> = Rc::new(mem.clone());
+    let expected = oracle(&lower(q, &mem), &mem).unwrap();
+    let roomy = plan_with(q, &mem, &QueryOptions::default());
+    let budget = 1024.0 * 1024.0;
+    // The unconstrained plan sorts or hashes more than 1 MB (at least the 20K `:livesIn` rows).
+    assert!(largest_buffer(&roomy) > budget, "{}", sq_plan::explain(&roomy, None));
+    for policy in [JoinPolicy::Auto, JoinPolicy::NoSql] {
+        let tight = QueryOptions { max_memory_mb: 1, join_policy: policy, ..Default::default() };
+        let p = plan_with(q, &mem, &tight);
+        let text = sq_plan::explain(&p, None);
+        assert!(largest_buffer(&p) <= budget, "{policy:?}: {text}");
+        assert_eq!(execute(Rc::clone(&st), p, &tight).unwrap(), expected, "{policy:?}: {text}");
+    }
+}

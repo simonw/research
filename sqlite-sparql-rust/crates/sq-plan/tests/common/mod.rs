@@ -128,6 +128,34 @@ pub fn social_ttl(n: usize) -> String {
     ttl
 }
 
+/// Turtle (with its prefix) of `n` people living in `cities` cities (`:livesIn`, one each, `n`
+/// a multiple of `cities`) who `:knows` three people each, half of them of their own city:
+/// joins on the city are many-to-many over a low-cardinality key, and the city of a friend of
+/// a friend is correlated with one's own (as in the tutorial's synthetic network).
+pub fn city_ttl(n: usize, cities: usize) -> String {
+    let mut ttl = String::from("@prefix : <http://ex/> .\n");
+    let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut next = || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    let per_city = (n / cities) as u64;
+    for i in 0..n {
+        ttl.push_str(&format!(":p{i} :livesIn :c{} .\n", i % cities));
+        for _ in 0..3 {
+            let j = if next() % 2 == 0 {
+                (next() % per_city) as usize * cities + i % cities
+            } else {
+                (next() % n as u64) as usize
+            };
+            ttl.push_str(&format!(":p{i} :knows :p{j} .\n"));
+        }
+    }
+    ttl
+}
+
 /// An in-memory SQLite store (schema initialized, statement pool armed) on its own
 /// connection. Fields drop in order: the store, then the connection; executions holding the
 /// store must be dropped before it.

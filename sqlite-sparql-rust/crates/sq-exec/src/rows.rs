@@ -127,6 +127,20 @@ impl Pull {
         out: &mut Batch,
         mut keep: impl FnMut(&mut crate::ctx::ExecCtx, &[TermId]) -> Result<bool>,
     ) -> Result<bool> {
+        self.pump_with(cx, input, out, |_, _| Ok(()), |cx, _, row| keep(cx, row))
+    }
+
+    /// [`Pull::pump`], calling `refilled` with each new input batch before its rows are
+    /// visited (Filter prefetches the terms its expression decodes); `keep` also gets the
+    /// row's index in that batch.
+    pub fn pump_with(
+        &mut self,
+        cx: &mut crate::ctx::ExecCtx,
+        input: &mut dyn crate::ops::Operator,
+        out: &mut Batch,
+        mut refilled: impl FnMut(&mut crate::ctx::ExecCtx, &Batch) -> Result<()>,
+        mut keep: impl FnMut(&mut crate::ctx::ExecCtx, usize, &[TermId]) -> Result<bool>,
+    ) -> Result<bool> {
         let mut ask = sq_core::BATCH_ROWS.saturating_sub(out.len()).max(1);
         loop {
             while self.pos < self.b.len() {
@@ -135,7 +149,7 @@ impl Pull {
                 }
                 let row = self.b.row(self.pos);
                 self.pos += 1;
-                if keep(cx, row)? {
+                if keep(cx, self.pos - 1, row)? {
                     out.push_row(row);
                 }
             }
@@ -148,6 +162,7 @@ impl Pull {
             self.b.clear();
             self.pos = 0;
             self.more = input.next_limited(cx, &mut self.b, ask)?;
+            refilled(cx, &self.b)?;
             ask = (ask * 2).min(sq_core::BATCH_ROWS);
         }
     }

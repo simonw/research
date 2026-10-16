@@ -29,6 +29,105 @@ fn filter_errors_are_false() {
     assert_eq!(Q::new(&fx.store, 1, f).rows(fx.rc()), vec![vec![int(1)]]);
 }
 
+fn regex(text: Expr, pattern: &str) -> Expr {
+    Expr::Call(Function::Regex, vec![text, cv(sq_core::codec::encode_short_str(pattern).unwrap())])
+}
+
+/// `?0` values of every id class over several batches: long strings (dictionary STR), language
+/// strings (dictionary LANG), IRIs, short strings (inline) and integers, with repeats.
+fn mixed_strings(fx: &Fx, n: usize) -> (Vec<TermId>, Vec<Option<String>>) {
+    let mut ids = Vec::new();
+    let mut strs = Vec::new();
+    for i in 0..n {
+        let (id, s) = match i % 6 {
+            0 => (fx.lit(&format!("dictionary string {i}")), Some(format!("dictionary string {i}"))),
+            1 => {
+                let t = oxrdf::Literal::new_language_tagged_literal_unchecked(format!("label {i}"), "en");
+                (fx.store.intern(t.as_ref().into()).unwrap(), Some(format!("label {i}")))
+            }
+            2 => (fx.iri(&format!("i{i}")), None),
+            3 => (sq_core::codec::encode_short_str(&format!("s{}", i % 50)).unwrap(), Some(format!("s{}", i % 50))),
+            4 => (int(i as i64), None),
+            // A repeated dictionary string (cached by the ValueCache after its second decode).
+            _ => (fx.lit("a repeated dictionary string 1"), Some("a repeated dictionary string 1".into())),
+        };
+        ids.push(id);
+        strs.push(s);
+    }
+    (ids, strs)
+}
+
+/// FILTER(REGEX(?0, ..)) decodes its input batch's dictionary strings in one store call and
+/// evaluates every row from that batch: no row decodes on its own.
+#[test]
+fn filter_prefetches_the_strings_it_decodes() {
+    let fx = Fx::new();
+    let (ids, strs) = mixed_strings(&fx, 3000);
+    let rows: Vec<Vec<TermId>> = ids.iter().map(|id| vec![*id]).collect();
+    let mut e = Q::new(&fx.store, 1, filter(values(&[0], rows), regex(sv(0), "1$"))).exec(fx.rc());
+    let got = collect(&mut e).unwrap();
+    let want: Vec<Vec<TermId>> =
+        ids.iter().zip(&strs).filter(|(_, s)| s.as_ref().is_some_and(|s| s.ends_with('1'))).map(|(id, _)| vec![*id]).collect();
+    assert_eq!(got, want);
+    let dict = ids.iter().filter(|id| id.is_dict() && matches!(id.tag(), sq_core::Tag::Str | sq_core::Tag::Lang)).count();
+    let p = e.profile();
+    assert_eq!(p.decode_misses, dict as u64, "each dictionary string is requested once, in a batch");
+    // Every row decoding a string found it prefetched; the repeated string is decoded twice,
+    // then served by the ValueCache.
+    assert_eq!(p.decode_hits, (dict - (3000 / 6) + 2) as u64);
+    // A FILTER that does not decode strings first prefetches nothing.
+    let rows: Vec<Vec<TermId>> = ids.iter().map(|id| vec![*id]).collect();
+    let f = Expr::And(Box::new(Expr::Bound(0)), Box::new(regex(sv(0), "1$")));
+    let mut e = Q::new(&fx.store, 1, filter(values(&[0], rows), f)).exec(fx.rc());
+    assert_eq!(collect(&mut e).unwrap(), want);
+    assert_eq!(e.profile().decode_hits, 0);
+}
+
+/// An EXISTS evaluated inside a prefetching FILTER runs its own prefetching FILTER, which
+/// replaces the outer batch's terms: the outer rows then decode on their own, with the same
+/// results.
+#[test]
+fn nested_prefetches_stay_correct() {
+    let fx = Fx::new();
+    let (name, tag) = (fx.iri("name"), fx.iri("tag"));
+    let mut want = Vec::new();
+    for k in 0..1500 {
+        let x = fx.iri(&format!("x{k}"));
+        let n = fx.lit(&format!("the name {k}"));
+        fx.add(x, name, n);
+        fx.add(x, tag, fx.lit(&format!("the tag value {}", k % 7)));
+        if k % 10 == 1 && k % 7 == 3 {
+            want.push(vec![x, n, u()]);
+        }
+    }
+    let inner = filter(scan(v(0), c(tag), v(2)), regex(sv(2), "3$"));
+    let outer = Expr::And(Box::new(regex(sv(1), "1$")), Box::new(Expr::Exists(sq_core::ir::ExistsId(0))));
+    let got = Q::new(&fx.store, 3, filter(scan(v(0), c(name), v(1)), outer)).exists(vec![inner]).sorted(fx.rc());
+    assert_eq!(got, ms(want));
+}
+
+/// BIND(UCASE(?0)) prefetches like FILTER, including over an input that already has rows in
+/// the output batch.
+#[test]
+fn extend_prefetches_the_strings_it_decodes() {
+    let fx = Fx::new();
+    let (ids, strs) = mixed_strings(&fx, 2500);
+    let rows: Vec<Vec<TermId>> = ids.iter().map(|id| vec![*id]).collect();
+    let ucase = Expr::Call(Function::UCase, vec![sv(0)]);
+    let mut e = Q::new(&fx.store, 2, extend(values(&[0], rows), 1, ucase)).exec(fx.rc());
+    let got = collect(&mut e).unwrap();
+    assert_eq!(got.len(), ids.len());
+    let shown = show(&mut e, &got.iter().map(|r| r[1]).collect::<Vec<_>>());
+    for ((row, s), shown) in got.iter().zip(&strs).zip(&shown) {
+        match s {
+            None => assert_eq!(row[1], u()),
+            Some(s) if row[0].tag() == sq_core::Tag::Lang => assert_eq!(*shown, format!("\"{}\"@en", s.to_uppercase())),
+            Some(s) => assert_eq!(*shown, format!("\"{}\"", s.to_uppercase())),
+        }
+    }
+    assert!(e.profile().decode_hits > 0);
+}
+
 #[test]
 fn extend_errors_leave_the_slot_unbound_and_canonical_ids() {
     let fx = Fx::new();

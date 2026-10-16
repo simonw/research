@@ -157,20 +157,55 @@ pub(crate) fn prepare_lowered(st: &ConnState, lowered: LoweredQuery, opts: &Quer
 
 /// Serializes the whole result (`sparql_query`, `sparql_query_sql`). `fmt` None picks the
 /// form's default (JSON, or N-Triples for CONSTRUCT / DESCRIBE).
-pub(crate) fn write_output(run: &mut Run, fmt: Option<ResultFormat>) -> Result<String> {
+///
+/// `limit` is the connection's `SQLITE_LIMIT_LENGTH` ([`ConnState::length_limit`]): SQLite
+/// refuses a longer function result anyway, so serialization stops as soon as the text
+/// would exceed it instead of building all of it first. The memory a call can take for its
+/// result is then bounded as it is for SQLite's own `group_concat`.
+pub(crate) fn write_output(run: &mut Run, fmt: Option<ResultFormat>, limit: usize) -> Result<String> {
     let form = run.form();
     let fmt = fmt.unwrap_or(form.default_format());
     form.check_format(fmt)?;
-    let mut out = Vec::with_capacity(4096);
-    match form {
-        Form::Select => sq_results::write_solutions(run.solutions(), fmt, &mut out)?,
-        Form::Ask => {
-            let b = run.ask()?;
-            sq_results::write_boolean(b, fmt, &mut out)?;
-        }
-        Form::Graph => sq_results::write_triples(run.triples()?, fmt, &mut out)?,
+    let mut out = CappedOutput { buf: Vec::with_capacity(4096.min(limit)), limit, exceeded: false };
+    let written = match form {
+        Form::Select => sq_results::write_solutions(run.solutions(), fmt, &mut out),
+        Form::Ask => run.ask().and_then(|b| sq_results::write_boolean(b, fmt, &mut out)),
+        Form::Graph => run.triples().and_then(|t| sq_results::write_triples(t, fmt, &mut out)),
+    };
+    if out.exceeded {
+        return Err(Error::Sqlite {
+            code: rusqlite::ffi::SQLITE_TOOBIG,
+            msg: format!(
+                "string or blob too big: the serialized result is longer than this connection's \
+                 SQLITE_LIMIT_LENGTH ({limit} bytes)"
+            ),
+        });
     }
-    String::from_utf8(out).map_err(|e| Error::internal(format!("result serializer produced invalid UTF-8: {e}")))
+    written?;
+    String::from_utf8(out.buf).map_err(|e| Error::internal(format!("result serializer produced invalid UTF-8: {e}")))
+}
+
+/// The output buffer of [`write_output`]: refuses (with an I/O error the caller replaces)
+/// a write that would take it past `limit` bytes.
+struct CappedOutput {
+    buf: Vec<u8>,
+    limit: usize,
+    exceeded: bool,
+}
+
+impl std::io::Write for CappedOutput {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        if data.len() > self.limit - self.buf.len() {
+            self.exceeded = true;
+            return Err(std::io::Error::other("result longer than SQLITE_LIMIT_LENGTH"));
+        }
+        self.buf.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 /// The first projected value of the first solution (`sparql_value`; ASK gives its boolean,

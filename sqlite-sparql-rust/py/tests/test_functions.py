@@ -142,6 +142,87 @@ def test_directonly_functions_are_rejected_in_triggers_and_views(loaded):
     assert scalar(loaded, "SELECT n FROM counter") == TRIPLES
 
 
+def test_stored_views_and_triggers_call_readers_with_trusted_schema_off(loaded):
+    # The sqlite3 shell starts with trusted_schema OFF: stored schema objects may then call
+    # only SQLITE_INNOCUOUS functions. Every reader is; writers stay DIRECTONLY.
+    loaded.executescript(
+        """
+        CREATE VIEW first_name AS
+          SELECT sparql_value('SELECT ?n WHERE { ?s <http://ex/name> ?n } ORDER BY ?n') AS name;
+        CREATE VIEW summary AS
+          SELECT sparql_count('SELECT * WHERE { ?s ?p ?o }') AS n,
+                 sparql_query('SELECT ?n WHERE { <http://ex/bob> <http://ex/name> ?n }', 'csv') AS csv,
+                 sparql_term(sparql_term_id('<http://ex/alice>')) AS alice;
+        CREATE TABLE log(q TEXT, n INTEGER);
+        CREATE TRIGGER count_on_insert AFTER INSERT ON log
+          BEGIN UPDATE log SET n = sparql_count(NEW.q) WHERE rowid = NEW.rowid; END;
+        CREATE VIEW loader AS SELECT sparql_load('<http://ex/a> <http://ex/b> <http://ex/c> .', 'nt') AS n;
+        """
+    )
+    loaded.execute("PRAGMA trusted_schema = OFF")
+    assert scalar(loaded, "PRAGMA trusted_schema") == 0
+    assert scalar(loaded, "SELECT name FROM first_name") == "Alice"
+    assert loaded.execute("SELECT n, csv, alice FROM summary").fetchone() == (TRIPLES, "n\r\nBob\r\n", "<http://ex/alice>")
+    loaded.execute("INSERT INTO log(q) VALUES ('SELECT * WHERE { ?s <http://ex/age> ?a }')")
+    assert scalar(loaded, "SELECT n FROM log") == 3
+    with pytest.raises(sqlite3.OperationalError, match=r"unsafe use of sparql_load\(\)"):
+        loaded.execute("SELECT n FROM loader").fetchall()
+    # TEMP views and triggers are exempt from DIRECTONLY: only this connection creates them.
+    loaded.execute("CREATE TEMP VIEW temp_loader AS SELECT sparql_load('<http://ex/t> <http://ex/b> <http://ex/c> .', 'nt') AS n")
+    assert scalar(loaded, "SELECT n FROM temp_loader") == 1
+
+
+def test_writers_do_not_run_from_a_stored_check_constraint(tmp_path):
+    # SQLite applies SQLITE_DIRECTONLY to stored views, triggers and DEFAULT clauses, but not
+    # to CHECK constraints: a database file from someone else could otherwise rewrite the
+    # store or turn allow_files on when the application inserts a row or checks the file.
+    path = str(tmp_path / "check.db")
+    author = connect(path)
+    scalar(author, "SELECT sparql_load(?)", DATA)
+    author.executescript(
+        """
+        CREATE TABLE inbox(msg TEXT CHECK (length(msg) >= 0
+          AND sparql_config('allow_files', 1) IS NOT NULL
+          AND sparql_update('DELETE WHERE { ?s ?p ?o }') >= 0));
+        PRAGMA ignore_check_constraints = 1;
+        INSERT INTO inbox VALUES ('planted');
+        PRAGMA ignore_check_constraints = 0;
+        """
+    )
+    author.close()
+    conn = connect(path)
+    conn.execute("PRAGMA trusted_schema = OFF")
+    for sql in ("INSERT INTO inbox VALUES ('hi')", "UPDATE inbox SET msg = 'x'", "PRAGMA integrity_check"):
+        with pytest.raises(sqlite3.OperationalError, match=r"table main\.inbox names a sparqlite writer"):
+            conn.execute(sql).fetchall()
+    assert scalar(conn, "SELECT sparql_config('allow_files')") == "0"
+    assert scalar(conn, "SELECT sparql_count('SELECT * WHERE { ?s ?p ?o }')") == TRIPLES
+    # The application's own top-level calls still work.
+    assert scalar(conn, "SELECT sparql_update('INSERT DATA { <http://ex/a> <http://ex/b> 1 }')") == 1
+    conn.close()
+
+
+def test_term_id_names_the_usual_mistakes(loaded):
+    with pytest.raises(sqlite3.OperationalError, match=r'"ex:Python" \(ex:Python is a prefixed name') as e:
+        scalar(loaded, "SELECT sparql_term_id('ex:Python')")
+    assert "exponent" not in str(e.value)
+    with pytest.raises(sqlite3.OperationalError, match=r"an IRI needs angle brackets: <http://ex/alice>"):
+        scalar(loaded, "SELECT sparql_term_id('http://ex/alice')")
+    # Standard prefixes are expanded to their real IRIs.
+    with pytest.raises(sqlite3.OperationalError, match=r"in angle brackets: <http://www\.w3\.org/2001/XMLSchema#integer>"):
+        scalar(loaded, "SELECT sparql_term_id('xsd:integer')")
+
+
+def test_a_result_longer_than_the_length_limit_stops_early(loaded):
+    everything = "SELECT * WHERE { ?s ?p ?o }"
+    full = scalar(loaded, "SELECT sparql_query(?)", everything)
+    loaded.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 500)
+    assert len(full) > 500
+    with pytest.raises(sqlite3.OperationalError, match=r"^sparql: SQLite error 18: string or blob too big"):
+        scalar(loaded, "SELECT sparql_query(?)", everything)
+    assert scalar(loaded, "SELECT sparql_query(?, 'csv')", "SELECT ?n WHERE { <http://ex/bob> <http://ex/name> ?n }") == "n\r\nBob\r\n"
+
+
 def test_every_connection_needs_the_extension(tmp_path):
     path = str(tmp_path / "x.db")
     a = connect(path)

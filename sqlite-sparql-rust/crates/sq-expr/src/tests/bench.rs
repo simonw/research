@@ -89,6 +89,8 @@ fn bench_hot_paths() {
     b.filter(&mut h, "?x * 2 > 9 (inline decimals)", "?x * 2 > 9", &decs, &[]);
     b.filter(&mut h, "REGEX(?x, \"^abc string number 1\")", "REGEX(?x, \"^abc string number 1\")", &strs, &[]);
     b.filter(&mut h, "REGEX(?x, \"number [0-9]5$\")", "REGEX(?x, \"number [0-9]5$\")", &strs, &[]);
+    let ci = "REGEX(?x, \"^ABC string number 1[0-9]*5$\", \"i\")";
+    b.filter(&mut h, &format!("{ci} (ASCII affixes)"), ci, &strs, &[]);
     b.filter(&mut h, "CONTAINS(?x, \"99\")", "CONTAINS(?x, \"99\")", &strs, &[]);
     b.filter(&mut h, "STRLEN(?x) > 20", "STRLEN(?x) > 20", &strs, &[]);
     b.filter(&mut h, "LANG(?x) = \"en\" (LangEq)", "LANG(?x) = \"en\"", &langs, &[]);
@@ -108,6 +110,26 @@ fn bench_hot_paths() {
     // Dynamic regex: (pattern, flags) cache hit per row.
     let pats: Vec<TermId> = ["^abc string number 1", "number [0-9]5$", "9|8"].iter().map(|p| h.term(&format!("\"{p}\""))).collect();
     b.filter(&mut h, "REGEX(?x, ?y) (dynamic pattern, cached)", "REGEX(?x, ?y)", &strs, &pats);
+    // Every value distinct and decoded once (a FILTER over every name), on a fresh cache: the
+    // admission filter keeps them out of the ValueCache.
+    let name = "REGEX(?x, \"1$\") over distinct strings (single use)";
+    if b.selected(name) {
+        let c = h.compile("REGEX(?x, \"1$\")");
+        let rows: Vec<Vec<TermId>> = (0..b.rows)
+            .map(|i| {
+                let x = h.env.resolver.simple(&format!("person name {i}"));
+                h.row(&[("x", x)])
+            })
+            .collect();
+        h.env.values = crate::ValueCache::new();
+        let start = Instant::now();
+        h.env.with(|cx| {
+            for r in &rows {
+                black_box(c.ebv(r, cx).unwrap());
+            }
+        });
+        b.report(name, start);
+    }
 
     // BIND producing new terms (computed value → id); `canonical` as an Extend would pass it.
     for (name, expr, xs, canonical) in [

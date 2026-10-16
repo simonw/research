@@ -343,13 +343,22 @@ fn decimal_inline_id(d: Decimal) -> Option<TermId> {
 
 /// Default number of decoded values kept before the cache is reset.
 const DEFAULT_LIMIT: usize = 1 << 17;
+/// Slots of the admission filter (a power of two; 32 KiB of ids).
+const SEEN_SLOTS: usize = 1 << 12;
 
 /// Per-execution decoded-value cache (also holds the dynamic regex cache and the
 /// `BNODE(str)` scope). Bounded: the decoded values are cleared when they reach the entry
 /// limit; the `BNODE(str)` scope is bounded in bytes by two generations.
+///
+/// A decoded value enters the cache only on the second decode of its id (an admission
+/// filter): a FILTER over distinct values (REGEX over every name) decodes each id once and
+/// would only pay for inserts and rehashes, while repeated ids are cached from their second
+/// use. The filter is a direct-mapped table of recently decoded ids, allocated on first use.
 pub struct ValueCache {
     map: FxHashMap<TermId, Value>,
     limit: usize,
+    /// Admission filter: ids decoded once, at `hash(id) % SEEN_SLOTS` (UNBOUND = empty).
+    seen: Box<[TermId]>,
     pub(crate) regexes: crate::regex::RegexCache,
     pub(crate) bnodes: crate::bnode::BNodeScope,
 }
@@ -370,6 +379,7 @@ impl ValueCache {
         ValueCache {
             map: FxHashMap::default(),
             limit: limit.max(16),
+            seen: Box::default(),
             regexes: Default::default(),
             bnodes: Default::default(),
         }
@@ -383,8 +393,30 @@ impl ValueCache {
         self.map.is_empty()
     }
 
+    /// Empties the decoded values (the admission filter only holds ids, and stays).
     pub fn clear(&mut self) {
         self.map.clear();
+    }
+
+    #[inline]
+    fn get(&self, id: TermId) -> Option<&Value> {
+        if self.map.is_empty() { None } else { self.map.get(&id) }
+    }
+
+    /// True if `id` was decoded before (its value is then worth caching); otherwise records
+    /// it. Two ids sharing a slot evict each other, which only delays caching.
+    #[inline]
+    fn admit(&mut self, id: TermId) -> bool {
+        if self.seen.is_empty() {
+            self.seen = vec![TermId::UNBOUND; SEEN_SLOTS].into_boxed_slice();
+        }
+        let h = (id.0 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - SEEN_SLOTS.trailing_zeros());
+        let slot = &mut self.seen[h as usize];
+        if *slot == id {
+            return true;
+        }
+        *slot = id;
+        false
     }
 
     fn insert(&mut self, id: TermId, v: Value) {
@@ -404,23 +436,56 @@ pub fn is_present(id: TermId) -> bool {
 /// Decodes any bound id to its value: inline ids from the payload, everything else through
 /// the `ValueCache` and then `EvalCtx::resolver`.
 pub fn value_of(id: TermId, cx: &mut EvalCtx) -> Result<Value> {
-    if let Some(v) = inline_value(id) {
-        return Ok(v);
+    let tag = id.tag();
+    match tag {
+        Tag::Iri | Tag::BNode | Tag::Str | Tag::Lang | Tag::Typed | Tag::ShortStr | Tag::Temp if is_present(id) => {}
+        _ => {
+            return inline_value(id)
+                .ok_or_else(|| Error::internal(format!("sq-expr: cannot decode term id {}", id.0)));
+        }
     }
-    if !is_present(id) || matches!(id.tag(), Tag::Reserved12 | Tag::Reserved13) {
-        return Err(Error::internal(format!("sq-expr: cannot decode term id {}", id.0)));
-    }
-    if let Some(v) = cx.values.map.get(&id) {
+    if let Some(v) = cx.values.get(id) {
         return Ok(v.clone());
     }
-    let v = if id.tag() == Tag::ShortStr {
+    decode_value(id, tag, cx)
+}
+
+/// `value_of` of a non-inline id missing from the `ValueCache`: decodes it (SHORTSTR from
+/// its payload, others through the resolver) and caches the value on its second decode.
+#[inline(never)]
+fn decode_value(id: TermId, tag: Tag, cx: &mut EvalCtx) -> Result<Value> {
+    let v = if tag == Tag::ShortStr {
         let s = codec::decode_short_str(id).ok_or_else(|| Error::internal("sq-expr: invalid SHORTSTR id"))?;
         Value::Str(s.into())
     } else {
-        Value::from_term(&*cx.resolver.term(id)?)
+        let tag = if tag == Tag::Temp { id.temp_tag() } else { tag };
+        let t = cx.resolver.term(id)?;
+        value_of_term(tag, &t)
     };
-    cx.values.insert(id, v.clone());
+    if cx.values.admit(id) {
+        cx.values.insert(id, v.clone());
+    }
     Ok(v)
+}
+
+/// Value of the term of an id with (effective) tag `tag`. The tag decides the value class
+/// without a datatype comparison: a STR id is always an xsd:string literal, LANG a
+/// language-tagged literal (codec::dict_tag, TempDict::intern). Only TYPED literals are
+/// classified by datatype IRI.
+#[inline]
+fn value_of_term(tag: Tag, t: &Term) -> Value {
+    match (tag, t) {
+        (Tag::Str, Term::Literal(l)) if l.lang.is_none() => {
+            debug_assert_eq!(&*l.datatype, XSD_STRING_IRI);
+            Value::Str(l.lex.clone())
+        }
+        (Tag::Lang, Term::Literal(Literal { lex, lang: Some(lang), .. })) => {
+            Value::LangStr { lex: lex.clone(), lang: lang.clone() }
+        }
+        (Tag::Iri, Term::Iri(i)) => Value::Iri(i.clone()),
+        (Tag::BNode, Term::BNode(b)) => Value::BNode(b.clone()),
+        _ => Value::from_term(t),
+    }
 }
 
 /// Decodes a lazy value.
@@ -474,7 +539,11 @@ pub fn id_of_val(v: Val, cx: &mut EvalCtx, canonical: bool) -> Result<TermId> {
             cx.resolver.intern(&t, true)
         }
         Val::Id(id) => Ok(id),
-        Val::V(v) => id_of_value(&v, cx, canonical),
+        // `id_of_value`, with the inline-id test in this function (it is the common case).
+        Val::V(v) => match inline_id_of_value(&v) {
+            Some(id) => Ok(id),
+            None => cx.resolver.intern(&v.to_term(), canonical),
+        },
         Val::Typed { value, datatype, lex } => {
             let lex = Val::typed_lexical(&value, &lex);
             match codec::encode_inline_literal(&lex, datatype.iri(), None) {

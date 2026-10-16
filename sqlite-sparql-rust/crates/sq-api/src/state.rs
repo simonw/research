@@ -18,6 +18,14 @@
 //! once `main`'s read transaction has started, SQLite keeps it while any statement of the
 //! connection is still reading, and the host statement itself is one.
 //!
+//! **Nesting (R8).** Step 2 also bounds how deeply entries nest. sparqlite's own SQL reads
+//! `main`'s `rdf_*` tables, and a database file may make one of them a view (or give it a
+//! trigger) that calls sparqlite again; without a bound, such a file recursed until the host's
+//! stack overflowed. A nested entry is refused once [`MAX_ENTRY_DEPTH`] entries are active or
+//! once more than [`NESTED_STACK_BUDGET`] of stack lies between it and the outermost entry
+//! (the nested request then still has its own nesting budget, `nesting.rs`, of stack left).
+//! Writers never run nested ([`ConnState::direct_guard`]).
+//!
 //! **Re-entrancy (R1).** All mutable state sits in `Cell`s and `RefCell`s that are borrowed
 //! only for O(1) reads and writes, never across a call that steps a statement or returns to
 //! SQLite: the baseline engine's generated SQL calls this crate's helper functions while
@@ -79,6 +87,8 @@ pub(crate) struct ConnState {
     open_cursors: Cell<u32>,
     /// Nesting depth of API entries.
     depth: Cell<u32>,
+    /// Stack position of the outermost active entry (meaningful while `depth > 0`).
+    stack_base: Cell<usize>,
     /// Connected `sparql_status` instances (the close hook, §8.7).
     status_tabs: Cell<u32>,
     last_report: RefCell<ChangeReport>,
@@ -161,6 +171,7 @@ impl ConnState {
             parsed: RefCell::new(ParsedLru::default()),
             open_cursors: Cell::new(0),
             depth: Cell::new(0),
+            stack_base: Cell::new(0),
             status_tabs: Cell::new(0),
             last_report: RefCell::new(ChangeReport::default()),
             counters: Cell::new(ApiCounters::default()),
@@ -242,9 +253,8 @@ impl ConnState {
 
     // ------------------------------------------------------------------ entries
 
-    /// Starts an API entry (re-arm, depth, R7).
-    pub(crate) fn enter(&self) -> Entry<'_> {
-        self.rearm();
+    /// Starts an API entry (R7, the nesting bound R8, re-arm, depth).
+    pub(crate) fn enter(&self) -> Result<Entry<'_>> {
         let depth = self.depth.get();
         #[cfg(debug_assertions)]
         {
@@ -254,8 +264,136 @@ impl ConnState {
                 None => self.entry_thread.set(Some(me)),
             }
         }
+        let here = stack_position();
+        if depth == 0 {
+            self.stack_base.set(here);
+        } else {
+            let used = self.stack_base.get().abs_diff(here);
+            if depth >= MAX_ENTRY_DEPTH || used > NESTED_STACK_BUDGET {
+                return Err(Error::Unsupported(format!(
+                    "sparqlite calls nest too deeply ({depth} calls are active, {} KiB of stack in use): a view or \
+                     trigger that sparqlite's own SQL runs calls sparqlite again; check that the rdf_* objects of \
+                     this database are sparqlite's own tables",
+                    used >> 10
+                )));
+            }
+        }
+        self.rearm();
         self.depth.set(depth + 1);
-        Entry { st: self, depth }
+        Ok(Entry { st: self, depth })
+    }
+
+    /// Refuses a `SQLITE_DIRECTONLY` function (writers, file access, the `sparql_config`
+    /// setter; `functions/mod.rs` calls this before each of them) where SQLite's own guard does
+    /// not reach:
+    ///
+    /// 1. **Nested** inside another API entry: only schema code that sparqlite's own SQL fired
+    ///    (a trigger on, or a view in place of, an `rdf_*` table) can call it there.
+    /// 2. **From a stored CHECK constraint.** SQLite refuses DIRECTONLY functions in views,
+    ///    triggers and DEFAULT clauses stored in `main` or an attached database, and generated
+    ///    columns and index expressions accept only deterministic functions, but it lets a
+    ///    stored CHECK constraint call them (verified with SQLite 3.45.1, also for its own
+    ///    DIRECTONLY `readfile()`). A CHECK runs inside any INSERT or UPDATE of its table, also
+    ///    one that a trigger or the application issues, and inside `PRAGMA integrity_check` /
+    ///    `quick_check`. A function cannot tell which schema object called it, so while any
+    ///    table stored in `main` or an attached database names a DIRECTONLY function in its
+    ///    definition, the call must prove it is direct: the connection runs exactly one
+    ///    statement, that statement is read-only (no CHECK of any table can run in it, except in
+    ///    an integrity check), and its own SQL text calls the function by name (an integrity
+    ///    check does not). TEMP views and triggers keep working while no such table exists.
+    pub(crate) fn direct_guard(&self, name: &str) -> Result<()> {
+        if self.depth.get() > 0 {
+            return Err(Error::Invalid(format!(
+                "{name} cannot run inside another sparqlite call (a trigger or view that sparqlite's own SQL fired \
+                 called it)"
+            )));
+        }
+        // A call that is plainly direct needs no schema scan (the common `SELECT sparql_update(?)`
+        // costs a walk over the running statements, before any statement of our own exists).
+        let running = self.running_statements();
+        if matches!(running.as_slice(), [(true, sql)] if calls_by_name(sql, name)) {
+            return Ok(());
+        }
+        let Some(table) = self.table_naming_a_writer()? else {
+            return Ok(());
+        };
+        Err(Error::Invalid(format!(
+            "{name} refused: the definition of table {table} names a sparqlite writer, and SQLite lets a CHECK \
+             constraint stored in a database call SQLITE_DIRECTONLY functions; while such a table is in main or \
+             an attached database, writers run only from a top-level SELECT that calls them by name, with no \
+             other statement of this connection running"
+        )))
+    }
+
+    /// Every statement of the connection that is running (stepped and not yet reset): whether
+    /// it is read-only, and its SQL text.
+    fn running_statements(&self) -> Vec<(bool, String)> {
+        use rusqlite::ffi;
+        let db = self.db.as_ptr();
+        let mut out = Vec::new();
+        // SAFETY: we run inside a callback of this connection, which holds its mutex, so the
+        // list of its prepared statements cannot change while it is walked; `sqlite3_sql`
+        // returns NULL or a NUL-terminated string owned by the statement, copied at once.
+        unsafe {
+            let mut stmt = ffi::sqlite3_next_stmt(db, std::ptr::null_mut());
+            while !stmt.is_null() {
+                if ffi::sqlite3_stmt_busy(stmt) != 0 {
+                    let text = ffi::sqlite3_sql(stmt);
+                    let sql = if text.is_null() {
+                        String::new()
+                    } else {
+                        std::ffi::CStr::from_ptr(text).to_string_lossy().into_owned()
+                    };
+                    out.push((ffi::sqlite3_stmt_readonly(stmt) != 0, sql));
+                }
+                stmt = ffi::sqlite3_next_stmt(db, stmt);
+            }
+        }
+        out
+    }
+
+    /// The first table stored in `main` or an attached database (not TEMP: only the
+    /// connection itself creates objects there) whose definition mentions a DIRECTONLY
+    /// function, as `schema.table`. SQLite matches function names ignoring ASCII case only,
+    /// and an identifier cannot be spelled any other way, so a CHECK that calls one of them
+    /// contains its name.
+    fn table_naming_a_writer(&self) -> Result<Option<String>> {
+        use rusqlite::types::ValueRef;
+        let failed = |e: rusqlite::Error| match e {
+            rusqlite::Error::SqliteFailure(f, m) => {
+                Error::Sqlite { code: f.extended_code, msg: m.unwrap_or_else(|| f.to_string()) }
+            }
+            other => Error::internal(other.to_string()),
+        };
+        // SAFETY: a wrapper of this live connection that never closes it (`from_handle` is
+        // not owning); it and its statements are dropped before this call returns.
+        let conn = unsafe { rusqlite::Connection::from_handle(self.db.as_ptr()) }.map_err(failed)?;
+        let schemas: Vec<String> = {
+            let mut st = conn.prepare("SELECT name FROM pragma_database_list WHERE name <> 'temp'").map_err(failed)?;
+            st.query_map([], |r| r.get(0)).map_err(failed)?.collect::<rusqlite::Result<_>>().map_err(failed)?
+        };
+        for schema in schemas {
+            let sql = format!(
+                "SELECT name, sql FROM \"{}\".sqlite_schema WHERE type = 'table'",
+                schema.replace('"', "\"\"")
+            );
+            let mut st = conn.prepare(&sql).map_err(failed)?;
+            let mut rows = st.query([]).map_err(failed)?;
+            while let Some(row) = rows.next().map_err(failed)? {
+                let (ValueRef::Text(text) | ValueRef::Blob(text)) = row.get_ref(1).map_err(failed)? else {
+                    continue;
+                };
+                let text = text.to_ascii_lowercase();
+                if DIRECT_FUNCTIONS.iter().any(|f| text.windows(f.len()).any(|w| w == f.as_bytes())) {
+                    let table = match row.get_ref(0) {
+                        Ok(ValueRef::Text(t)) => String::from_utf8_lossy(t).into_owned(),
+                        _ => "?".into(),
+                    };
+                    return Ok(Some(format!("{schema}.{table}")));
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// Entry step 4: the §4.4 epoch check. An incompatible schema fails every call; an absent
@@ -269,7 +407,7 @@ impl ConnState {
 
     /// A reading entry whose work ends inside the call.
     pub(crate) fn read_call<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
-        let entry = self.enter();
+        let entry = self.enter()?;
         let scope = self.store.read_scope(entry.depth())?;
         self.validate()?;
         let out = f();
@@ -292,7 +430,7 @@ impl ConnState {
     /// own scope: loads, analyze, vacuum, schema creation — the refusal becomes an error naming
     /// the restriction.
     pub(crate) fn write_call<T>(&self, auto_init: bool, f: impl FnOnce() -> Result<T>) -> Result<T> {
-        let entry = self.enter();
+        let entry = self.enter()?;
         self.refuse_while_reading()?;
         if auto_init && !matches!(self.shared().schema_state()?, SchemaState::Ready { .. }) {
             // Outside the write scope: its schema read must not precede the write lock.
@@ -311,7 +449,7 @@ impl ConnState {
 
     /// A writing entry that manages its own scopes (`sparql_init`).
     pub(crate) fn writer_call<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
-        let _entry = self.enter();
+        let _entry = self.enter()?;
         self.refuse_while_reading()?;
         f().map_err(savepoint_refusal)
     }
@@ -359,6 +497,17 @@ impl ConnState {
 
     fn refuse_while_reading(&self) -> Result<()> {
         if self.open_cursors.get() > 0 { Err(Error::WriteWhileReading) } else { Ok(()) }
+    }
+
+    /// The connection's `SQLITE_LIMIT_LENGTH`: the longest TEXT or BLOB SQLite accepts as a
+    /// function result (1,000,000,000 bytes unless the application lowered it).
+    pub(crate) fn length_limit(&self) -> usize {
+        // SAFETY: `db` is the live connection (constructor contract); a negative new value
+        // only reads the current limit.
+        let n = unsafe {
+            rusqlite::ffi::sqlite3_limit(self.db.as_ptr(), rusqlite::ffi::SQLITE_LIMIT_LENGTH, -1)
+        };
+        usize::try_from(n).unwrap_or(0)
     }
 
     // ------------------------------------------------------------------ configuration
@@ -540,6 +689,41 @@ impl ConnState {
     }
 }
 
+/// Most API entries that may be active at once (R8). Legitimate nesting is shallow: a reader in
+/// a trigger on `rdf_quad` runs one level inside the writer whose INSERT fired it.
+pub(crate) const MAX_ENTRY_DEPTH: u32 = 8;
+
+/// Most stack a nested entry may find in use since the outermost entry began (R8). The nested
+/// request still parses within its own nesting budget (`nesting.rs`, about 1 MiB in the worst
+/// case), so the two together stay inside a 2 MiB thread stack. Legitimate nesting (a trigger
+/// fired by a writer's INSERT) measures far below this; see the crate README.
+pub(crate) const NESTED_STACK_BUDGET: usize = 384 << 10;
+
+/// The `SQLITE_DIRECTONLY` functions, lower case (`sparql_load` also matches
+/// `sparql_load_file`). Kept in step with `functions::register` by a unit test there.
+pub(crate) const DIRECT_FUNCTIONS: [&str; 6] =
+    ["sparql_init", "sparql_load", "sparql_update", "sparql_analyze", "sparql_vacuum_terms", "sparql_config"];
+
+/// An address in the current stack frame (the stack's direction does not matter to callers,
+/// which only compare distances).
+#[inline(always)]
+fn stack_position() -> usize {
+    let marker = 0u8;
+    std::hint::black_box(&marker) as *const u8 as usize
+}
+
+/// Whether `sql` calls the function `name` (ASCII case-insensitive, as SQLite resolves
+/// function names): the name as a whole identifier, followed by `(`.
+fn calls_by_name(sql: &str, name: &str) -> bool {
+    let (hay, needle) = (sql.as_bytes(), name.as_bytes());
+    let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80;
+    (0..hay.len().saturating_sub(needle.len() - 1)).any(|i| {
+        hay[i..i + needle.len()].eq_ignore_ascii_case(needle)
+            && (i == 0 || !ident(hay[i - 1]))
+            && hay[i + needle.len()..].iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'(')
+    })
+}
+
 /// Environment variable that enables the `debug_panic` hook in release builds (read when the
 /// connection registers). Production builds cannot arm the hook through SQL alone.
 pub(crate) const DEBUG_HOOKS_ENV: &str = "SPARQLITE_DEBUG_HOOKS";
@@ -589,13 +773,57 @@ mod tests {
         st.shared().disarm_and_finalize();
         assert!(!st.shared().is_armed());
         {
-            let outer = st.enter();
+            let outer = st.enter().unwrap();
             assert!(st.shared().is_armed(), "the next entry re-arms");
             assert_eq!(outer.depth(), 0);
-            let inner = st.enter();
+            let inner = st.enter().unwrap();
             assert_eq!(inner.depth(), 1);
         }
         assert_eq!(st.depth.get(), 0);
+    }
+
+    /// R8: nested entries stop at `MAX_ENTRY_DEPTH`, and at `NESTED_STACK_BUDGET` of stack
+    /// between the outermost entry and the nested one, whichever comes first.
+    #[test]
+    fn nested_entries_are_bounded_by_depth_and_stack() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let st = registered(&conn);
+        fn nest(st: &ConnState) -> u32 {
+            match st.enter() {
+                Ok(_e) => 1 + nest(st),
+                Err(e) => {
+                    assert!(e.to_string().contains("nest too deeply"), "{e}");
+                    0
+                }
+            }
+        }
+        assert_eq!(nest(&st), MAX_ENTRY_DEPTH);
+        assert_eq!(st.depth.get(), 0, "refused entries leave the depth as it was");
+        // Burn `kib` KiB of stack in 16 KiB frames, then try a nested entry.
+        #[inline(never)]
+        fn deep(st: &ConnState, kib: usize) -> bool {
+            let frame = [0u8; 16 << 10];
+            std::hint::black_box(&frame);
+            if kib <= 16 { st.enter().is_ok() } else { deep(st, kib - 16) }
+        }
+        let outer = st.enter().unwrap();
+        assert!(deep(&st, 64), "a shallow nested entry is fine");
+        assert!(!deep(&st, (NESTED_STACK_BUDGET >> 10) + 64), "one past the stack budget is refused");
+        drop(outer);
+        assert!(deep(&st, (NESTED_STACK_BUDGET >> 10) + 64), "an outermost entry has no stack bound");
+    }
+
+    #[test]
+    fn calls_by_name_needs_the_whole_name_and_a_parenthesis() {
+        assert!(calls_by_name("SELECT sparql_update(?1)", "sparql_update"));
+        assert!(calls_by_name("select SPARQL_Update ('x')", "sparql_update"));
+        assert!(calls_by_name("SELECT 1, sparql_config(\n'k', 2)", "sparql_config"));
+        assert!(!calls_by_name("PRAGMA integrity_check", "sparql_update"));
+        assert!(!calls_by_name("PRAGMA integrity_check(sparql_update)", "sparql_update"));
+        assert!(!calls_by_name("SELECT sparql_load_file('x')", "sparql_load"));
+        assert!(!calls_by_name("SELECT my_sparql_load('x')", "sparql_load"));
+        assert!(!calls_by_name("SELECT sparql_load", "sparql_load"));
+        assert!(!calls_by_name("", "sparql_load"));
     }
 
     #[test]

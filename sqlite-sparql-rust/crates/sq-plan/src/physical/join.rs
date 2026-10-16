@@ -57,6 +57,8 @@ const MAX_DP_UNITS: usize = 12;
 const MAX_DP_WORK: usize = 6_000;
 /// `sort_left` threshold (spec §7.5).
 pub(super) const SORT_LEFT_ROWS: f64 = 64.0;
+/// [`Group::unit_dv_index`] of a slot whose distinct values are not computed yet.
+pub(super) const NO_DVS: u16 = u16::MAX;
 
 #[derive(Clone, Copy)]
 pub(super) enum UnitRef<'l> {
@@ -124,6 +126,11 @@ pub(super) struct Group<'l> {
     accesses: Vec<Option<SortedAccesses>>,
     /// Distinct values per slot (min over the patterns binding it; infinite when unknown).
     pub(super) dv: FxHashMap<Slot, f64>,
+    /// Per slot (an index into `unit_dvs`, `NO_DVS` until computed): the distinct values of
+    /// the slot in each quad pattern unit that binds it (in the group's context), ascending,
+    /// for join estimates (`choice::Planner::key_dvs`).
+    pub(super) unit_dv_index: [u16; SlotSet::MAX_SLOTS],
+    pub(super) unit_dvs: Vec<SmallVec<[(f64, usize); 4]>>,
     /// Join candidates of the step being decided: one buffer for the whole ordering search.
     choices: Vec<Choice>,
 }
@@ -164,6 +171,8 @@ impl<'l> Group<'l> {
             range_est: vec![None; n],
             accesses: vec![None; n],
             dv: FxHashMap::default(),
+            unit_dv_index: [NO_DVS; SlotSet::MAX_SLOTS],
+            unit_dvs: Vec::new(),
             choices: Vec::new(),
         }
     }
@@ -364,9 +373,10 @@ pub(super) struct Shape {
     /// or such scans joined by SQL steps only, with no filter applied yet. At most
     /// `sqljoin::MAX_ALIASES`.
     pub(super) chain: usize,
-    /// The last operator is a merge join without checks: a COUNT of the prefix is the sum of
-    /// run products (`fast_count`), no row is produced.
-    pub(super) factorized: bool,
+    /// The cost a COUNT of the prefix does not pay (0 unless it is factorized): when the last
+    /// operator is a merge join without checks, the count is the sum of its run products
+    /// (`fast_count`), which produces no row and buffers no run ([`Choice::count_free`]).
+    pub(super) count_free: f64,
     /// Object slots read by IntRange scans: their range conjuncts' selectivity is already in
     /// `rows`.
     pub(super) ranged: SlotSet,
@@ -384,7 +394,7 @@ impl Shape {
             units: Bits::default(),
             sorted: plan.sorted_by,
             chain: 0,
-            factorized: false,
+            count_free: 0.0,
             ranged: SlotSet::EMPTY,
         }
     }
@@ -447,19 +457,17 @@ pub(super) struct Choice {
     pub(super) rows: f64,
     pub(super) cost: f64,
     pub(super) sorted: Option<Slot>,
+    /// Of `cost`, what a COUNT of the join's rows does not pay: a merge join without checks
+    /// counts the products of its runs (`fast_count`) without producing its rows or buffering
+    /// its right runs. 0 for every other step.
+    pub(super) count_free: f64,
 }
 
 impl Choice {
     /// A join step with its estimates kept finite (`clamp_est`).
     pub(super) fn new(algo: Algo, right: Opened, rows: f64, cost: f64, sorted: Option<Slot>) -> Choice {
-        Choice { algo, right, rows: clamp_est(rows), cost: clamp_est(cost), sorted }
+        Choice { algo, right, rows: clamp_est(rows), cost: clamp_est(cost), sorted, count_free: 0.0 }
     }
-
-    /// A merge join without checks: COUNT is factorized over it.
-    fn factorized(&self) -> bool {
-        matches!(self.algo, Algo::Merge { check, .. } if check.is_empty())
-    }
-
 }
 
 /// A join order with its decisions: the first unit and its access path, then the operator
@@ -617,7 +625,7 @@ fn joined_shape(left: &Shape, right: &Props, unit: Option<usize>, ch: &Choice, k
         units,
         sorted: ch.sorted,
         chain: step_chain(left.chain, ch),
-        factorized: ch.factorized(),
+        count_free: ch.count_free,
         ranged: if inner { left.ranged.union(ch.right.ranged) } else { left.ranged },
     }
 }
@@ -653,7 +661,7 @@ impl<'a> Planner<'a> {
                 units: Bits::default(),
                 sorted: None,
                 chain: 0,
-                factorized: false,
+                count_free: 0.0,
                 ranged: SlotSet::EMPTY,
             };
             let side = Side { plan: mk(Op::Unit, 1.0, 0.0, None), shape };
@@ -931,7 +939,7 @@ impl<'a> Planner<'a> {
             units: Bits::single(i),
             sorted: opened.sorted,
             chain,
-            factorized: false,
+            count_free: 0.0,
             ranged: opened.ranged,
         };
         Ok((opened, shape))
@@ -977,15 +985,15 @@ impl<'a> Planner<'a> {
     }
 
     /// What a complete group costs for its goal: under a COUNT a factorized merge join on top
-    /// produces no row.
+    /// produces no row and buffers no run (`Shape::count_free`).
     fn final_cost(&self, g: &Group<'_>, shape: &Shape) -> f64 {
-        self.final_cost_of(g, shape.cost, shape.rows, shape.factorized)
+        self.final_cost_of(g, shape.cost, shape.count_free)
     }
 
     /// [`Self::final_cost`] of a complete group with these estimates.
-    fn final_cost_of(&self, g: &Group<'_>, cost: f64, rows: f64, factorized: bool) -> f64 {
+    fn final_cost_of(&self, g: &Group<'_>, cost: f64, count_free: f64) -> f64 {
         match g.goal {
-            Goal::Count if factorized => (cost - rows * self.row_copy()).max(0.0),
+            Goal::Count => (cost - count_free).max(0.0),
             _ => cost,
         }
     }
@@ -1089,7 +1097,7 @@ impl<'a> Planner<'a> {
                 // filters only add cost, keep the order and may close an SQL chain (whose rows
                 // are unordered, so the state then competes as `Key::Any`).
                 let key = key_for(g, step_chain(state.shape.chain, ch), ch.sorted, rest);
-                let rank = if complete { self.final_cost_of(g, ch.cost, ch.rows, ch.factorized()) } else { ch.cost };
+                let rank = if complete { self.final_cost_of(g, ch.cost, ch.count_free) } else { ch.cost };
                 if dominated(into, key, rank) {
                     continue;
                 }
@@ -1290,7 +1298,7 @@ impl<'a> Planner<'a> {
             return Ok((steps, shape));
         }
         shape.chain = 0;
-        shape.factorized = false;
+        shape.count_free = 0.0;
         if !plain.is_empty() {
             let n = plain.len() as f64;
             let (rows, cost) = (clamp_est(shape.rows * sel), clamp_est(shape.cost + shape.rows * n * EXPR_EVAL_NS));
@@ -1451,7 +1459,7 @@ mod tests {
             units: Bits::default(),
             sorted: None,
             chain: 0,
-            factorized: false,
+            count_free: 0.0,
             ranged: SlotSet::EMPTY,
         }
     }

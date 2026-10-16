@@ -42,8 +42,17 @@ scripted routes create the same file, tutorial/tutorial.db):
    why load.sql must be run from inside the data directory (inside the shell,
    ".cd tutorial/data" changes directory too).
 
-3. By hand, one file at a time, in any sqlite3 session with the extension
-   loaded:  SELECT sparql_load(readfile('languages.ttl'));
+3. By hand, one file at a time, in a sqlite3 session started inside the data
+   directory with the extension loaded.  sparql_load() reads Turtle unless
+   given a format, so survey.trig needs the 'trig' format argument (people.nt,
+   if you made it, takes 'ntriples'), and job_postings.sql is plain SQL for
+   the shell's .read command, not RDF.  The last line computes the planner
+   statistics that routes 1 and 2 also compute:
+
+     sqlite> SELECT sparql_load(readfile('languages.ttl'));
+     sqlite> SELECT sparql_load(readfile('survey.trig'), 'trig');
+     sqlite> .read job_postings.sql
+     sqlite> ANALYZE; SELECT sparql_analyze();
 
 The extension file is libsparqlite.so on Linux, libsparqlite.dylib on macOS
 and sparqlite.dll (no "lib") on Windows; .load and --ext accept the name with

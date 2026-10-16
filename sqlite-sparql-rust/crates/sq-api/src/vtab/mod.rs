@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use rusqlite::Connection;
-use rusqlite::vtab::Module;
+use rusqlite::vtab::{Context, Module};
 use sq_core::store::Dictionary;
 use sq_core::{BATCH_ROWS, Result, Term, TermId};
 
@@ -32,6 +32,27 @@ pub(crate) fn register(conn: &Connection, st: &Arc<ConnState>) -> rusqlite::Resu
     conn.create_module("sparql_rows", const { &Module::<rows::RowsTab>::eponymous_only_module() }, Some(st.clone()))?;
     conn.create_module("sparql_view", const { &Module::<view::ViewTab>::read_only_module() }, Some(st.clone()))?;
     Ok(())
+}
+
+/// Reports an `xColumn` failure with its own result code (`SQLITE_INTERRUPT`, `SQLITE_BUSY`,
+/// …) as well as its `sparql: …` message, as `xFilter` and `xNext` do through `zErrMsg`.
+///
+/// rusqlite reports a column error with `sqlite3_result_error_code` followed by
+/// `sqlite3_result_error`, and the second call resets the code to `SQLITE_ERROR`. Setting the
+/// message as the column's TEXT result first and handing rusqlite the code alone keeps both:
+/// `sqlite3_result_error_code` leaves a non-NULL result in place, and `OP_VColumn` reports
+/// that text with the code. `SQLITE_TOOBIG` and `SQLITE_NOMEM` keep rusqlite's own handling.
+pub(crate) fn column_error(ctx: &mut Context, r: rusqlite::Result<()>) -> rusqlite::Result<()> {
+    use rusqlite::ffi;
+    match r {
+        Err(rusqlite::Error::SqliteFailure(e, Some(msg)))
+            if !matches!(e.extended_code, ffi::SQLITE_ERROR | ffi::SQLITE_TOOBIG | ffi::SQLITE_NOMEM) =>
+        {
+            ctx.set_result(&msg.as_str())?;
+            Err(rusqlite::Error::SqliteFailure(e, None))
+        }
+        r => r,
+    }
 }
 
 /// Whether column `col` is in SQLite's `colUsed` mask (bit 63 stands for every column ≥ 63).

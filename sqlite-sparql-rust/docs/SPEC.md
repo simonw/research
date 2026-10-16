@@ -893,32 +893,32 @@ conn.enable_load_extension(True); conn.load_extension("ext/target/release/libspa
 `register(&Connection)` runs per connection; every pooled connection must load the extension. It creates one `Arc<ConnState>` and registers the functions, the 3 modules, and the close hook.
 
 ### 8.2 Scalar functions (exact)
-All functions use `SQLITE_UTF8`. **None is DETERMINISTIC**, because they depend on the dictionary or the database. Writers and filesystem access are `SQLITE_DIRECTONLY`, so they cannot run from views, triggers or schema. Each nArg variant is registered separately.
+All functions use `SQLITE_UTF8`. **None is DETERMINISTIC**, because they depend on the dictionary or the database (so no generated column, index expression or partial index can use them). Writers and filesystem access (D) are `SQLITE_DIRECTONLY`: SQLite refuses them in views, triggers and DEFAULT clauses stored in `main` or an attached database, whatever `trusted_schema` says. TEMP views and TEMP triggers are exempt, because only the connection itself can create them. SQLite (3.45.1) does **not** refuse them in a CHECK constraint stored in `main` or an attached database, which runs inside every INSERT/UPDATE of its table and inside `PRAGMA integrity_check` / `quick_check`; so every D function first passes `direct_guard` (§8.6 R9). Every other function (I) is `SQLITE_INNOCUOUS`: it only reads (`main`'s RDF store and the connection's settings), opens no file or socket, and stays within the connection's `timeout_ms`, `max_memory_mb`, `SQLITE_LIMIT_LENGTH` and the nesting bound (§8.6 R8), so views and triggers stored in the database may call it even with `PRAGMA trusted_schema = OFF` (the sqlite3 shell's default). The full argument, and its gap (a view or trigger stored in an attached database also reads `main`'s store), is in `crates/sq-api/README.md`. Each nArg variant is registered separately.
 
 | Function | Returns | Flags | Notes |
 |---|---|---|---|
-| `sparql_version()` | TEXT | | crate version + `sqlite_version()` |
+| `sparql_version()` | TEXT | I | crate version + `sqlite_version()` |
 | `sparql_init()` | INTEGER schema_version | D | idempotent. Loads and updates auto-init. Queries on an absent schema see an empty dataset. |
 | `sparql_load(data TEXT\|BLOB [, format TEXT='turtle' [, base TEXT [, graph TEXT]]])` | INTEGER new quads | D | formats: `turtle`/`ttl`, `ntriples`/`nt`, `nquads`/`nq`, `trig`, `rdfxml`/`xml`, `n3`, `jsonld`. `graph` = target graph IRI (NULL means default). |
 | `sparql_load_file(path [, format [, base [, graph]]])` | INTEGER | D | requires `sparql_config('allow_files', 1)`; format guessed from the extension |
-| `sparql_query(query [, format TEXT='json'])` | TEXT | | SELECT/ASK: `json`, `xml`, `csv`, `tsv`. CONSTRUCT/DESCRIBE: `ntriples` (default), `nquads`, `turtle`. Engine per `sparql_config('engine')`. |
-| `sparql_ask(query)` | INTEGER 0/1 | | |
-| `sparql_count(query)` | INTEGER | | runs fully and counts solutions (or triples) with **no decode and no serialization** (benchmark primitive) |
-| `sparql_value(query)` | native | | first projected variable of the first row (§8.4), NULL if none |
+| `sparql_query(query [, format TEXT='json'])` | TEXT | I | SELECT/ASK: `json`, `xml`, `csv`, `tsv`. CONSTRUCT/DESCRIBE: `ntriples` (default), `nquads`, `turtle`. Engine per `sparql_config('engine')`. |
+| `sparql_ask(query)` | INTEGER 0/1 | I | |
+| `sparql_count(query)` | INTEGER | I | runs fully and counts solutions (or triples) with **no decode and no serialization** (benchmark primitive) |
+| `sparql_value(query)` | native | I | first projected variable of the first row (§8.4), NULL if none |
 | `sparql_update(update)` | INTEGER inserted+deleted | D | one write scope per request |
-| `sparql_explain(query [, mode TEXT='plan'])` | TEXT | | modes: `algebra` (spargebra SSE), `logical`, `plan`, `analyze` (executes), `sql` (baseline SQL), `sqlplan` (its EXPLAIN QUERY PLAN) |
+| `sparql_explain(query [, mode TEXT='plan'])` | TEXT | I | modes: `algebra` (spargebra SSE), `logical`, `plan`, `analyze` (executes), `sql` (baseline SQL), `sqlplan` (its EXPLAIN QUERY PLAN) |
 | `sparql_analyze()` | TEXT JSON summary | D | |
-| `sparql_config(key)` / `sparql_config(key, value)` | TEXT current value | 2-arg: D | §8.5 |
-| `sparql_query_sql(query [, format])` | TEXT | | baseline translator (§9) |
-| `sparql_count_sql(query)` | INTEGER | | `SELECT count(*) FROM (<sql>)` |
-| `sparql_to_sql(query)` | TEXT | | the generated SQL |
-| `sparql_term(id)` | TEXT N-Triples / NULL | | inline, bnode and dictionary ids; NULL for 0 and TEMP |
-| `sparql_term_value(id)` | native | | §8.4 mapping |
-| `sparql_term_id(nt TEXT)` | INTEGER / NULL | | parses one N-Triples term; lookup only, never allocates |
-| `sparql_term_kind(id)`, `sparql_term_lex(id)`, `sparql_term_lang(id)`, `sparql_term_datatype(id)` | TEXT | | kind ∈ `iri`/`bnode`/`literal` |
-| `sparql_num(id)`, `sparql_str(id)`, `sparql_ebv(id)`, `sparql_sortkey(id)` | INTEGER/REAL/NULL, TEXT/NULL, 0/1/NULL, BLOB | | baseline helpers. `sortkey` is a memcmp-ordered encoding of SortKey. |
+| `sparql_config(key)` / `sparql_config(key, value)` | TEXT current value | 1-arg: I, 2-arg: D | §8.5 |
+| `sparql_query_sql(query [, format])` | TEXT | I | baseline translator (§9) |
+| `sparql_count_sql(query)` | INTEGER | I | `SELECT count(*) FROM (<sql>)` |
+| `sparql_to_sql(query)` | TEXT | I | the generated SQL |
+| `sparql_term(id)` | TEXT N-Triples / NULL | I | inline, bnode and dictionary ids; NULL for 0 and TEMP |
+| `sparql_term_value(id)` | native | I | §8.4 mapping |
+| `sparql_term_id(nt TEXT)` | INTEGER / NULL | I | parses one N-Triples term; lookup only, never allocates. A prefixed name (`ex:x`), a bare IRI or a prefixed datatype is refused with a message that names the mistake. |
+| `sparql_term_kind(id)`, `sparql_term_lex(id)`, `sparql_term_lang(id)`, `sparql_term_datatype(id)` | TEXT | I | kind ∈ `iri`/`bnode`/`literal` |
+| `sparql_num(id)`, `sparql_str(id)`, `sparql_ebv(id)`, `sparql_sortkey(id)` | INTEGER/REAL/NULL, TEXT/NULL, 0/1/NULL, BLOB | I | baseline helpers (the other helpers and the aggregate helpers are I too). `sortkey` is a memcmp-ordered encoding of SortKey. |
 | `sparql_vacuum_terms()` | INTEGER rows deleted | D | deletes unreferenced dictionary rows, bumps `dict_gen` |
-| `sparql_check()` | TEXT | | invariants: no inline-eligible rows, no duplicate keys, no dangling ids, index/table count parity, registry ⊇ used graphs |
+| `sparql_check()` | TEXT | I | invariants: no inline-eligible rows, no duplicate keys, no dangling ids, index/table count parity, registry ⊇ used graphs |
 
 ### 8.3 Virtual tables
 **(a) `sparql_rows`** is an eponymous-only table-valued function (`Module::eponymous_only_module()`, `Aux = Arc<ConnState>`). Prototype verified.
@@ -939,7 +939,7 @@ CREATE TABLE x(n INTEGER,                                    -- col 0: solution 
   3. Create the `Execution` in streaming mode and increment `open_cursors`.
 - **xNext** pulls the next 1024-row batch when needed and decodes **only** the columns set in col_used: `v_i`/`t_i` need the term, `id_i` needs nothing, `json` needs all projected terms. It writes them into `RefCell` row buffers, because `VTabCursor::column(&self, …)` is `&self`. **xClose** decrements `open_cursors`.
 - **Query forms.** ASK gives one row with `v0` = 0/1. CONSTRUCT/DESCRIBE give one row per triple with `v0..v2` = s,p,o (and `t*`/`id*`). With more than 16 variables, use `json` or `sparql_view`.
-- **Options** are a JSON object that overrides the connection config for this call: `engine`, `union_default_graph`, `timeout_ms`, `max_memory_mb`, `join_policy`, `reorder`.
+- **Options** are a JSON object that overrides the connection config for this call: `engine`, `union_default_graph`, `timeout_ms`, `max_memory_mb`, `join_policy`, `reorder` (also `probe_counts`, `probe_cap`). `timeout_ms` and `max_memory_mb` can only tighten the connection's limits: the stricter value wins, and `timeout_ms = 0` does not remove a connection timeout. The same holds for `sparql_view`'s `key=value` arguments and its `opts` column, so a call stored in someone else's database file cannot lift the application's limits.
 
 **(b) `sparql_view`** is a `CreateVTab` (`read_only_module`, `KIND = Default`).
 ```sql
@@ -992,7 +992,7 @@ A writable `rdf_quads` vtab is **out of scope for v1** (feasibility judge).
 | `join_policy` | `auto` | `auto` \| `hash` \| `bind` \| `merge` \| `nosql` |
 | `reorder` | 1 | 0/1 |
 | `probe_counts` / `probe_cap` | 32 / 1000 | integers |
-| `allow_files` | 0 | 0/1. Only the DIRECTONLY 2-arg form can set it. |
+| `allow_files` | 0 | 0/1. Only the DIRECTONLY 2-arg form can set it (and `direct_guard`, R9, keeps a stored CHECK constraint from calling that). |
 | `reader` | `auto` | `auto` \| `sql` \| `btree` (phase 2; `auto` = sql in v1) |
 
 ### 8.6 Per-connection state, transactions, re-entrancy
@@ -1030,8 +1030,10 @@ pub fn register(conn: &rusqlite::Connection) -> rusqlite::Result<()>;
     - `Drop` impls of vtabs catch too;
     - init is wrapped.
   - **R5.** Leases are reset on drop. Only a live streaming cursor keeps statements mid-step, until xClose.
-  - **R6.** Interrupts: our statements return `SQLITE_INTERRUPT` and become `Error::Interrupted`. CPU loops poll the pooled `SELECT 1` every 4096 rows. `timeout_ms` is checked at the same points.
+  - **R6.** Interrupts: our statements return `SQLITE_INTERRUPT` and become `Error::Interrupted`. CPU loops poll the pooled `SELECT 1` every 4096 rows. `timeout_ms` is checked at the same points. Virtual-table methods (`xFilter`, `xNext`, `xColumn`) report it as `sparql: interrupted` with code `SQLITE_INTERRUPT`; an interrupt that SQLite's own statement loop notices between two rows of a scan keeps SQLite's message `interrupted` (same code).
   - **R7.** Debug builds record the thread id on entry and assert there is no concurrent entry.
+  - **R8.** Entries nest boundedly. Our internal SQL reads `main`'s `rdf_*` tables, and a database file may make one of them a view (or give it a trigger) that calls a reader again: a file whose `rdf_meta` was such a view recursed until the host's stack overflowed. `enter()` refuses a nested entry once 8 entries are active or more than 384 KiB of stack lies between it and the outermost entry (`sparql: unsupported: sparqlite calls nest too deeply ...`); the nested request keeps its own nesting budget of stack. A nested failure reaches the user with its own message, not wrapped once per level.
+  - **R9.** `direct_guard` runs before every DIRECTONLY function: (1) never nested inside another entry; (2) while a table stored in `main` or an attached database names a DIRECTONLY function in its definition (the only way a CHECK can call one), only when the connection runs exactly one statement, it is read-only, and its own SQL text (`sqlite3_sql`) calls the function by name. Otherwise it fails with a message naming the table. TEMP views and triggers and writing host statements keep working while no such table exists.
 - **Halloween.** Our updates materialize WHERE first. Plain-SQL writes to `rdf_quad` during a `sparql_rows` iteration are documented as undefined.
 
 ### 8.7 Close hook (prevents zombie connections; verified)

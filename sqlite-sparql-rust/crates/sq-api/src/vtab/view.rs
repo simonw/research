@@ -33,7 +33,7 @@ use sq_core::ir::{Expr, Logical, QueryForm};
 use sq_core::store::Dictionary;
 use sq_core::{Error, Result, Tag, Term, TermId};
 
-use super::{Source, Stream, col_used};
+use super::{Source, Stream, col_used, column_error};
 use crate::config::{Key, PanicSite, QuerySettings};
 use crate::error::{IntoSql, sql_error};
 use crate::guard::{guard, guard_drop, guard_eof};
@@ -356,7 +356,8 @@ impl ViewCursor {
         let values: Vec<ValueRef<'_>> = args.iter().collect();
         let value = |j: usize| values.get(j).copied().unwrap_or(ValueRef::Null);
 
-        let mut settings = st.settings()?;
+        let conn = st.settings()?;
+        let mut settings = conn.clone();
         for (k, v) in self.overrides.iter() {
             settings.set(*k, v)?;
         }
@@ -375,6 +376,8 @@ impl ViewCursor {
                 opts_arg = Some(json.to_string());
             }
         }
+        // The definition's arguments and the `opts` column may only tighten the limits.
+        settings.within_limits_of(&conn);
         let opts = settings.options();
         let parsed = st.parse_query(&self.query, opts.base_iri.as_deref())?;
         let mut lowered = sq_plan::lower_query(&parsed, st.store(), &opts)?;
@@ -431,6 +434,49 @@ fn parse_idx(idx_str: Option<&str>) -> Result<(u64, Vec<usize>)> {
     Ok((used, cols))
 }
 
+impl ViewCursor {
+    /// The `xColumn` body; its error goes through [`column_error`].
+    fn column_value(&self, ctx: &mut Context, i: c_int) -> rusqlite::Result<()> {
+        let mut scan = self.scan.try_borrow_mut().map_err(|_| sql_error(Error::Reentrant))?;
+        let Some(scan) = scan.as_mut() else { return ctx.set_result(&Null) };
+        let n = self.vars.len();
+        let st = &*self.st;
+        match column(n, i as usize) {
+            Some(Column::Value(k)) => {
+                let term = match scan.map[k] {
+                    Some(c) => scan.stream.term(st, c).into_sql()?,
+                    None => None,
+                };
+                ctx.set_result(&native(term.as_deref()))
+            }
+            Some(Column::Term(k)) => {
+                let term = match scan.map[k] {
+                    Some(c) => scan.stream.term(st, c).into_sql()?,
+                    None => None,
+                };
+                match term {
+                    Some(t) => {
+                        let mut text = self.text.borrow_mut();
+                        text.clear();
+                        write_ntriples(&t, &mut text);
+                        ctx.set_result(&text.as_str())
+                    }
+                    None => ctx.set_result(&Null),
+                }
+            }
+            Some(Column::Id(k)) => {
+                let id = match scan.map[k] {
+                    Some(c) => scan.stream.public_id(st, c).into_sql()?,
+                    None => None,
+                };
+                ctx.set_result(&id)
+            }
+            Some(Column::Opts) => ctx.set_result(&scan.opts.as_deref()),
+            None => ctx.set_result(&Null),
+        }
+    }
+}
+
 unsafe impl VTabCursor for ViewCursor {
     fn filter(&mut self, _idx_num: c_int, idx_str: Option<&str>, args: &Filters<'_>) -> rusqlite::Result<()> {
         guard("sparql_view xFilter", || {
@@ -462,43 +508,8 @@ unsafe impl VTabCursor for ViewCursor {
     fn column(&self, ctx: &mut Context, i: c_int) -> rusqlite::Result<()> {
         guard("sparql_view xColumn", || {
             self.st.debug_panic(PanicSite::Column);
-            let mut scan = self.scan.try_borrow_mut().map_err(|_| sql_error(Error::Reentrant))?;
-            let Some(scan) = scan.as_mut() else { return ctx.set_result(&Null) };
-            let n = self.vars.len();
-            let st = &*self.st;
-            match column(n, i as usize) {
-                Some(Column::Value(k)) => {
-                    let term = match scan.map[k] {
-                        Some(c) => scan.stream.term(st, c).into_sql()?,
-                        None => None,
-                    };
-                    ctx.set_result(&native(term.as_deref()))
-                }
-                Some(Column::Term(k)) => {
-                    let term = match scan.map[k] {
-                        Some(c) => scan.stream.term(st, c).into_sql()?,
-                        None => None,
-                    };
-                    match term {
-                        Some(t) => {
-                            let mut text = self.text.borrow_mut();
-                            text.clear();
-                            write_ntriples(&t, &mut text);
-                            ctx.set_result(&text.as_str())
-                        }
-                        None => ctx.set_result(&Null),
-                    }
-                }
-                Some(Column::Id(k)) => {
-                    let id = match scan.map[k] {
-                        Some(c) => scan.stream.public_id(st, c).into_sql()?,
-                        None => None,
-                    };
-                    ctx.set_result(&id)
-                }
-                Some(Column::Opts) => ctx.set_result(&scan.opts.as_deref()),
-                None => ctx.set_result(&Null),
-            }
+            let r = self.column_value(ctx, i);
+            column_error(ctx, r)
         })
     }
 

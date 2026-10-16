@@ -166,6 +166,9 @@ charged against the budget, and is cleared rather than failing the query when me
   DISTINCT or GROUP BY: it uses its input's `fast_count` (a store count or a factorized merge
   join) and iterates otherwise. Its own `fast_count` (one row) runs that count first, so
   `Execution::count` of an aggregate query evaluates the query.
+- **Filter, Extend** (`ops/filter.rs`) evaluate their expression row by row on the rows of an
+  input batch, after prefetching the strings it decodes (concept 9). Filter pulls through
+  `rows::Pull::pump_with`, whose `refilled` hook runs once per input batch.
 - **Distinct** keeps the first row of each key in a hash set. **Reduced** drops only adjacent
   duplicates.
 - **Union** (`ops/union.rs`) runs its branches one after another (bag semantics) and opens each
@@ -178,9 +181,26 @@ charged against the budget, and is cleared rather than failing the query when me
 
 *Decoding.* The resolver decodes inline and blank-node ids with no I/O and TEMP ids from the
 execution's `TempDict`. Dictionary ids go to `store.dict()`, which is where sq-sqlite applies
-its connection caches. `decode_batch` sorts and deduplicates the misses. There are two
-per-execution maps, both cleared when they fill up: decoded terms (up to 131,072) and canonical
-lookups, misses included (up to 65,536).
+its connection-level DecodeCache. The execution keeps no decoded-term map of its own on top of
+that cache. Such a map cost an insert and its rehashes for every distinct id, about 51M
+instructions of a 362M-instruction FILTER over 200K distinct names, and gave no hit there.
+sq-expr's `ValueCache` caches the values of repeated ids. `decode_batch` (result decoding)
+hands the dictionary ids of a whole batch to the store in one call, and the store sorts and
+deduplicates its misses. The one per-execution map left is the canonical-lookup map for
+`intern`, misses included, which is cleared when it reaches 65,536 entries.
+
+*Prefetching strings.* Filter and Extend ask their compiled expression for
+`string_slots()`: the slots whose strings it decodes first on every row, such as `?n` in
+`REGEX(?n, ..)` or `CONTAINS(LCASE(?n), ..)`. Before evaluating an input batch, they decode the
+dictionary ids of tag STR and LANG in those slots with one `Dictionary::decode` call
+(`Terms::prefetch`). The terms are kept aligned with the rows, and the operator announces each
+row it evaluates (`Terms::at_row`), so a lookup costs one id comparison and no hashing. The
+evaluation decodes exactly these ids anyway, so nothing extra is read. On a cold DecodeCache the
+store reads the batch's misses in sorted order instead of one point read per row. With the
+prefetch switched on and off in one build, Q7 (REGEX over 200K names) took 237 ms instead of
+328 ms cold, and 80 ms instead of 91 ms warm. A lookup that misses falls back to `decode_one`. That happens for an id from another slot, or after an
+EXISTS evaluated inside the expression ran its own prefetching Filter and replaced the batch.
+A hit is always correct, because a term is a function of its id.
 
 *Memory.* Every materializing structure holds a `Charge` against `max_memory_mb` MiB, and going
 over gives `Error::MemoryBudget`. That covers hash tables, buffered join runs, sort rows, DISTINCT
@@ -244,7 +264,10 @@ Things to know when you call it:
   general date arithmetic, about 20K instructions per query). `memory_used()` reports the bytes currently charged.
   `enable_timing()` adds per-node wall time to `profile()`, which returns an
   `sq_core::plan::ExecProfile` with `opens`, `rows_out` and `seeks` per `Plan::id`, decode
-  hits and misses, and `exec_ns`. `plan_ns` is left at 0 for the caller to fill in.
+  hits and misses, and `exec_ns`. `decode_misses` counts the dictionary ids requested from the
+  store, one by one or in batch calls, counted per id. `decode_hits` counts the dictionary ids
+  served from a prefetched batch. Inline, blank-node and TEMP ids are decoded locally and
+  counted in neither. `plan_ns` is left at 0 for the caller to fill in.
 - The options that sq-exec reads are `timeout_ms`, `max_memory_mb` and `base_iri`, the last
   only when the plan has none. `ExecCaches` is an empty placeholder.
 - The errors a caller sees are `Error::Timeout` (the deadline), `Error::Interrupted` (from
@@ -296,7 +319,7 @@ a match with a wildcard arm, such as the one in `physical/estimate.rs`.
 ## Testing
 
 ```sh
-cargo test -p sq-exec                                            # 118 passed, 2 ignored
+cargo test -p sq-exec                                            # 121 passed, 2 ignored
 cargo test --release -p sq-exec bench_operators -- --ignored --nocapture --test-threads=1
 ```
 
@@ -316,7 +339,7 @@ polls. It can also inject interrupts and supply canned `SqlJoin` rows.
 | `prop.rs` | 2 | 60 random graphs and join trees: BindJoin = HashJoin (both sides) = NestedLoop = MergeJoin; merge `fast_count` = iterated count |
 | `paths.rs` | 12 | every path form, zero-length rules, NPS multiplicities, cycles, graphs, brute-force reachability for both expansion strategies, capped edge counts |
 | `exists.rs` | 11 | substitution through OPTIONAL/MINUS/FILTER/GRAPH, memoization, nesting, bounded memo, cursor reuse |
-| `modifiers.rs` | 19 | Filter, Extend, Group/Count (and `Execution::count` of an aggregate), Sort/TopK/SortBySlot (lazy keys against eagerly built SortKeys for every term class; a 4,001-key ORDER BY on a 256 KiB stack), Distinct, Reduced, Slice, Project |
+| `modifiers.rs` | 22 | Filter, Extend (string prefetch across batches and every id class, the decode counters, nested prefetches under EXISTS), Group/Count (and `Execution::count` of an aggregate), Sort/TopK/SortBySlot (lazy keys against eagerly built SortKeys for every term class; a 4,001-key ORDER BY on a 256 KiB stack), Distinct, Reduced, Slice, Project |
 | `graphs.rs`, `construct.rs` | 6, 5 | GraphLoop register, GraphNames; CONSTRUCT, DESCRIBE, ASK, decoding |
 | `limits.rs` | 9 | interrupts, deadlines, the memory budget, polling of probes that find no match, `now_utc` |
 | `review.rs`, `review_exec.rs` | 8, 13 | reviewer-pinned semantics; inputs that cross batch boundaries; resource handling |
@@ -362,6 +385,16 @@ Probe-heavy shapes on MemStore (BindJoin: about 1.3 µs per probe in the author'
 µs on 2026-10-15) mostly measure the range copy MemStore makes on every `rebind`, not the
 executor.
 
+Decoding (2026-10-15). The decoded-term map was removed, Filter and Extend now prefetch, and
+sq-expr changed its value cache and regex plans. These changes were measured on the sparqlite
+extension against the same tree with sq-exec and sq-expr at HEAD. The benchmark DBs were the
+1.6M-triple social and the bsbm datasets, and each figure is the best of 5 CPU times. Q7 count
+went from 178 ms to 65 ms warm and from 485 ms to 208 ms cold. Full result decoding through
+`sparql_rows` went from 213 ms to 78 ms for Q7, from 64 ms to 59 ms for Q1 and from 40 ms to
+37 ms for Q5. The other 16 queries in count mode stayed within the run-to-run noise of ±3%. Q10
+was the largest at +2-4% over repeated runs, with an identical instruction count (980.6M per
+warm run in both builds). `bench_operators` was unchanged within its noise.
+
 ## Where the code differs from docs/SPEC.md
 
 - **Operator trait (§5.1).** `open` takes `Option<Seed>` (row plus substituted `SlotSet`)
@@ -369,6 +402,10 @@ executor.
   `fast_count` takes a `cap`.
 - **ExecCaches (§11, §4.3).** It is an empty struct. The connection DecodeCache and LookupCache
   are applied behind `store.dict()`.
+- **Decode path (§4.3).** Step 4 of §4.3, the per-execution `FxHashMap<TermId, Arc<Term>>`,
+  does not exist. Dictionary ids are served from a prefetched batch (Filter, Extend) or go
+  straight to the store's DecodeCache. Result decoding hands whole batches to the store, which
+  deduplicates.
 - **HashJoin (§5.3).** There is no bitmask-grouped `CompatTable`. Wildcard lists and per-candidate
   `check` comparisons keep the join exact.
 - **Group (§5.3).** A GROUP BY expression that errors and one that evaluates to unbound form

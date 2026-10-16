@@ -7,9 +7,11 @@
 //!   subtraction (`[a-z-[aeiou]]`). XPath's `\s` and `\w` and its non-dot-all `.` (which also
 //!   excludes `\r`) are translated to their exact XPath definitions.
 //! * Constant patterns are compiled once; dynamic (pattern, flags) pairs are cached in the
-//!   execution's `ValueCache`. Anchored literal prefixes and literal patterns (a single
-//!   top-level branch only) are checked with plain string operations before (or instead of)
-//!   running the automaton.
+//!   execution's `ValueCache`. Literal patterns, anchored literal prefixes and literal
+//!   suffixes before a final `$` (a single top-level branch only) are checked with plain
+//!   string operations before (or instead of) running the automaton; under the `i` flag the
+//!   ASCII part of such an affix rejects texts whose bytes there are ASCII and differ beyond
+//!   ASCII case.
 //! * XSD character classes have no set operators: `&` and `~` are escaped so the `regex`
 //!   crate never reads `&&` / `~~` as intersection / symmetric difference; `--` is an error.
 //! * REPLACE replacement strings are prepared once per (regex, replacement) pair when both
@@ -34,8 +36,62 @@ enum Plan {
     StartsWith(Box<str>),
     /// `^literal$`: equality test.
     Equals(Box<str>),
-    /// `^literal…`: a match requires the prefix, then the automaton decides.
-    Prefix(Box<str>),
+    /// `^prefix…suffix$` (either may be empty): a match requires both affixes, then the
+    /// automaton decides. See [`affixes_allow`]. Under the `i` flag (`ci`) the affixes are
+    /// ASCII and lower case.
+    Affix { prefix: AffixLit, suffix: AffixLit, ci: bool },
+}
+
+/// A literal affix, compared 8 bytes at a time as `(text | mask) == lit`. `mask` is 0x20 on
+/// the lower-case ASCII letters of a case-insensitive affix (`b | 0x20` lowercases exactly the
+/// ASCII letters into letters; every other byte, non-ASCII included, must equal `lit`) and 0
+/// everywhere else, which makes the comparison byte-exact.
+#[derive(Debug)]
+struct AffixLit {
+    lit: Box<[u8]>,
+    mask: Box<[u8]>,
+}
+
+impl AffixLit {
+    fn new(lit: &str, ci: bool) -> AffixLit {
+        let mask = lit.bytes().map(|b| if ci && b.is_ascii_lowercase() { 0x20 } else { 0 }).collect();
+        AffixLit { lit: lit.as_bytes().into(), mask }
+    }
+
+    /// `bytes` (as long as the affix) matches it.
+    #[inline]
+    fn matches(&self, bytes: &[u8]) -> bool {
+        fn word(x: &[u8]) -> u64 {
+            u64::from_le_bytes(x[..8].try_into().expect("8 bytes"))
+        }
+        let (mut b, mut l, mut m) = (bytes, &*self.lit, &*self.mask);
+        while l.len() >= 8 {
+            if word(b) | word(m) != word(l) {
+                return false;
+            }
+            (b, l, m) = (&b[8..], &l[8..], &m[8..]);
+        }
+        b.iter().zip(l).zip(m).all(|((&b, &l), &m)| b | m == l)
+    }
+}
+
+/// False only if `text` cannot match a single-branch pattern that starts with the literal
+/// `prefix` (after `^`) and ends with the literal `suffix` (before `$`), anchors without the
+/// `m` flag. Every pattern character matches exactly one text character (the `regex` crate
+/// folds case character by character), so a match has at least `prefix.len() +
+/// suffix.len()` bytes. Case-sensitively the affixes are byte-exact. With `ci` (the `i`
+/// flag; lower-case ASCII affixes) an affix decides only where the text's bytes are ASCII: an
+/// ASCII character matches an ASCII pattern character exactly when they are equal up to ASCII
+/// case (the other members of a case-folding orbit, such as U+212A KELVIN SIGN for `k`, are
+/// not ASCII), while a non-ASCII byte there leaves the decision to the automaton.
+#[inline]
+fn affixes_allow(text: &str, prefix: &AffixLit, suffix: &AffixLit, ci: bool) -> bool {
+    let (t, p, s) = (text.as_bytes(), prefix.lit.len(), suffix.lit.len());
+    if t.len() < p + s {
+        return false;
+    }
+    let (head, tail) = (&t[..p], &t[t.len() - s..]);
+    (prefix.matches(head) || ci && !head.is_ascii()) && (suffix.matches(tail) || ci && !tail.is_ascii())
 }
 
 /// A compiled XPath regular expression.
@@ -65,7 +121,7 @@ impl CompiledRegex {
             Plan::Contains(s) => text.contains(&**s),
             Plan::StartsWith(s) => text.starts_with(&**s),
             Plan::Equals(s) => text == &**s,
-            Plan::Prefix(s) => text.starts_with(&**s) && self.re.is_match(text),
+            Plan::Affix { prefix, suffix, ci } => affixes_allow(text, prefix, suffix, *ci) && self.re.is_match(text),
         }
     }
 
@@ -243,39 +299,82 @@ fn has_top_level_alternation(pattern: &str) -> bool {
     false
 }
 
-/// String-level plan for patterns that are (anchored) literals. Only a single top-level
-/// branch can take a shortcut.
+/// The literal characters right before a final, unescaped `$` of `tail` (a pattern suffix
+/// that does not start inside a literal run). A quantifier follows its atom, so these
+/// characters are never quantified; a run right after a backslash loses its first character,
+/// which belongs to the escape (`\d7$` gives "7", `\\7$` conservatively "").
+fn trailing_literal(tail: &str) -> &str {
+    let Some(body) = tail.strip_suffix('$') else { return "" };
+    if body.ends_with('\\') {
+        // `\$` is a literal dollar, not the end anchor.
+        return "";
+    }
+    match body.rfind(META) {
+        None => body,
+        Some(i) => {
+            let run = &body[i + 1..];
+            if body[i..].starts_with('\\') {
+                let mut cs = run.chars();
+                cs.next();
+                cs.as_str()
+            } else {
+                run
+            }
+        }
+    }
+}
+
+/// String-level plan for patterns that are (anchored) literals or have literal affixes. Only
+/// a single top-level branch can take a shortcut.
 fn plan_for(pattern: &str, f: Flags) -> Plan {
-    if f.i || f.x {
+    if f.x {
         return Plan::Regex;
     }
-    if f.q {
-        return Plan::Contains(pattern.into());
-    }
-    if !pattern.contains(META) {
-        return Plan::Contains(pattern.into());
+    if f.q || !pattern.contains(META) {
+        return if f.i { Plan::Regex } else { Plan::Contains(pattern.into()) };
     }
     if f.m || has_top_level_alternation(pattern) {
         return Plan::Regex;
     }
-    let Some(rest) = pattern.strip_prefix('^') else { return Plan::Regex };
-    let end = rest.find(META).unwrap_or(rest.len());
-    let (lit, tail) = rest.split_at(end);
-    if tail.is_empty() {
-        return Plan::StartsWith(lit.into());
-    }
-    if tail == "$" {
-        return Plan::Equals(lit.into());
-    }
-    // A quantifier applies to the last literal character, which is then not required.
-    let lit = if tail.starts_with(['*', '?', '{', '+']) {
-        let mut cs = lit.chars();
-        cs.next_back();
-        cs.as_str()
-    } else {
-        lit
+    let (prefix, tail) = match pattern.strip_prefix('^') {
+        Some(rest) => {
+            let end = rest.find(META).unwrap_or(rest.len());
+            let (lit, tail) = rest.split_at(end);
+            if !f.i && tail.is_empty() {
+                return Plan::StartsWith(lit.into());
+            }
+            if !f.i && tail == "$" {
+                return Plan::Equals(lit.into());
+            }
+            // A quantifier applies to the last literal character, which is then not required.
+            let lit = if tail.starts_with(['*', '?', '{', '+']) {
+                let mut cs = lit.chars();
+                cs.next_back();
+                cs.as_str()
+            } else {
+                lit
+            };
+            (lit, tail)
+        }
+        None => ("", pattern),
     };
-    if lit.is_empty() { Plan::Regex } else { Plan::Prefix(lit.into()) }
+    let suffix = trailing_literal(tail);
+    let (prefix, suffix) = if f.i {
+        // Case-insensitive affixes are compared up to ASCII case: keep their ASCII ends.
+        let p = prefix.find(|c: char| !c.is_ascii()).map_or(prefix, |i| &prefix[..i]);
+        let s = match suffix.char_indices().rev().find(|(_, c)| !c.is_ascii()) {
+            Some((i, c)) => &suffix[i + c.len_utf8()..],
+            None => suffix,
+        };
+        (p.to_ascii_lowercase(), s.to_ascii_lowercase())
+    } else {
+        (prefix.to_string(), suffix.to_string())
+    };
+    if prefix.is_empty() && suffix.is_empty() {
+        Plan::Regex
+    } else {
+        Plan::Affix { prefix: AffixLit::new(&prefix, f.i), suffix: AffixLit::new(&suffix, f.i), ci: f.i }
+    }
 }
 
 /// Compiles an XPath regex with XPath flags. None = invalid pattern or flags (SPARQL error).
@@ -414,6 +513,19 @@ mod tests {
         assert_eq!(m(r"\p{Lu}", "", "aB"), Some(true));
     }
 
+    /// The automaton alone, built as `compile` builds it.
+    fn automaton(p: &str, flags: &str) -> Option<Regex> {
+        let f = parse_flags(flags)?;
+        let translated = if f.q { regex::escape(p) } else { translate(p, f)? };
+        RegexBuilder::new(&translated)
+            .case_insensitive(f.i)
+            .multi_line(f.m && !f.q)
+            .dot_matches_new_line(f.s && !f.q)
+            .size_limit(SIZE_LIMIT)
+            .build()
+            .ok()
+    }
+
     #[test]
     fn literal_plans_agree_with_the_automaton() {
         let cases = [
@@ -446,24 +558,134 @@ mod tests {
             (r"^a\|b", "a|b"),
             (r"^a\|b", "b"),
             ("^a[]|]b", "b"),
+            // Literal suffixes before `$`, escapes next to them, and case-insensitive affixes
+            // against texts with non-ASCII case-folding partners (U+212A KELVIN SIGN folds
+            // with `k`, U+017F LONG S with `s`).
+            ("^person 1[0-9]*7$", "Person 127"),
+            ("^person 1[0-9]*7$", "PERSON 17"),
+            ("^person 1[0-9]*7$", "person 2347"),
+            ("^person 1[0-9]*7$", "person 1238"),
+            ("^person 1[0-9]*7$", "per\u{17F}on 107"),
+            ("[0-9]+ks$", "12\u{212A}s"),
+            ("[0-9]+ks$", "12KS"),
+            ("[0-9]+ks$", "12ks\n"),
+            ("^k.*s$", "\u{212A}xx\u{17F}"),
+            ("^ks", "K\u{17F}"),
+            (r"\d7$", "17"),
+            (r"\d7$", "d7"),
+            (r"a\$", "a$"),
+            (r"a\\$", "a\\"),
+            (r"\p{Lu}x$", "Ax"),
+            ("a{2}b$", "aab"),
+            ("(ab)c$", "abc"),
+            ("x[$]", "x$"),
+            ("^ab.*ba$", "aba"),
+            ("^ab.*ba$", "abba"),
+            ("^é.*É$", "ÉxÉ"),
+            ("^é.*É$", "éxé"),
+            ("^aé.*Éb$", "AÉxéB"),
+            ("^ab*$", "a"),
+            ("^ab+$", "abbb"),
+            // `b | 0x20` maps '@' to '`' and '[' to '{': only letters fold.
+            ("^@[x]*Z$", "`xz"),
+            ("^@[x]*Z$", "@xZ"),
+            ("^`[x]*\\{$", "@x["),
+            ("^`[x]*\\{$", "`x{"),
+            ("^a1_[x]*$", "A1_x"),
+            ("^a1_[x]*$", "A1\u{7f}x"),
+            // Affixes longer than one 8-byte word.
+            ("^abcdefghIJKLMNOPq.*RSTUVWXYZabcdefgh$", "ABCDEFGHijklmnopQ--rstuvwxyzABCDEFGH"),
+            ("^abcdefghIJKLMNOPq.*RSTUVWXYZabcdefgh$", "ABCDEFGHijklmnopQ--rstuvwxyzABCDEFGh"),
+            ("^abcdefghIJKLMNOPq.*RSTUVWXYZabcdefgh$", "abcdefghIJKLMNOPq--RSTUVWXYZabcdefgi"),
+            ("^abcdefghIJKLMNOPq.*RSTUVWXYZabcdefgh$", "abcdefgh\u{212A}JKLMNOPq--RSTUVWXYZabcdefgh"),
         ];
-        for flags in ["", "s"] {
+        for flags in ["", "s", "i", "is"] {
             for (p, t) in cases {
                 let r = compile(p, flags).unwrap();
-                let f = parse_flags(flags).unwrap();
-                let raw = RegexBuilder::new(&translate(p, f).unwrap()).dot_matches_new_line(f.s).build().unwrap();
-                assert_eq!(r.is_match(t), raw.is_match(t), "{p} /{flags} on {t} (plan {:?})", r.plan);
+                let raw = automaton(p, flags).unwrap();
+                assert_eq!(r.is_match(t), raw.is_match(t), "{p} /{flags} on {t:?} (plan {:?})", r.plan);
             }
         }
         assert!(matches!(compile("^abc", "").unwrap().plan, Plan::StartsWith(_)));
         assert!(matches!(compile("^abc$", "").unwrap().plan, Plan::Equals(_)));
-        assert!(matches!(compile("^abc.*d", "").unwrap().plan, Plan::Prefix(_)));
-        assert!(matches!(compile("^ab(c|d)", "").unwrap().plan, Plan::Prefix(_)));
+        let affix = |p: &str, f: &str| match compile(p, f).unwrap().plan {
+            Plan::Affix { prefix, suffix, ci } => {
+                Some((String::from_utf8(prefix.lit.to_vec()).unwrap(), String::from_utf8(suffix.lit.to_vec()).unwrap(), ci))
+            }
+            _ => None,
+        };
+        let some = |p: &str, s: &str, ci: bool| Some((p.to_string(), s.to_string(), ci));
+        assert_eq!(affix("^abc.*d", ""), some("abc", "", false));
+        assert_eq!(affix("^abc.*d$", ""), some("abc", "d", false));
+        assert_eq!(affix("^ab(c|d)", ""), some("ab", "", false));
+        assert_eq!(affix("^a[|]b", ""), some("a", "", false));
+        assert_eq!(affix("^person 1[0-9]*7$", "i"), some("person 1", "7", true));
+        assert_eq!(affix("^abc", "i"), some("abc", "", true));
+        assert_eq!(affix("^aBc[x]*@Z$", "i"), some("abc", "@z", true));
+        assert_eq!(affix("^abc$", "i"), some("abc", "", true));
+        assert_eq!(affix("^ab*c$", ""), some("a", "c", false));
+        assert_eq!(affix(r"\d7$", ""), some("", "7", false));
+        assert_eq!(affix(r"\p{L}xy$", ""), some("", "xy", false));
+        assert_eq!(affix("^aé.*Éb$", "i"), some("a", "b", true));
+        assert_eq!(affix("^aé.*Éb$", ""), some("aé", "Éb", false));
+        assert_eq!(affix(r"a\$", ""), None);
+        assert_eq!(affix(r"\\7$", ""), None);
+        assert_eq!(affix("(ab)$", ""), None);
         assert!(matches!(compile("abc", "").unwrap().plan, Plan::Contains(_)));
         assert!(matches!(compile("abc", "i").unwrap().plan, Plan::Regex));
         assert!(matches!(compile("^abc|xyz", "").unwrap().plan, Plan::Regex));
         assert!(matches!(compile("^abc$|x", "").unwrap().plan, Plan::Regex));
-        assert!(matches!(compile("^a[|]b", "").unwrap().plan, Plan::Prefix(_)));
+        assert!(matches!(compile("^abc.*d$", "m").unwrap().plan, Plan::Regex));
+        assert!(matches!(compile("^a b c", "x").unwrap().plan, Plan::Regex));
+    }
+
+    /// Random single- and multi-branch patterns over literals, classes, escapes, quantifiers
+    /// and anchors, against texts with ASCII and non-ASCII case variants: the plan never
+    /// changes the automaton's answer.
+    #[test]
+    fn plans_agree_with_the_automaton_on_random_patterns() {
+        let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+        let mut next = |n: usize| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x % n as u64) as usize
+        };
+        let pieces = [
+            "a", "b", "k", "s", "K", "S", "x", "7", "1", " ", "é", "É", ".", "[0-9]", "[a-z]", "[$]", r"\d", r"\$",
+            r"\\", r"\.", "*", "+", "?", "{2}", "(a|b)", "(k)", "|", "@", "`", r"\[", "Z",
+            "kSaKsZ@`x", "AbKs1é",
+        ];
+        let chars = [
+            "a", "b", "k", "s", "K", "S", "x", "7", "1", " ", "\u{212A}", "\u{17F}", "é", "É", "$", "\\", "\n", ".",
+            "@", "`", "[", "{", "z", "Z", "kSaKsZ@`x", "KsAkSz@`X", "AbKs1é",
+        ];
+        let (mut checked, mut affix_ci, mut affix_cs) = (0, 0, 0);
+        for _ in 0..6000 {
+            let mut p = String::new();
+            if next(2) == 0 {
+                p.push('^');
+            }
+            for _ in 0..1 + next(6) {
+                p.push_str(pieces[next(pieces.len())]);
+            }
+            if next(2) == 0 {
+                p.push('$');
+            }
+            let flags = ["", "i", "s", "is", "m", "q", "iq"][next(7)];
+            let (Some(r), Some(raw)) = (compile(&p, flags), automaton(&p, flags)) else { continue };
+            match r.plan {
+                Plan::Affix { ci: true, .. } => affix_ci += 1,
+                Plan::Affix { ci: false, .. } => affix_cs += 1,
+                _ => {}
+            }
+            for _ in 0..12 {
+                let t: String = (0..next(9)).map(|_| chars[next(chars.len())]).collect();
+                assert_eq!(r.is_match(&t), raw.is_match(&t), "{p:?} /{flags} on {t:?} (plan {:?})", r.plan);
+                checked += 1;
+            }
+        }
+        assert!(checked > 20_000 && affix_ci > 200 && affix_cs > 200, "{checked} {affix_ci} {affix_cs}");
     }
 
     #[test]

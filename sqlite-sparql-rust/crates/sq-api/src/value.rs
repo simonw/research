@@ -94,9 +94,81 @@ pub(crate) fn public_id(id: TermId) -> Option<i64> {
 }
 
 /// Parses exactly one N-Triples term (`<iri>`, `_:label`, `"lex"`, `"lex"@lang`,
-/// `"lex"^^<datatype>`).
+/// `"lex"^^<datatype>`; oxrdf also takes Turtle's bare numbers and `true` / `false`).
 pub(crate) fn parse_term(text: &str) -> Result<oxrdf::Term> {
-    oxrdf::Term::from_str(text.trim()).map_err(|e| Error::Invalid(format!("not an N-Triples term: {text:?} ({e})")))
+    let t = text.trim();
+    oxrdf::Term::from_str(t).map_err(|e| {
+        let why = term_mistake(t).unwrap_or_else(|| e.to_string());
+        Error::Invalid(format!("not an N-Triples term: {text:?} ({why})"))
+    })
+}
+
+/// A plain explanation for the usual mistakes: SPARQL / Turtle shorthand that N-Triples does
+/// not have. oxrdf reads anything that does not start with `<`, `_` or `"` as a number, so
+/// its own message for `ex:Python` is "Double serialization with an invalid exponent".
+fn term_mistake(t: &str) -> Option<String> {
+    let first = t.chars().next()?;
+    if first == '"' {
+        // `"5"^^xsd:integer`: the datatype must be a full IRI too.
+        let (_, after) = t.rsplit_once('"')?;
+        let dt = after.trim_start().strip_prefix("^^")?.trim_start();
+        return (!dt.starts_with('<')).then(|| match expand_well_known(dt) {
+            Some(iri) => format!(
+                "the datatype {dt} must be a full IRI in angle brackets: ^^<{iri}>; prefixed names are not N-Triples"
+            ),
+            None => format!(
+                "the datatype {dt} must be a full IRI in angle brackets, \
+                 e.g. ^^<http://www.w3.org/2001/XMLSchema#integer>; prefixed names are not N-Triples"
+            ),
+        });
+    }
+    if first == '\'' {
+        return Some("N-Triples strings use double quotes: \"…\"".into());
+    }
+    if !(first.is_alphabetic() || first == ':') {
+        return None; // `<…>`, `_:…`, numbers: oxrdf's message is to the point.
+    }
+    // Classify the first word (`ex:Python .` is still a prefixed name).
+    let word = t.split(char::is_whitespace).next().unwrap_or(t);
+    let Some((prefix, local)) = word.split_once(':') else {
+        return Some(
+            "neither a literal nor an IRI: write a string in double quotes (\"…\") and an IRI in angle \
+             brackets (<…>)"
+                .into(),
+        );
+    };
+    if local.starts_with("//") || ["urn", "mailto", "file", "tag", "data"].contains(&prefix) {
+        return Some(format!("an IRI needs angle brackets: <{word}>"));
+    }
+    if prefix.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.')) {
+        let how = match expand_well_known(word) {
+            Some(iri) => format!("<{iri}>"),
+            // The example must not look like the answer: the namespace is the user's own.
+            None => format!(
+                "the namespace IRI that {prefix}: stands for, followed by {local} \
+                 (if {prefix}: is <http://example.org/>, that is <http://example.org/{local}>)"
+            ),
+        };
+        return Some(format!(
+            "{word} is a prefixed name, and N-Triples has none: no PREFIX applies outside a SPARQL query, so \
+             write the full IRI in angle brackets: {how}"
+        ));
+    }
+    None
+}
+
+/// The full IRI of a prefixed name in one of the standard vocabularies whose prefix everyone
+/// uses the same way (`rdf:`, `rdfs:`, `xsd:`, `owl:`).
+fn expand_well_known(name: &str) -> Option<String> {
+    const PREFIXES: [(&str, &str); 4] = [
+        ("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#"),
+        ("rdfs", "http://www.w3.org/2000/01/rdf-schema#"),
+        ("xsd", "http://www.w3.org/2001/XMLSchema#"),
+        ("owl", "http://www.w3.org/2002/07/owl#"),
+    ];
+    let (prefix, local) = name.split_once(':')?;
+    let ns = PREFIXES.iter().find(|(p, _)| *p == prefix)?.1;
+    Some(format!("{ns}{local}"))
 }
 
 #[cfg(test)]
@@ -160,5 +232,49 @@ mod tests {
         assert_eq!(public_id(TermId::from_int(5).unwrap()), Some(TermId::from_int(5).unwrap().raw()));
         assert!(parse_term("not a term").is_err());
         assert!(parse_term("<a> <b>").is_err());
+    }
+
+    fn mistake(text: &str) -> String {
+        match parse_term(text) {
+            Err(Error::Invalid(m)) => m,
+            other => panic!("{text}: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn usual_mistakes_are_explained() {
+        let m = mistake("ex:Python");
+        assert!(m.contains("ex:Python is a prefixed name"), "{m}");
+        assert!(m.contains("<http://example.org/Python>") && !m.contains("exponent"), "{m}");
+        assert!(mistake(":x").contains("prefixed name"));
+        assert!(mistake("schema:Person").contains("prefixed name"));
+        let m = mistake("http://example.org/pl/Go");
+        assert!(m.contains("an IRI needs angle brackets: <http://example.org/pl/Go>"), "{m}");
+        assert!(mistake("urn:isbn:0451450523").contains("<urn:isbn:0451450523>"));
+        let m = mistake("\"5\"^^xsd:integer");
+        assert!(m.contains("the datatype xsd:integer must be a full IRI"), "{m}");
+        assert!(m.contains("^^<http://www.w3.org/2001/XMLSchema#integer>"), "{m}");
+        let m = mistake("\"5\"^^xsd:decimal");
+        assert!(m.contains("^^<http://www.w3.org/2001/XMLSchema#decimal>"), "{m}");
+        let m = mistake("\"5\"^^ex:dt");
+        assert!(m.contains("the datatype ex:dt must be a full IRI") && m.contains("e.g."), "{m}");
+        // Standard prefixes expand to their real IRIs; other prefixes get no copyable guess.
+        let m = mistake("xsd:integer");
+        assert!(m.contains(": <http://www.w3.org/2001/XMLSchema#integer>") && !m.contains("example.org"), "{m}");
+        let m = mistake("rdf:type");
+        assert!(m.contains("<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>"), "{m}");
+        assert!(mistake("rdfs:label").contains("<http://www.w3.org/2000/01/rdf-schema#label>"));
+        assert!(mistake("owl:Thing").contains("<http://www.w3.org/2002/07/owl#Thing>"));
+        let m = mistake("schema:Person");
+        assert!(m.contains("the namespace IRI that schema: stands for, followed by Person"), "{m}");
+        assert!(mistake("'single'").contains("double quotes"));
+        assert!(mistake("Python").contains("neither a literal nor an IRI"));
+        assert!(mistake("ex:Python .").contains("ex:Python is a prefixed name"));
+        // Errors inside well-delimited terms keep the parser's message.
+        assert!(mistake("<http://ex/a").contains("not an N-Triples term: \"<http://ex/a\" ("));
+        assert!(mistake("1.").contains("Decimal serialization"), "numbers keep oxrdf's message");
+        // Accepted shorthand is unchanged.
+        assert!(parse_term("42").is_ok() && parse_term("true").is_ok() && parse_term("4.2e1").is_ok());
+        assert!(parse_term("\"5\"^^<http://www.w3.org/2001/XMLSchema#integer>").is_ok());
     }
 }

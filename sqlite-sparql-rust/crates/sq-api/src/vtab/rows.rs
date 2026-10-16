@@ -31,7 +31,7 @@ use rusqlite::vtab::{
 };
 use sq_core::{Error, Result};
 
-use super::{Source, Stream, col_used};
+use super::{Source, Stream, col_used, column_error};
 use crate::config::PanicSite;
 use crate::error::{IntoSql, sql_error};
 use crate::guard::{guard, guard_drop, guard_eof};
@@ -163,9 +163,11 @@ impl Scan {
     }
 
     fn start(st: &Arc<ConnState>, query: String, opts: Option<String>, used: u64) -> Result<Scan> {
-        let mut settings = st.settings()?;
+        let conn = st.settings()?;
+        let mut settings = conn.clone();
         if let Some(o) = &opts {
             settings.apply_json(o)?;
+            settings.within_limits_of(&conn);
         }
         let mut run = query::prepare(st, &query, &settings)?;
         let form = run.form();
@@ -228,6 +230,50 @@ impl Drop for RowsCursor {
     }
 }
 
+impl RowsCursor {
+    /// The `xColumn` body; its error goes through [`column_error`].
+    fn column_value(&self, ctx: &mut Context, i: c_int) -> rusqlite::Result<()> {
+        let mut scan = self.scan.try_borrow_mut().map_err(|_| sql_error(Error::Reentrant))?;
+        let Some(scan) = scan.as_mut() else { return ctx.set_result(&Null) };
+        let st = &*self.st;
+        match i {
+            COL_N => ctx.set_result(&scan.stream.ordinal()),
+            _ if (COL_V..COL_T).contains(&i) => {
+                let term = scan.stream.term(st, (i - COL_V) as usize).into_sql()?;
+                ctx.set_result(&native(term.as_deref()))
+            }
+            _ if (COL_T..COL_ID).contains(&i) => match scan.stream.term(st, (i - COL_T) as usize).into_sql()? {
+                Some(t) => {
+                    let mut text = self.text.borrow_mut();
+                    text.clear();
+                    write_ntriples(&t, &mut text);
+                    ctx.set_result(&text.as_str())
+                }
+                None => ctx.set_result(&Null),
+            },
+            _ if (COL_ID..COL_VARS).contains(&i) => {
+                ctx.set_result(&scan.stream.public_id(st, (i - COL_ID) as usize).into_sql()?)
+            }
+            COL_VARS => ctx.set_result(&scan.vars_json.as_str()),
+            COL_JSON => {
+                let mut text = self.text.borrow_mut();
+                text.clear();
+                if scan.form == Form::Ask {
+                    let b = scan.stream.id(0) == sq_core::TermId::from_bool(true);
+                    text.push_str(if b { r#"{"boolean":true}"# } else { r#"{"boolean":false}"# });
+                } else {
+                    let terms = scan.stream.row_terms(st).into_sql()?;
+                    sq_results::append_solution_json(&mut text, &scan.names, terms);
+                }
+                ctx.set_result(&text.as_str())
+            }
+            COL_QUERY => ctx.set_result(&scan.query.as_str()),
+            COL_OPTS => ctx.set_result(&scan.opts.as_deref()),
+            _ => ctx.set_result(&Null),
+        }
+    }
+}
+
 unsafe impl VTabCursor for RowsCursor {
     fn filter(&mut self, idx_num: c_int, idx_str: Option<&str>, args: &Filters<'_>) -> rusqlite::Result<()> {
         guard("sparql_rows xFilter", || {
@@ -267,44 +313,8 @@ unsafe impl VTabCursor for RowsCursor {
     fn column(&self, ctx: &mut Context, i: c_int) -> rusqlite::Result<()> {
         guard("sparql_rows xColumn", || {
             self.st.debug_panic(PanicSite::Column);
-            let mut scan = self.scan.try_borrow_mut().map_err(|_| sql_error(Error::Reentrant))?;
-            let Some(scan) = scan.as_mut() else { return ctx.set_result(&Null) };
-            let st = &*self.st;
-            match i {
-                COL_N => ctx.set_result(&scan.stream.ordinal()),
-                _ if (COL_V..COL_T).contains(&i) => {
-                    let term = scan.stream.term(st, (i - COL_V) as usize).into_sql()?;
-                    ctx.set_result(&native(term.as_deref()))
-                }
-                _ if (COL_T..COL_ID).contains(&i) => match scan.stream.term(st, (i - COL_T) as usize).into_sql()? {
-                    Some(t) => {
-                        let mut text = self.text.borrow_mut();
-                        text.clear();
-                        write_ntriples(&t, &mut text);
-                        ctx.set_result(&text.as_str())
-                    }
-                    None => ctx.set_result(&Null),
-                },
-                _ if (COL_ID..COL_VARS).contains(&i) => {
-                    ctx.set_result(&scan.stream.public_id(st, (i - COL_ID) as usize).into_sql()?)
-                }
-                COL_VARS => ctx.set_result(&scan.vars_json.as_str()),
-                COL_JSON => {
-                    let mut text = self.text.borrow_mut();
-                    text.clear();
-                    if scan.form == Form::Ask {
-                        let b = scan.stream.id(0) == sq_core::TermId::from_bool(true);
-                        text.push_str(if b { r#"{"boolean":true}"# } else { r#"{"boolean":false}"# });
-                    } else {
-                        let terms = scan.stream.row_terms(st).into_sql()?;
-                        sq_results::append_solution_json(&mut text, &scan.names, terms);
-                    }
-                    ctx.set_result(&text.as_str())
-                }
-                COL_QUERY => ctx.set_result(&scan.query.as_str()),
-                COL_OPTS => ctx.set_result(&scan.opts.as_deref()),
-                _ => ctx.set_result(&Null),
-            }
+            let r = self.column_value(ctx, i);
+            column_error(ctx, r)
         })
     }
 

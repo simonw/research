@@ -526,3 +526,83 @@ fn plans_match_the_oracle_on_memory_and_sqlite_stores() {
     let exercised = [t.sql_joins, t.merge_joins, t.star_rewrites, t.enforcers, t.int_ranges, t.fast_counts];
     assert!(exercised.iter().all(|n| *n > 0), "{t:?}");
 }
+
+/// Many-to-many joins on a key with few values whose other shared slots are checked (the
+/// tutorial's "friends of friends in the same city"), joins on several keys, a cycle and an
+/// OPTIONAL on two keys, under every option set on both stores, against the oracle. Plans with
+/// a merge chain also run as their StarMerge rewrite (its checks combine the runs of every
+/// input), and every SqlJoin is checked with EXPLAIN QUERY PLAN.
+#[test]
+fn many_to_many_joins_on_few_values_match_the_oracle() {
+    let ttl = city_ttl(240, 3);
+    let mem = sq_memstore::MemStore::new();
+    load_ttl(&mem, &ttl, None);
+    mem.analyze();
+    let db = Sqlite::new();
+    db.load(&ttl, None);
+    db.store.analyze().expect("analyze");
+    let mem_rc: Rc<dyn QuadStore> = Rc::new(mem.clone());
+    let sql_rc: Rc<dyn QuadStore> = Rc::new(db.store.clone());
+    let same_city = "?a :knows ?b . ?b :knows ?c . ?a :livesIn ?city . ?c :livesIn ?city";
+    let queries = [
+        format!("SELECT ?a ?c {{ {same_city} }}"),
+        format!("SELECT (COUNT(*) AS ?n) {{ {same_city} }}"),
+        format!("SELECT ?city (COUNT(*) AS ?n) {{ {same_city} }} GROUP BY ?city"),
+        "SELECT DISTINCT ?city ?b { ?a :livesIn ?city . ?b :livesIn ?city . ?a :knows ?b }".to_owned(),
+        "SELECT ?a ?b ?c { ?a :livesIn ?city . ?b :livesIn ?city . ?c :livesIn ?city . ?a :knows ?b . ?b :knows ?c }"
+            .to_owned(),
+        "SELECT (COUNT(*) AS ?n) { ?a :livesIn ?city . ?b :livesIn ?city . ?c :livesIn ?city }".to_owned(),
+        "SELECT * { ?a :knows ?b . ?b :knows ?c . ?c :knows ?a }".to_owned(),
+        "SELECT * { ?a :knows ?b OPTIONAL { ?a :livesIn ?city . ?b :livesIn ?city } }".to_owned(),
+    ];
+    let mut failures = Vec::new();
+    let (mut runs, mut merges_checked) = (0, 0);
+    for q in &queries {
+        let mut expected_by_union = [None, None];
+        for (name, opts) in option_sets() {
+            let slot = &mut expected_by_union[usize::from(opts.union_default_graph)];
+            if slot.is_none() {
+                *slot = Some(oracle(&lower_on(q, &mem, &opts), &mem).expect("oracle"));
+            }
+            let expected = slot.as_ref().expect("computed above");
+            for (store_name, st) in [("mem", &mem_rc), ("sqlite", &sql_rc)] {
+                let _read = (store_name == "sqlite").then(|| {
+                    let scope = db.store.read_scope(0).expect("read scope");
+                    db.store.shared().validate_epoch().expect("epoch");
+                    scope
+                });
+                let plan = plan_on(q, &**st, &opts);
+                merges_checked += nodes(&plan)
+                    .iter()
+                    .filter(|n| matches!(&n.op, Op::MergeJoin { check, .. } if !check.is_empty()))
+                    .count();
+                if store_name == "sqlite"
+                    && let Err(e) = check_sql_joins(&plan, &db)
+                {
+                    failures.push(format!("[{name}/{store_name}] {q}\n{e}"));
+                }
+                let mut variants = vec![("", plan)];
+                if let Some(star) = with_star_merges(&variants[0].1) {
+                    variants.push((" star-rewrite", star));
+                }
+                for (variant, plan) in variants {
+                    runs += 1;
+                    let text = sq_plan::explain(&plan, None);
+                    match execute(Rc::clone(st), plan, &opts) {
+                        Ok(got) if &got == expected => {}
+                        Ok(got) => failures.push(format!(
+                            "[{name}{variant}/{store_name}] {q}\n{text}expected {} rows, got {}",
+                            expected.len(),
+                            got.len()
+                        )),
+                        Err(e) => failures.push(format!("[{name}{variant}/{store_name}] {q}\n{text}error: {e}")),
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("{runs} runs, {merges_checked} merge joins with checks");
+    assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures[..failures.len().min(4)].join("\n\n"));
+    // PreferMerge has to merge on one key and check the others.
+    assert!(merges_checked > 0);
+}

@@ -99,7 +99,7 @@ impl Planner<'_> {
             let right = this.open_node(q, ctx.unseeded(), mode)?;
             let b = right.rows;
             let (hb, hp) = this.hash_costs(b);
-            let cost = side.cost + right.cost + b * hb + lrows * hp;
+            let cost = side.cost + right.cost + b * hb + this.over_budget(b) + lrows * hp;
             let algo = if keys.is_empty() {
                 Algo::Nested { check: s }
             } else {

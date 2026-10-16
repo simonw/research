@@ -273,6 +273,12 @@ fn term_functions() {
     assert!(id("\"5\"^^<http://www.w3.org/2001/XMLSchema#integer>").is_some(), "inline terms need no store");
     let e = err(&c, "SELECT sparql_term_id('not a term')", []);
     assert!(e.contains("not an N-Triples term"), "{e}");
+    // A prefixed name is the usual mistake; the message says so instead of the parser's
+    // "Double serialization with an invalid exponent".
+    let e = err(&c, "SELECT sparql_term_id('ex:Python')", []);
+    assert!(e.starts_with("sparql: invalid argument: not an N-Triples term: \"ex:Python\""), "{e}");
+    assert!(e.contains("is a prefixed name") && e.contains("<http://example.org/Python>"), "{e}");
+    assert!(!e.contains("exponent"), "{e}");
 
     let q = |f: &str, id: i64| -> Value { one_p(&c, &format!("SELECT {f}(?1)"), [id]) };
     assert_eq!(q("sparql_term", alice), Value::Text("<http://ex/alice>".into()));

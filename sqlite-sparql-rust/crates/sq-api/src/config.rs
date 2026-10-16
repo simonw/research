@@ -1,5 +1,7 @@
 //! Per-connection configuration (§8.5, `sparql_config`) and per-call overrides (the `opts`
-//! argument of `sparql_rows`, the `key=value` arguments of `sparql_view`).
+//! argument of `sparql_rows`, the `key=value` arguments of `sparql_view`). Overrides may lower
+//! the connection's `timeout_ms` and `max_memory_mb`, never raise them
+//! ([`QuerySettings::within_limits_of`]).
 //!
 //! Settings live in two places: query settings ([`QuerySettings`], turned into
 //! `sq_core::plan::QueryOptions` for every call and overridable per call) and connection-wide
@@ -174,6 +176,17 @@ impl QuerySettings {
             Key::ProbeCap => self.probe_cap.to_string(),
             _ => return None,
         })
+    }
+
+    /// Per-call overrides may lower the connection's limits, never raise them: after applying
+    /// them, the stricter `timeout_ms` (0 = none) and `max_memory_mb` of `self` and `conn` win.
+    /// A `sparql_rows` call or `sparql_view` definition stored in someone else's database file
+    /// therefore cannot lift a limit the application set.
+    pub(crate) fn within_limits_of(&mut self, conn: &QuerySettings) {
+        if conn.timeout_ms > 0 && (self.timeout_ms == 0 || self.timeout_ms > conn.timeout_ms) {
+            self.timeout_ms = conn.timeout_ms;
+        }
+        self.max_memory_mb = self.max_memory_mb.min(conn.max_memory_mb);
     }
 
     /// Applies a JSON object of per-call overrides (`sparql_rows(query, opts)`).
@@ -439,5 +452,23 @@ mod tests {
         assert!(q.apply_json("[1]").is_err());
         assert!(q.apply_json("{").is_err());
         assert!(q.apply_json(r#"{"timeout_ms":[1]}"#).is_err());
+    }
+
+    #[test]
+    fn per_call_limits_only_tighten() {
+        let conn = |t: u64, m: u64| QuerySettings { timeout_ms: t, max_memory_mb: m, ..QuerySettings::default() };
+        let call = |json: &str, c: &QuerySettings| {
+            let mut q = c.clone();
+            q.apply_json(json).unwrap();
+            q.within_limits_of(c);
+            (q.timeout_ms, q.max_memory_mb)
+        };
+        // No connection timeout: any per-call timeout is tighter.
+        assert_eq!(call(r#"{"timeout_ms":50,"max_memory_mb":64}"#, &conn(0, 1024)), (50, 64));
+        // Raising is clamped to the connection's values; 0 (no timeout) is not an escape.
+        assert_eq!(call(r#"{"timeout_ms":60000,"max_memory_mb":4096}"#, &conn(500, 1024)), (500, 1024));
+        assert_eq!(call(r#"{"timeout_ms":0}"#, &conn(500, 1024)), (500, 1024));
+        assert_eq!(call(r#"{"timeout_ms":200,"max_memory_mb":16}"#, &conn(500, 32)), (200, 16));
+        assert_eq!(call(r#"{"engine":"sql"}"#, &conn(500, 32)), (500, 32));
     }
 }

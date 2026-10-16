@@ -5,7 +5,9 @@
 //! keys are too sparse in the 598 `knows` rows for a galloping merge to pay off), OPTIONAL,
 //! ORDER BY + LIMIT as a TopK, COUNT(*) of a chain as a factorized MergeJoin of the o-sorted and
 //! s-sorted streams, a FILTER range as an IntRange scan, and a cyclic join whose hash join keeps
-//! its probe order for the closing merge. Update them deliberately when the cost model changes.
+//! its probe order for the closing merge (on ?x, whose runs are short, checking ?z; both keys
+//! are entity keys, so the estimate multiplies their selectivities: 26.7 rows for the 26
+//! triangles of this random graph). Update them deliberately when the cost model changes.
 mod common;
 
 use common::*;
@@ -102,7 +104,7 @@ fn count_star() {
 #0 Project [?n]                                     est=1 cost=29.3us
 #1  Extend ?n := ?_3 (output-only)                  est=1 cost=29.3us
 #2   Count -> ?_3 fast=merge-factorized             est=1 cost=29.3us
-#3    MergeJoin key=?b gallop=6                     est=1.8e3 cost=38.2us
+#3    MergeJoin key=?b gallop=6                     est=1.8e3 cost=41.2us
 #4     Scan Gpos ?a <http://ex/knows> ?b (sorted ?b) est=598 cost=14.7us
 #5     Scan Gpso ?b <http://ex/knows> ?c (sorted ?b) est=598 cost=14.7us
 ",
@@ -126,8 +128,8 @@ fn unselective_cycle_hashes_in_probe_order_then_merges() {
     check(
         "SELECT * { ?x :knows ?y . ?y :knows ?z . ?z :knows ?x }",
         "\
-#0 Project [?x ?y ?z]                               est=27.8 cost=100.2us
-#1  MergeJoin key=?x gallop=6 check=[?z]            est=27.8 cost=100.2us
+#0 Project [?x ?y ?z]                               est=26.7 cost=123.4us
+#1  MergeJoin key=?x gallop=6 check=[?z]            est=26.7 cost=123.4us
 #2   HashJoin keys=[?y] build=right                 est=1.8e3 cost=85.5us
 #3    Scan Gpso ?y <http://ex/knows> ?z (sorted ?y) est=598 cost=14.7us
 #4    Scan Gpso ?x <http://ex/knows> ?y (sorted ?x) est=598 cost=14.7us

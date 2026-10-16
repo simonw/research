@@ -156,8 +156,23 @@ Each step considers these join operators:
   enforcers can sort an input by the key. A galloping right side costs, per distinct left key,
   an ordered seek (random when the keys are sparse) plus the rows read past the previous key
   before it (up to the gallop threshold), so 9 keys against a 600K-row range no longer look
-  cheaper than 9 probes.
+  cheaper than 9 probes. The executor buffers the right run of each key and pairs every left
+  row of the key with all of it, so a merge on one key that checks the other shared slots
+  (`check=[...]`) visits `Σ |L_run| × |R_run| ≈ |L| × rows(R | key)` pairs before the check
+  keeps its output. Each pair costs `pair_cost` (a row copy plus one `row_copy_per_slot` per
+  checked slot; 5.7 ns measured for 4-slot rows, 5 ns modelled), and every matched right row
+  is copied into the run buffer once. A key with few values and checks is therefore costed
+  at its run products: the planner merges on the most selective key, or hashes on all the
+  keys, instead (see "Joins on several keys" below). A COUNT(*) factorized over a check-free
+  merge on top of the group (`fast=merge-factorized`, `fast=star-factorized`) multiplies run
+  lengths: it is charged neither the output rows nor the run buffer (`count_free`).
 - **NestedLoop:** used when nothing else is legal.
+- **Memory.** A SortBySlot enforcer or a hash table whose estimated bytes (rows × (8 × slots
+  + 24)) exceed the memory budget (`max_memory_mb`, 1 GB by default) would stop the query
+  with "memory budget exceeded". It costs 100 µs more per buffered row (`over_budget`, about
+  20,000 row copies), so a plan whose buffers fit wins unless it is far slower; between plans
+  that all exceed the budget, the smaller buffers win. It is a cost, not a ban, because the
+  row estimates may be too high.
 
 By default (`choose_order`), a quad pattern reads the first `IndexOrder::candidates` order for
 its bound columns, except that probes with g, s and p bound (and fully bound probes) read GPSO.
@@ -175,7 +190,7 @@ filter on an object with a fixed graph and a constant predicate may become
 |---|---|
 | `Auto` (default) | Cost-based choice of bind, hash and merge (at most one enforcer per merge). SQL steps only when `store.caps().sql`, the group is unseeded and the plan is not an EXISTS plan. StarMerge post-pass. EXISTS decorrelation chosen by cost. |
 | `NoSql` | `Auto` without SQL steps. |
-| `PreferMerge` | Every inner join with a certain shared key is a binary MergeJoin (enforcers allowed on both sides). Other steps are cost-based, without SQL steps. No StarMerge. |
+| `PreferMerge` | Every inner join with a certain shared key is a binary MergeJoin (enforcers allowed on both sides), on its cheapest key (with several keys, usually the most selective one, the others checked). Other steps are cost-based, without SQL steps. No StarMerge. |
 | `PreferHash` | HashJoin wherever keys exist, else NestedLoop. Never merges. Always decorrelates EXISTS when legal. |
 | `PreferBind` | BindJoin wherever legal. Never merges. Decorrelated EXISTS becomes a BindJoin. |
 
@@ -198,7 +213,9 @@ EXISTS plans never use merge joins or SQL steps and never claim a sort order.
   `Error::Unsupported`.
 - **Post-passes.** SQL chains are rendered as `SqlJoin` when they close (at a filter, a
   non-SQL step or the end of the group, and at most 64 aliases). Merge chains of three or more
-  inputs become `StarMerge` where cheaper (`Auto` and `NoSql` only). Then pre-order plan ids
+  inputs become `StarMerge` where cheaper (`Auto` and `NoSql` only); a StarMerge with checks
+  is charged for every combination of its key's runs, as the checked MergeJoins of the chain
+  are for their pairs, and both are charged for buffering the runs. Then pre-order plan ids
   are assigned, root first and then the EXISTS plans. Finally `Extend.canonical = false`
   (shown as `(output-only)` in EXPLAIN) is set only for slots that no id-comparing consumer
   reads.
@@ -219,6 +236,28 @@ correctness).
   an even share of the named-graph scope.
 - **Store inputs.** `store.costs()` selects the `CostConstants`, `caps().sql` enables SQL
   steps, `caps().reader` sets the gallop threshold, and `stats()` feeds `Card`.
+- **Joins** (`choice.rs`, `pattern_join`). Every operator of a join step gets the same row
+  estimate. For a quad pattern unit it is the unit's rows in the group's context times the
+  combined selectivity of the join keys. Each key's selectivity is `1 / max(dv_L, dv_R)`:
+  `dv_R` is the unit's rows over its rows per value of the key, and `dv_L` is the fewest
+  distinct values among the prefix's quad patterns that bind the key, capped by the prefix's
+  rows (SPEC §7.4.5; a prefix with more values than the unit finds a match for only part of
+  its rows). A unit that extends a subject star of the prefix uses its characteristic-set
+  ratio as the subject's selectivity. Opaque units are estimated with the keys seeded.
+- **Joins on several keys** (`combine_keys`). The most selective key counts in full. Further
+  *entity* keys multiply, as SPEC §7.4.5 says (independent keys). Further *attribute* keys,
+  whose values the unit repeats on at least 100 rows (`ATTRIBUTE_ROWS`: a city, an age, a
+  type, a vendor's country), back off exponentially: the first is square-rooted, the next
+  fourth-rooted, and so on. Attributes shared along a join are often correlated with its
+  other keys. On the tutorial's 100K-person network, `?a :knows ?b . ?b :knows ?c . ?a
+  :livesIn ?city . ?c :livesIn ?city` returns 292,595 rows: independent keys estimate 4.5e4,
+  the backoff 2.0e5. On the 1.6M-triple benchmark graph (1,000 cities), friends of friends
+  in the same city are 52,949 rows: 1.8e3 independent, 5.7e4 backed off. Backing off an
+  attribute costs at most `sqrt(dv)` when the keys are in fact independent, which its few
+  values keep small. Entity keys, such as the last edge of a cycle, have as many values as
+  the graph has nodes and multiply: the golden triangle `?x :knows ?y . ?y :knows ?z . ?z
+  :knows ?x` on 200 random people is estimated at 26.7 rows for its 26 triangles (backing
+  off would say 378, and about 500 times too many on the 200K-person benchmark graph).
 - **Clamping.** All estimates are finite and clamped to `[0, 1e300]`.
 
 ## Public API tour
@@ -301,7 +340,7 @@ the o-sorted and s-sorted `knows` streams.
 #0 Project [?n]                                     est=1 cost=29.3us
 #1  Extend ?n := ?_3 (output-only)                  est=1 cost=29.3us
 #2   Count -> ?_3 fast=merge-factorized             est=1 cost=29.3us
-#3    MergeJoin key=?b gallop=6                     est=1.8e3 cost=38.2us
+#3    MergeJoin key=?b gallop=6                     est=1.8e3 cost=41.2us
 #4     Scan Gpos ?a <http://ex/knows> ?b (sorted ?b) est=598 cost=14.7us
 #5     Scan Gpso ?b <http://ex/knows> ?c (sorted ?b) est=598 cost=14.7us
 ```
@@ -322,7 +361,7 @@ SqlJoin `EXPLAIN QUERY PLAN` assertions in `differential.rs` were validated on S
 another SQLite version may choose a different plan shape.
 
 ```sh
-cargo test -p sq-plan                       # 60 unit tests in src/ + 77 integration tests
+cargo test -p sq-plan                       # 64 unit tests in src/ + 83 integration tests
 cargo test -p sq-plan --test golden         # one file
 SQ_W3C_DIR=/path/to/rdf-tests/sparql cargo test -p sq-plan --test w3c -- --nocapture
 REVIEW_SEED=3 REVIEW_N=600 cargo test -p sq-plan --test review3_semantics -- review_physical_plans
@@ -344,19 +383,20 @@ There are no `#[ignore]`d tests. Some tests read environment variables:
 - **`tests/review_wp8.rs`** reads `REVIEW_SEED`, `REVIEW_CASES` and `REVIEW_SIZE` (defaults
   11, 150 and 90).
 
-In a dev-profile run on the 4-vCPU dev VM, all 137 tests passed. The slowest files were
-`differential` (7.0 s), `review_wp8` (4.1 s) and `review3_semantics` (3.4 s).
+In a dev-profile run on the 4-vCPU dev VM, all 147 tests passed. The slowest files were
+`differential` (4.5 s), `optimizer` (3.7 s), `review3_semantics` (2.4 s) and `review_wp8`
+(2.2 s).
 
 | File | Covers |
 |---|---|
 | `lower.rs` | Slot scopes, blank nodes, constants and TEMP ids, datasets, forms, the 256-slot limit, UPDATE WHERE, a logical EXPLAIN snapshot |
 | `planner.rs` | GRAPH push / loop, filter scope, OPTIONAL filters, seeds, TopK / Count / ASK, policies, EXISTS plans and decorrelation, canonical flags, SERVICE, no BindJoin into a side that mints values, joins on a GROUP BY key that evaluate the aggregation once |
-| `optimizer.rs` | Merge joins and enforcers, order claims, COUNT fast paths, StarMerge, galloping, IntRange choice, SQL chain placement and the 64-alias cap, `validate()` on corrupted plans |
+| `optimizer.rs` | Merge joins and enforcers, order claims, COUNT fast paths, StarMerge, galloping, IntRange choice, SQL chain placement and the 64-alias cap, `validate()` on corrupted plans, many-to-many joins on a key with few values (no merge on the city that checks `?c`, under Auto, NoSql and PreferMerge, at 4K and 40K people; the two-key estimate within 2× of the result), no SortBySlot or hash table over a 1 MB memory budget when a plan that fits exists |
 | `golden.rs` | EXPLAIN snapshots: star (and its SqlJoin on SQLite), chain, OPTIONAL, TopK, factorized count, IntRange, cycle. Update them deliberately when costs change. |
 | `validate.rs` | The core `validate()` checks (seeds, keys / checks, Extend, Distinct, Active graph, scan order, sortedness, slot ranges, ids), each exercised by mutating a valid plan. The optimizer-specific checks (merge, SortBySlot, IntRange, SqlJoin) are in `optimizer.rs`. |
-| `differential.rs` | 1,000 random queries × 8 option sets × {MemStore, SQLite}, executed by sq-exec against sq-oracle; every SqlJoin is checked with `EXPLAIN QUERY PLAN`; an exhaustive IntRange test |
+| `differential.rs` | 1,000 random queries × 8 option sets × {MemStore, SQLite}, executed by sq-exec against sq-oracle; every SqlJoin is checked with `EXPLAIN QUERY PLAN`; an exhaustive IntRange test; 8 many-to-many and several-key queries (same city, cycle, OPTIONAL on two keys) on a 240-person, 3-city network under every option set, with their StarMerge rewrites |
 | `w3c.rs` | Every W3C `.rq` file: parse, lower, optimize, validate and props invariants. It plans on an empty store (default options) and on the test's data with and without statistics under 6 option sets. |
-| `review*.rs` | Regression tests from adversarial reviews: seeded groups, absent graphs, finite estimates, a naive-evaluator differential of physical plans, planning budget, StarMerge selection, statistics scopes |
+| `review*.rs` | Regression tests from adversarial reviews: seeded groups, absent graphs, finite estimates, a naive-evaluator differential of physical plans, planning budget, StarMerge selection, statistics scopes, no merge on an attribute key that checks the person (city, age, join day pairs), cycle estimates within 4× on random graphs |
 
 ## Performance
 
@@ -386,6 +426,30 @@ sweep, which comes from the test run above.
   predicates takes 2.6 ms as a merge chain (120,000 intermediate rows) and 0.6 ms as a
   StarMerge. Without the count, the StarMerge is slower: 70 ms against 46 ms for 2.4M output
   rows.
+- **Joins on several keys** (release, CPU time best of 5). On the tutorial's 100K-person
+  network (838K quads, B-tree reader), `?a foaf:knows ?b . ?b foaf:knows ?c . ?a ex:livesIn
+  ?city . ?c ex:livesIn ?city` (292,595 rows) took 47 s of CPU time under `Auto` (55 s in
+  the tutorial's run) as a `MergeJoin key=?city check=[?c]` over 9.4e9 pairs of rows. It now
+  merges on `?c` and checks the city: 0.23 s (0.26 s as a COUNT(*)), against 0.35 s under
+  `PreferHash` and 1.2 s under `PreferBind`. On the 1.6M-triple benchmark social graph:
+  `?a :knows ?b . ?a :city ?x . ?b :city ?x` went from 17.6 s to 0.12 s; a 4-cycle that also
+  checks a city from 52 s to 0.52 s; friends of friends sharing a city, an age or a class
+  from over 20 s (timeout) to 0.44–0.50 s; pairs of people sharing a city and a join day
+  from over 20 s to 1.2 s. On BSBM, products sharing a feature and a producer went from 7.4 s
+  to 1.0 s. Cycles (triangles, mutual `:knows`, 4-cycles) keep their plans and estimates
+  (21 triangles: estimated 27; 8 mutual pairs: 9). The 17 benchmark queries (count mode)
+  keep their plan shapes, Q3's factorized merge join included, and their times are
+  unchanged within noise (0.98–1.03×; Q4, Q7 and Q16 are 0.81×, 0.33× and 0.86× through
+  changes in other crates, with the same plans).
+- **Memory budget.** `SELECT (COUNT(*) AS ?n) { ?a :city ?x . ?a :age ?g . ?b :city ?x .
+  ?b :age ?g }` on the benchmark social graph streams 1.2e9 city pairs in every left-deep
+  order (the cities are skewed; estimated 4e7). Without the memory term, `Auto` sorted them
+  for a merge and stopped after 1.1 s with "memory budget exceeded (1024 MB)"; it now
+  probes a hash table of the 200K `:age` rows and returns the count after 68 s.
+- **Cost of the join estimates.** Estimating each step from its keys' distinct values costs
+  about 800 instructions per join step considered. Planning the 10-pattern 5-clique on the
+  benchmark database went from 2.7 ms to 3.2 ms, a 9-pattern two-subject star from 1.37 ms to
+  1.55 ms, and the benchmark queries 0–6% (Q2's 6-pattern star: 275 µs to 292 µs).
 - **Correctness evidence.** `differential.rs` ran 16,000 executions with zero differences
   from the oracle. The test is deterministic; its tally covers 380 SqlJoins, 7,737 MergeJoins,
   2,403 enforcers, 1,624 streaming groups, 169 factorized counts and 59 IntRange scans. All
@@ -407,8 +471,15 @@ sweep, which comes from the test run above.
 - **Streaming groups.** A Group streams only when its input happens to be sorted by its
   single key; the planner does not request that order.
 - **Cost model.** The cost constants are not calibrated, and Group estimates ignore distinct
-  key values. A merged multi-graph default graph is charged one seek per open. An IntRange scan
-  of the GraphLoop register graph assumes 0 numeric exceptions.
+  key values. Join estimates assume runs of even size: a merge on a skewed key visits more
+  pairs than estimated (the tutorial's 20 cities: 9.4e9 against 4.5e9). Several join keys
+  are told apart by a fixed rows-per-value threshold (100): an attribute key that is in fact
+  independent of the others is overestimated by up to `sqrt(dv)` (two random people sharing
+  a city and an age: 10× with 100 ages), and correlated entity keys are underestimated
+  (clustered graphs have more triangles than a random one). `dv_L` is known only from the
+  prefix's quad patterns. The memory term is a step at the budget, on estimated rows.
+  A merged multi-graph default graph is charged one seek per open. An IntRange scan of the
+  GraphLoop register graph assumes 0 numeric exceptions.
 - **Graph sort orders.** Order claims are conservative for GRAPH ?g scans over FROM NAMED lists
   of more than 8 graphs.
 - **Release builds skip checks.** `validate()` and `check_barriers` run inside `optimize()` only
@@ -427,10 +498,16 @@ sweep, which comes from the test run above.
 - **§7.3.4.** Decorrelation has extra conditions (MINUS, non-empty S, not inside EXISTS), is
   cost-based under `Auto`, and can emit HashJoin, NestedLoop or BindJoin Semi/Anti joins.
 - **§7.4.** A Group with keys is estimated at `max(1, |in| / 2)` rows (1 without keys), not
-  `min(|in|, Π dv(keys))`.
+  `min(|in|, Π dv(keys))`. A join on several keys multiplies the per-key
+  `1 / max(dv_L, dv_R)` of its entity keys only; attribute keys (100 or more rows per value
+  in the unit), other than the most selective key, are backed off exponentially. `dv_L`
+  comes from the prefix's quad patterns and is capped by its rows.
 - **§7.5.** The DP is bounded by work (`MAX_DP_WORK`) with fallback tiers, and keeps open SQL
   chains as an interesting property. StarMerge is costed per distinct key, with an output-row
-  term and a COUNT-aware comparison. Probes with g, s and p bound read GPSO.
+  term and a COUNT-aware comparison. A MergeJoin or StarMerge with checks also pays for every
+  pair (combination) of its key's runs, and both pay a row copy per buffered run row unless a
+  COUNT is factorized over them. Enforcers and hash tables estimated over the memory budget
+  are penalized. Probes with g, s and p bound read GPSO.
 - **§7.6.** In SqlJoin text the graph is a parameter too; chains close at filters and are
   capped at 64 aliases.
 

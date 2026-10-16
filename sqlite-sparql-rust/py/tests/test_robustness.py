@@ -104,6 +104,52 @@ def test_interrupt_stops_a_streaming_scan(db):
     assert status(db, "open_cursors") == 0
 
 
+FLOW_THEN_NEVER = (
+    "SELECT * WHERE { { ?a ?p ?b . ?c ?q ?d } UNION"
+    ' { ?e ?r ?f . ?g ?s ?h . ?i ?t ?j FILTER(CONCAT(STR(?f), STR(?h), STR(?j)) = "never") } }'
+)
+
+
+def interrupted_after(db, seconds, sql, *params):
+    timer = threading.Timer(seconds, db.interrupt)
+    timer.start()
+    try:
+        with pytest.raises(sqlite3.OperationalError) as e:
+            db.execute(sql, params).fetchall()
+    finally:
+        timer.join()
+    return e.value
+
+
+@pytest.mark.parametrize(
+    "sql, query",
+    [
+        ("SELECT count(*) FROM sparql_rows(?)", "NEVER"),  # xFilter: the first batch never fills
+        ("SELECT count(*) FROM sparql_rows(?, '{\"engine\":\"sql\"}')", "NEVER"),
+        ("SELECT count(*) FROM sparql_rows(?)", "FLOW_THEN_NEVER"),  # xNext, after 90,000 rows
+        ("SELECT count(*) FROM never", None),
+    ],
+)
+def test_an_interrupted_scan_says_sparql_interrupted(db, sql, query):
+    # When sparqlite's own code notices the interrupt, a scan reports it as the scalar
+    # functions do, with SQLITE_INTERRUPT as the code.
+    big(db)
+    db.execute("CREATE VIRTUAL TABLE temp.never USING sparql_view('%s')" % NEVER.replace("'", "''"))
+    params = ({"NEVER": NEVER, "FLOW_THEN_NEVER": FLOW_THEN_NEVER}[query],) if query else ()
+    e = interrupted_after(db, 0.3, sql, *params)
+    assert str(e) == "sparql: interrupted"
+    assert e.sqlite_errorcode == sqlite3.SQLITE_INTERRUPT
+    assert status(db, "open_cursors") == 0
+
+
+def test_an_interrupted_flowing_scan_reports_sqlite_interrupt(db):
+    # Rows flowing: SQLite's own check between rows may notice first and keeps its message.
+    big(db)
+    e = interrupted_after(db, 0.2, "SELECT max(v0) FROM sparql_rows(?)", ENDLESS)
+    assert e.sqlite_errorcode == sqlite3.SQLITE_INTERRUPT
+    assert str(e) in ("sparql: interrupted", "interrupted")
+
+
 def test_timeout(db):
     big(db)
     scalar(db, "SELECT sparql_config('timeout_ms', 100)")
@@ -221,6 +267,42 @@ def test_deeply_nested_requests_do_not_crash_the_host():
         """
     )
     assert done.returncode == 0 and done.stdout.strip() == "ok", (done.returncode, done.stderr[-2000:])
+
+
+def test_a_view_that_recurses_into_sparqlite_does_not_crash_the_host():
+    # A database whose rdf_meta is a view calling a reader made every reader recurse through
+    # its own epoch check until the stack overflowed (SIGSEGV), trusted_schema OFF or not.
+    done = run_isolated(
+        """
+        conn = connect()
+        conn.execute("SELECT sparql_load('<http://ex/a> <http://ex/p> <http://ex/b> .', 'nt')")
+        conn.executescript(
+            "ALTER TABLE rdf_meta RENAME TO meta_real;"
+            "CREATE VIEW main.rdf_meta(key, value) AS SELECT key, CASE WHEN key = 'dict_gen'"
+            " THEN value + 0 * (SELECT count(*) FROM sparql_rows('ASK {}')) + 0 * sparql_count('ASK {}')"
+            " ELSE value END FROM meta_real;"
+        )
+        conn.execute("PRAGMA trusted_schema = OFF")
+        for sql in ("SELECT sparql_count('SELECT * WHERE { ?s ?p ?o }')",
+                    "SELECT count(*) FROM sparql_rows('SELECT * WHERE { ?s ?p ?o }')"):
+            try:
+                conn.execute(sql).fetchall()
+                raise SystemExit(f"accepted: {sql}")
+            except sqlite3.OperationalError as e:
+                assert str(e).startswith("sparql: unsupported: sparqlite calls nest too deeply"), e
+        print("ok")
+        """
+    )
+    assert done.returncode == 0 and done.stdout.strip() == "ok", (done.returncode, done.stderr[-2000:])
+
+
+def test_per_call_options_cannot_lift_the_connection_timeout(db):
+    big(db)
+    scalar(db, "SELECT sparql_config('timeout_ms', 100)")
+    start = time.monotonic()
+    with pytest.raises(sqlite3.OperationalError, match="query timeout"):
+        db.execute("SELECT count(*) FROM sparql_rows(?, '{\"timeout_ms\": 0}')", (ENDLESS,)).fetchall()
+    assert time.monotonic() - start < 20
 
 
 def test_a_temp_view_scan_leaves_autocommit_writes_alone(tmp_path):

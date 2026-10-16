@@ -56,9 +56,13 @@ literal whose term is *not* canonical. Examples are `xsd:int("05")`, which is `"
 strings, the numeric tower, the date/time and duration types, plus `Other` (an unknown datatype)
 and `IllTyped` (a known XSD type with a bad lexical form or a failed facet, such as
 `"300"^^xsd:byte`). Inline INT/BOOL/DECIMAL/DATETIME/DATE ids decode from the payload with no
-cache and no I/O (`inline_value`). SHORTSTR ids also decode from the payload, with no I/O, but
-the result is stored in the `ValueCache` because decoding allocates. Dictionary, BNODE and TEMP
-ids go through the `ValueCache` and then `TermResolver::term`.
+cache and no I/O (`inline_value`). SHORTSTR ids also decode from the payload, with no I/O.
+SHORTSTR, dictionary, BNODE and TEMP ids are looked up in the `ValueCache` first, and on a miss
+SHORTSTR is decoded from the payload and the others with `TermResolver::term`. The id's tag
+(for TEMP ids, `temp_tag`) gives the value class of IRIs, blank nodes, strings and language
+strings: a STR id is always an xsd:string literal and a LANG id a language-tagged one
+(`codec::dict_tag`, `TempDict::intern`). Only TYPED literals are classified by their datatype
+IRI. A decoded value is cached from the second decode of its id (concept 8).
 
 **3. Interning only when an id is needed.** Intermediate results stay as `Val::V`/`Val::Typed`.
 Only `CompiledExpr::eval`, `id_of_val`/`id_of_value` and `Accumulator::finish` assign ids to
@@ -92,11 +96,35 @@ specialised nodes:
 | `TagIs` | `isIRI` / `isBlank` / `isLiteral` | tag read (`temp_tag` for TEMP ids) |
 | `LangEq` | `LANG(?x) = "c"`, `c` a SHORTSTR or TEMP constant | cached language tag |
 | `LangMatchesConst` | `LANGMATCHES(e, "range")`, `range` a SHORTSTR or TEMP constant | no range decode |
-| `Regex` / `Replace` (const) | constant pattern and flags | compiled once on first use; literal and `^literal` patterns become string ops; a constant replacement is prepared once |
+| `Regex` / `Replace` (const) | constant pattern and flags | compiled once on first use; literal and `^literal` patterns become string ops; a literal prefix (`^abc…`) and suffix (`…xyz$`) of a single-branch pattern reject texts before the automaton runs, under the `i` flag too (see below); a constant replacement is prepared once |
 
 Arithmetic and numeric-comparison subtrees run directly on `Num`, with no `Value` built in
 between. Ordering operands that share no ordering class (an IRI against a number, a string
-against a number) are type errors decided from the tags, without decoding.
+against a number) are type errors decided from the tags, without decoding. The same holds for
+string arguments (the text of REGEX and REPLACE, the arguments of CONTAINS, STRLEN, UCASE,
+CONCAT, LANGMATCHES, MD5 and the other string functions): only STR, SHORTSTR and LANG ids hold
+string literals, so an IRI, a blank node, a number or a TYPED literal there is an error found
+from the tag, and a bare variable is read straight from the row. A constant REGEX pattern's
+compiled regex is borrowed from the node, so a row costs no reference-count update for it.
+
+Regex affixes (`regex.rs`, `Plan::Affix`). A single-branch pattern without the `m` and `x`
+flags keeps the literal run after a leading `^` (minus a quantified last character) and the
+literal run before a final unescaped `$` (minus a character that belongs to a backslash
+escape). A text shorter than the two runs together, or whose bytes there differ from them, is
+rejected without running the automaton; a text that passes still goes to the automaton. Under the `i`
+flag only the ASCII ends of the runs are kept, lower-cased, and they decide only where the
+text's bytes are ASCII. An ASCII character matches an ASCII pattern character exactly when
+they are equal up to ASCII case, because the other members of a case-folding orbit (U+212A
+KELVIN SIGN for `k`, U+017F LONG S for `s`) are not ASCII. A non-ASCII byte in that region
+leaves the decision to the automaton. The comparison runs 8 bytes at a time as `(text |
+mask) == literal`, with mask 0x20 on the lower-case letters. Q7's `^person 1[0-9]*7$` with
+`i` thus runs the automaton on about 11K of 200K names instead of all of them. Unit tests
+compare plan and automaton on fixed cases and on random patterns built from literals in both
+cases, escapes, classes, quantifiers, groups, alternations and anchors, under seven flag
+combinations, against texts that contain the Kelvin sign and the long s. One run checks more
+than 20,000 pattern and text pairs, including over 200 case-sensitive and 200
+case-insensitive affix plans. Three more seeds at ten times that size also passed when the
+plan was written.
 
 **6. Numerics (`numeric.rs`).** Promotion runs integer → decimal → float → double.
 `xsd:integer` and the derived integer types are `i64`; larger values are `IllTyped` (a documented
@@ -118,12 +146,18 @@ sq-exec's sort fast path depends on this. MIN and MAX use the same order.
 
 **8. Per-execution state lives in `ValueCache`.** It holds the decoded values (131,072 entries by
 default and cleared when full; `ValueCache::with_limit`, minimum 16), the dynamic regex cache (256
-`(pattern, flags)` entries, cleared when full) and the `BNODE(str)` scope. The scope is keyed by
-row content, with blank nodes from earlier `BNODE(str)` calls on the same solution masked out of
-the key (the "lineage" rule in `bnode.rs`). Its memory is bounded by two generations of about 8
-MiB each. Create one `ValueCache` per execution and never share one between executions, because
-TEMP ids differ. `ValueCache::clear()` empties only the decoded values; the regex cache and the
-BNODE scope survive it.
+`(pattern, flags)` entries, cleared when full) and the `BNODE(str)` scope. A decoded value is
+admitted only on the second decode of its id. The first decode records the id in a
+direct-mapped table of 4,096 recently decoded ids (32 KiB, allocated on the first miss). The
+next decode of an id still in that table caches the value. A FILTER over distinct values
+(REGEX over 200K names) therefore never inserts into the map, which used to cost an insert and
+its rehashes per row with no hit. Repeated ids are cached from their second use. Two ids that
+share a table slot evict each other, which only delays caching. The `BNODE(str)` scope is keyed
+by row content, with blank nodes from earlier `BNODE(str)` calls on the same solution masked out
+of the key (the "lineage" rule in `bnode.rs`). Its memory is bounded by two generations of about
+8 MiB each. Create one `ValueCache` per execution and never share one between executions,
+because TEMP ids differ. `ValueCache::clear()` empties only the decoded values; the regex cache,
+the BNODE scope and the admission table (which holds ids, not values) survive it.
 
 ## Public API tour
 
@@ -173,8 +207,18 @@ let key = env.with(|cx| bind.sort_key(&[name], cx))?;    // ORDER BY key, not in
 ```
 
 `CompiledExpr` also has `as_slot()` and `as_const()`, which let hosts recognise a bare variable
-or a constant (for a pass-through BIND or `ORDER BY ?x`). It is `Send` but not `Sync`, because
-constant regexes are cached in a `OnceCell` on first use.
+or a constant (for a pass-through BIND or `ORDER BY ?x`). `string_slots()` names the slots whose
+strings the expression decodes first on every row: the text of REGEX or REPLACE, or the first
+argument of a string function, reached from the root through the operand each node evaluates
+first (`!`, the left operand of `&&`, `||`, `<`, `+` and IN, IF's condition, the first COALESCE
+argument, a cast's argument, the non-constant side of `=` and sameTerm, and nested string
+functions such as `REGEX(LCASE(?n), ..)`). For such a slot, every row whose value is a STR or
+LANG id decodes it before anything can end the evaluation. sq-exec's Filter and Extend
+therefore decode those ids of a whole input batch in one store call (see
+[../sq-exec/README.md](../sq-exec/README.md)). The analysis returns nothing when the first
+operand may decide alone, as in `?age > 3 && REGEX(?n, ..)` or `BOUND(?n) && ..`.
+`CompiledExpr` is `Send` but not `Sync`, because constant regexes are cached in a `OnceCell`
+on first use.
 
 Aggregates. The host evaluates the argument itself with `canonical = true` and passes the id to
 `add`, or passes `None` when the argument is unbound or an error. `accumulator` ignores
@@ -222,7 +266,7 @@ sq-expr = { workspace = true, features = ["testing"] }
 ## Testing
 
 ```sh
-cargo test -p sq-expr                    # 102 tests: 97 run, 5 ignored
+cargo test -p sq-expr                    # 108 tests: 103 run, 5 ignored
 git clone https://github.com/w3c/rdf-tests /path/to/rdf-tests
 SQ_W3C_DIR=/path/to/rdf-tests/sparql cargo test -p sq-expr w3c -- --nocapture
 cargo test --release -p sq-expr bench -- --ignored --nocapture        # micro-benchmarks
@@ -231,8 +275,9 @@ SQ_VALUE_DIFF_N=20000 SQ_VALUE_DIFF_OUT=/tmp/x.tsv cargo test -p sq-expr value_d
 
 - Module unit tests cover XSD lexical spaces and facets, the `WELL_KNOWN` row table, decimal
   arithmetic and rounding, inline dateTime/date decoding (checked against the parser on 2,000
-  pseudo-random values), regex translation and flags, the string helpers, the cast table and the
-  BNODE scope (lineage and memory bound).
+  pseudo-random values), regex translation and flags, regex plans against the automaton (fixed
+  and random patterns), the string helpers, the cast table and the BNODE scope (lineage and
+  memory bound).
 - `src/tests/` uses a harness that parses SPARQL expression text with spargebra, lowers it the
   way sq-plan does (stored constants become dictionary ids, absent ones TEMP ids) and evaluates it
   on a `TestEnv`. It contains per-function tables with W3C expected values (`functions.rs`), the
@@ -240,6 +285,11 @@ SQ_VALUE_DIFF_N=20000 SQ_VALUE_DIFF_OUT=/tmp/x.tsv cargo test -p sq-expr value_d
   (`sorting.rs`), aggregates (`aggregates.rs`) and interning and identity rules
   (`interning.rs`). `review.rs` and `review2.rs` hold adversarial tests from two review rounds;
   some of these check that the fast paths agree with the general path for every id class.
+  `decoding.rs` covers the decoding discipline. It checks the `ValueCache` admission (nothing
+  cached on a first decode, cached from the second, single-use ids never fill the map) and that
+  tag-classified values equal datatype-classified ones for every id class. It checks that string
+  arguments of non-string ids are errors with no resolver call, and what `string_slots` returns
+  for 25 expressions.
 - `w3c.rs` runs the query-evaluation tests of 16 expression-heavy W3C directories through a small
   nested-loop reference evaluator. Clone https://github.com/w3c/rdf-tests and set
   `SQ_W3C_DIR=<clone>/sparql`. The built-in default is a scratchpad path that exists only on the
@@ -249,8 +299,10 @@ SQ_VALUE_DIFF_N=20000 SQ_VALUE_DIFF_OUT=/tmp/x.tsv cargo test -p sq-expr value_d
   `"3.0"`), 2 skips (one named-graph test, one query spargebra cannot parse) and 0 failures. The
   test fails if fewer than 290 tests pass (strict or lenient).
 - Ignored tools: `bench_hot_paths` (`SQ_BENCH_ROWS`, default 200,000; `SQ_BENCH_ONLY` filters
-  case names), `value_diff` (writes `expression \t result` TSV to `SQ_VALUE_DIFF_OUT`;
-  `SQ_VALUE_DIFF_N` sets the number of expressions, default 5,000),
+  case names; the case "over distinct strings (single use)" builds `SQ_BENCH_ROWS` distinct
+  dictionary strings and decodes each once on a fresh `ValueCache`), `value_diff` (writes
+  `expression \t result` TSV to `SQ_VALUE_DIFF_OUT`; `SQ_VALUE_DIFF_N` sets the number of
+  expressions, default 5,000),
   `review_string_function_diff` / `review_date_function_diff` (`SQ_REVIEW_DIFF_OUT`) and
   `review_probe_expressions` (`SQ_REVIEW_PROBE_IN` → `SQ_REVIEW_PROBE_OUT`). The two
   `review_*_diff` tests write the same `SQ_REVIEW_DIFF_OUT` file, so a plain `-- --ignored` run
@@ -280,6 +332,42 @@ about ±2x between runs on the shared VM, and compare cases only within one run.
 | `BIND(BNODE(?x))` (scope hit) | 211 | 169-248 |
 | `SUM` over inline ints | 12 | 12-17 |
 | `sort_key` of a dictionary string | | 99-233 |
+
+### Decoding discipline and regex affixes (2026-10-15)
+
+The `ValueCache` admission rule, tag-classified values, tag-decided string arguments, the
+borrowed constant regex and the regex affixes were measured against the same tree with this
+crate's sources at HEAD (only `tests/bench.rs` kept, so that both builds have the same cases).
+The time is the best of 7 interleaved runs of `bench_hot_paths` (ns/row) on the shared 4-vCPU VM
+at a load average of about 2.5. The instruction counts per row come from callgrind with the
+harness setup subtracted, and they are deterministic. Timings are not: cases near 10 ns moved by
+±1-2 ns in either direction between builds (for example `?x = <iri>` read 9.1 → 7.7 in one A/B
+pair and 8.2 → 9.5 in the next) while their library code ran the same instructions. The extra
+1-5 instructions that `bench_hot_paths` itself spends in some loops differ between the two
+builds, for example the `SUM` loop around an identical `Sum::add`.
+
+| Case | ns/row before | ns/row after | instr/row before | instr/row after |
+|---|---|---|---|---|
+| `REGEX(?x, "1$")` over 200K distinct strings, fresh cache | 717 | 243 | 5,018 | 4,424 |
+| `REGEX(?x, "^abc string number 1")` (literal prefix) | 98.0 | 60.4 | 459 | 350 |
+| `REGEX(?x, "number [0-9]5$")` (suffix "5") | 117.8 | 64.5 | 673 | 387 |
+| `REGEX(?x, "^ABC string number 1[0-9]*5$", "i")` | 135.6 | 65.9 | 803 | 430 |
+| `REGEX(?x, ?y)` (dynamic pattern, cached) | 228.2 | 172.2 | 1,197 | 950 |
+| `CONTAINS(?x, "99")` / `STRLEN(?x) > 20` | 155.6 / 144.4 | 129.6 / 122.3 | 821 / 852 | 729 / 759 |
+| `BIND(UCASE(?x))` / `BIND(BNODE(?x))` | 305.5 / 143.8 | 248.2 / 100.0 | 1,748 / 703 | 1,646 / 614 |
+| `sort_key` of a dictionary string / `MIN(string)` | 104.2 / 73.7 | 91.4 / 70.6 | 822 / 341 | 810 / 319 |
+| every other case | | within the noise above | | equal, or +1-5 in the harness loop |
+
+The single-use case's instruction count includes building its 200K dictionary strings, which
+dominates it; its time does not. End to end, Q7 (`REGEX(?n, "^person 1[0-9]*7$", "i")` over
+200K names, sparqlite extension, social dataset, count mode, best of 5 CPU) went from 178 ms to
+65 ms warm and from 485 ms to 208 ms cold; pyoxigraph takes about 170 ms. Its warm run went
+from 362.7M to 207.9M instructions (callgrind). This crate's share of the savings: `ValueCache`
+inserts and rehashes (29M, plus the value clones and drops that went with them), the datatype
+comparison in `Value::from_literal` and `XsdType::from_iri` (17M), and about 50M in the regex,
+whose automaton now runs only on the 11,111 names that pass both affixes (the matches) instead
+of all 200K. sq-exec removed its decoded-term map and batches the decodes (see
+[../sq-exec/README.md](../sq-exec/README.md)).
 
 Value agreement with pyoxigraph, as logged in `../../notes.md`: on 20,000 random arithmetic, cast
 and comparison expressions (`SQ_VALUE_DIFF_N=20000`), 97.8% matched exactly and 100% matched

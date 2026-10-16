@@ -11,10 +11,14 @@
 //!   (`min(cost, seek_random + keys × seek_sorted + matched rows)`);
 //! * an output row combines k input rows ([`Planner::star_row_cost`]), against one row copy
 //!   per output row of the chain, which however also produces the intermediate rows of its
-//!   inner joins;
-//! * under COUNT(*) the top of the group produces no row when it is factorized: a check-free
-//!   StarMerge multiplies its runs per key, a check-free top MergeJoin of the chain sums the
-//!   products of its runs but still produces the rows of its inner joins.
+//!   inner joins; with checks, every combination of the key's runs (`Σ_key Π_i |run_i|`,
+//!   about `keys × Π_i rows_i / keys_i`) is combined before the check rejects it, as a checked
+//!   MergeJoin of the chain pays for every pair of its runs (`choice`);
+//! * the runs of every input are buffered (one row copy per matched input row);
+//! * under COUNT(*) the top of the group produces no row and buffers no run when it is
+//!   factorized ([`Planner::count_free`]): a check-free StarMerge multiplies its run lengths
+//!   per key, a check-free top MergeJoin of the chain sums the products of its run lengths but
+//!   still produces the rows of its inner joins.
 //!
 //! Measured (release, MemStore, 300 subjects × 20 values of three predicates, COUNT(*)): the
 //! chain 2.6 ms with its 120 000 intermediate rows, the StarMerge 0.6 ms. Without the count, the
@@ -47,6 +51,11 @@ fn chain_inputs(p: &Plan, key: Slot) -> SmallVec<[&Plan; 8]> {
     inputs.push(q);
     inputs.reverse();
     inputs
+}
+
+/// Rows of StarMerge input `q` (with `keys` distinct keys) under the `driver` candidate keys.
+fn matched_rows(q: &Plan, keys: f64, driver: f64) -> f64 {
+    q.est_rows * (driver / keys.max(1.0)).min(1.0)
 }
 
 /// The union of the checks of the chain of MergeJoins on `key` along the left spine of `p`.
@@ -135,16 +144,17 @@ impl Planner<'_> {
     /// else unchanged; with the decrease of the estimated cost.
     fn star_merge(&self, p: Plan, key: Slot, counted: bool, bound: SlotSet) -> (Plan, f64) {
         let (rows, chain_cost, id) = (p.est_rows, p.est_cost_ns, p.id);
-        let (k, star_cost) = {
-            let inputs = chain_inputs(&p, key);
-            (inputs.len(), self.star_cost(&inputs, key, rows, bound))
-        };
         let check = chain_check(&p, key);
-        // What each produces in the end: a counted, check-free top produces no row.
+        let (k, star_cost, buffered) = {
+            let inputs = chain_inputs(&p, key);
+            let (cost, buffered) = self.star_cost(&inputs, key, rows, !check.is_empty(), bound);
+            (inputs.len(), cost, buffered)
+        };
+        // What each costs in the end: a counted, check-free top produces no row and buffers
+        // no run (`fast_count`).
         let (chain_rank, star_rank) = if counted {
-            let top_free = matches!(&p.op, Op::MergeJoin { check, .. } if check.is_empty());
-            let chain = if top_free { chain_cost - rows * self.row_copy() } else { chain_cost };
-            let star = if check.is_empty() { star_cost - rows * self.star_row_cost(k) } else { star_cost };
+            let chain = chain_cost - self.count_free(&p);
+            let star = if check.is_empty() { star_cost - self.star_count_free(k, rows, buffered) } else { star_cost };
             (chain, star)
         } else {
             (chain_cost, star_cost)
@@ -161,25 +171,71 @@ impl Planner<'_> {
         (star, saved)
     }
 
-    /// `Σ_i input_i + k × keys × STAR_STEP_NS + out × star_row_cost(k)`, where `keys` is the
-    /// smallest number of distinct keys of an input and an input read through one cursor costs
-    /// `min(its cost, seek_random + keys × seek_sorted + matched rows)` (see the module docs).
-    fn star_cost(&self, inputs: &[&Plan], key: Slot, out_rows: f64, bound: SlotSet) -> f64 {
-        let keys: SmallVec<[f64; 8]> = inputs.iter().map(|q| self.input_keys(q, key)).collect();
-        let driver = keys.iter().copied().fold(f64::INFINITY, f64::min).max(0.0);
+    /// `Σ_i input_i + k × keys × STAR_STEP_NS + combined × star_row_cost(k) + buffered rows`,
+    /// where `keys` is the smallest number of distinct keys of an input, an input read through
+    /// one cursor costs `min(its cost, seek_random + keys × seek_sorted + matched rows)`, and
+    /// `combined` is `out_rows`, or with checks (`checked`) the combinations of the runs (see
+    /// the module docs). With the buffered rows ([`Self::star_buffered`]).
+    fn star_cost(&self, inputs: &[&Plan], key: Slot, out_rows: f64, checked: bool, bound: SlotSet) -> (f64, f64) {
+        let (keys, driver) = self.candidate_keys(inputs, key);
         let mut cost = 0.0;
+        let mut buffered = 0.0;
+        // Combinations of the runs per candidate key, summed over the candidate keys.
+        let mut combinations = driver;
         for (q, &dk) in inputs.iter().zip(&keys) {
+            let matched = matched_rows(q, dk, driver);
+            buffered += matched;
+            combinations *= q.est_rows / dk.max(1.0);
             cost += match &q.op {
                 Op::Scan(s) if single_cursor(&s.pat, bound, self.dataset) => {
                     let per_row = (q.est_cost_ns - self.costs.seek_random).max(0.0) / q.est_rows.max(1.0);
-                    // Rows of this input under the candidate keys.
-                    let matched = q.est_rows * (driver / dk.max(1.0)).min(1.0);
                     q.est_cost_ns.min(self.costs.seek_random + driver * self.costs.seek_sorted + matched * per_row)
                 }
                 _ => q.est_cost_ns,
             };
         }
-        clamp_est(cost + inputs.len() as f64 * driver * STAR_STEP_NS + out_rows * self.star_row_cost(inputs.len()))
+        let combined = if checked { clamp_est(combinations).max(out_rows) } else { out_rows };
+        let k = inputs.len();
+        let steps = k as f64 * driver * STAR_STEP_NS;
+        let cost = cost + steps + combined * self.star_row_cost(k) + buffered * self.row_copy();
+        (clamp_est(cost), buffered)
+    }
+
+    /// The distinct keys of each input of a StarMerge on `key`, and the candidate keys: those of
+    /// the input with the fewest.
+    fn candidate_keys(&self, inputs: &[&Plan], key: Slot) -> (SmallVec<[f64; 8]>, f64) {
+        let keys: SmallVec<[f64; 8]> = inputs.iter().map(|q| self.input_keys(q, key)).collect();
+        let driver = keys.iter().copied().fold(f64::INFINITY, f64::min).max(0.0);
+        (keys, driver)
+    }
+
+    /// The rows a StarMerge on `key` buffers (as `star_cost` counts them).
+    fn star_buffered(&self, inputs: &[&Plan], key: Slot) -> f64 {
+        let (keys, driver) = self.candidate_keys(inputs, key);
+        inputs.iter().zip(&keys).map(|(q, &dk)| matched_rows(q, dk, driver)).sum()
+    }
+
+    /// Of a check-free StarMerge's cost, what counting its `rows` skips (`fast_count`): its
+    /// output rows of `k` inputs and the `buffered` input rows (one row copy each).
+    fn star_count_free(&self, k: usize, rows: f64, buffered: f64) -> f64 {
+        rows * self.star_row_cost(k) + buffered * self.row_copy()
+    }
+
+    /// Of the estimated cost of `p`, what a COUNT(*) over it skips when the count is
+    /// factorized over a check-free MergeJoin or StarMerge on top (through Extend / Project, as
+    /// `count_fast_path` looks): no output row is produced and no run buffered. 0 otherwise.
+    pub(super) fn count_free(&self, p: &Plan) -> f64 {
+        match &p.op {
+            Op::Extend { input, .. } | Op::Project { input, .. } => self.count_free(input),
+            Op::MergeJoin { right, check, .. } if check.is_empty() => {
+                self.merge_count_free(p.est_rows, p.est_rows.min(right.est_rows))
+            }
+            Op::StarMerge { inputs, key, check } if check.is_empty() => {
+                let refs: SmallVec<[&Plan; 8]> = inputs.iter().collect();
+                self.star_count_free(inputs.len(), p.est_rows, self.star_buffered(&refs, *key))
+            }
+            _ => 0.0,
+        }
     }
 
     /// Distinct values of `key` in the rows of a StarMerge input (at most its rows): the column
@@ -269,6 +325,34 @@ mod tests {
         let planner = Planner::new(&store, &forced, &ds, 0, &[], &temps, 8);
         let p = costed_merge(costed_merge(big_scan(0, 1), big_scan(0, 2), 0, 1e6), big_scan(0, 3), 0, 10.0);
         assert!(matches!(planner.star_merges(p, Goal::Rows, SlotSet::EMPTY).op, Op::MergeJoin { .. }));
+    }
+
+    #[test]
+    fn checked_star_merges_pay_for_every_combination_of_their_runs() {
+        let store = sq_memstore::MemStore::new();
+        let opts = QueryOptions::default();
+        let ds = DatasetSpec { default: DefaultGraph::StoreDefault, named: NamedGraphs::All };
+        let temps = TempDict::default();
+        let planner = Planner::new(&store, &opts, &ds, 0, &[], &temps, 8);
+        let inputs = [big_scan(0, 1), big_scan(0, 2), big_scan(0, 3)];
+        let refs: Vec<&Plan> = inputs.iter().collect();
+        let (free, buffered) = planner.star_cost(&refs, 0, 10.0, false, SlotSet::EMPTY);
+        let (checked, _) = planner.star_cost(&refs, 0, 10.0, true, SlotSet::EMPTY);
+        // 500 keys with runs of 2 rows per input: 500 × 2³ combinations of 3 rows each are
+        // combined before the check keeps 10 of them.
+        let extra = (4_000.0 - 10.0) * planner.star_row_cost(3);
+        assert!((checked - free - extra).abs() < 1e-6, "{free} {checked}");
+        // Every input row is buffered once (one row copy each), whether checked or not.
+        let unbuffered = 3.0 * 24_300.0 + 3.0 * 500.0 * STAR_STEP_NS + 10.0 * planner.star_row_cost(3);
+        assert!((free - unbuffered - 3_000.0 * 8.0).abs() < 1e-6, "{free}");
+        assert_eq!(buffered, 3_000.0);
+        assert_eq!(planner.star_buffered(&refs, 0), 3_000.0);
+        // Counted without checks, it neither produces its rows nor buffers its runs.
+        let star = mk(Op::StarMerge { key: 0, inputs: inputs.to_vec(), check: vec![] }, 10.0, free, Some(0));
+        assert!((planner.count_free(&star) - 10.0 * planner.star_row_cost(3) - 3_000.0 * 8.0).abs() < 1e-6);
+        let op = Op::StarMerge { key: 0, inputs: inputs.to_vec(), check: vec![5] };
+        let checked_star = mk(op, 10.0, checked, Some(0));
+        assert_eq!(planner.count_free(&checked_star), 0.0);
     }
 
     #[test]

@@ -11,14 +11,27 @@ use crate::seed::{Seed, SeedBuf};
 pub(crate) struct Filter {
     input: BoxOp,
     expr: CompiledExpr,
+    /// Slots whose strings the expression decodes on every row (`CompiledExpr::string_slots`):
+    /// each input batch decodes them in one store call before its rows are evaluated.
+    prefetch: Vec<Slot>,
     seed: SeedBuf,
     pull: Pull,
 }
 
 impl Filter {
     pub fn new(input: BoxOp, expr: CompiledExpr, width: usize) -> Self {
-        Filter { input, expr, seed: SeedBuf::new(width), pull: Pull::new(width) }
+        let prefetch = expr.string_slots();
+        Filter { input, expr, prefetch, seed: SeedBuf::new(width), pull: Pull::new(width) }
     }
+}
+
+/// Decodes the strings of `slots` in the rows `from..` of `rows` ahead of their row-by-row
+/// evaluation.
+fn prefetch(cx: &ExecCtx, rows: &Batch, from: usize, slots: &[Slot]) -> Result<()> {
+    if slots.is_empty() || rows.len() <= from {
+        return Ok(());
+    }
+    cx.sh.terms.borrow_mut().prefetch(cx.store(), rows, from, slots)
 }
 
 impl Operator for Filter {
@@ -29,12 +42,18 @@ impl Operator for Filter {
     }
 
     fn next(&mut self, cx: &mut ExecCtx, out: &mut Batch) -> Result<bool> {
-        let expr = &self.expr;
-        self.pull.pump(
+        let (expr, slots) = (&self.expr, &self.prefetch);
+        self.pull.pump_with(
             cx,
             self.input.as_mut(),
             out,
-            |cx, row| Ok(cx.with_eval(|ecx| expr.ebv(row, ecx))? == Some(true)),
+            |cx, rows| prefetch(cx, rows, 0, slots),
+            |cx, i, row| {
+                if !slots.is_empty() {
+                    cx.sh.terms.borrow_mut().at_row(i);
+                }
+                Ok(cx.with_eval(|ecx| expr.ebv(row, ecx))? == Some(true))
+            },
         )
     }
 
@@ -54,6 +73,8 @@ pub(crate) struct Extend {
     input: BoxOp,
     slot: Slot,
     expr: CompiledExpr,
+    /// As in [`Filter`].
+    prefetch: Vec<Slot>,
     canonical: bool,
     error_id: TermId,
     seed: SeedBuf,
@@ -63,7 +84,8 @@ pub(crate) struct Extend {
 
 impl Extend {
     pub fn new(input: BoxOp, slot: Slot, expr: CompiledExpr, canonical: bool, error_id: TermId, width: usize) -> Self {
-        Extend { input, slot, expr, canonical, error_id, seed: SeedBuf::new(width), keep: Vec::new() }
+        let prefetch = expr.string_slots();
+        Extend { input, slot, expr, prefetch, canonical, error_id, seed: SeedBuf::new(width), keep: Vec::new() }
     }
 }
 
@@ -76,10 +98,16 @@ impl Operator for Extend {
     fn next(&mut self, cx: &mut ExecCtx, out: &mut Batch) -> Result<bool> {
         let start = out.len();
         let more = self.input.next(cx, out)?;
+        prefetch(cx, out, start, &self.prefetch)?;
         let (expr, slot, canonical, error_id) = (&self.expr, self.slot as usize, self.canonical, self.error_id);
+        let prefetched = !self.prefetch.is_empty();
         if self.seed.value(self.slot).is_none() {
+            let sh = std::rc::Rc::clone(&cx.sh);
             cx.with_eval(|ecx| -> Result<()> {
                 for i in start..out.len() {
+                    if prefetched {
+                        sh.terms.borrow_mut().at_row(i - start);
+                    }
                     let v = expr.eval(out.row(i), ecx, canonical)?;
                     out.row_mut(i)[slot] = v.unwrap_or(error_id);
                 }
@@ -93,8 +121,12 @@ impl Operator for Extend {
         // value instead would let a later join merge put the seed back and hide the conflict.
         let keep = &mut self.keep;
         keep.clear();
+        let sh = std::rc::Rc::clone(&cx.sh);
         cx.with_eval(|ecx| -> Result<()> {
             for i in start..out.len() {
+                if prefetched {
+                    sh.terms.borrow_mut().at_row(i - start);
+                }
                 let v = expr.eval(out.row(i), ecx, canonical)?;
                 let current = out.row(i)[slot];
                 keep.push(match v {
