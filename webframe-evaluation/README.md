@@ -1,5 +1,10 @@
 # webframe: evaluated as a scraper and a sandbox
 
+<!-- AI-GENERATED-NOTE -->
+> [!NOTE]
+> This is an AI-generated research report. All text and code in this report was created by an LLM (Large Language Model). For more information on how these reports are created, see the [main research repository](https://github.com/simonw/research).
+<!-- /AI-GENERATED-NOTE -->
+
 [tractordev/webframe](https://github.com/tractordev/webframe) (commit `03155e2`) runs a web page as a command-line program. It loads the page in a hidden native webview (WebKitGTK on Linux, through [glaze](https://github.com/progrium/glaze) and purego, with no cgo), sends `console.*` to stdout and exceptions to stderr, and with `-c` evaluates each line of stdin in the page. The CLI is about 460 lines of Go and JS, and it builds to a 5.3 MB binary.
 
 I built it on Ubuntu 24.04 with WebKitGTK 2.52 and Xvfb and ran it through a set of probes. Then I built three prototypes:

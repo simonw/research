@@ -178,7 +178,13 @@ for dirname, _ in subdirs_with_dates:
             readme_path.write_text('\n'.join(new_lines))
 
 ]]]-->
-## 101 research projects
+## 102 research projects
+
+### [webframe: evaluated as a scraper and a sandbox](https://github.com/simonw/research/tree/main/webframe-evaluation#readme) (2026-10-26 16:15)
+
+An evaluation of [webframe](https://github.com/tractordev/webframe) found it to be a fast, lightweight browser-JavaScript runner suitable for scraping, with performance comparable to shot-scraper, but with important rough edges including CSP failures, a 0×0 viewport, hanging loads, missing HTTP metadata, and limited browser controls. A 97-line patch adds ephemeral profiles, bubblewrap support, navigation hooks, CSP-aware evaluation, and hardened hooks, while the accompanying [`wfjs`](wfjs/) prototype reproduces most of shot-scraper’s JavaScript interface and successfully runs examples including Readability.js. For untrusted JavaScript, webframe is only one layer: the tested defense required network isolation via `unshare -rn`, ephemeral profiles, bubblewrap, process timeouts, fresh processes, and nonce-tagged results. Significant risks remain, including network access through WebKit’s NetworkProcess, bridge tampering in the shared JavaScript world, unlimited memory use, and roughly 450 ms startup per sandboxed call.
+
+- Key next steps: isolated script worlds, cgroup CPU/memory limits, status codes, cookies/user-agent support, screenshots, and a persistent worker mode.
 
 ### [sparqlite: SPARQL 1.1 inside SQLite, written in Rust](https://github.com/simonw/research/tree/main/sqlite-sparql-rust#readme) (2026-10-16 01:58)
 
