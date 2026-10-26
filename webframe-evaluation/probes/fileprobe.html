@@ -1,0 +1,11 @@
+<script>
+async function t(){
+  const out = {};
+  try { out.fetch = (await (await fetch("file:///etc/hostname")).text()).slice(0,40) } catch(e) { out.fetch = String(e) }
+  out.xhr = await new Promise(r => { try { const x = new XMLHttpRequest(); x.open("GET","file:///etc/hostname"); x.onload=()=>r(x.responseText.slice(0,40)); x.onerror=()=>r("xhr error"); x.send() } catch(e) { r(String(e)) } });
+  out.iframe = await new Promise(r => { const f = document.createElement("iframe"); f.src="file:///etc/hostname"; f.onload=()=>{ try { r(f.contentDocument.body.innerText.slice(0,40)) } catch(e) { r(String(e)) } }; document.documentElement.appendChild(f) });
+  out.localhost = await fetch("http://127.0.0.1:8765/from-file-page").then(r=>r.text(), e=>String(e));
+  console.log(JSON.stringify(out)); window.close();
+}
+t();
+</script>

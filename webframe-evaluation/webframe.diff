@@ -1,0 +1,217 @@
+diff --git a/cmd/webframe/main.go b/cmd/webframe/main.go
+index ddb185e..0959bc3 100644
+--- a/cmd/webframe/main.go
++++ b/cmd/webframe/main.go
+@@ -66,9 +66,11 @@ func main() {
+ 	console := flag.Bool("c", false, "interactive console: evaluate stdin lines in the page")
+ 	debug := flag.Bool("d", false, "enable the web inspector")
+ 	version := flag.Bool("v", false, "print version and exit")
++	private := flag.Bool("p", false, "private: keep cookies, storage and cache in memory only")
++	sandbox := flag.Bool("b", false, "run page content in WebKit's bubblewrap sandbox (Linux, needs bwrap)")
+ 	flag.Var(&window, "w", "show a window, optionally sized `WIDTHxHEIGHT`")
+ 	flag.Usage = func() {
+-		fmt.Fprintln(os.Stderr, "usage: webframe [-s|-S] [-e] [-c] [-d] [-v] [-w [WIDTHxHEIGHT]] <url|file>")
++		fmt.Fprintln(os.Stderr, "usage: webframe [-s|-S] [-e] [-c] [-d] [-p] [-b] [-v] [-w [WIDTHxHEIGHT]] <url|file>")
+ 		flag.PrintDefaults()
+ 		fmt.Fprintln(os.Stderr, "\nWF_* environment variables are set as page globals without the prefix.")
+ 		if runtime.GOOS == "linux" {
+@@ -117,11 +119,13 @@ func main() {
+ 	ready := make(chan struct{}, 1)
+ 	var frame *webframe.Frame
+ 	frame, err := webframe.New(webframe.Options{
+-		Debug:   *debug,
+-		Window:  window.set,
+-		Width:   window.w,
+-		Height:  window.h,
+-		Globals: envGlobals(),
++		Debug:     *debug,
++		Window:    window.set,
++		Width:     window.w,
++		Height:    window.h,
++		Globals:   envGlobals(),
++		Ephemeral: *private,
++		Sandbox:   *sandbox,
+ 		Console: func(level, text string) {
+ 			if level != "log" {
+ 				text = "[" + level + "] " + text
+diff --git a/hooks.js b/hooks.js
+index 154069e..6a161ce 100644
+--- a/hooks.js
++++ b/hooks.js
+@@ -2,6 +2,17 @@
+   if (window.__webframe_hooks) return;
+   window.__webframe_hooks = true;
+ 
++  // Keep the originals, so a page that replaces these later can't break
++  // the hooks or the results they report.
++  var stringify = JSON.stringify;
++  var indirectEval = window.eval;
++  var NativePromise = Promise;
++
++  // Defines name on window so the page can't replace it.
++  function lock(name, value) {
++    Object.defineProperty(window, name, { value: value, writable: false, configurable: false, enumerable: false });
++  }
++
+   var queue = [];
+   var busy = false;
+ 
+@@ -25,8 +36,8 @@
+     flush();
+   }
+ 
+-  function send(kind, level, text, id) {
+-    queue.push({ kind: kind, level: level || "", text: text || "", id: id || 0 });
++  function send(kind, level, text, id, csp) {
++    queue[queue.length] = { kind: kind, level: level || "", text: text || "", id: id || 0, csp: !!csp };
+     flush();
+   }
+ 
+@@ -46,7 +57,7 @@
+ 
+   function fmt(v, quote) {
+     switch (typeof v) {
+-      case "string": return quote ? JSON.stringify(v) : v;
++      case "string": return quote ? stringify(v) : v;
+       case "undefined": return "undefined";
+       case "function": return "[Function: " + (v.name || "(anonymous)") + "]";
+       case "symbol": return v.toString();
+@@ -57,7 +68,7 @@
+     if (v instanceof Error) return fmtErr(v);
+     var stack = [];
+     try {
+-      var s = JSON.stringify(v, function (k, x) {
++      var s = stringify(v, function (k, x) {
+         switch (typeof x) {
+           case "function": return "[Function: " + (x.name || "(anonymous)") + "]";
+           case "symbol": return x.toString();
+@@ -134,17 +145,48 @@
+     return "Uncaught " + fmt(e);
+   }
+ 
+-  window.__webframe_eval = function (id, src) {
++  function settle(id, r) {
++    NativePromise.resolve(r).then(
++      function (v) { send("eval", "", fmt(v, true), id); },
++      function (e) { send("evalerr", "", evalErr(e), id); }
++    );
++  }
++
++  lock("__webframe_eval", function (id, src) {
+     var r;
+     try {
+-      r = (0, eval)(src);
++      r = indirectEval(src);
+     } catch (e) {
++      // CSP without 'unsafe-eval': ask Go to inject src as an expression.
++      if (e instanceof EvalError && /unsafe-eval/.test(e.message)) {
++        send("evalerr", "", src, id, true);
++        return;
++      }
+       send("evalerr", "", evalErr(e), id);
+       return;
+     }
+-    Promise.resolve(r).then(
+-      function (v) { send("eval", "", fmt(v, true), id); },
+-      function (e) { send("evalerr", "", evalErr(e), id); }
+-    );
+-  };
++    settle(id, r);
++  });
++
++  // The CSP fallback runs as three scripts. If the middle one doesn't parse,
++  // begin is never matched by run, and end reports it.
++  var started = {};
++  lock("__webframe_expr_begin", function (id) { started[id] = false; });
++  lock("__webframe_expr_run", function (id, thunk) {
++    started[id] = true;
++    var r;
++    try {
++      r = thunk();
++    } catch (e) {
++      send("evalerr", "", evalErr(e), id);
++      return;
++    }
++    settle(id, r);
++  });
++  lock("__webframe_expr_end", function (id) {
++    if (started[id] === false) {
++      send("evalerr", "", "Uncaught SyntaxError: this page's Content-Security-Policy blocks eval, so only a single expression can be evaluated", id);
++    }
++    delete started[id];
++  });
+ })();
+diff --git a/webframe.go b/webframe.go
+index dd59a0c..ce61eb4 100644
+--- a/webframe.go
++++ b/webframe.go
+@@ -50,6 +50,18 @@ type Options struct {
+ 	// Globals are set as string properties of window before any page
+ 	// script runs.
+ 	Globals map[string]string
++
++	// Ephemeral keeps cookies, local storage and cache in memory only, so
++	// nothing is shared with earlier or later runs.
++	Ephemeral bool
++
++	// Sandbox runs page content in WebKitGTK's bubblewrap sandbox on Linux
++	// (needs bwrap). Always on with WebKitGTK 6.0 and on macOS.
++	Sandbox bool
++
++	// NavigationStart is called with the URL whenever a main-frame
++	// navigation starts, including the first one.
++	NavigationStart func(url string)
+ }
+ 
+ // Frame is a hidden web view running one page.
+@@ -68,6 +80,7 @@ type message struct {
+ 	Level string `json:"level"`
+ 	Text  string `json:"text"`
+ 	ID    int    `json:"id"`
++	CSP   bool   `json:"csp"`
+ }
+ 
+ // New creates a Frame. It must be called from the main goroutine, which then
+@@ -78,7 +91,10 @@ func New(opts Options) (*Frame, error) {
+ 		Debug:             opts.Debug,
+ 		Hidden:            !opts.Window,
+ 		DisableThrottling: true,
++		Ephemeral:         opts.Ephemeral,
++		SandboxWebContent: opts.Sandbox,
+ 		OnNavigation:      f.navigated,
++		OnNavigationStart: opts.NavigationStart,
+ 		OnClose: func() {
+ 			if opts.Closed != nil {
+ 				opts.Closed()
+@@ -137,6 +153,13 @@ func (f *Frame) receive(batch []message) {
+ 				f.opts.Ready()
+ 			}
+ 		case "eval", "evalerr":
++			if m.CSP {
++				// The page's Content-Security-Policy forbids eval, so run the
++				// source again as an expression injected by the web view,
++				// which CSP does not apply to.
++				f.evalExpr(m.ID, m.Text)
++				continue
++			}
+ 			f.mu.Lock()
+ 			cb := f.evals[m.ID]
+ 			delete(f.evals, m.ID)
+@@ -196,6 +219,17 @@ func (f *Frame) Eval(src string, cb func(result string, err error)) {
+ 	})
+ }
+ 
++// evalExpr evaluates src as an expression without eval, for pages whose CSP
++// blocks eval. Statements that are not an expression fail to parse; the
++// third script notices that the second never started and reports it.
++func (f *Frame) evalExpr(id int, src string) {
++	f.w.Dispatch(func() {
++		f.w.Eval(fmt.Sprintf("window.__webframe_expr_begin(%d)", id))
++		f.w.Eval(fmt.Sprintf("window.__webframe_expr_run(%d, (function(){ return (\n%s\n); }))", id, src))
++		f.w.Eval(fmt.Sprintf("window.__webframe_expr_end(%d)", id))
++	})
++}
++
+ // Run runs the event loop until Terminate. Call it from the goroutine that
+ // called New.
+ func (f *Frame) Run() {

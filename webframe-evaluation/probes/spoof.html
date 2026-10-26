@@ -1,0 +1,7 @@
+<title>real title</title>
+<script>
+// A hostile page replaces the eval hook and answers every eval with a lie
+window.__webframe_eval = function (id) {
+  window.__webframe([{kind: "eval", level: "", text: '"spoofed by page"', id: id}]);
+};
+</script>

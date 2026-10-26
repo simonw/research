@@ -1,0 +1,80 @@
+## basic
+   ok=True wall=468ms
+   result: [2, 4, 6]
+   requests reaching 127.0.0.1: none
+## statements
+   ok=True wall=427ms
+   result: 42
+   requests reaching 127.0.0.1: none
+## throw
+   ok=False wall=419ms
+   error: TypeError: bad input
+   requests reaching 127.0.0.1: none
+## not serializable
+   ok=False wall=415ms
+   error: result is not JSON-serializable: TypeError: JSON.stringify cannot serialize cyclic structures.
+   requests reaching 127.0.0.1: none
+## wasm
+   ok=True wall=389ms
+   result: 42
+   requests reaching 127.0.0.1: none
+## exfil, no network namespace
+   ok=True wall=722ms
+   result: {"fetchLocal": "blocked: Load failed", "fetchInternet": "blocked: Load failed", "fileRead": "blocked: Load failed", "ws": "blocked: The operation is insecure.", "rtc": "undefined", "open": "null"}
+   requests reaching 127.0.0.1: none
+## exfil, network namespace
+   ok=True wall=732ms
+   result: {"fetchLocal": "blocked: Load failed", "fetchInternet": "blocked: Load failed", "fileRead": "blocked: Load failed", "ws": "blocked: The operation is insecure.", "rtc": "undefined", "open": "null"}
+   requests reaching 127.0.0.1: none
+## navigate, no network namespace
+   ok=False wall=412ms
+   error: no result (exit 0)
+   requests reaching 127.0.0.1: ['/navigate?stolen=1']
+## navigate, network namespace
+   ok=True wall=1926ms
+   result: "still here"
+   requests reaching 127.0.0.1: none
+## infinite loop
+   ok=False wall=3020ms
+   error: timeout after 3s
+   requests reaching 127.0.0.1: none
+## memory bomb
+   ok=False wall=5066ms
+   error: timeout after 5s
+   requests reaching 127.0.0.1: none
+## persist: write
+   ok=True wall=494ms
+   result: "written"
+   requests reaching 127.0.0.1: none
+## persist: read
+   ok=True wall=480ms
+   result: {"ls": null, "cookie": ""}
+   requests reaching 127.0.0.1: none
+## persist: write (no -p)
+   ok=True wall=427ms
+   result: "written"
+   requests reaching 127.0.0.1: none
+## persist: read (no -p)
+   ok=True wall=512ms
+   result: "from earlier run"
+   requests reaching 127.0.0.1: none
+## env leak
+   ok=True wall=501ms
+   result: []
+   requests reaching 127.0.0.1: none
+## forge result via bridge
+   ok=False wall=423ms
+   error: no result (exit 0)
+   requests reaching 127.0.0.1: none
+## replace runner
+   ok=True wall=373ms
+   result: "still the original"
+   requests reaching 127.0.0.1: none
+## close early
+   ok=False wall=379ms
+   error: no result (exit 0)
+   requests reaching 127.0.0.1: none
+## dialog
+   ok=True wall=422ms
+   result: false
+   requests reaching 127.0.0.1: none

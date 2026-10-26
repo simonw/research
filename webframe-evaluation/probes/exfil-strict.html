@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'"></head><body><script>
+const E = "http://127.0.0.1:8765/strict";
+const v = {};
+function tryit(name, fn) { try { fn(); v[name] = "attempted" } catch (e) { v[name] = String(e).slice(0,60) } }
+tryit("fetch", () => fetch(E + "/fetch").catch(()=>{}));
+tryit("xhr", () => { const x = new XMLHttpRequest(); x.open("GET", E + "/xhr"); x.send() });
+tryit("beacon", () => navigator.sendBeacon(E + "/beacon", "data"));
+tryit("img", () => { new Image().src = E + "/img" });
+tryit("css", () => { const l = document.createElement("link"); l.rel="stylesheet"; l.href = E + "/css"; document.head.appendChild(l) });
+tryit("script", () => { const s = document.createElement("script"); s.src = E + "/script"; document.head.appendChild(s) });
+tryit("websocket", () => new WebSocket(E.replace("http","ws") + "/ws"));
+tryit("eventsource", () => new EventSource(E + "/sse"));
+tryit("prefetch", () => { const l = document.createElement("link"); l.rel="prefetch"; l.href = E + "/prefetch"; document.head.appendChild(l) });
+tryit("iframe", () => { const f = document.createElement("iframe"); f.src = E + "/iframe"; document.body.appendChild(f) });
+tryit("form", () => { const f = document.createElement("form"); f.method="POST"; f.action = E + "/form"; f.target="x"; const i=document.createElement("iframe"); i.name="x"; document.body.append(i, f); f.submit() });
+tryit("rtc", () => new RTCPeerConnection({iceServers:[{urls:"stun:127.0.0.1:8765"}]}));
+tryit("window.open", () => window.open(E + "/open"));
+console.log(JSON.stringify(v));
+setTimeout(() => { location.href = E + "/navigate" }, 700);
+setTimeout(() => window.close(), 1500);
+</script></body></html>

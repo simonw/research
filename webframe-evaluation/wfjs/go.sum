@@ -1,0 +1,4 @@
+github.com/ebitengine/purego v0.11.1 h1:2zpWRSQNVKN4eKsKO9eM1ILDgWfYMY9GwqRmK6XeQ/0=
+github.com/ebitengine/purego v0.11.1/go.mod h1:DCHPP08djqhNSoTfImcnHYQRZmd0qhakvrozqaEYhGQ=
+github.com/progrium/glaze v0.0.0-20261024141632-aa23a9a95cce h1:c7DnAs/b0WQIczvmGiMOp+SShVvWMOdP9qhMZjwztWk=
+github.com/progrium/glaze v0.0.0-20261024141632-aa23a9a95cce/go.mod h1:6entg9bLZvTDjEuVBX/tO2c4I1HlMPuerkpnVwIVFZo=

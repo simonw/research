@@ -1,0 +1,12 @@
+<script>
+console.log("hello", 1, {a:[1,2]}, null, undefined);
+const o = {x:1}; o.self = o; console.log(o);
+console.warn("careful"); console.info(document.body); console.log(10n, Symbol("s"), function foo(){});
+console.log(navigator.userAgent);
+console.log(JSON.stringify({w: innerWidth, h: innerHeight, dpr: devicePixelRatio}));
+console.log("API_KEY=", window.API_KEY);
+Promise.reject(new TypeError("nope"));
+alert("hi");
+setTimeout(() => { throw new Error("boom") }, 10);
+setTimeout(() => window.close(), 50);
+</script>
