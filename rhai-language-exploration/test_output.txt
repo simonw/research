@@ -1,0 +1,32 @@
+
+Value round-tripping
+  PASS  scalars, arrays and maps round-trip
+  PASS  nested Python dict/list round-trips
+  PASS  unsupported Python type raises TypeError
+
+Callbacks and scope
+  PASS  Python callbacks callable from Rhai
+  PASS  callback exceptions become ScriptRuntimeError
+  PASS  scope persists across eval/run
+  PASS  print output is captured
+
+Sandbox limits (each must raise its specific exception)
+  PASS  max_operations stops an infinite loop
+  PASS  timeout_ms stops an infinite loop
+  PASS  max_array_size stops an array bomb
+  PASS  max_string_size stops a string bomb
+  PASS  max_call_levels stops infinite recursion
+  PASS  max_expr_depth rejects pathological nesting
+  PASS  every sandbox exception subclasses RhaiError
+  PASS  timeout is per-call, not per-engine
+  PASS  a legitimate script runs fine under full limits
+
+Known gap: max_map_size on index assignment
+  PASS  map index-assignment bypasses max_map_size (upstream gap)
+  PASS  mitigations for the map gap all work
+
+Memory containment
+        (peak RSS grew 0.0 MB over 60 hostile scripts)
+  PASS  60 hostile scripts leave peak RSS flat
+
+All tests passed. SQUAWK!

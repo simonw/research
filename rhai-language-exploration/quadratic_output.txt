@@ -1,0 +1,25 @@
+Building an array of N integers, with and without a size limit set.
+
+       N    no limits   max_array_size   slowdown  ratio vs N/2
+---------------------------------------------------------------
+    2000        0.9ms            3.0ms       3.4x             -
+    4000        1.5ms           10.5ms       6.8x         3.53x
+    8000        3.2ms           38.9ms      12.1x         3.71x
+   16000        6.5ms          149.1ms      22.9x         3.84x
+   32000       12.7ms          581.6ms      45.7x         3.90x
+
+A doubling of N that roughly quadruples the limited time (ratio ~4x) confirms O(N^2).
+
+Same question for object maps (property assignment triggers the check):
+
+       N    no limits     max_map_size   slowdown
+-------------------------------------------------
+    1000        2.7ms            4.0ms       1.5x
+    2000        5.8ms           11.5ms       2.0x
+    4000       12.9ms           38.6ms       3.0x
+    8000       30.4ms          122.9ms       4.0x
+
+Practical consequence: a size limit is necessary to bound RAM, but it makes
+container building quadratic — so a script can burn CPU cheaply while staying
+well inside the size limit. Always pair size limits with max_operations AND a
+wall-clock timeout.

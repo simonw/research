@@ -1,0 +1,20 @@
+[package]
+name = "pelican-rhai"
+version = "0.1.0"
+edition = "2021"
+
+# Uses the local clone of https://github.com/rhaiscript/rhai at /tmp/rhai —
+# clone it there first (see README.md).
+[dependencies]
+rhai = { path = "/tmp/rhai" }
+
+[[bin]]
+name = "pelican_tour"
+path = "src/main.rs"
+
+[[bin]]
+name = "safety"
+path = "src/bin/safety.rs"
+
+[profile.release]
+debug = false
