@@ -1,0 +1,4191 @@
+diff --git a/.gitignore b/.gitignore
+index a2325f8..864db8a 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,3 +1,5 @@
+ .vscode
+ .DS_Store
+-
++tests/fixtures/generated/
++__pycache__/
++.pytest_cache/
+diff --git a/README.md b/README.md
+index 67943b1..7cdb17b 100644
+--- a/README.md
++++ b/README.md
+@@ -16,6 +16,27 @@ Datasette Lite runs the full server-side Datasette Python web application direct
+ 
+ When you launch the demo, your browser will download and start executing a full Python interpreter, install the [datasette](https://pypi.org/project/datasette/) package (and its dependencies), download one or more SQLite database files and start the application running in a browser window (actually a [Web Worker](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Using_web_workers) attached to that window).
+ 
++Datasette's pages are displayed in a full-window `<iframe>` pointing at URLs under `/app/<session>/`. Those URLs don't exist on the server: a [service worker](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API) (`sw.js`) intercepts every request for them - link clicks, GET and POST form submissions, `fetch()` calls made by JavaScript, static assets - and the page relays each one to Datasette's [ASGI](https://asgi.readthedocs.io/) application running in Pyodide. This means Datasette's own JavaScript and the JavaScript and CSS provided by plugins work, as do POST forms, CSRF protection, sign-in cookies, file uploads and downloads.
++
++```
++  index.html + shell.js (the page)                webworker.js (Web Worker)
++  ┌───────────────────────────────────┐  relay   ┌──────────────────────────┐
++  │  owns the Web Worker  ────────────┼─────────►│ Pyodide                  │
++  │                                   │◄─────────┼ Datasette ASGI app       │
++  │  <iframe src="app/<session>/..."> │          │ ASGI bridge + cookie jar │
++  │    Datasette pages, JS, forms     │          └──────────────────────────┘
++  └────────┬──────────────────▲───────┘
++   requests│                  │responses
++           ▼                  │
++  sw.js (service worker): finds the tab that owns <session>, asks it to relay
++```
++
++The page you are on mirrors the iframe's location into its `#fragment`, so URLs like `https://lite.datasette.io/?url=...#/fixtures/facetable?_facet=state` can be bookmarked and shared, and the back button works. Each tab gets its own random `<session>` so multiple Datasette Lite tabs with different data can be open at once.
++
++Cookies are kept in a cookie jar inside the Python ASGI bridge (service workers cannot read or set cookies), so they last until the tab is closed or reloaded - as does all of the data.
++
++A browser with service worker support is required. Some private browsing modes (Firefox private windows for example) disable service workers.
++
+ ## Load a different Datasette version
+ 
+ Datasette Lite uses the most recent stable Datasette release [from PyPI](https://pypi.org/project/datasette/).
+@@ -157,6 +178,22 @@ Datasette [supports metadata](https://docs.datasette.io/en/stable/metadata.html)
+ 
+ You can load a metadata file in either of these formats by passing a URL to the `?metadata=` query string option.
+ 
++## Loading configuration
++
++Datasette 1.0 alphas take [configuration](https://docs.datasette.io/en/latest/configuration.html) - plugin settings, permissions, `settings:` and more - from a `datasette.yaml` or `datasette.json` file. Pass a URL to one using `?config=`, along with `?ref=pre`:
++
++    https://lite.datasette.io/?ref=pre&config=https://example.com/datasette.yml
++
++Datasette Lite always sets the `base_url` and `num_sql_threads` settings itself.
++
++## Signing in as root
++
++Add `?root=1` to sign in as the `root` actor, the equivalent of running `datasette --root`. This is needed by plugins that write to the database, and for the Datasette 1.0 alpha [write API](https://docs.datasette.io/en/latest/json_api.html#the-json-write-api) and table editing features:
++
++    https://lite.datasette.io/?root=1&ref=pre
++
++Use "Log out" from the menu to return to being an anonymous user.
++
+ ## Special handling of GitHub URLs
+ 
+ A tricky thing about using Datasette Lite is that the files you load via URL need to be hosted somewhere that serves open CORS headers.
+@@ -176,7 +213,12 @@ Datasette has a number of [plugins](https://datasette.io/plugins) that enable ne
+ 
+ You can install plugins into Datasette Lite by adding one or more `?install=name-of-plugin` parameters to the URL.
+ 
+-Not all plugins are compatible with Datasette Lite at the moment, for example plugins that load their own JavaScript and CSS do not currently work, see [issue #8](https://github.com/simonw/datasette-lite/issues/8).
++Plugins that load their own JavaScript and CSS now work, as do plugins that accept POST requests - for example [datasette-cluster-map](https://datasette.io/plugins/datasette-cluster-map), [datasette-vega](https://datasette.io/plugins/datasette-vega), [datasette-write](https://datasette.io/plugins/datasette-write), [datasette-edit-schema](https://datasette.io/plugins/datasette-edit-schema), [datasette-upload-csvs](https://datasette.io/plugins/datasette-upload-csvs) and [datasette-auth-passwords](https://datasette.io/plugins/datasette-auth-passwords). Plugins need to be pure Python (or available as Pyodide packages) and must not require threads or subprocesses.
++
++- [datasette-cluster-map](https://datasette.io/plugins/datasette-cluster-map) - Datasette plugin that shows a map for any data with latitude/longitude columns - [demo](https://lite.datasette.io/?install=datasette-cluster-map&url=https://global-power-plants.datasettes.com/global-power-plants.db#/global-power-plants/global-power-plants)
++- [datasette-write](https://datasette.io/plugins/datasette-write) - Datasette plugin providing a UI for executing SQL writes against the database (needs `?root=1`) - [demo](https://lite.datasette.io/?root=1&install=datasette-write#/fixtures/-/write)
++- [datasette-edit-schema](https://datasette.io/plugins/datasette-edit-schema) - Datasette plugin for modifying table schemas (needs `?root=1`) - [demo](https://lite.datasette.io/?root=1&install=datasette-edit-schema#/-/edit-schema/fixtures/facetable)
++- [datasette-upload-csvs](https://datasette.io/plugins/datasette-upload-csvs) - Datasette plugin for uploading CSV files and converting them to database tables (needs `?root=1`) - [demo](https://lite.datasette.io/?root=1&memory=1&csv=https://raw.githubusercontent.com/fivethirtyeight/data/master/fight-songs/fight-songs.csv&install=datasette-upload-csvs#/-/upload-csvs)
+ 
+ Here's a list of plugins that have been tested with Datasette Lite, plus demo links to see them in action:
+ 
+@@ -226,3 +268,9 @@ uv run --python 3.12 \
+   --with-requirements dev-requirements.txt \
+   python -m pytest
+ ```
++- `tests/test_bridge.py` - fast pure-Python tests of the ASGI bridge, cookie jar and `base_url` workarounds, extracted from `webworker.js`. Install `datasette` to also run them against a real Datasette.
++- `tests/test_datasette_lite.py` - the original browser tests, loading the default databases.
++- `tests/test_url_patterns.py` - every supported `?` option and `#` URL pattern, using the small files in `tests/fixtures/`.
++- `tests/test_plugins_and_post.py` - JavaScript (core and plugins), POST forms, CSRF, sign-in, uploads, downloads, the 1.0 alpha write API, multiple tabs and service worker restarts.
++
++Tests that download from third-party hosts beyond Pyodide, PyPI and the default databases are marked `network`; skip them with `-m "not network"`. To use an existing Chromium binary set `CHROMIUM_EXECUTABLE=/path/to/chrome`. If the browser needs an HTTPS proxy set `DATASETTE_LITE_TEST_PROXY` (or `HTTPS_PROXY`).
+diff --git a/app.css b/app.css
+deleted file mode 100644
+index 562d6ad..0000000
+--- a/app.css
++++ /dev/null
+@@ -1,912 +0,0 @@
+-/* Reset and Page Setup ==================================================== */
+-
+-/* Reset from http://meyerweb.com/eric/tools/css/reset/
+-   v2.0 | 20110126
+-   License: none (public domain)
+-*/
+-html, body, div, span, applet, object, iframe,
+-h1, h2, h3, h4, h5, h6, p, blockquote, pre,
+-a, abbr, acronym, address, big, cite, code,
+-del, dfn, em, img, ins, kbd, q, s, samp,
+-small, strike, strong, sub, sup, tt, var,
+-b, u, i, center,
+-dl, dt, dd, ol, ul, li,
+-fieldset, form, label, legend,
+-table, caption, tbody, tfoot, thead, tr, th, td,
+-article, aside, canvas, details, embed,
+-figure, figcaption, footer, header, hgroup,
+-menu, nav, output, ruby, section, summary,
+-time, mark, audio, video {
+-	margin: 0;
+-	padding: 0;
+-	border: 0;
+-	font-size: 100%;
+-	font: inherit;
+-	vertical-align: baseline;
+-}
+-/* HTML5 display-role reset for older browsers */
+-article, aside, details, figcaption, figure,
+-footer, header, hgroup, menu, nav, section {
+-	display: block;
+-}
+-body {
+-	line-height: 1;
+-}
+-ol,
+-ul {
+-	list-style: none;
+-}
+-blockquote,
+-q {
+-	quotes: none;
+-}
+-blockquote:before,
+-blockquote:after,
+-q:before,
+-q:after {
+-	content: '';
+-	content: none;
+-}
+-table {
+-	border-collapse: collapse;
+-	border-spacing: 0;
+-}
+-th {
+-    padding-right: 1em;
+-    white-space: nowrap;
+-}
+-strong {
+-    font-weight: bold;
+-}
+-em {
+-    font-style: italic;
+-}
+-/* end reset */
+-
+-
+-body {
+-    margin: 0;
+-    padding: 0;
+-    font-family: "Helvetica Neue", sans-serif;
+-    font-size: 1rem;
+-    font-weight: 400;
+-    line-height: 1.5;
+-    color: #111A35;
+-    text-align: left;
+-    background-color: #F8FAFB;
+-}
+-
+-/* Helper Styles  ===========================================================*/
+-
+-.intro {
+-  font-size: 1rem;
+-}
+-.metadata-description {
+-  margin-bottom: 1em;
+-}
+-p {
+-  margin: 0 0 0.75rem 0;
+-  padding: 0;
+-}
+-.meta {
+-  color: rgba(0,0,0,0.3);
+-  font-size: 0.75rem
+-}
+-.intro {
+-	font-size: 1.5rem;
+-  margin-bottom: 0.75rem;
+-}
+-.context-text {
+-	/* for accessibility and hidden from sight */
+-	text-indent: -999em;
+-	display: block;
+-	width:0;
+-	overflow: hidden;
+-	margin: 0;
+-	padding: 0;
+-	line-height: 0;
+-}
+-
+-h1,
+-h2,
+-h3,
+-h4,
+-h5,
+-h6,
+-.header1,
+-.header2,
+-.header3,
+-.header4,
+-.header5,
+-.header6 {
+-  font-weight: 700;
+-  font-size: 1rem;
+-  margin: 0;
+-  padding: 0;
+-  word-break: break-word;
+-}
+-h1,
+-.header1 {
+-  font-size: 2rem;
+-  margin-bottom: 0.75rem;
+-  margin-top: 1rem;
+-}
+-h2,
+-.header2 {
+-  font-size: 1.5rem;
+-  margin-bottom: 0.75rem;
+-  margin-top: 1rem;
+-}
+-h3,
+-.header3 {
+-  font-size: 1.25rem;
+-  margin: 1rem 0 0.25rem 0;
+-}
+-h4,
+-.header4 {
+-  margin: 1rem 0 0.25rem 0;
+-  font-weight: 400;
+-  text-decoration: underline;
+-}
+-h5,
+-.header5 {
+-  margin: 1rem 0 0.25rem 0;
+-  font-weight: 700;
+-  text-decoration: underline;
+-}
+-h6,
+-.header6 {
+-  margin: 1rem 0 0.25rem 0;
+-  font-weight: 400;
+-  font-style: italic;
+-  text-decoration: underline;
+-}
+-
+-.page-header {
+-  padding-left: 10px;
+-  border-left: 10px solid #666;
+-  margin-bottom: 0.75rem;
+-  margin-top: 1rem;
+-}
+-.page-header h1 {
+-    margin: 0;
+-    font-size: 2rem;
+-    padding-right: 0.2em;
+-}
+-
+-.page-action-menu details > summary {
+-    list-style: none;
+-    cursor: pointer;
+-}
+-.page-action-menu details > summary::-webkit-details-marker {
+-    display: none;
+-}
+-
+-div,
+-section,
+-article,
+-header,
+-nav,
+-footer,
+-.wrapper {
+-	display: block;
+-	box-sizing: border-box;
+-}
+-
+-a:link {
+-	color: #276890;
+-	text-decoration: underline;
+-}
+-a:visited {
+-	color: #54AC8E;
+-	text-decoration: underline;
+-}
+-a:hover,
+-a:focus,
+-a:active  {
+-	color: #67C98D;
+-	text-decoration: underline;
+-}
+-
+-button.button-as-link {
+-    background: none;
+-    border: none;
+-    padding: 0;
+-    color: #276890;
+-    text-decoration: underline;
+-    cursor: pointer;
+-    font-size: 1rem;
+-}
+-button.button-as-link:hover,
+-button.button-as-link:focus {
+-	color: #67C98D;
+-}
+-
+-a img {
+-  display: block;
+-  max-width: 100%;
+-  border: 0;
+-}
+-
+-code,
+-pre {
+-  font-family: monospace;
+-}
+-
+-ul.bullets,
+-ul.tight-bullets,
+-ul.spaced,
+-ol.spaced {
+-	margin-bottom: 0.8rem;
+-}
+-ul.bullets,
+-ul.tight-bullets {
+-	padding-left: 1.25rem;
+-}
+-ul.bullets li,
+-ul.spaced li,
+-ol.spaced li {
+-	margin-bottom: 0.4rem;
+-}
+-ul.bullets li {
+-	list-style-type: circle;
+-}
+-ul.tight-bullets li {
+-    list-style-type: disc;
+-    margin-bottom: 0;
+-    word-break: break-all;
+-}
+-a.not-underlined {
+-    text-decoration: none;
+-}
+-.not-underlined .underlined {
+-    text-decoration: underline;
+-}
+-
+-/* Page Furniture ========================================================= */
+-/* Header */
+-header,
+-footer {
+-    padding: 0.6rem 1rem 0.5rem 1rem;
+-    background-color: #276890;
+-    background: linear-gradient(180deg, rgba(96,144,173,1) 0%, rgba(39,104,144,1) 50%);
+-    color: rgba(255,255,244,0.9);
+-    overflow: hidden;
+-    box-sizing: border-box;
+-    min-height: 2.6rem;
+-}
+-header p,
+-footer p {
+-    margin: 0;
+-    padding: 0;
+-}
+-header .crumbs {
+-    float: left;
+-}
+-header .actor {
+-    float: right;
+-    text-align: right;
+-    padding-left: 1rem;
+-    padding-right: 1rem;
+-    position: relative;
+-    top: -3px;
+-}
+-
+-footer a:link,
+-footer a:visited,
+-footer a:hover,
+-footer a:focus,
+-footer a:active,
+-footer button.button-as-link {
+-    color: rgba(255,255,244,0.8);
+-}
+-header a:link,
+-header a:visited,
+-header a:hover,
+-header a:focus,
+-header a:active,
+-header button.button-as-link {
+-    color: rgba(255,255,244,0.8);
+-    text-decoration: none;
+-}
+-
+-footer a:hover,
+-footer a:focus,
+-footer a:active,
+-footer.button-as-link:hover,
+-footer.button-as-link:focus,
+-header a:hover,
+-header a:focus,
+-header a:active,
+-button.button-as-link:hover,
+-button.button-as-link:focus {
+-	color: rgba(255,255,244,1);
+-}
+-
+-
+-/* Body */
+-section.content {
+-    margin: 0 1rem;
+-}
+-
+-/* Footer */
+-footer {
+-	  margin-top: 1rem;
+-}
+-
+-/* Navigation menu */
+-details.nav-menu > summary {
+-    list-style: none;
+-    display: inline;
+-    float: right;
+-    position: relative;
+-    cursor: pointer;
+-}
+-details.nav-menu > summary::-webkit-details-marker {
+-    display: none;
+-}
+-details .nav-menu-inner {
+-    position: absolute;
+-    top: 2.6rem;
+-    right: 10px;
+-    width: 180px;
+-    background-color: #276890;
+-    z-index: 1000;
+-    padding: 0;
+-}
+-.nav-menu-inner li,
+-form.nav-menu-logout {
+-    padding: 0.3rem 0.5rem;
+-    border-top: 1px solid #ffffff69;
+-}
+-.nav-menu-inner a {
+-    display: block;
+-}
+-
+-/* Table/database actions menu */
+-.page-action-menu {
+-    position: relative;
+-    margin-bottom: 0.5em;
+-}
+-.actions-menu-links {
+-    display: inline;
+-}
+-.actions-menu-links .dropdown-menu {
+-    position: absolute;
+-    top: calc(100% + 10px);
+-    left: 0;
+-    z-index: 10000;
+-}
+-.page-action-menu .icon-text {
+-    display: inline-flex;
+-    align-items: center;
+-    border-radius: .25rem;
+-    padding: 5px 12px 3px 7px;
+-    color: #fff;
+-    font-weight: 400;
+-    font-size: 0.8em;
+-    background: linear-gradient(180deg, #007bff 0%, #4E79C7 100%);
+-    border-color: #007bff;
+-}
+-.page-action-menu .icon-text span {
+-    /* Nudge text up a bit */
+-    position: relative;
+-    top: -2px;
+-}
+-.page-action-menu .icon-text:hover {
+-    cursor: pointer;
+-}
+-.page-action-menu .icon {
+-    width: 18px;
+-    height: 18px;
+-    margin-right: 4px;
+-}
+-
+-/* Components ============================================================== */
+-
+-
+-h2 em {
+-    font-style: normal;
+-    font-weight: lighter;
+-}
+-
+-/* Messages */
+-
+-.message-info,
+-.message-warning,
+-.message-error {
+-    padding: 1rem;
+-    margin-bottom: 1rem;
+-    background-color: rgba(103,201,141,0.3);
+-}
+-.message-warning {
+-    background-color: rgba(245,166,35,0.3);
+-}
+-.message-error {
+-    background-color: rgba(208,2,27,0.3);
+-}
+-
+-.pattern-heading {
+-  padding: 1rem;
+-  margin-top: 2rem;
+-  border-top: 1px solid rgba(208,2,27,0.8);
+-  border-bottom: 1px solid rgba(208,2,27,0.8);
+-  background-color: rgba(208,2,27,0.2)
+-}
+-
+-/* URL arguments */
+-.extra-wheres ul,
+-.extra-wheres li {
+-    list-style-type: none;
+-    padding: 0;
+-    margin: 0;
+-}
+-
+-.wrapped-sql {
+-    white-space: pre-wrap;
+-    margin: 1rem 0;
+-    font-family: monospace;
+-}
+-
+-/* Tables ================================================================== */
+-.table-wrapper {
+-    overflow-x: auto;
+-}
+-table {
+-    border-collapse: collapse;
+-}
+-td {
+-    border-top: 1px solid #aaa;
+-    border-right: 1px solid #eee;
+-    padding: 4px;
+-    vertical-align: top;
+-    white-space: pre-wrap;
+-}
+-td.type-pk {
+-    font-weight: bold;
+-}
+-td em {
+-    font-style: normal;
+-    font-size: 0.8em;
+-    color: #aaa;
+-}
+-th {
+-    padding-right: 1em;
+-}
+-table a:link {
+-    text-decoration: none;
+-}
+-.rows-and-columns td:before {
+-    display: block;
+-    color: black;
+-    margin-left: -10%;
+-    font-size: 0.8em;
+-}
+-.rows-and-columns td ol,
+-.rows-and-columns td ul {
+-    list-style: initial;
+-    list-style-position: inside;
+-}
+-a.blob-download {
+-    display: inline-block;
+-}
+-.db-table p {
+-    margin-top: 0;
+-    margin-bottom: 0.3em;
+-}
+-.db-table h2 {
+-    margin-top: 1em;
+-    margin-bottom: 0;
+-}
+-
+-
+-/* Forms =================================================================== */
+-
+-
+-form.sql textarea {
+-    border: 1px solid #ccc;
+-    width: 70%;
+-    height: 3em;
+-    padding: 4px;
+-    font-family: monospace;
+-    font-size: 1.3em;
+-}
+-form.sql label {
+-    width: 15%;
+-}
+-form label {
+-    font-weight: bold;
+-    display: inline-block;
+-}
+-.advanced-export input[type=submit] {
+-    font-size: 0.6em;
+-    margin-left: 1em;
+-}
+-label.sort_by_desc {
+-    padding-right: 1em;
+-}
+-pre#sql-query {
+-    margin-bottom: 1em;
+-}
+-form input[type=text],
+-form input[type=search] {
+-    border: 1px solid #ccc;
+-    border-radius: 3px;
+-    width: 60%;
+-    padding: 9px 4px;
+-    display: inline-block;
+-    font-size: 1em;
+-    font-family: Helvetica, sans-serif;
+-}
+-/* Stop Webkit from styling search boxes in an inconsistent way */
+-/* https://css-tricks.com/webkit-html5-search-inputs/ comments */
+-input[type=search] {
+-    -webkit-appearance: textfield;
+-}
+-input[type="search"]::-webkit-search-decoration,
+-input[type="search"]::-webkit-search-cancel-button,
+-input[type="search"]::-webkit-search-results-button,
+-input[type="search"]::-webkit-search-results-decoration {
+-    display: none;
+-}
+-
+-form input[type=submit], form button[type=button] {
+-    font-weight: 400;
+-    cursor: pointer;
+-    text-align: center;
+-    vertical-align: middle;
+-    border-width: 1px;
+-    border-style: solid;
+-    padding: .5em 0.8em;
+-    font-size: 0.9rem;
+-    line-height: 1;
+-    border-radius: .25rem;
+-}
+-
+-form input[type=submit] {
+-    color: #fff;
+-    background: linear-gradient(180deg, #007bff 0%, #4E79C7 100%);
+-    border-color: #007bff;
+-    -webkit-appearance: button;
+-}
+-
+-form button[type=button] {
+-    color: #007bff;
+-    background-color: #fff;
+-    border-color: #007bff;
+-}
+-
+-.filter-row {
+-    margin-bottom: 0.6em;
+-}
+-.search-row {
+-    margin-bottom: 1.8em;
+-}
+-
+-.search-row label {
+-    font-size: 1.2em;
+-    padding-right: 0.5em;
+-    display: inline-block;
+-    width: 80px;
+-}
+-
+-.select-wrapper {
+-    border: 1px solid #ccc;
+-    width: 120px;
+-    border-radius: 3px;
+-    padding: 0;
+-    background-color: #fafafa;
+-    position: relative;
+-    display: inline-block;
+-    margin-right: 0.3em;
+-}
+-.select-wrapper:focus-within {
+-    border: 1px solid black;
+-}
+-.select-wrapper.filter-op {
+-    width: 80px;
+-}
+-.select-wrapper::after {
+-    content: "\25BE";
+-    position: absolute;
+-    top: 0px;
+-    right: 0.4em;
+-    color: #bbb;
+-    pointer-events: none;
+-    font-size: 1.2em;
+-    padding-top: 0.16em;
+-}
+-
+-.select-wrapper select {
+-    padding: 9px 8px;
+-    width: 100%;
+-    border: none;
+-    box-shadow: none;
+-    background: transparent;
+-    background-image: none;
+-    -webkit-appearance: none;
+-    -moz-appearance: none;
+-    cursor: pointer;
+-}
+-.select-wrapper select {
+-    font-size: 1em;
+-    font-family: Helvetica, sans-serif;
+-}
+-.select-wrapper option {
+-    font-size: 1em;
+-    font-family: Helvetica, sans-serif;
+-}
+-
+-.select-wrapper select:focus {
+-    outline: none;
+-}
+-.filters {
+-    font-size: 0.8em;
+-}
+-.filters input.filter-value {
+-    width: 200px;
+-    border-radius: 3px;
+-    -webkit-appearance: none;
+-    padding: 9px 4px;
+-    font-size: 1em;
+-    font-family: Helvetica, sans-serif;
+-}
+-
+-
+-
+-
+-.facet-results {
+-    display: flex;
+-    flex-direction: row;
+-    flex-wrap: wrap;
+-}
+-.facet-info {
+-    width: 250px;
+-    margin-right: 15px;
+-}
+-.facet-info-total {
+-    font-size: 0.8em;
+-    color: #666;
+-    padding-right: 0.25em;
+-}
+-.facet-info li,
+-.facet-info ul {
+-    margin: 0;
+-    padding: 0;
+-}
+-.facet-info ul {
+-    padding-left: 1.25em;
+-    margin-bottom: 1em;
+-}
+-.facet-info a.cross:link,
+-.facet-info a.cross:visited,
+-.facet-info a.cross:hover,
+-.facet-info a.cross:focus,
+-.facet-info a.cross:active {
+-    text-decoration: none;
+-}
+-ul li.facet-truncated {
+-    list-style-type: none;
+-    position: relative;
+-    top: -0.35em;
+-    text-indent: 0.85em;
+-}
+-
+-.advanced-export {
+-    margin-top: 1em;
+-    padding: 0.01em 2em 0.01em 1em;
+-    width: auto;
+-    display: inline-block;
+-    box-shadow: 1px 2px 8px 2px rgba(0,0,0,0.08);
+-	background-color: white;
+-}
+-
+-.download-sqlite em {
+-    font-style: normal;
+-    font-size: 0.8em;
+-}
+-
+-
+-
+-p.zero-results {
+-    border: 2px solid #ccc;
+-    background-color: #eee;
+-    padding: 0.5em;
+-    font-style: italic;
+-}
+-
+-/* Value types */
+-.type-float, .type-int {
+-    color: #666;
+-}
+-
+-
+-
+-
+-
+-
+-/* Overrides ===============================================================*/
+-
+-.small-screen-only,
+-.select-wrapper.small-screen-only {
+-    display: none;
+-}
+-@media only screen and (max-width: 576px) {
+-
+-    .small-screen-only {
+-        display: initial;
+-    }
+-    .select-wrapper.small-screen-only {
+-        display: inline-block;
+-    }
+-
+-    form.sql textarea {
+-        width: 95%;
+-    }
+-    /* Force table to not be like tables anymore */
+-    table.rows-and-columns,
+-    .rows-and-columns thead,
+-    .rows-and-columns tbody,
+-    .rows-and-columns th,
+-    .rows-and-columns td,
+-    .rows-and-columns tr {
+-        display: block;
+-    }
+-
+-    /* Hide table headers (but not display: none;, for accessibility) */
+-    .rows-and-columns thead tr {
+-        position: absolute;
+-        top: -9999px;
+-        left: -9999px;
+-    }
+-
+-    .rows-and-columns tr {
+-        border: 1px solid #ccc;
+-        margin-bottom: 1em;
+-        border-radius: 10px;
+-        background-color: white;
+-        padding: 0.2rem;
+-    }
+-
+-    .rows-and-columns td {
+-        /* Behave  like a "row" */
+-        border: none;
+-        border-bottom: 1px solid #eee;
+-        padding: 0;
+-        padding-left: 10%;
+-    }
+-
+-    .rows-and-columns td:before {
+-        display: block;
+-        color: black;
+-        margin-left: -10%;
+-        font-size: 0.8em;
+-    }
+-
+-    .select-wrapper {
+-        width: 100px;
+-    }
+-    .select-wrapper.filter-op {
+-        width: 60px;
+-    }
+-    .filters input.filter-value {
+-        width: 140px;
+-    }
+-}
+-
+-svg.dropdown-menu-icon {
+-    display: inline-block;
+-    position: relative;
+-    top: 2px;
+-    cursor: pointer;
+-    opacity: 0.8;
+-}
+-.dropdown-menu {
+-    border: 1px solid #ccc;
+-    border-radius: 4px;
+-    line-height: 1.4;
+-    font-size: 16px;
+-    box-shadow: 2px 2px 2px #aaa;
+-    background-color: #fff;
+-    z-index: 1000;
+-}
+-.dropdown-menu ul,
+-.dropdown-menu li {
+-    list-style-type: none;
+-    margin: 0;
+-    padding: 0;
+-}
+-.dropdown-menu .dropdown-column-type {
+-    font-size: 0.7em;
+-    color: #666;
+-    margin: 0;
+-    padding: 4px 8px 4px 8px;
+-}
+-.dropdown-menu .dropdown-column-description {
+-    margin: 0;
+-    color: #666;
+-    padding: 4px 8px 4px 8px;
+-    max-width: 20em;
+-}
+-.dropdown-menu li {
+-    border-bottom: 1px solid #ccc;
+-}
+-.dropdown-menu li:last-child {
+-    border: none;
+-}
+-.dropdown-menu a:link,
+-.dropdown-menu a:visited,
+-.dropdown-menu a:hover,
+-.dropdown-menu a:focus
+-.dropdown-menu a:active {
+-    text-decoration: none;
+-    display: block;
+-    padding: 4px 8px 2px 8px;
+-    color: #222;
+-    white-space: nowrap;
+-}
+-.dropdown-menu a:hover {
+-    background-color: #eee;
+-}
+-.dropdown-menu .dropdown-description {
+-    margin: 0;
+-    color: #666;
+-    font-size: 0.8em;
+-    max-width: 80vw;
+-    white-space: normal;
+-}
+-.dropdown-menu .hook {
+-    display: block;
+-    position: absolute;
+-    top: -5px;
+-    left: 6px;
+-    width: 0;
+-    height: 0;
+-    border-left: 5px solid transparent;
+-    border-right: 5px solid transparent;
+-    border-bottom: 5px solid #666;
+-}
+-
+-.canned-query-edit-sql {
+-    padding-left: 0.5em;
+-    position: relative;
+-    top: 1px;
+-}
+-
+-.blob-download {
+-    display: block;
+-    white-space: nowrap;
+-    padding-right: 20px;
+-    position: relative;
+-    background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiIgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2Ij48cGF0aCBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik03LjQ3IDEwLjc4YS43NS43NSAwIDAwMS4wNiAwbDMuNzUtMy43NWEuNzUuNzUgMCAwMC0xLjA2LTEuMDZMOC43NSA4LjQ0VjEuNzVhLjc1Ljc1IDAgMDAtMS41IDB2Ni42OUw0Ljc4IDUuOTdhLjc1Ljc1IDAgMDAtMS4wNiAxLjA2bDMuNzUgMy43NXpNMy43NSAxM2EuNzUuNzUgMCAwMDAgMS41aDguNWEuNzUuNzUgMCAwMDAtMS41aC04LjV6Ij48L3BhdGg+PC9zdmc+");
+-    background-size: 16px 16px;
+-    background-position: right;
+-    background-repeat: no-repeat;
+-}
+-
+-dl.column-descriptions dt {
+-    font-weight: bold;
+-}
+-dl.column-descriptions dd {
+-    padding-left: 1.5em;
+-    white-space: pre-wrap;
+-    line-height: 1.1em;
+-    color: #666;
+-}
+-
+-.anim-scale-in {
+-    animation-name: scale-in;
+-    animation-duration: 0.15s;
+-    animation-timing-function: cubic-bezier(0.2, 0, 0.13, 1.5);
+-}
+-
+-@keyframes scale-in {
+-    0% {
+-        opacity: 0;
+-        transform: scale(0.6);
+-    }
+-    100% {
+-        opacity: 1;
+-        transform: scale(1);
+-    }
+-}
+diff --git a/dev-requirements.txt b/dev-requirements.txt
+index 2f81021..d991f11 100644
+--- a/dev-requirements.txt
++++ b/dev-requirements.txt
+@@ -1,2 +1,4 @@
+ pytest-playwright==0.7.1
+ playwright==1.55.0
++# For tests/test_bridge.py tests against a real Datasette
++datasette
+diff --git a/index.html b/index.html
+index 7dccce2..7e9706c 100644
+--- a/index.html
++++ b/index.html
+@@ -1,9 +1,14 @@
+ <!DOCTYPE html>
+ <html>
+ <head>
++  <meta charset="utf-8">
+   <title>Datasette</title>
+-  <link rel="stylesheet" href="app.css">
+ <style>
++html, body {
++  margin: 0;
++  height: 100%;
++  font-family: Helvetica, Arial, sans-serif;
++}
+ #loading-indicator {
+   text-align: center;
+ }
+@@ -24,10 +29,20 @@
+   font-size: min(3vw, 1.2em);
+   line-height: 1.8;
+ }
+-textarea#sql-editor {
+-  padding: 0.5em;
+-  font-size: 1em;
+-  line-height: 1.4;
++/* Datasette itself runs in this iframe, served by the service worker */
++#datasette {
++  display: none;
++  position: fixed;
++  inset: 0;
++  width: 100%;
++  height: 100%;
++  border: 0;
++}
++body.ready #datasette {
++  display: block;
++}
++body.ready #loading-indicator {
++  display: none;
+ }
+ </style>
+ <script defer data-domain="lite.datasette.io" src="https://plausible.io/js/script.manual.js"></script>
+@@ -91,228 +106,10 @@ textarea#sql-editor {
+ <textarea id="loading-logs">Loading...</textarea>
+ </div>
+ 
+-<script>
+-const datasetteWorker = new Worker("webworker.js");
+-const githubUrl = /^https:\/\/github.com\/(.*)\/(.*)\/blob\/(.*)(\?raw=true)?$/;
+-const gistUrl = /^https:\/\/gist.github.com\/(.*)\/(.*)$/;
+-
+-function fixUrl(url) {
+-  const githubMatch = githubUrl.exec(url);
+-  if (githubMatch) {
+-    return `https://raw.githubusercontent.com/${githubMatch[1]}/${githubMatch[2]}/${githubMatch[3]}`;
+-  }
+-  const gistMatch = gistUrl.exec(url);
+-  if (gistMatch) {
+-    return `https://gist.githubusercontent.com/${gistMatch[1]}/${gistMatch[2]}/raw`;
+-  }
+-  return url;
+-}
+-
+-const urlParams = new URLSearchParams(location.search);
+-const sqliteUrls = urlParams.getAll('url').map(fixUrl);
+-const memory = !!urlParams.get('memory');
+-const metadataUrl = fixUrl(urlParams.get('metadata'));
+-const csvUrls = urlParams.getAll('csv').map(fixUrl);
+-const sqlUrls = urlParams.getAll('sql').map(fixUrl);
+-const jsonUrls = urlParams.getAll('json').map(fixUrl);
+-const parquetUrls = urlParams.getAll('parquet').map(fixUrl);
+-const installUrls = urlParams.getAll('install');
+-const ref = urlParams.get('ref');
+-
+-datasetteWorker.postMessage({type: 'startup', ref, sqliteUrls, memory, csvUrls, sqlUrls, jsonUrls, parquetUrls, installUrls, metadataUrl});
+-
+-let loadingLogs = ["Loading..."];
+-
+-function escapeHtml(unsafe) {
+-  return unsafe
+-    .replace(/&/g, "&amp;")
+-    .replace(/</g, "&lt;")
+-    .replace(/>/g, "&gt;")
+-    .replace(/"/g, "&quot;")
+-    .replace(/'/g, "&#039;");
+-}
+-
+-datasetteWorker.onmessage = (event) => {
+-  var ta = document.getElementById('loading-logs');
+-  if (event.data.type == 'log') {
+-    loadingLogs.push(event.data.line);
+-    ta.value = loadingLogs.join("\n");
+-    ta.scrollTop = ta.scrollHeight;
+-    return;
+-  }
+-  let html = '';
+-  if (event.data.error) {
+-    html = `<div style="padding: 0.5em"><h3>Error</h3><pre style="white-space: pre-wrap">${escapeHtml(event.data.error)}</pre></div>`;
+-  } else if (/^text\/html/.exec(event.data.contentType)) {
+-    html = event.data.text;
+-  } else if (/^application\/json/.exec(event.data.contentType)) {
+-    html = `<pre style="padding: 0.5em">${escapeHtml(JSON.stringify(JSON.parse(event.data.text), null, 4))}</pre>`;
+-  } else {
+-    html = `<pre style="padding: 0.5em">${escapeHtml(event.data.text)}</pre>`;
+-  }
+-  document.getElementById("output").innerHTML = html;
+-  let title = document.getElementById("output").querySelector("title");
+-  if (title) {
+-    document.title = title.innerText;
+-  }
+-  window.scrollTo({top: 0, left: 0});
+-  document.getElementById('loading-indicator').style.display = 'none';
+-};
+-</script>
+-
+ <div id="output"></div>
+ 
+-<form id="load-custom">
+-  <p style="padding: 1em">
+-    <button type="button" class="db-url">Load SQLite DB by URL</button>
+-    <button type="button" class="csv-url">Load CSV</button>
+-    <button type="button" class="json-url">Load JSON</button>
+-    <button type="button" class="parquet-url">Load Parquet</button>
+-    <button type="button" class="sql-url">Load SQL</button>
+-    <a style="text-decoration: none; padding-left: 0.3em; color: #067EFF" href="https://github.com/simonw/datasette-lite">Documentation</a>
+-  </p>
+-</form>
+-
+-<script>
+-const useAnalytics = (location.hostname == "lite.datasette.io") && (new URLSearchParams(location.search).get('analytics') != 'off');
+-useAnalytics && plausible('pageview');
+-
+-window.onpopstate = function(event) {
+-  console.log(event);
+-  datasetteWorker.postMessage({path: event.target.location.hash.split("#")[1] || ""});
+-}
+-
+-// Start with path from location.hash, if available
+-if (location.hash) {
+-  datasetteWorker.postMessage({path: location.hash.replace(/^\#/, '')});
+-} else {
+-  datasetteWorker.postMessage({path: "/"});
+-}
+-
+-function isExternal(url) {
+-  let startsWithProtocol = !!/^http:\/\/|https:\/\//.exec(url);
+-  if (!startsWithProtocol) {
+-    return false;
+-  }
+-  // Is it localhost?
+-  return new URL(url).host != 'localhost';
+-}
+-
+-function isFragmentLink(url) {
+-  // Is this a #fragment on the current page?
+-  let u = new URL(url);
+-  return (
+-    location.pathname == u.pathname &&
+-    location.hostname == u.hostname &&
+-    u.hash &&
+-    u.hash != location.hash
+-  );
+-}
+-
+-function loadPath(path) {
+-  path = path.split("#")[0].replace("http://localhost", "");
+-  console.log({path});
+-  history.pushState({path: path}, path, "#" + path);
+-  useAnalytics && plausible('pageview', {u: location.href.replace('?', '').replace('#', '/')});
+-  datasetteWorker.postMessage({path});
+-}
+-
+-let output = document.getElementById('output');
+-output.addEventListener('click', (ev => {
+-  var link = ev.srcElement.closest("a");
+-  if (link && link.href) {
+-    ev.stopPropagation();
+-    ev.preventDefault();
+-    if (isFragmentLink(link.href)) {
+-      // Jump them to that element, but don't update the URL bar
+-      // since we use # in the URL to mean something else
+-      let fragment = new URL(link.href).hash.replace("#", "");
+-      if (fragment) {
+-        let el = document.getElementById(fragment);
+-        el.scrollIntoView();
+-      }
+-      return;
+-    }
+-    let href = link.getAttribute("href");
+-    if (isExternal(href)) {
+-      window.open(href);
+-      return;
+-    }
+-    loadPath(href);
+-  }
+-}), true);
+-
+-output.addEventListener('submit', (ev => {
+-  console.log(ev);
+-  ev.stopPropagation();
+-  ev.preventDefault();
+-  if (ev.target && ev.target.nodeName == "FORM" && ev.target.method.toLowerCase() == "get") {
+-    let qs = new URLSearchParams(new FormData(ev.target)).toString();
+-    let action = ev.target.getAttribute("action");
+-    loadPath(`${action}?${qs}`);
+-  }
+-}), true);
+-
+-async function checkUrl(url, contentTypes) {
+-  try {
+-    response = (await fetch(url, {method: 'HEAD'}));
+-    if (response.status != 200) {
+-      return false;
+-    }
+-    if (contentTypes && (!contentTypes.includes(response.headers.get('content-type')))) {
+-      return false;
+-    }
+-    return true;
+-  } catch (error) {
+-    console.error(error);
+-    return false;
+-  }
+-}
+-
+-const fileTypes = [
+-  {
+-    id: "db-url",
+-    prompt: "Enter a full URL to a SQLite .db file",
+-    param: "url",
+-    mimes: [
+-      "application/octet-stream",
+-      "application/x-sqlite3",
+-      "application/vnd.sqlite3",
+-    ],
+-  },
+-  { id: "csv-url", prompt: "Enter a full URL to a CSV file", param: "csv" },
+-  { id: "json-url", prompt: "Enter a full URL to a JSON file", param: "json" },
+-  {
+-    id: "parquet-url",
+-    prompt: "Enter a full URL to a Parquet file",
+-    param: "parquet",
+-  },
+-  { id: "sql-url", prompt: "Enter a full URL to a SQL file", param: "sql" },
+-];
+-
+-fileTypes.forEach((fileType) => {
+-  document
+-    .querySelector(`#load-custom button.${fileType.id}`)
+-    .addEventListener("click", async function (ev) {
+-      ev.preventDefault();
+-      let url = fixUrl(prompt(fileType.prompt));
+-      if (!url) {
+-        return;
+-      }
+-      let valid = await checkUrl(url, fileType.mimes);
+-      if (valid) {
+-        location.href =
+-          location.pathname +
+-          "?" +
+-          fileType.param +
+-          "=" +
+-          encodeURIComponent(url);
+-      } else {
+-        alert(`That ${fileType.param.toUpperCase()} could not be loaded`);
+-      }
+-    });
+-});
++<iframe id="datasette" title="Datasette"></iframe>
+ 
+-</script>
++<script src="shell.js"></script>
+ </body>
+ </html>
+diff --git a/pytest.ini b/pytest.ini
+new file mode 100644
+index 0000000..befcc13
+--- /dev/null
++++ b/pytest.ini
+@@ -0,0 +1,3 @@
++[pytest]
++markers =
++    network: needs to download data from third party hosts
+diff --git a/shell.js b/shell.js
+new file mode 100644
+index 0000000..e3a54ef
+--- /dev/null
++++ b/shell.js
+@@ -0,0 +1,357 @@
++// shell.js - the Datasette Lite "shell" page logic.
++//
++// Datasette Lite runs the real Datasette ASGI application in Pyodide, in a Web
++// Worker owned by this page. Datasette's pages are displayed in an <iframe>
++// pointed at <scope>/app/<session>/... - URLs that don't exist on the server:
++// the service worker (sw.js) intercepts every request under that prefix and
++// this page relays it to the Pyodide worker, which answers it via ASGI.
++//
++// The iframe keeps the Pyodide worker alive across navigations. The iframe's
++// location is mirrored into this page's #fragment, so URLs such as
++//   https://lite.datasette.io/?url=...#/fixtures/facetable?_facet=state
++// keep working, are shareable, and the back button works.
++
++const SCOPE_PATH = new URL("./", location.href).pathname;
++const SESSION = (
++  (self.crypto && crypto.randomUUID && crypto.randomUUID()) ||
++  String(Math.random()).slice(2) + String(Date.now())
++).replace(/-/g, "").slice(0, 12);
++// Datasette's base_url: every URL Datasette generates starts with this.
++const APP_BASE = SCOPE_PATH + "app/" + SESSION + "/";
++const APP_ROOT = APP_BASE.slice(0, -1);
++
++const githubUrl = /^https:\/\/github.com\/(.*)\/(.*)\/blob\/(.*)(\?raw=true)?$/;
++const gistUrl = /^https:\/\/gist.github.com\/(.*)\/(.*)$/;
++
++function fixUrl(url) {
++  if (!url) {
++    return url;
++  }
++  const githubMatch = githubUrl.exec(url);
++  if (githubMatch) {
++    return `https://raw.githubusercontent.com/${githubMatch[1]}/${githubMatch[2]}/${githubMatch[3]}`;
++  }
++  const gistMatch = gistUrl.exec(url);
++  if (gistMatch) {
++    return `https://gist.githubusercontent.com/${gistMatch[1]}/${gistMatch[2]}/raw`;
++  }
++  return url;
++}
++
++const urlParams = new URLSearchParams(location.search);
++const startup = {
++  type: "startup",
++  ref: urlParams.get("ref"),
++  sqliteUrls: urlParams.getAll("url").map(fixUrl),
++  memory: !!urlParams.get("memory"),
++  metadataUrl: fixUrl(urlParams.get("metadata")),
++  configUrl: fixUrl(urlParams.get("config")),
++  csvUrls: urlParams.getAll("csv").map(fixUrl),
++  sqlUrls: urlParams.getAll("sql").map(fixUrl),
++  jsonUrls: urlParams.getAll("json").map(fixUrl),
++  parquetUrls: urlParams.getAll("parquet").map(fixUrl),
++  installUrls: urlParams.getAll("install"),
++  root: !!urlParams.get("root"),
++  baseUrl: APP_BASE,
++};
++
++const useAnalytics = (location.hostname == "lite.datasette.io") && (urlParams.get("analytics") != "off");
++useAnalytics && plausible("pageview");
++
++const frame = document.getElementById("datasette");
++const loadingLogs = ["Loading..."];
++
++function escapeHtml(unsafe) {
++  return unsafe
++    .replace(/&/g, "&amp;")
++    .replace(/</g, "&lt;")
++    .replace(/>/g, "&gt;")
++    .replace(/"/g, "&quot;")
++    .replace(/'/g, "&#039;");
++}
++
++function log(line) {
++  const ta = document.getElementById("loading-logs");
++  loadingLogs.push(line);
++  ta.value = loadingLogs.join("\n");
++  ta.scrollTop = ta.scrollHeight;
++}
++
++function showError(message) {
++  document.getElementById("loading-indicator").style.display = "none";
++  document.getElementById("output").innerHTML =
++    `<div style="padding: 0.5em"><h3>Error</h3><pre style="white-space: pre-wrap">${escapeHtml(message)}</pre></div>`;
++}
++
++// --- The Pyodide worker ------------------------------------------------------
++
++const datasetteWorker = new Worker("webworker.js");
++const pending = new Map();
++let nextId = 1;
++
++const workerReady = new Promise((resolve, reject) => {
++  datasetteWorker.onmessage = (event) => {
++    const data = event.data;
++    if (data.type == "log") {
++      log(data.line);
++    } else if (data.type == "ready") {
++      resolve();
++    } else if (data.type == "error") {
++      reject(new Error(data.error));
++    } else if (data.type == "response") {
++      const resolveResponse = pending.get(data.id);
++      pending.delete(data.id);
++      resolveResponse && resolveResponse(data);
++    }
++  };
++});
++datasetteWorker.postMessage(startup);
++
++function callWorker(request) {
++  const id = nextId++;
++  return new Promise((resolve) => {
++    pending.set(id, resolve);
++    datasetteWorker.postMessage(
++      {type: "request", id, ...request},
++      request.body ? [request.body] : [],
++    );
++  });
++}
++
++// --- The service worker ------------------------------------------------------
++
++function onServiceWorkerMessage(event) {
++  const data = event.data || {};
++  const port = event.ports[0];
++  if (data.type == "datasette-lite-owner") {
++    port.postMessage({owner: data.session === SESSION});
++  } else if (data.type == "datasette-lite-request" && data.session === SESSION) {
++    callWorker(data.request).then((response) => {
++      port.postMessage(
++        {status: response.status, headers: response.headers, body: response.body},
++        response.body ? [response.body] : [],
++      );
++    });
++  }
++}
++
++async function registerServiceWorker() {
++  if (!("serviceWorker" in navigator)) {
++    throw new Error(
++      "Datasette Lite needs a browser with service worker support. " +
++      "Service workers are unavailable in some private browsing modes."
++    );
++  }
++  navigator.serviceWorker.addEventListener("message", onServiceWorkerMessage);
++  navigator.serviceWorker.startMessages();
++  await navigator.serviceWorker.register("sw.js", {scope: "./"});
++  await navigator.serviceWorker.ready;
++}
++
++// --- Routing between the #fragment and the iframe ----------------------------
++
++function pathFromHash() {
++  let path = location.hash.replace(/^#/, "");
++  if (!path) {
++    return "/";
++  }
++  if (!path.startsWith("/")) {
++    path = "/" + path;
++  }
++  return path;
++}
++
++function isAppPath(pathname) {
++  return pathname === APP_ROOT || pathname.startsWith(APP_BASE);
++}
++
++function frameAppPath() {
++  try {
++    const loc = frame.contentWindow.location;
++    if (!isAppPath(loc.pathname)) {
++      return null;
++    }
++    return (loc.pathname.slice(APP_ROOT.length) || "/") + loc.search;
++  } catch (e) {
++    return null;
++  }
++}
++
++function navigateFrame(path, replace) {
++  const target = APP_ROOT + path;
++  if (replace) {
++    frame.contentWindow.location.replace(target);
++  } else {
++    frame.src = target;
++  }
++}
++
++window.addEventListener("hashchange", () => {
++  // The user edited the #fragment, or went back/forward to a #fragment change
++  const path = pathFromHash();
++  if (frameAppPath() !== path) {
++    navigateFrame(path, true);
++  }
++});
++
++let firstLoad = true;
++
++frame.addEventListener("load", () => {
++  let doc;
++  try {
++    doc = frame.contentDocument;
++  } catch (e) {
++    return;
++  }
++  const loc = frame.contentWindow.location;
++  if (loc.href === "about:blank") {
++    return;
++  }
++  if (loc.origin === location.origin && !isAppPath(loc.pathname)) {
++    // Somehow navigated outside Datasette within this site - show it full page
++    location.href = loc.href;
++    return;
++  }
++  const path = frameAppPath();
++  if (path !== null) {
++    const newHash = "#" + path;
++    if (location.hash !== newHash) {
++      // replaceState: the iframe navigation already created a history entry
++      history.replaceState(null, "", newHash);
++    }
++  }
++  document.title = (doc && doc.title) || "Datasette";
++  if (doc && doc.contentType == "text/html" && doc.body) {
++    enhanceDocument(doc);
++  }
++  if (!firstLoad) {
++    useAnalytics && plausible("pageview", {u: location.href.replace("?", "").replace("#", "/")});
++  }
++  firstLoad = false;
++});
++
++// Called for every HTML page Datasette renders in the iframe
++function enhanceDocument(doc) {
++  // Open external links in a new window, and make links to other Datasette
++  // Lite URLs (e.g. in metadata descriptions) replace the whole page.
++  doc.addEventListener("click", (ev) => {
++    if (ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) {
++      return;
++    }
++    const link = ev.target.closest && ev.target.closest("a[href]");
++    if (!link) {
++      return;
++    }
++    const target = (link.getAttribute("target") || "").toLowerCase();
++    if (target && target !== "_self") {
++      return;
++    }
++    let url;
++    try {
++      url = new URL(link.href);
++    } catch (e) {
++      return;
++    }
++    if (!/^https?:$/.test(url.protocol)) {
++      return;
++    }
++    if (url.origin !== location.origin) {
++      ev.preventDefault();
++      window.open(url.href);
++    } else if (!isAppPath(url.pathname)) {
++      ev.preventDefault();
++      location.href = url.href;
++    }
++  });
++  addLoadButtons(doc);
++}
++
++// --- The "Load SQLite DB by URL" etc buttons ----------------------------------
++
++async function checkUrl(url, contentTypes) {
++  try {
++    const response = await fetch(url, {method: "HEAD"});
++    if (response.status != 200) {
++      return false;
++    }
++    if (contentTypes && (!contentTypes.includes(response.headers.get("content-type")))) {
++      return false;
++    }
++    return true;
++  } catch (error) {
++    console.error(error);
++    return false;
++  }
++}
++
++const fileTypes = [
++  {
++    id: "db-url",
++    label: "Load SQLite DB by URL",
++    prompt: "Enter a full URL to a SQLite .db file",
++    param: "url",
++    mimes: [
++      "application/octet-stream",
++      "application/x-sqlite3",
++      "application/vnd.sqlite3",
++    ],
++  },
++  {id: "csv-url", label: "Load CSV", prompt: "Enter a full URL to a CSV file", param: "csv"},
++  {id: "json-url", label: "Load JSON", prompt: "Enter a full URL to a JSON file", param: "json"},
++  {
++    id: "parquet-url",
++    label: "Load Parquet",
++    prompt: "Enter a full URL to a Parquet file",
++    param: "parquet",
++  },
++  {id: "sql-url", label: "Load SQL", prompt: "Enter a full URL to a SQL file", param: "sql"},
++];
++
++function addLoadButtons(doc) {
++  if (doc.getElementById("load-custom")) {
++    return;
++  }
++  const form = doc.createElement("form");
++  form.id = "load-custom";
++  const p = doc.createElement("p");
++  p.style.padding = "1em";
++  for (const fileType of fileTypes) {
++    const button = doc.createElement("button");
++    button.type = "button";
++    button.className = fileType.id;
++    button.textContent = fileType.label;
++    button.addEventListener("click", async (ev) => {
++      ev.preventDefault();
++      const url = fixUrl(window.prompt(fileType.prompt));
++      if (!url) {
++        return;
++      }
++      const valid = await checkUrl(url, fileType.mimes);
++      if (valid) {
++        location.href =
++          location.pathname + "?" + fileType.param + "=" + encodeURIComponent(url);
++      } else {
++        window.alert(`That ${fileType.param.toUpperCase()} could not be loaded`);
++      }
++    });
++    p.appendChild(button);
++    p.appendChild(doc.createTextNode(" "));
++  }
++  const docs = doc.createElement("a");
++  docs.href = "https://github.com/simonw/datasette-lite";
++  docs.textContent = "Documentation";
++  docs.style.cssText = "text-decoration: none; padding-left: 0.3em; color: #067EFF";
++  p.appendChild(docs);
++  form.appendChild(p);
++  doc.body.appendChild(form);
++}
++
++// --- Boot ----------------------------------------------------------------------
++
++async function main() {
++  await Promise.all([registerServiceWorker(), workerReady]);
++  navigateFrame(pathFromHash(), false);
++  document.body.classList.add("ready");
++}
++
++main().catch((error) => showError((error && error.message) || String(error)));
+diff --git a/sw.js b/sw.js
+new file mode 100644
+index 0000000..a9651d9
+--- /dev/null
++++ b/sw.js
+@@ -0,0 +1,171 @@
++// sw.js - the Datasette Lite service worker.
++//
++// Every same-origin request under <scope>/app/<session>/ - link navigations,
++// form submissions (GET and POST), fetch() calls made by Datasette's own
++// JavaScript and by plugins, static assets - is intercepted here and answered
++// by the Datasette ASGI app running in Pyodide, in a Web Worker owned by the
++// Datasette Lite "shell" page (index.html). Everything else passes through to
++// the network.
++//
++// <session> is a random id chosen by each shell page. It lets several
++// Datasette Lite tabs - each with its own databases - share one service worker:
++// a request is only ever answered by the tab that owns that session.
++//
++// Service workers are terminated when idle, so no state is kept here: for each
++// request the owning shell is looked up afresh with clients.matchAll().
++
++const SCOPE_PATH = new URL("./", self.location.href).pathname;
++const APP_PREFIX = SCOPE_PATH + "app/";
++const OWNER_TIMEOUT_MS = 2000;
++
++self.addEventListener("install", () => self.skipWaiting());
++self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
++
++function sessionFor(rawUrl) {
++  const url = new URL(rawUrl);
++  if (url.origin !== self.location.origin) return null;
++  if (!url.pathname.startsWith(APP_PREFIX)) return null;
++  const session = url.pathname.slice(APP_PREFIX.length).split("/")[0];
++  return session || null;
++}
++
++function isAppPath(pathname) {
++  return pathname.startsWith(APP_PREFIX);
++}
++
++self.addEventListener("fetch", (event) => {
++  const session = sessionFor(event.request.url);
++  if (session) {
++    event.respondWith(handleAppRequest(event.request, session));
++    return;
++  }
++  const url = new URL(event.request.url);
++  if (url.origin === self.location.origin && url.pathname.startsWith("/-/")) {
++    // Datasette (and plugins) sometimes hardcode root-relative "/-/..." URLs
++    // that ignore base_url - e.g. a form action="/-/password-tool". When such
++    // a request comes from a Datasette page, route it to that page's session.
++    event.respondWith(handleHardcodedPath(event, url));
++  }
++  // Everything else: network passthrough
++});
++
++async function sessionOfRequester(event) {
++  if (event.clientId) {
++    const client = await self.clients.get(event.clientId);
++    if (client) return sessionFor(client.url);
++  }
++  // Navigations have no clientId - use the referring page instead
++  if (event.request.referrer) {
++    return sessionFor(event.request.referrer);
++  }
++  return null;
++}
++
++async function handleHardcodedPath(event, url) {
++  const session = await sessionOfRequester(event);
++  if (!session) {
++    return fetch(event.request);
++  }
++  const target = new URL(APP_PREFIX + session + url.pathname + url.search, url);
++  if (event.request.mode === "navigate") {
++    // Let the browser navigate to the correct URL. 307 keeps the method and
++    // body of POST form submissions.
++    return Response.redirect(target.href, 307);
++  }
++  return handleAppRequest(new Request(target.href, event.request), session);
++}
++
++// Ask a single window client whether it owns this session.
++function askOwner(client, session) {
++  return new Promise((resolve) => {
++    const channel = new MessageChannel();
++    const timer = setTimeout(() => resolve(false), OWNER_TIMEOUT_MS);
++    channel.port1.onmessage = (event) => {
++      clearTimeout(timer);
++      resolve(!!(event.data && event.data.owner));
++    };
++    client.postMessage({type: "datasette-lite-owner", session}, [channel.port2]);
++  });
++}
++
++async function findOwner(session) {
++  const windows = await self.clients.matchAll({type: "window", includeUncontrolled: true});
++  const shells = windows.filter((client) => !isAppPath(new URL(client.url).pathname));
++  if (!shells.length) return null;
++  const answers = await Promise.all(shells.map((client) => askOwner(client, session)));
++  const index = answers.indexOf(true);
++  return index === -1 ? null : shells[index];
++}
++
++function shellRedirect(shellUrl, requestUrl, session) {
++  // Turn /app/<session>/fixtures?sql=... into <shell>?<options>#/fixtures?sql=...
++  const url = new URL(requestUrl);
++  const appPath = url.pathname.slice((APP_PREFIX + session).length) || "/";
++  const target = new URL(shellUrl);
++  target.hash = appPath + url.search;
++  return Response.redirect(target.href, 302);
++}
++
++async function handleAppRequest(request, session) {
++  const owner = await findOwner(session);
++  // A top-level navigation to an app URL (e.g. "open link in new tab") can't
++  // host Pyodide itself, so send it to a fresh Datasette Lite shell instead,
++  // with the same startup options when the owning tab is still open.
++  if (request.mode === "navigate" && request.destination === "document") {
++    if (request.method === "GET") {
++      return shellRedirect(owner ? owner.url : new URL(SCOPE_PATH, self.location.href).href,
++                           request.url, session);
++    }
++  }
++  if (!owner) {
++    return new Response(
++      "This Datasette Lite session is no longer running - reload the page to start it again.",
++      {status: 503, headers: {"content-type": "text/plain; charset=utf-8"}},
++    );
++  }
++
++  const hasBody = !["GET", "HEAD"].includes(request.method);
++  const body = hasBody ? await request.arrayBuffer() : null;
++  const headers = [...request.headers.entries()];
++
++  const channel = new MessageChannel();
++  const reply = new Promise((resolve) => {
++    channel.port1.onmessage = (event) => resolve(event.data);
++  });
++  owner.postMessage(
++    {
++      type: "datasette-lite-request",
++      session,
++      request: {method: request.method, url: request.url, headers, body},
++    },
++    body ? [channel.port2, body] : [channel.port2],
++  );
++  const msg = await reply;
++
++  const responseHeaders = new Headers();
++  for (const [name, value] of msg.headers) {
++    const lower = name.toLowerCase();
++    // Datasette Lite hosts Datasette inside an iframe, so neutralise
++    // frame-busting headers (Datasette's write pages send these).
++    if (lower === "x-frame-options") continue;
++    // Can't be set from a service worker anyway - cookies live in the
++    // Python-side cookie jar.
++    if (lower === "set-cookie") continue;
++    if (lower === "content-security-policy") {
++      const kept = value
++        .split(";")
++        .map((directive) => directive.trim())
++        .filter((directive) => directive && !/^frame-ancestors\b/i.test(directive));
++      if (kept.length) responseHeaders.append(name, kept.join("; "));
++      continue;
++    }
++    try {
++      responseHeaders.append(name, value);
++    } catch (e) {
++      // Ignore header values the Fetch API rejects
++    }
++  }
++  const status = msg.status;
++  const nullBody = [101, 204, 205, 304].includes(status) || request.method === "HEAD";
++  return new Response(nullBody ? null : msg.body, {status, headers: responseHeaders});
++}
+diff --git a/tests/conftest.py b/tests/conftest.py
+new file mode 100644
+index 0000000..2ec10bb
+--- /dev/null
++++ b/tests/conftest.py
+@@ -0,0 +1,145 @@
++import os
++import pathlib
++import re
++import socket
++import sqlite3
++import time
++from http.client import HTTPConnection
++from subprocess import Popen, DEVNULL
++
++import pytest
++from playwright.sync_api import Page, expect
++
++root = pathlib.Path(__file__).parent.parent.absolute()
++fixtures = pathlib.Path(__file__).parent / "fixtures"
++generated = fixtures / "generated"
++
++# Booting Pyodide + installing Datasette takes a while, plugins take longer
++BOOT_TIMEOUT = 180 * 1000
++
++
++def _free_port():
++    with socket.socket() as s:
++        s.bind(("127.0.0.1", 0))
++        return s.getsockname()[1]
++
++
++@pytest.fixture(scope="session")
++def generated_fixtures():
++    generated.mkdir(exist_ok=True)
++    for name, rows in (
++        ("demo", [("Cleo", 5), ("Pancakes", 3)]),
++        ("other", [("Azi", 1)]),
++    ):
++        path = generated / (name + ".db")
++        if path.exists():
++            path.unlink()
++        conn = sqlite3.connect(path)
++        conn.execute("create table dogs (id integer primary key, name text, age integer)")
++        conn.executemany("insert into dogs (name, age) values (?, ?)", rows)
++        conn.commit()
++        conn.close()
++    return generated
++
++
++@pytest.fixture(scope="session")
++def static_server(generated_fixtures):
++    port = int(os.environ.get("DATASETTE_LITE_TEST_PORT") or _free_port())
++    process = Popen(
++        ["python", "-m", "http.server", str(port), "--directory", str(root)],
++        stdout=DEVNULL,
++        stderr=DEVNULL,
++    )
++    for _ in range(50):
++        try:
++            conn = HTTPConnection("localhost:{}".format(port))
++            conn.request("HEAD", "/")
++            conn.getresponse()
++            break
++        except ConnectionRefusedError:
++            time.sleep(0.2)
++    else:
++        process.terminate()
++        raise RuntimeError("Failed to start http server")
++    yield "http://localhost:{}".format(port)
++    process.terminate()
++    process.wait()
++
++
++@pytest.fixture(scope="session")
++def subpath_server(generated_fixtures, tmp_path_factory):
++    "Serves Datasette Lite from /sub/ - like a GitHub Pages project site"
++    port = _free_port()
++    directory = tmp_path_factory.mktemp("subpath")
++    (directory / "sub").symlink_to(root, target_is_directory=True)
++    process = Popen(
++        ["python", "-m", "http.server", str(port), "--directory", str(directory)],
++        stdout=DEVNULL,
++        stderr=DEVNULL,
++    )
++    for _ in range(50):
++        try:
++            conn = HTTPConnection("localhost:{}".format(port))
++            conn.request("HEAD", "/sub/")
++            conn.getresponse()
++            break
++        except ConnectionRefusedError:
++            time.sleep(0.2)
++    yield "http://localhost:{}/sub".format(port)
++    process.terminate()
++    process.wait()
++
++
++@pytest.fixture(scope="session")
++def browser_type_launch_args(browser_type_launch_args):
++    args = dict(browser_type_launch_args)
++    # Some sandboxes route browser traffic through an HTTPS proxy
++    proxy = os.environ.get("DATASETTE_LITE_TEST_PROXY") or os.environ.get("HTTPS_PROXY")
++    if proxy:
++        # Only proxy https:// - the local test server is plain http://
++        host = proxy.split("://", 1)[-1].rstrip("/")
++        args["args"] = list(args.get("args") or []) + ["--proxy-server=https=" + host]
++    executable = os.environ.get("CHROMIUM_EXECUTABLE")
++    if executable:
++        args["executable_path"] = executable
++    return args
++
++
++def wait_for_boot(page: Page):
++    "Wait for Datasette Lite to finish booting, fail fast with any startup error"
++    page.wait_for_function(
++        "document.body.classList.contains('ready') || "
++        "document.getElementById('output').textContent.length",
++        timeout=BOOT_TIMEOUT,
++    )
++    error = page.locator("#output").text_content()
++    assert not error, error
++
++
++def boot(page: Page, url: str, wait_for="footer"):
++    """Load a Datasette Lite URL and return a FrameLocator for the Datasette iframe"""
++    page.goto(url)
++    wait_for_boot(page)
++    frame = page.frame_locator("#datasette")
++    if wait_for:
++        expect(frame.locator(wait_for).first).to_be_attached(timeout=60 * 1000)
++    return frame
++
++
++def datasette_frame(page: Page):
++    "The Frame object for the Datasette iframe, for evaluate()"
++    return page.locator("#datasette").element_handle().content_frame()
++
++
++def app_path(page: Page):
++    "The current Datasette path, as mirrored in the #fragment"
++    return page.evaluate("location.hash").lstrip("#")
++
++
++def wait_for_hash(page: Page, pattern):
++    regex = re.compile(pattern)
++    page.wait_for_function(
++        "pattern => new RegExp(pattern).test(location.hash.slice(1))",
++        arg=regex.pattern,
++        timeout=60 * 1000,
++    )
+diff --git a/tests/fixtures/auth-metadata.json b/tests/fixtures/auth-metadata.json
+new file mode 100644
+index 0000000..7a69b57
+--- /dev/null
++++ b/tests/fixtures/auth-metadata.json
+@@ -0,0 +1,7 @@
++{
++  "plugins": {
++    "datasette-auth-passwords": {
++      "simon_password_hash": "pbkdf2_sha256$1000$testsalt12345678$EYlhRmcdIOn7xmRwD+K1kp6XeVlt3v80/QPlkV3QXHo="
++    }
++  }
++}
+\ No newline at end of file
+diff --git a/tests/fixtures/config.yml b/tests/fixtures/config.yml
+new file mode 100644
+index 0000000..57c4299
+--- /dev/null
++++ b/tests/fixtures/config.yml
+@@ -0,0 +1,3 @@
++settings:
++  default_page_size: 2
++  base_url: /should-be-ignored/
+diff --git a/tests/fixtures/items.csv b/tests/fixtures/items.csv
+new file mode 100644
+index 0000000..b9f1886
+--- /dev/null
++++ b/tests/fixtures/items.csv
+@@ -0,0 +1,4 @@
++id,name,qty,price
++1,Widget,5,1.5
++2,Gadget,12,2.25
++3,Sprocket,7,0.75
+diff --git a/tests/fixtures/keyed.json b/tests/fixtures/keyed.json
+new file mode 100644
+index 0000000..a50eeff
+--- /dev/null
++++ b/tests/fixtures/keyed.json
+@@ -0,0 +1 @@
++{"anchor-positioning": {"spec": "https://drafts.csswg.org/css-anchor-position-1/"}, "array-at": {"spec": "https://tc39.es/"}}
+diff --git a/tests/fixtures/lines.ndjson b/tests/fixtures/lines.ndjson
+new file mode 100644
+index 0000000..865560c
+--- /dev/null
++++ b/tests/fixtures/lines.ndjson
+@@ -0,0 +1,2 @@
++{"id": 1, "name": "Line 1"}
++{"id": 2, "name": "Line 2"}
+diff --git a/tests/fixtures/metadata.json b/tests/fixtures/metadata.json
+new file mode 100644
+index 0000000..b6e739c
+--- /dev/null
++++ b/tests/fixtures/metadata.json
+@@ -0,0 +1 @@
++{"title": "Custom metadata title", "description": "Loaded from metadata.json"}
+diff --git a/tests/fixtures/metadata.yml b/tests/fixtures/metadata.yml
+new file mode 100644
+index 0000000..f37f91d
+--- /dev/null
++++ b/tests/fixtures/metadata.yml
+@@ -0,0 +1 @@
++title: YAML metadata title
+diff --git a/tests/fixtures/nested.json b/tests/fixtures/nested.json
+new file mode 100644
+index 0000000..f397f88
+--- /dev/null
++++ b/tests/fixtures/nested.json
+@@ -0,0 +1 @@
++{"meta": {"count": 3}, "short": [{"a": 1}], "rows": [{"id": 1, "name": "One"}, {"id": 2, "name": "Two"}, {"id": 3, "name": "Three"}]}
+diff --git a/tests/fixtures/places.csv b/tests/fixtures/places.csv
+new file mode 100644
+index 0000000..7acb011
+--- /dev/null
++++ b/tests/fixtures/places.csv
+@@ -0,0 +1,5 @@
++id,name,latitude,longitude,category
++1,London,51.5074,-0.1278,city
++2,Paris,48.8566,2.3522,city
++3,Berlin,52.52,13.405,city
++4,Madrid,40.4168,-3.7038,capital
+diff --git a/tests/fixtures/rows.json b/tests/fixtures/rows.json
+new file mode 100644
+index 0000000..0288d25
+--- /dev/null
++++ b/tests/fixtures/rows.json
+@@ -0,0 +1 @@
++[{"id": 1, "name": "Item 1"}, {"id": 2, "name": "Item 2"}]
+diff --git a/tests/fixtures/semicolon.csv b/tests/fixtures/semicolon.csv
+new file mode 100644
+index 0000000..be90ac9
+--- /dev/null
++++ b/tests/fixtures/semicolon.csv
+@@ -0,0 +1,3 @@
++id;city;population
++1;Paris;2100000
++2;Lyon;520000
+diff --git a/tests/fixtures/setup.sql b/tests/fixtures/setup.sql
+new file mode 100644
+index 0000000..26dd0b5
+--- /dev/null
++++ b/tests/fixtures/setup.sql
+@@ -0,0 +1,3 @@
++create table items (id integer primary key, name text, qty integer, price real, note text default 'from-sql');
++create table setup_marker (value text);
++insert into setup_marker values ('setup ran');
+diff --git a/tests/test_bridge.py b/tests/test_bridge.py
+new file mode 100644
+index 0000000..7adb997
+--- /dev/null
++++ b/tests/test_bridge.py
+@@ -0,0 +1,293 @@
++"""Pure-Python unit tests of the ASGI bridge that runs inside Pyodide.
++
++The Python source is extracted from the String.raw block in webworker.js,
++so the code tested here is exactly the code that ships."""
++import asyncio
++import pathlib
++import re
++
++import pytest
++
++WEBWORKER = pathlib.Path(__file__).parent.parent / "webworker.js"
++
++
++def extract(name):
++    source = WEBWORKER.read_text()
++    match = re.search(
++        r"// PYTHON-BEGIN {name}\n.*?String\.raw`(.*?)`;\n// PYTHON-END {name}".format(name=name),
++        source,
++        re.S,
++    )
++    assert match, name
++    return match.group(1)
++
++
++@pytest.fixture(scope="module")
++def bridge():
++    namespace = {}
++    exec(extract("bridge"), namespace)
++    return namespace
++
++
++def run(coro):
++    return asyncio.run(coro)
++
++
++def test_python_blocks_are_string_raw_safe():
++    for name in ("bridge", "startup"):
++        source = extract(name)
++        assert "`" not in source
++        assert "${" not in source
++
++
++def make_echo_app(set_cookies=()):
++    async def app(scope, receive, send):
++        if scope["type"] == "lifespan":
++            message = await receive()
++            if message["type"] == "lifespan.startup":
++                await send({"type": "lifespan.startup.complete"})
++            return
++        body = b""
++        while True:
++            message = await receive()
++            body += message.get("body", b"")
++            if not message.get("more_body"):
++                break
++        headers = dict((k.decode(), v.decode()) for k, v in scope["headers"])
++        await send(
++            {
++                "type": "http.response.start",
++                "status": 200,
++                "headers": [(b"content-type", b"text/plain")]
++                + [(b"set-cookie", c.encode()) for c in set_cookies],
++            }
++        )
++        out = "{} {} {} {} cookie={} host={} body={}".format(
++            scope["method"],
++            scope["path"],
++            scope["raw_path"].decode(),
++            scope["query_string"].decode(),
++            headers.get("cookie"),
++            headers.get("host"),
++            body.decode(),
++        )
++        await send({"type": "http.response.body", "body": out.encode()})
++
++    return app
++
++
++def test_scope_and_body(bridge):
++    b = bridge["ASGIBridge"](make_echo_app())
++
++    async def go():
++        await b.startup()
++        return await b.handle(
++            "post", "/app/x/my table", "a=1", [["content-type", "text/plain"]], b"hello",
++            host="localhost", port=8123, raw_path="/app/x/my%20table",
++        )
++
++    response = run(go())
++    assert response["status"] == 200
++    assert response["body"].decode() == (
++        "POST /app/x/my table /app/x/my%20table a=1 cookie=None host=localhost:8123 body=hello"
++    )
++
++
++def test_cookie_jar_round_trip(bridge):
++    cookies = ["ds_actor=abc; Path=/", "csrftoken=xyz; Path=/; SameSite=Lax"]
++    b = bridge["ASGIBridge"](make_echo_app(cookies))
++
++    async def go():
++        first = await b.handle("GET", "/app/x/", "", [])
++        second = await b.handle("GET", "/app/x/db", "", [])
++        return first, second
++
++    first, second = run(go())
++    # Set-Cookie is consumed by the jar, never returned to the service worker
++    assert not [h for h in first["headers"] if h[0].lower() == "set-cookie"]
++    assert "cookie=None" in first["body"].decode()
++    assert "cookie=ds_actor=abc; csrftoken=xyz" in second["body"].decode()
++
++
++def test_cookie_jar_expiry_and_paths(bridge):
++    jar = bridge["CookieJar"]()
++    jar.store("a=1; Path=/", "/app/x/")
++    jar.store("b=2; Path=/app/x/db", "/app/x/db")
++    jar.store("c=3", "/app/x/db/table")  # default path /app/x/db
++    assert jar.header_for("/app/x/") == "a=1"
++    assert jar.header_for("/app/x/db/table") == "b=2; c=3; a=1"
++    assert jar.header_for("/app/x/dbother") == "a=1"
++    jar.store("a=deleted; Path=/; Max-Age=0", "/")
++    assert jar.header_for("/app/x/") == ""
++    jar.store('b=gone; Path=/app/x/db; expires=Thu, 01 Jan 1970 00:00:00 GMT', "/")
++    assert jar.header_for("/app/x/db") == "c=3"
++    jar.store("d=4; Path=/; expires=Fri, 01 Jan 2100 00:00:00 GMT", "/")
++    assert "d=4" in jar.header_for("/")
++    # Garbage is ignored
++    jar.store("no-equals-sign", "/")
++    jar.store("=novalue", "/")
++    assert jar.as_dict() == {"c": "3", "d": "4"}
++
++
++def test_signed_cookie_values_preserved(bridge):
++    jar = bridge["CookieJar"]()
++    value = '"eyJhIjp7ImlkIjoicm9vdCJ9fQ.abc_DEF-123"'
++    jar.store("ds_actor={}; Path=/; HttpOnly".format(value), "/")
++    assert jar.header_for("/") == "ds_actor=" + value
++
++
++def html_app(body, location=None, status=200):
++    async def app(scope, receive, send):
++        headers = [(b"content-type", b"text/html; charset=utf-8"), (b"content-length", str(len(body)).encode())]
++        if location:
++            headers.append((b"location", location))
++        await send({"type": "http.response.start", "status": status, "headers": headers})
++        await send({"type": "http.response.body", "body": body})
++
++    return app
++
++
++def call(bridge, app, path):
++    b = bridge["ASGIBridge"](bridge["datasette_base_url_fixes"](app, "/app/s1/"))
++    return run(b.handle("GET", path, "", []))
++
++
++def test_base_url_fixes_jump(bridge):
++    r = call(bridge, html_app(b'<navigation-search url="/-/jump"></navigation-search>'), "/app/s1/")
++    assert r["body"] == b'<navigation-search url="/app/s1/-/jump"></navigation-search>'
++    # content-length is dropped because the body changed
++    assert not [h for h in r["headers"] if h[0] == "content-length"]
++
++
++def test_base_url_fixes_double_prefix(bridge):
++    body = (
++        b'<a href="/app/s1/app/s1/data/items.json">json</a>'
++        b'<a href="http://localhost:8000/app/s1/app/s1/data/items?_sort=id">sort</a>'
++        b'<a href="/app/s1/app">db named app</a>'
++    )
++    r = call(bridge, html_app(body), "/app/s1/data/items")
++    assert r["body"] == (
++        b'<a href="/app/s1/data/items.json">json</a>'
++        b'<a href="http://localhost:8000/app/s1/data/items?_sort=id">sort</a>'
++        b'<a href="/app/s1/app">db named app</a>'
++    )
++
++
++def test_base_url_fixes_redirect(bridge):
++    for location, expected in (
++        (b"/data/-/query?sql=1", "/app/s1/data/-/query?sql=1"),
++        (b"/app/s1/app/s1/data/items?name__exact=x", "/app/s1/data/items?name__exact=x"),
++        (b"/app/s1/data", "/app/s1/data"),
++        (b"//example.com/", "//example.com/"),
++        (b"https://example.com/", "https://example.com/"),
++    ):
++        r = call(bridge, html_app(b"", location=location, status=302), "/app/s1/data")
++        assert dict(r["headers"])["location"] == expected
++
++
++def test_json_double_prefix_fixed_but_jump_untouched(bridge):
++    async def app(scope, receive, send):
++        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
++        await send({"type": "http.response.body", "body": b'{"url": "/-/jump", "next_url": "http://x/app/s1/app/s1/db/t.json"}'})
++
++    r = call(bridge, app, "/app/s1/")
++    assert r["body"] == b'{"url": "/-/jump", "next_url": "http://x/app/s1/db/t.json"}'
++
++
++def test_other_content_types_untouched(bridge):
++    async def app(scope, receive, send):
++        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/csv")]})
++        await send({"type": "http.response.body", "body": b"/app/s1/app/s1/"})
++
++    r = call(bridge, app, "/app/s1/")
++    assert r["body"] == b"/app/s1/app/s1/"
++
++
++# --- Against a real Datasette (skipped if Datasette is not installed) ---------
++
++
++@pytest.fixture
++def datasette_bridge(bridge):
++    pytest.importorskip("datasette")
++    from datasette.app import Datasette
++
++    async def make():
++        ds = Datasette(memory=True, settings={"base_url": "/app/s1/", "num_sql_threads": 0})
++        await ds.invoke_startup()
++        b = bridge["ASGIBridge"](bridge["datasette_base_url_fixes"](ds.app(), "/app/s1/"))
++        await b.startup()
++        return ds, b
++
++    return make
++
++
++def test_real_datasette_root_login_csrf_post_and_messages(datasette_bridge):
++    import secrets
++
++    async def go():
++        ds, b = await datasette_bridge()
++        ds.root_enabled = True
++        ds._root_token = secrets.token_hex(16)
++        r = await b.handle("GET", "/app/s1/-/auth-token", "token=" + ds._root_token, [])
++        assert r["status"] == 302
++        assert "ds_actor" in b.cookies.as_dict()
++        r = await b.handle("GET", "/app/s1/-/actor.json", "", [])
++        assert b'"id": "root"' in r["body"]
++        # GET the logout form: asgi-csrf sets its csrftoken cookie
++        r = await b.handle("GET", "/app/s1/-/logout", "", [])
++        html = r["body"].decode()
++        token = re.search(r'name="csrftoken" value="([^"]+)"', html).group(1)
++        assert "ds_csrftoken" in b.cookies.as_dict()
++        # POST without the token is rejected...
++        r = await b.handle(
++            "POST", "/app/s1/-/logout", "",
++            [["content-type", "application/x-www-form-urlencoded"]], b"",
++        )
++        assert r["status"] == 403
++        # ...with it, succeeds, and redirects inside base_url
++        r = await b.handle(
++            "POST", "/app/s1/-/logout", "",
++            [["content-type", "application/x-www-form-urlencoded"]],
++            ("csrftoken=" + token).encode(),
++        )
++        assert r["status"] == 302
++        headers = {k.lower(): v for k, v in r["headers"]}
++        assert headers["location"].startswith("/app/s1/")
++        # ds_actor was deleted from the jar; a ds_messages cookie was set
++        assert "ds_actor" not in b.cookies.as_dict()
++        r = await b.handle("GET", "/app/s1/", "", [])
++        assert "You are now logged out" in r["body"].decode()
++        # Messages are shown once
++        r = await b.handle("GET", "/app/s1/", "", [])
++        assert "You are now logged out" not in r["body"].decode()
++
++    run(go())
++
++
++def test_real_datasette_links_prefixed(datasette_bridge):
++    async def go():
++        ds, b = await datasette_bridge()
++        r = await b.handle("GET", "/app/s1/_memory", "sql=select+1", [])
++        html = r["body"].decode()
++        assert 'href="/app/s1/-/static/app.css' in html
++        assert "/app/s1/app/s1/" not in html
++        r = await b.handle("GET", "/app/s1/_memory.json", "sql=select+1+as+n&_shape=array", [])
++        assert r["body"] == b'[{"n": 1}]'
++
++    run(go())
++
++
++def test_hardcoded_root_relative_attributes(bridge):
++    body = (
++        b'<form action="/-/password-tool" method="post">'
++        b"<a href='/-/plugins'>x</a><script src=\"/-/static/x.js\"></script>"
++        b'<a href="/app/s1/-/ok">ok</a><a href="/other">other</a>'
++        b'<p>Text mentioning href="/-/not-an-attribute"</p>'
++    )
++    r = call(bridge, html_app(body), "/app/s1/")
++    assert r["body"] == (
++        b'<form action="/app/s1/-/password-tool" method="post">'
++        b"<a href='/app/s1/-/plugins'>x</a><script src=\"/app/s1/-/static/x.js\"></script>"
++        b'<a href="/app/s1/-/ok">ok</a><a href="/other">other</a>'
++        b'<p>Text mentioning href="/app/s1/-/not-an-attribute"</p>'
++    )
+diff --git a/tests/test_datasette_lite.py b/tests/test_datasette_lite.py
+index 19535a5..4ac2d9d 100644
+--- a/tests/test_datasette_lite.py
++++ b/tests/test_datasette_lite.py
+@@ -1,72 +1,54 @@
+-import json
+-from playwright.sync_api import Browser, Page, expect
+-from subprocess import Popen, PIPE
+-import pathlib
+-import pytest
+-import time
+-from http.client import HTTPConnection
+-
+-root = pathlib.Path(__file__).parent.parent.absolute()
++"""The original Datasette Lite tests, adapted to the iframe/service worker model.
+ 
++These load the default fixtures.db + content.db databases from the network."""
++import json
+ 
+-@pytest.fixture(scope="module")
+-def static_server():
+-    process = Popen(
+-        ["python", "-m", "http.server", "8123", "--directory", root], stdout=PIPE
+-    )
+-    retries = 5
+-    while retries > 0:
+-        conn = HTTPConnection("localhost:8123")
+-        try:
+-            conn.request("HEAD", "/")
+-            response = conn.getresponse()
+-            if response is not None:
+-                yield process
+-                break
+-        except ConnectionRefusedError:
+-            time.sleep(1)
+-            retries -= 1
++import pytest
++from playwright.sync_api import Browser, Page, expect
+ 
+-    if not retries:
+-        raise RuntimeError("Failed to start http server")
+-    else:
+-        process.terminate()
+-        process.wait()
++from conftest import boot, wait_for_boot
+ 
+ 
+ @pytest.fixture(scope="module")
+-def dslite(static_server, browser: Browser) -> Page:
++def dslite(static_server, browser: Browser):
+     page = browser.new_page()
+-    page.goto("http://localhost:8123/")
+-    loading = page.locator("#loading-indicator")
+-    expect(loading).to_have_css("display", "block")
+-    # Give it up to 60s to finish loading
+-    expect(loading).to_have_css("display", "none", timeout=60 * 1000)
+-    return page
++    page.goto(static_server + "/")
++    expect(page.locator("#loading-indicator")).to_be_visible()
++    wait_for_boot(page)
++    frame = page.frame_locator("#datasette")
++    expect(frame.locator("h2").first).to_be_visible()
++    yield page
++    page.close()
+ 
+ 
+ def test_initial_load(dslite: Page):
+     expect(dslite.locator("#loading-indicator")).to_have_css("display", "none")
++    expect(dslite.locator("#datasette")).to_be_visible()
+ 
+ 
+ def test_has_two_databases(dslite: Page):
+-    assert [el.inner_text() for el in dslite.query_selector_all("h2")] == [
+-        "fixtures",
+-        "content",
+-    ]
++    frame = dslite.frame_locator("#datasette")
++    expect(frame.locator("h2")).to_have_text(["fixtures", "content"])
+ 
+ 
+ def test_navigate_to_database(dslite: Page):
+-    h2 = dslite.query_selector("h2")
+-    assert h2.inner_text() == "fixtures"
+-    h2.query_selector("a").click()
++    frame = dslite.frame_locator("#datasette")
++    h2 = frame.locator("h2").first
++    expect(h2).to_have_text("fixtures")
++    h2.locator("a").click()
+     expect(dslite).to_have_title("fixtures")
+-    dslite.query_selector("textarea#sql-editor").fill(
+-        "SELECT * FROM no_primary_key limit 1"
+-    )
+-    dslite.query_selector("input[type=submit]").click()
++    assert dslite.evaluate("location.hash") == "#/fixtures"
++    # Datasette's own JavaScript runs now: the SQL textarea is a CodeMirror editor
++    # (CodeMirror 5 in Datasette 0.x, CodeMirror 6 in 1.0)
++    editor = frame.locator(".CodeMirror, .cm-content").first
++    expect(editor).to_be_visible()
++    expect(frame.locator("textarea#sql-editor")).to_be_hidden()
++    editor.click()
++    dslite.keyboard.press("ControlOrMeta+a")
++    dslite.keyboard.type("SELECT * FROM no_primary_key limit 1")
++    frame.locator("input[type=submit]").first.click()
+     expect(dslite).to_have_title("fixtures: SELECT * FROM no_primary_key limit 1")
+-    table = dslite.query_selector("table.rows-and-columns")
++    table = frame.locator("table.rows-and-columns")
+     table_html = "".join(table.inner_html().split())
+     assert table_html == (
+         '<thead><tr><thclass="col-content"scope="col">content</th>'
+@@ -79,28 +61,25 @@ def test_navigate_to_database(dslite: Page):
+ 
+ def test_load_multiple_database_urls(static_server, browser: Browser):
+     page = browser.new_page()
+-    page.goto(
+-        "http://localhost:8123/"
++    frame = boot(
++        page,
++        static_server + "/"
+         "?url=https://latest.datasette.io/fixtures.db"
+         "&url=https://datasette.io/content.db"
+-        "&url=https://latest.datasette.io/fixtures.db"
++        "&url=https://latest.datasette.io/fixtures.db",
+     )
+-    loading = page.locator("#loading-indicator")
+-    expect(loading).to_have_css("display", "none", timeout=60 * 1000)
+-    assert [el.inner_text() for el in page.query_selector_all("h2")] == [
+-        "fixtures",
+-        "content",
+-        "fixtures_2",
+-    ]
++    expect(frame.locator("h2")).to_have_text(["fixtures", "content", "fixtures_2"])
+     page.close()
+ 
+ 
+-def test_ref(static_server, browser: Browser) -> Page:
++def test_ref(static_server, browser: Browser):
+     page = browser.new_page()
+-    page.goto("http://localhost:8123/?ref=1.0a11#/-/versions")
+-    loading = page.locator("#loading-indicator")
+-    expect(loading).to_have_css("display", "block")
+-    # Give it up to 60s to finish loading
+-    expect(loading).to_have_css("display", "none", timeout=60 * 1000)
+-    info = json.loads(page.text_content("pre"))
++    page.goto(static_server + "/?ref=1.0a11#/-/versions.json")
++    expect(page.locator("#loading-indicator")).to_be_visible()
++    wait_for_boot(page)
++    frame = page.frame_locator("#datasette")
++    # Chrome renders a JSON response as a <pre>
++    expect(frame.locator("pre")).to_be_attached(timeout=60 * 1000)
++    info = json.loads(frame.locator("pre").text_content())
+     assert info["datasette"]["version"] == "1.0a11"
++    page.close()
+diff --git a/tests/test_plugins_and_post.py b/tests/test_plugins_and_post.py
+new file mode 100644
+index 0000000..1628f3d
+--- /dev/null
++++ b/tests/test_plugins_and_post.py
+@@ -0,0 +1,401 @@
++"""Things the old innerHTML-based Datasette Lite could not do at all:
++running page JavaScript (core and plugins), POST requests, cookies (CSRF
++tokens, sign-in, flash messages), file uploads and downloads."""
++import json
++import re
++
++import pytest
++from playwright.sync_api import Browser, Page, expect
++
++from conftest import app_path, boot, datasette_frame, wait_for_boot, wait_for_hash
++
++F = "tests/fixtures/"
++
++
++@pytest.fixture
++def page(browser: Browser):
++    page = browser.new_page()
++    yield page
++    page.close()
++
++
++def iframe_base(page: Page):
++    return re.match(r"(/app/[^/]+)", datasette_frame(page).evaluate("location.pathname")).group(1)
++
++
++def fetch_json(page: Page, path, options=None):
++    return datasette_frame(page).evaluate(
++        """async ([path, options]) => {
++            const response = await fetch(path, options || {});
++            return {status: response.status, json: await response.json()};
++        }""",
++        [path, options],
++    )
++
++
++def actor(page: Page):
++    return fetch_json(page, iframe_base(page) + "/-/actor.json")["json"]["actor"]
++
++
++# --- Core Datasette JavaScript ------------------------------------------------
++
++
++def test_core_javascript_format_sql(page, static_server):
++    frame = boot(page, static_server + "/?memory=1#/_memory?sql=select+1+as+a,+2+as+b")
++    expect(frame.locator(".CodeMirror")).to_be_visible()
++    frame.locator("#sql-format").click()
++    value = datasette_frame(page).evaluate("document.querySelector('.CodeMirror').CodeMirror.getValue()")
++    assert value != "select 1 as a, 2 as b"
++    assert "\n" in value
++
++
++def test_core_javascript_column_actions_menu(page, static_server):
++    frame = boot(page, static_server + "/?csv=" + F + "items.csv#/data/items")
++    # table.js adds a cog menu to each column header
++    frame.locator("th.col-qty svg.dropdown-menu-icon").click()
++    menu = frame.locator(".dropdown-menu")
++    expect(menu).to_be_visible()
++    menu.locator("a", has_text="Sort descending").click()
++    wait_for_hash(page, r"^/data/items\?_sort_desc=qty$")
++    expect(frame.locator("td.col-name").first).to_have_text("Gadget")
++
++
++def test_json_export_link(page, static_server):
++    "The double-applied base_url bug in export links is worked around"
++    frame = boot(page, static_server + "/?csv=" + F + "items.csv#/data/items")
++    link = frame.locator(".export-links a", has_text="json").first
++    href = link.get_attribute("href")
++    assert href.startswith(iframe_base(page) + "/data/items.json")
++    assert "/app/" not in href[len(iframe_base(page)):]
++    link.click()
++    wait_for_hash(page, r"^/data/items\.json")
++    data = json.loads(page.frame_locator("#datasette").locator("pre").text_content())
++    assert len(data["rows"]) == 3
++
++
++def test_csv_download(page, static_server):
++    boot(page, static_server + "/?csv=" + F + "items.csv#/data/items")
++    base = iframe_base(page)
++    with page.expect_download() as download_info:
++        datasette_frame(page).evaluate(
++            "base => { const a = document.createElement('a'); a.href = base + '/data/items.csv?_dl=1'; document.body.appendChild(a); a.click(); }",
++            base,
++        )
++    download = download_info.value
++    assert download.suggested_filename == "items.csv"
++    content = open(download.path()).read()
++    assert content.splitlines()[0] == "rowid,id,name,qty,price"
++    assert "Gadget" in content
++
++
++# --- Plugins that ship JavaScript -----------------------------------------------
++
++
++def test_plugin_datasette_cluster_map(page, static_server):
++    frame = boot(
++        page,
++        static_server + "/?install=datasette-cluster-map&csv=" + F + "places.csv#/data/places",
++    )
++    # The plugin's JavaScript (served from /-/static-plugins/) fetches the
++    # table's .json and renders a Leaflet map with a marker cluster
++    expect(frame.locator(".leaflet-container")).to_be_visible(timeout=30 * 1000)
++    expect(frame.locator(".marker-cluster, .leaflet-marker-icon").first).to_be_attached(timeout=30 * 1000)
++
++
++def test_plugin_datasette_vega(page, static_server):
++    frame = boot(page, static_server + "/?install=datasette-vega&csv=" + F + "items.csv#/data/items")
++    # datasette-vega hardcodes /-/static-plugins/ URLs that ignore base_url;
++    # the service worker routes them back to this session
++    frame.locator(".datasette-vega-inactive button").click(timeout=30 * 1000)
++    expect(frame.locator(".datasette-vega")).to_be_visible()
++    frame.locator(".datasette-vega select[name=x_column]").select_option("name")
++    frame.locator(".datasette-vega select[name=y_column]").select_option("qty")
++    frame.locator(".datasette-vega input[name=mark][value=bar]").check()
++    # The chart's data comes from fetch()ing the table's .json export link
++    expect(frame.locator("canvas.marks, svg.marks").first).to_be_visible(timeout=30 * 1000)
++
++
++def test_plugin_datasette_copyable(page, static_server):
++    "Custom output formats from a register_output_renderer plugin"
++    frame = boot(
++        page,
++        static_server
++        + "/?install=datasette-copyable&csv=" + F + "items.csv#/data/items.copyable?_table_format=github",
++    )
++    expect(frame.locator("textarea.copyable")).to_contain_text("| Widget")
++
++
++# --- POST requests, CSRF and cookies -------------------------------------------
++
++
++def test_root_sign_in_and_logout(page, static_server):
++    frame = boot(page, static_server + "/?memory=1&root=1")
++    assert actor(page) == {"id": "root"}
++    # Log out is a POST form with a CSRF token; the message is a signed cookie
++    datasette_frame(page).evaluate("location.href = location.pathname.replace(/\\/$/, '') + '/-/logout'")
++    expect(frame.locator("form input[type=submit]")).to_be_visible()
++    frame.locator("form input[type=submit]").click()
++    expect(frame.locator(".message-warning, .message-info").first).to_contain_text("logged out")
++    assert actor(page) is None
++
++
++def test_no_actor_by_default(page, static_server):
++    boot(page, static_server + "/?memory=1")
++    assert actor(page) is None
++
++
++def test_core_messages_debug_post(page, static_server):
++    "/-/messages is a root-only POST form - exercises CSRF + messages cookie"
++    frame = boot(page, static_server + "/?memory=1&root=1#/-/messages")
++    frame.locator("input[name=message]").fill("Hello from a POST")
++    frame.locator("form input[type=submit]").click()
++    expect(frame.locator(".message-info, .message-warning, .message-error").first).to_contain_text(
++        "Hello from a POST"
++    )
++
++
++def test_plugin_datasette_write(page, static_server):
++    frame = boot(
++        page,
++        static_server + "/?root=1&install=datasette-write&csv=" + F + "items.csv#/data/-/write",
++        wait_for="textarea[name=sql]",
++    )
++    frame.locator("textarea[name=sql]").fill(
++        "insert into items (id, name, qty, price) values (4, 'Bolt', 100, 0.1)"
++    )
++    frame.locator("form.write-form input[type=submit]").click()
++    expect(frame.locator(".message-info")).to_contain_text("1 row affected")
++    rows = fetch_json(page, iframe_base(page) + "/data/items.json?_shape=array")["json"]
++    assert rows[-1]["name"] == "Bolt"
++
++
++def test_plugin_datasette_write_forbidden_without_root(page, static_server):
++    frame = boot(
++        page,
++        static_server + "/?install=datasette-write&csv=" + F + "items.csv#/data/-/write",
++        wait_for="h1",
++    )
++    expect(frame.locator("body")).to_contain_text("Permission denied")
++
++
++def test_plugin_datasette_auth_passwords(page, static_server):
++    frame = boot(
++        page,
++        static_server
++        + "/?memory=1&install=datasette-auth-passwords&metadata=" + F + "auth-metadata.json#/-/login",
++        wait_for="form.password-login",
++    )
++    frame.locator("#id_username").fill("simon")
++    frame.locator("#id_password").fill("wrong")
++    frame.locator("form.password-login input[type=submit]").click()
++    expect(frame.locator("body")).to_contain_text("Invalid username or password")
++    frame.locator("#id_username").fill("simon")
++    frame.locator("#id_password").fill("password123")
++    frame.locator("form.password-login input[type=submit]").click()
++    # Redirects to the homepage, with a ds_actor cookie in the bridge's jar
++    wait_for_hash(page, "^/$")
++    assert actor(page) == {"id": "simon"}
++
++
++def test_plugin_hardcoded_form_action(page, static_server):
++    """datasette-auth-passwords' password tool form has action="/-/password-tool"
++    - ignoring base_url. The service worker routes that POST back to Datasette."""
++    frame = boot(
++        page,
++        static_server + "/?memory=1&install=datasette-auth-passwords#/-/password-tool",
++        wait_for="input[name=password]",
++    )
++    frame.locator("input[name=password]").fill("secret")
++    frame.locator("form input[type=submit]").click()
++    expect(frame.locator("body")).to_contain_text("pbkdf2_sha256$")
++    wait_for_hash(page, "^/-/password-tool$")
++
++
++def test_plugin_datasette_upload_csvs(page, static_server):
++    "Multipart file upload, via the plugin's own XHR JavaScript and progress polling"
++    frame = boot(
++        page,
++        static_server + "/?root=1&install=datasette-upload-csvs&csv=" + F + "items.csv#/-/upload-csvs",
++        wait_for="input[type=file]",
++    )
++    frame.locator("input[type=file]").set_input_files(
++        files=[{"name": "uploaded.csv", "mimeType": "text/csv", "buffer": b"id,animal\n1,cat\n2,dog\n3,fox\n"}]
++    )
++    frame.locator("input[type=submit]").click()
++    expect(frame.locator("body")).to_contain_text("uploaded", timeout=30 * 1000)
++    base = iframe_base(page)
++    page.wait_for_function(
++        """async base => {
++            const r = await document.querySelector('#datasette').contentWindow.fetch(base + '/data/uploaded.json?_shape=array');
++            if (r.status != 200) return false;
++            return (await r.json()).length == 3;
++        }""",
++        arg=base,
++        timeout=30 * 1000,
++    )
++    rows = fetch_json(page, base + "/data/uploaded.json?_shape=array")["json"]
++    assert [r["animal"] for r in rows] == ["cat", "dog", "fox"]
++
++
++def test_plugin_datasette_edit_schema(page, static_server):
++    frame = boot(
++        page,
++        static_server + "/?root=1&install=datasette-edit-schema&csv=" + F + "items.csv#/-/edit-schema/data/items",
++        wait_for="input[name=rename_table]",
++    )
++    rename = frame.locator("form", has=frame.locator("input[name=rename_table]"))
++    rename.locator("input[name=name]").fill("renamed_items")
++    rename.locator("input[type=submit]").click()
++    wait_for_hash(page, "renamed_items")
++    tables = fetch_json(page, iframe_base(page) + "/data.json")["json"]["tables"]
++    assert [t["name"] for t in tables] == ["renamed_items"]
++
++
++# --- Datasette 1.0 alpha ---------------------------------------------------------
++
++
++@pytest.fixture(scope="module")
++def pre_page(browser: Browser, static_server):
++    page = browser.new_page()
++    boot(page, static_server + "/?ref=pre&root=1&csv=" + F + "items.csv#/data/items")
++    yield page
++    page.close()
++
++
++def test_pre_root_actor(pre_page):
++    assert actor(pre_page) == {"id": "root"}
++
++
++def test_pre_json_write_api(pre_page):
++    base = iframe_base(pre_page)
++    result = fetch_json(
++        pre_page,
++        base + "/data/items/-/insert",
++        {
++            "method": "POST",
++            "headers": {"content-type": "application/json"},
++            "body": json.dumps({"row": {"id": 99, "name": "Inserted by API", "qty": 1, "price": 9.5}}),
++        },
++    )
++    assert result["status"] == 201, result
++    rows = fetch_json(pre_page, base + "/data/items.json?_shape=array&id=99")["json"]
++    assert rows[0]["name"] == "Inserted by API"
++
++
++def test_pre_create_table_api(pre_page):
++    base = iframe_base(pre_page)
++    result = fetch_json(
++        pre_page,
++        base + "/data/-/create",
++        {
++            "method": "POST",
++            "headers": {"content-type": "application/json"},
++            "body": json.dumps({"table": "created", "rows": [{"id": 1, "x": "y"}], "pk": "id"}),
++        },
++    )
++    assert result["status"] == 201, result
++    datasette_frame(pre_page).evaluate("base => location.href = base + '/data/created'", base)
++    wait_for_hash(pre_page, "^/data/created$")
++    expect(pre_page.frame_locator("#datasette").locator("td.col-x")).to_have_text("y")
++
++
++def test_pre_codemirror_6_and_query(pre_page):
++    frame = pre_page.frame_locator("#datasette")
++    datasette_frame(pre_page).evaluate("base => location.href = base + '/data'", iframe_base(pre_page))
++    wait_for_hash(pre_page, "^/data$")
++    editor = frame.locator(".cm-content")
++    expect(editor).to_be_visible()
++    editor.click()
++    pre_page.keyboard.press("ControlOrMeta+a")
++    pre_page.keyboard.type("select 'from cm6' as v")
++    frame.locator("form.sql input[type=submit]").first.click()
++    expect(frame.locator("td.col-v")).to_have_text("from cm6")
++
++
++def test_pre_jump_navigation(pre_page):
++    "1.0a's 'Jump to' search hardcodes /-/jump - must still be answered"
++    base = iframe_base(pre_page)
++    result = fetch_json(pre_page, "/-/jump?q=items")
++    assert result["status"] == 200
++    result2 = fetch_json(pre_page, base + "/-/jump?q=items")
++    assert result2["json"] == result["json"]
++    assert any("items" in json.dumps(m) for m in result["json"]["matches"])
++
++
++# --- Multiple tabs, new tabs, service worker restarts -----------------------------
++
++
++def test_two_tabs_are_isolated(browser: Browser, static_server):
++    context = browser.new_context()
++    one = context.new_page()
++    two = context.new_page()
++    try:
++        frame_one = boot(one, static_server + "/?csv=" + F + "items.csv")
++        frame_two = boot(two, static_server + "/?url=" + F + "generated/demo.db")
++        expect(frame_one.locator("h2")).to_have_text(["data"])
++        expect(frame_two.locator("h2")).to_have_text(["demo"])
++        # Navigate both again - each is answered by its own Pyodide
++        one.evaluate("location.hash = '#/data/items'")
++        two.evaluate("location.hash = '#/demo/dogs'")
++        expect(frame_one.locator("h1")).to_contain_text("items")
++        expect(frame_two.locator("h1")).to_contain_text("dogs")
++    finally:
++        context.close()
++
++
++def test_app_url_opened_in_new_tab_redirects_to_shell(browser: Browser, static_server):
++    context = browser.new_context()
++    try:
++        page = context.new_page()
++        boot(page, static_server + "/?csv=" + F + "items.csv#/data/items")
++        iframe_url = datasette_frame(page).url + "?_sort=name"
++        new_tab = context.new_page()
++        new_tab.goto(iframe_url)
++        new_tab.wait_for_url(re.compile(r"/\?csv=.*#/data/items\?_sort=name$"))
++        wait_for_boot(new_tab)
++        expect(new_tab.frame_locator("#datasette").locator("td.col-name").first).to_have_text("Gadget")
++    finally:
++        context.close()
++
++
++def test_survives_service_worker_restart(page, static_server):
++    frame = boot(page, static_server + "/?memory=1")
++    cdp = page.context.new_cdp_session(page)
++    cdp.send("ServiceWorker.enable")
++    cdp.send("ServiceWorker.stopAllWorkers")
++    page.evaluate("location.hash = '#/_memory?sql=select+42+as+answer'")
++    expect(frame.locator("td.col-answer")).to_have_text("42")
++
++
++def test_hard_reload(page, static_server):
++    boot(page, static_server + "/?memory=1#/_memory")
++    cdp = page.context.new_cdp_session(page)
++    cdp.send("Page.reload", {"ignoreCache": True})
++    page.wait_for_timeout(500)
++    wait_for_boot(page)
++    expect(page.frame_locator("#datasette").locator("h1")).to_have_text("_memory")
++    assert app_path(page) == "/_memory"
++
++
++def test_served_from_subpath(page, subpath_server):
++    """Deployed under /sub/ the service worker scope is /sub/ - hardcoded
++    root-relative /-/ URLs from plugins land outside it, but requests from a
++    controlled page still reach the service worker, which routes them back."""
++    frame = boot(
++        page,
++        subpath_server
++        + "/?memory=1&install=datasette-auth-passwords&csv=tests/fixtures/items.csv#/-/password-tool",
++        wait_for="input[name=password]",
++    )
++    assert datasette_frame(page).evaluate("location.pathname").startswith("/sub/app/")
++    frame.locator("input[name=password]").fill("secret")
++    frame.locator("form input[type=submit]").click()
++    expect(frame.locator("body")).to_contain_text("pbkdf2_sha256$")
++    wait_for_hash(page, "^/-/password-tool$")
++    # fetch() of a hardcoded /-/ URL from a Datasette page
++    result = fetch_json(page, "/-/versions.json")
++    assert result["status"] == 200
++    assert "datasette" in result["json"]
++    # And regular navigation
++    page.evaluate("location.hash = '#/data/items'")
++    expect(frame.locator("td.col-name").first).to_have_text("Widget")
+diff --git a/tests/test_url_patterns.py b/tests/test_url_patterns.py
+new file mode 100644
+index 0000000..704c660
+--- /dev/null
++++ b/tests/test_url_patterns.py
+@@ -0,0 +1,277 @@
++"""Every documented Datasette Lite URL pattern must keep working.
++
++Uses small local fixture files from tests/fixtures/ so these are fast and
++do not depend on third party hosts (except where noted)."""
++import json
++import re
++from urllib.parse import quote
++
++import pytest
++from playwright.sync_api import Browser, Page, expect
++
++from conftest import app_path, boot, datasette_frame, wait_for_boot, wait_for_hash
++
++F = "tests/fixtures/"
++
++
++@pytest.fixture
++def page(browser: Browser):
++    page = browser.new_page()
++    yield page
++    page.close()
++
++
++def table_json(page: Page, path):
++    "Fetch a JSON API URL from inside the Datasette iframe (served by the SW)"
++    return datasette_frame(page).evaluate(
++        "async path => (await fetch(path)).json()", path
++    )
++
++
++def iframe_base(page: Page):
++    "The base_url the iframe is using, e.g. /app/abc123"
++    return re.match(r"(/app/[^/]+)", datasette_frame(page).evaluate("location.pathname")).group(1)
++
++
++def test_url_loads_database_named_from_filename(page, static_server):
++    frame = boot(page, static_server + "/?url=" + F + "generated/demo.db")
++    expect(frame.locator("h2")).to_have_text(["demo"])
++
++
++def test_url_repeated_gets_suffixes(page, static_server):
++    frame = boot(
++        page,
++        static_server
++        + "/?url={F}generated/demo.db&url={F}generated/other.db&url={F}generated/demo.db".format(F=F),
++    )
++    expect(frame.locator("h2")).to_have_text(["demo", "other", "demo_2"])
++
++
++def test_csv_with_type_detection(page, static_server):
++    frame = boot(page, static_server + "/?csv=" + F + "items.csv#/data/items")
++    expect(page).to_have_title(re.compile("data: items"))
++    base = iframe_base(page)
++    data = table_json(page, base + "/data/items.json?_shape=array")
++    assert data == [
++        {"rowid": 1, "id": 1, "name": "Widget", "qty": 5, "price": 1.5},
++        {"rowid": 2, "id": 2, "name": "Gadget", "qty": 12, "price": 2.25},
++        {"rowid": 3, "id": 3, "name": "Sprocket", "qty": 7, "price": 0.75},
++    ]
++
++
++def test_csv_semicolon_and_repeated(page, static_server):
++    boot(page, static_server + "/?csv={F}semicolon.csv&csv={F}items.csv&csv={F}items.csv".format(F=F))
++    base = iframe_base(page)
++    tables = table_json(page, base + "/data.json")
++    names = sorted(t["name"] for t in tables["tables"])
++    assert names == ["items", "items_1", "semicolon"]
++    rows = table_json(page, base + "/data/semicolon.json?_shape=array")
++    assert rows[0]["city"] == "Paris"
++    assert rows[0]["population"] == 2100000
++
++
++def test_json_variants(page, static_server):
++    boot(
++        page,
++        static_server
++        + "/?json={F}rows.json&json={F}nested.json&json={F}keyed.json&json={F}lines.ndjson".format(F=F),
++    )
++    base = iframe_base(page)
++    assert table_json(page, base + "/data/rows.json?_shape=array") == [
++        {"rowid": 1, "id": 1, "name": "Item 1"},
++        {"rowid": 2, "id": 2, "name": "Item 2"},
++    ]
++    nested = table_json(page, base + "/data/nested.json?_shape=array")
++    assert [r["name"] for r in nested] == ["One", "Two", "Three"]
++    keyed = table_json(page, base + "/data/keyed.json?_shape=array")
++    assert [r["_key"] for r in keyed] == ["anchor-positioning", "array-at"]
++    lines = table_json(page, base + "/data/lines.json?_shape=array")
++    assert [r["name"] for r in lines] == ["Line 1", "Line 2"]
++
++
++def test_sql_runs_before_csv(page, static_server):
++    # setup.sql creates "items" with an extra column; the CSV inserts into it
++    boot(page, static_server + "/?csv={F}items.csv&sql={F}setup.sql".format(F=F))
++    base = iframe_base(page)
++    rows = table_json(page, base + "/data/items.json?_shape=array")
++    assert [(r["name"], r["note"]) for r in rows] == [
++        ("Widget", "from-sql"),
++        ("Gadget", "from-sql"),
++        ("Sprocket", "from-sql"),
++    ]
++    marker = table_json(page, base + "/data/setup_marker.json?_shape=array")
++    assert marker == [{"rowid": 1, "value": "setup ran"}]
++
++
++def test_memory(page, static_server):
++    frame = boot(page, static_server + "/?memory=1")
++    expect(frame.locator("h2")).to_have_text(["_memory"])
++
++
++def test_metadata_json(page, static_server):
++    frame = boot(page, static_server + "/?memory=1&metadata=" + F + "metadata.json")
++    expect(frame.locator("h1")).to_have_text("Custom metadata title")
++    expect(page).to_have_title(re.compile("^Custom metadata title"))
++
++
++def test_metadata_yaml(page, static_server):
++    frame = boot(page, static_server + "/?memory=1&metadata=" + F + "metadata.yml")
++    expect(frame.locator("h1")).to_have_text("YAML metadata title")
++
++
++def test_default_metadata_about_link(page, static_server):
++    frame = boot(page, static_server + "/?memory=1")
++    expect(frame.locator("footer a", has_text="Datasette Lite")).to_have_attribute(
++        "href", "https://github.com/simonw/datasette-lite"
++    )
++
++
++def test_install_plugin(page, static_server):
++    frame = boot(page, static_server + "/?memory=1&install=datasette-packages#/-/packages", wait_for="h1")
++    expect(frame.locator("h1")).to_have_text(re.compile("Installed packages", re.I))
++    expect(frame.locator("body")).to_contain_text("datasette-packages")
++
++
++def test_install_multiple_plugins(page, static_server):
++    frame = boot(
++        page,
++        static_server
++        + "/?memory=1&install=datasette-haversine&install=datasette-statistics#/_memory?sql="
++        + quote("select haversine(0, 154, 1, 131) as h, statistics_mean(1) as m"),
++    )
++    expect(frame.locator("td.col-h")).to_have_text(re.compile(r"^2\d\d\d\.\d+"))
++    expect(frame.locator("td.col-m")).to_have_text("1.0")
++
++
++def test_ref_pre_installs_prerelease(page, static_server):
++    frame = boot(page, static_server + "/?memory=1&ref=pre#/-/versions.json", wait_for="pre")
++    info = json.loads(frame.locator("pre").text_content())
++    assert re.match(r"^1\.0a\d+", info["datasette"]["version"])
++
++
++def test_config_requires_1_0(page, static_server):
++    page.goto(static_server + "/?memory=1&config=" + F + "config.yml")
++    page.wait_for_function("document.getElementById('output').textContent.length", timeout=180 * 1000)
++    expect(page.locator("#output")).to_contain_text("?config= requires Datasette 1.0a8")
++
++
++def test_config_with_ref_pre(page, static_server):
++    boot(page, static_server + "/?ref=pre&config={F}config.yml&csv={F}items.csv".format(F=F))
++    base = iframe_base(page)
++    settings = table_json(page, base + "/-/settings.json")
++    assert settings["default_page_size"] == 2
++    # Datasette Lite's own base_url always wins
++    assert settings["base_url"] == base + "/"
++
++
++def test_hash_with_query_string(page, static_server):
++    frame = boot(page, static_server + "/?memory=1#/_memory?sql=" + quote("select 'hello' as greeting"))
++    expect(frame.locator("td.col-greeting")).to_have_text("hello")
++
++
++def test_hash_without_leading_slash(page, static_server):
++    frame = boot(page, static_server + "/?csv=" + F + "items.csv#data/items")
++    expect(frame.locator("h1")).to_contain_text("items")
++
++
++def test_navigation_updates_hash_and_back_button(page, static_server):
++    frame = boot(page, static_server + "/?csv=" + F + "items.csv")
++    assert app_path(page) == "/"
++    frame.locator("h2 a", has_text="data").click()
++    wait_for_hash(page, "^/data$")
++    expect(page).to_have_title("data")
++    frame.locator("a", has_text="items").first.click()
++    wait_for_hash(page, "^/data/items$")
++    expect(frame.locator("h1")).to_contain_text("items")
++    # Sort by a column - adds a query string
++    datasette_frame(page).evaluate("location.href = location.pathname + '?_sort_desc=qty'")
++    wait_for_hash(page, r"^/data/items\?_sort_desc=qty$")
++    expect(frame.locator("td.col-name").first).to_have_text("Gadget")
++    page.go_back()
++    wait_for_hash(page, "^/data/items$")
++    expect(frame.locator("td.col-name").first).to_have_text("Widget")
++    page.go_back()
++    wait_for_hash(page, "^/data$")
++    page.go_forward()
++    wait_for_hash(page, "^/data/items$")
++    # Startup options are preserved throughout
++    assert "csv=" in page.url
++
++
++def test_editing_hash_navigates(page, static_server):
++    frame = boot(page, static_server + "/?csv=" + F + "items.csv")
++    page.evaluate("location.hash = '#/data/items?_size=1'")
++    expect(frame.locator("h1")).to_contain_text("items")
++    expect(frame.locator("tbody tr")).to_have_count(1)
++
++
++def test_get_form_submission(page, static_server):
++    "The table filter form is a GET form"
++    frame = boot(page, static_server + "/?csv=" + F + "items.csv#/data/items")
++    frame.locator(".filters input[name=_filter_value]").first.fill("Gadget")
++    frame.locator(".filters select[name=_filter_column]").first.select_option("name")
++    frame.locator(".filters input[type=submit]").click()
++    wait_for_hash(page, r"^/data/items\?.*name.*Gadget")
++    expect(frame.locator("tbody tr")).to_have_count(1)
++
++
++def test_external_links_open_in_new_window(page, static_server):
++    frame = boot(page, static_server + "/?memory=1")
++    with page.expect_popup() as popup_info:
++        frame.locator("footer a", has_text="Datasette Lite").click()
++    popup = popup_info.value
++    popup.wait_for_url("https://github.com/simonw/datasette-lite**")
++    popup.close()
++    # The Datasette Lite page itself did not navigate away
++    assert app_path(page) == "/"
++
++
++def test_load_buttons(page, static_server):
++    frame = boot(page, static_server + "/?memory=1")
++    buttons = frame.locator("#load-custom button")
++    expect(buttons).to_have_text(
++        ["Load SQLite DB by URL", "Load CSV", "Load JSON", "Load Parquet", "Load SQL"]
++    )
++    csv_url = static_server + "/" + F + "items.csv"
++    page.once("dialog", lambda dialog: dialog.accept(csv_url))
++    frame.locator("#load-custom button.csv-url").click()
++    page.wait_for_url("**/?csv=*")
++    assert page.url == static_server + "/?csv=" + quote(csv_url, safe="")
++    wait_for_boot(page)
++    expect(page.frame_locator("#datasette").locator("h2")).to_have_text(["data"])
++
++
++def test_github_and_gist_urls_rewritten(page, static_server):
++    boot(page, static_server + "/?memory=1")
++    assert page.evaluate(
++        "fixUrl('https://github.com/simonw/datasette-lite/blob/main/README.md')"
++    ) == "https://raw.githubusercontent.com/simonw/datasette-lite/main/README.md"
++    assert page.evaluate(
++        "fixUrl('https://gist.github.com/simonw/7eacc70cd8b2868be0a18796cec078b9')"
++    ) == "https://gist.githubusercontent.com/simonw/7eacc70cd8b2868be0a18796cec078b9/raw"
++
++
++def test_load_error_is_displayed(page, static_server):
++    page.goto(static_server + "/?csv=" + F + "does-not-exist.csv")
++    page.wait_for_function("document.getElementById('output').textContent.length", timeout=180 * 1000)
++    expect(page.locator("#output")).to_contain_text("HTTP 404")
++
++
++@pytest.mark.network
++def test_csv_from_github_blob_url(page, static_server):
++    frame = boot(
++        page,
++        static_server
++        + "/?csv=https://github.com/fivethirtyeight/data/blob/master/fight-songs/fight-songs.csv#/data/fight-songs",
++    )
++    expect(frame.locator("h1")).to_contain_text("fight-songs")
++
++
++@pytest.mark.network
++def test_parquet(page, static_server):
++    frame = boot(
++        page,
++        static_server
++        + "/?parquet=https://github.com/Teradata/kylo/blob/master/samples/sample-data/parquet/userdata1.parquet#/data/userdata1",
++    )
++    expect(frame.locator("h3").first).to_contain_text("1,000 rows")
+diff --git a/webworker.js b/webworker.js
+index 62e3580..95189e8 100644
+--- a/webworker.js
++++ b/webworker.js
+@@ -1,7 +1,21 @@
+-importScripts("https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.js");
++// webworker.js - runs Pyodide + Datasette in a dedicated Web Worker.
++//
++// The shell page (index.html) owns this worker. Once Datasette has started, the
++// shell forwards every request that the service worker (sw.js) intercepts under
++// the app prefix to this worker, which answers it by calling Datasette's ASGI
++// application directly - links, form submissions (GET and POST), fetch() calls
++// made by Datasette's own JavaScript and by plugins, static assets, downloads.
++//
++// Python source lives in String.raw blocks so the pure-Python unit tests can
++// extract and exercise the exact code that runs in the browser. Constraint:
++// those blocks must contain no backticks and no "${".
++
++const PYODIDE_VERSION = "0.27.2";
++const PYODIDE_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
++importScripts(PYODIDE_URL + "pyodide.js");
+ 
+ function log(line) {
+-  console.log({line})
++  console.log({line});
+   self.postMessage({type: 'log', line: line});
+ }
+ 
+@@ -26,10 +40,594 @@ function databaseFiles(sqliteUrls) {
+       }
+     }
+     usedNames.add(name);
+-    return [name, url];
++    return [name + ".db", url];
+   });
+ }
+ 
++// PYTHON-BEGIN bridge
++const BRIDGE_PY = String.raw`
++import asyncio
++import re
++from datetime import datetime, timezone
++from email.utils import parsedate_to_datetime
++
++
++def _default_cookie_path(request_path):
++    # RFC 6265 section 5.1.4
++    if not request_path.startswith("/") or request_path.count("/") == 1:
++        return "/"
++    return request_path.rsplit("/", 1)[0]
++
++
++def _path_matches(request_path, cookie_path):
++    if request_path == cookie_path:
++        return True
++    if request_path.startswith(cookie_path):
++        return cookie_path.endswith("/") or request_path[len(cookie_path)] == "/"
++    return False
++
++
++class CookieJar:
++    """A minimal per-tab cookie jar.
++
++    A service worker can neither read the Cookie request header nor set the
++    Set-Cookie response header (both are forbidden header names), so cookies
++    can never reach the browser's own cookie store. Instead the bridge keeps
++    them here: Set-Cookie headers from Datasette are stored, and a Cookie
++    header is synthesized for every subsequent request. This is what makes
++    CSRF tokens, ds_actor sign-in, flash messages and plugin logins work."""
++
++    def __init__(self):
++        self._cookies = {}  # (name, path) -> value
++
++    def header_for(self, request_path):
++        matches = [
++            (name, path, value)
++            for (name, path), value in self._cookies.items()
++            if _path_matches(request_path, path)
++        ]
++        # Longer paths first, as browsers do
++        matches.sort(key=lambda item: -len(item[1]))
++        return "; ".join("{}={}".format(name, value) for name, path, value in matches)
++
++    def store(self, set_cookie, request_path):
++        parts = [part.strip() for part in set_cookie.split(";")]
++        if not parts or "=" not in parts[0]:
++            return
++        name, _, value = parts[0].partition("=")
++        name = name.strip()
++        value = value.strip()
++        if not name:
++            return
++        attrs = {}
++        for part in parts[1:]:
++            key, _, attr_value = part.partition("=")
++            attrs[key.strip().lower()] = attr_value.strip()
++        path = attrs.get("path") or ""
++        if not path.startswith("/"):
++            path = _default_cookie_path(request_path)
++        expired = False
++        if "max-age" in attrs:
++            try:
++                expired = int(attrs["max-age"]) <= 0
++            except ValueError:
++                pass
++        elif attrs.get("expires"):
++            try:
++                expires = parsedate_to_datetime(attrs["expires"])
++                if expires.tzinfo is None:
++                    expires = expires.replace(tzinfo=timezone.utc)
++                expired = expires <= datetime.now(timezone.utc)
++            except (TypeError, ValueError, IndexError):
++                pass
++        if expired:
++            self._cookies.pop((name, path), None)
++        else:
++            self._cookies[(name, path)] = value
++
++    def as_dict(self):
++        return {name: value for (name, path), value in self._cookies.items()}
++
++
++class ASGIBridge:
++    """Drives an ASGI app: runs the lifespan protocol once and handles HTTP
++    requests one message-cycle at a time, returning a plain dict response."""
++
++    def __init__(self, app, root_path=""):
++        self.app = app
++        self.root_path = root_path
++        self.cookies = CookieJar()
++        self._lifespan_task = None
++        self._startup_complete = None
++        self._recv_queue = None
++
++    async def startup(self):
++        loop = asyncio.get_event_loop()
++        self._recv_queue = asyncio.Queue()
++        self._startup_complete = loop.create_future()
++        scope = {"type": "lifespan", "asgi": {"version": "3.0", "spec_version": "2.0"}}
++        await self._recv_queue.put({"type": "lifespan.startup"})
++
++        async def receive():
++            return await self._recv_queue.get()
++
++        async def send(message):
++            t = message["type"]
++            if t == "lifespan.startup.complete":
++                if not self._startup_complete.done():
++                    self._startup_complete.set_result(True)
++            elif t == "lifespan.startup.failed":
++                if not self._startup_complete.done():
++                    self._startup_complete.set_exception(
++                        RuntimeError(message.get("message", "lifespan startup failed"))
++                    )
++
++        async def run():
++            try:
++                await self.app(scope, receive, send)
++            except Exception as exc:
++                # Apps without lifespan support may raise; that's fine
++                if not self._startup_complete.done():
++                    self._startup_complete.set_result(False)
++            finally:
++                if not self._startup_complete.done():
++                    self._startup_complete.set_result(False)
++
++        self._lifespan_task = asyncio.ensure_future(run())
++        await self._startup_complete
++
++    async def handle(self, method, path, query_string, headers, body=b"",
++                     scheme="http", host="localhost", port=80, raw_path=None):
++        if isinstance(query_string, str):
++            query_string = query_string.encode("latin-1")
++        if isinstance(body, str):
++            body = body.encode("utf-8")
++        if body is None:
++            body = b""
++
++        raw_headers = []
++        have_host = False
++        cookie_values = []
++        for name, value in headers:
++            lower = name.lower()
++            if lower == "host":
++                have_host = True
++            if lower == "cookie":
++                cookie_values.append(value)
++                continue
++            raw_headers.append((lower.encode("latin-1"), value.encode("latin-1")))
++        jar_cookies = self.cookies.header_for(path)
++        if jar_cookies:
++            cookie_values.append(jar_cookies)
++        if cookie_values:
++            raw_headers.append((b"cookie", "; ".join(cookie_values).encode("latin-1")))
++        if not have_host:
++            # A service worker cannot forward the browser-managed Host header,
++            # so synthesize one - including any non-default port, otherwise
++            # absolute URLs generated by the app point at the wrong place.
++            host_header = host
++            if int(port) not in (80, 443):
++                host_header = host + ":" + str(int(port))
++            raw_headers.append((b"host", host_header.encode("latin-1")))
++
++        scope = {
++            "type": "http",
++            "asgi": {"version": "3.0", "spec_version": "2.3"},
++            "http_version": "1.1",
++            "method": method.upper(),
++            "scheme": scheme,
++            "path": path,
++            "raw_path": (raw_path if raw_path is not None else path).encode("utf-8"),
++            "query_string": query_string,
++            "root_path": self.root_path,
++            "headers": raw_headers,
++            "server": (host, int(port)),
++            "client": ("127.0.0.1", 0),
++        }
++
++        request_messages = [{"type": "http.request", "body": body, "more_body": False}]
++        response_complete = asyncio.Event()
++
++        async def receive():
++            if request_messages:
++                return request_messages.pop(0)
++            # Block like a real server until the response has been sent
++            await response_complete.wait()
++            return {"type": "http.disconnect"}
++
++        response = {"status": 500, "headers": [], "body": bytearray()}
++
++        async def send(message):
++            t = message["type"]
++            if t == "http.response.start":
++                response["status"] = message["status"]
++                response["headers"] = [
++                    [k.decode("latin-1"), v.decode("latin-1")]
++                    for k, v in message.get("headers", [])
++                ]
++            elif t == "http.response.body":
++                chunk = message.get("body", b"") or b""
++                response["body"].extend(chunk)
++                if not message.get("more_body"):
++                    response_complete.set()
++
++        try:
++            await self.app(scope, receive, send)
++        finally:
++            response_complete.set()
++
++        headers_out = []
++        for name, value in response["headers"]:
++            if name.lower() == "set-cookie":
++                self.cookies.store(value, path)
++            else:
++                headers_out.append([name, value])
++        return {
++            "status": response["status"],
++            "headers": headers_out,
++            "body": bytes(response["body"]),
++        }
++
++
++HARDCODED_ATTRIBUTE_RE = re.compile(
++    rb"""(\s(?:href|action|src|formaction)=["'])/-/""", re.IGNORECASE
++)
++
++
++def datasette_base_url_fixes(app, base_url):
++    """Work around places where Datasette does not fully honor base_url.
++
++    1. Datasette 1.0a base.html hardcodes the "Jump to" navigation search
++       endpoint as url="/-/jump", so its fetch() escapes the app prefix.
++    2. Some URLs double-apply base_url, because urls.path() is passed a path
++       derived from request.path, which already includes base_url: the
++       table/row/query export links, and the redirect after submitting the
++       table filter form in Datasette 0.x.
++    3. Some redirects (e.g. the 1.0a /db?sql= -> /db/-/query redirect) send
++       a Location without the base_url prefix.
++
++    base_url includes a random per-tab session id, so a doubled prefix such as
++    /app/3f2a9c/app/3f2a9c/ can only ever be this bug - it is safe to collapse
++    it everywhere."""
++    prefix = base_url.rstrip("/").encode("latin-1")
++    doubled = prefix + prefix + b"/"
++    single = prefix + b"/"
++    rewrite_types = (b"text/html", b"application/json")
++
++    def fix_body(body):
++        if doubled in body:
++            body = body.replace(doubled, single)
++        return body
++
++    def fix_location(value):
++        value = fix_body(value)
++        if (
++            value.startswith(b"/")
++            and not value.startswith(b"//")
++            and value != prefix
++            and not value.startswith(single)
++        ):
++            value = prefix + value
++        return value
++
++    async def wrapped(scope, receive, send):
++        if scope["type"] != "http":
++            await app(scope, receive, send)
++            return
++        state = {"rewrite": False, "html": False}
++
++        async def send_wrapper(message):
++            if message["type"] == "http.response.start":
++                headers = []
++                for key, value in message.get("headers", []):
++                    lower = key.lower()
++                    if lower == b"location":
++                        value = fix_location(value)
++                    elif lower == b"content-type":
++                        content_type = value.lower()
++                        state["rewrite"] = any(t in content_type for t in rewrite_types)
++                        state["html"] = b"text/html" in content_type
++                    headers.append((key, value))
++                if state["rewrite"]:
++                    # Body length may change
++                    headers = [(k, v) for k, v in headers if k.lower() != b"content-length"]
++                await send({**message, "headers": headers})
++            elif message["type"] == "http.response.body" and state["rewrite"]:
++                body = fix_body(message.get("body", b"") or b"")
++                if state["html"]:
++                    body = body.replace(b'"/-/jump"', b'"' + prefix + b'/-/jump"')
++                    # Plugins sometimes hardcode root-relative /-/ URLs, e.g.
++                    # action="/-/password-tool". If Datasette Lite is served
++                    # from a subdirectory those navigations would escape the
++                    # service worker's scope entirely, so fix them here.
++                    body = HARDCODED_ATTRIBUTE_RE.sub(
++                        lambda m: m.group(1) + prefix + b"/-/", body
++                    )
++                await send({**message, "body": body})
++            else:
++                await send(message)
++
++        await app(scope, receive, send_wrapper)
++
++    return wrapped
++`;
++// PYTHON-END bridge
++
++// PYTHON-BEGIN startup
++const STARTUP_PY = String.raw`
++# https://github.com/pyodide/pyodide/issues/3880#issuecomment-1560130092
++import os, sys
++import csv
++import json
++os.link = os.symlink
++# Recent platformdirs releases (imported by Datasette's vendored pint) call
++# os.geteuid(), which Pyodide does not provide
++if not hasattr(os, "geteuid"):
++    os.geteuid = os.getuid
++
++settings = json.loads(settings_json)
++to_load = settings["to_load"]
++sources = settings["sources"]
++
++# Increase CSV field size limit to maximim possible
++# https://stackoverflow.com/a/15063941
++field_size_limit = sys.maxsize
++
++while True:
++    try:
++        csv.field_size_limit(field_size_limit)
++        break
++    except OverflowError:
++        field_size_limit = int(field_size_limit / 10)
++
++
++async def fetch_bytes(url):
++    response = await pyfetch(url)
++    if not response.ok:
++        raise ValueError("Could not load {}: HTTP {}".format(url, response.status))
++    return await response.bytes()
++
++
++import sqlite3
++from pyodide.http import pyfetch
++names = []
++for name, url in to_load:
++    if url:
++        content = await fetch_bytes(url)
++        with open(name, "wb") as fp:
++            fp.write(content)
++    else:
++        sqlite3.connect(name).execute("vacuum")
++    names.append(name)
++
++import micropip
++await micropip.install("python-multipart==0.0.15")
++# To avoid possible 'from typing_extensions import deprecated' error:
++await micropip.install('typing-extensions>=4.12.2')
++try:
++    await micropip.install(settings["datasette_to_install"], pre=settings["pre"])
++except ValueError:
++    # Older Datasette releases: workaround for "Requested 'h11<0.13,>=0.11',
++    # but h11==0.13.0 is already installed". Not used by default because
++    # httpx==0.23 pulls in Pyodide's bundled idna 3.7, which conflicts with
++    # recent 1.0 alphas (they need idna>=3.18)
++    await micropip.install("h11==0.12.0")
++    await micropip.install("httpx==0.23")
++    await micropip.install(settings["datasette_to_install"], pre=settings["pre"])
++import re
++
++
++async def install_resolving_conflicts(requirement, attempts=5):
++    """micropip can't upgrade an already installed package, so a plugin that
++    needs e.g. click>=8.3.1 fails if Datasette already pulled in Pyodide's
++    bundled click 8.1.7. Nothing has been imported yet at this point, so it is
++    safe to uninstall the conflicting package and install what was asked for."""
++    for _ in range(attempts):
++        try:
++            await micropip.install(requirement)
++            return
++        except ValueError as ex:
++            match = re.search(r"Requested '(.+?)', but (\S+)==\S+ is already installed", str(ex))
++            if not match:
++                raise
++            micropip.uninstall(match.group(2))
++            await micropip.install(match.group(1))
++    await micropip.install(requirement)
++
++
++# Install any extra ?install= dependencies
++for install_url in settings["install_urls"]:
++    await install_resolving_conflicts(install_url)
++# Execute any ?sql=URL SQL
++for sql_url in [url for kind, urls in sources if kind == "sql" for url in urls]:
++    # Fetch that SQL and execute it
++    sql = (await fetch_bytes(sql_url)).decode("utf-8")
++    sqlite3.connect("data.db").executescript(sql)
++metadata = {
++    "about": "Datasette Lite",
++    "about_url": "https://github.com/simonw/datasette-lite"
++}
++from datasette.utils import parse_metadata
++if settings["metadata_url"]:
++    content = (await fetch_bytes(settings["metadata_url"])).decode("utf-8")
++    metadata = parse_metadata(content)
++config = None
++if settings["config_url"]:
++    content = (await fetch_bytes(settings["config_url"])).decode("utf-8")
++    config = parse_metadata(content)
++
++# Import data from ?csv=URL CSV files/?json=URL JSON files
++import_sources = [source for source in sources if source[0] in ("csv", "json", "parquet")]
++if import_sources:
++    try:
++        # Datasette 1.0 alphas already depend on sqlite-utils 4
++        import sqlite_utils
++    except ImportError:
++        await install_resolving_conflicts("sqlite-utils==3.28")
++        import sqlite_utils
++    from sqlite_utils.utils import rows_from_file, TypeTracker, Format
++    db = sqlite_utils.Database("data.db")
++    table_names = set()
++    for source_type, urls in import_sources:
++        for url in urls:
++            # Derive table name from URL
++            bit = url.split("/")[-1].split(".")[0].split("?")[0]
++            bit = bit.strip()
++            if not bit:
++                bit = "table"
++            prefix = 0
++            base_bit = bit
++            while bit in table_names:
++                prefix += 1
++                bit = "{}_{}".format(base_bit, prefix)
++            table_names.add(bit)
++
++            if source_type == "csv":
++                tracker = TypeTracker()
++                csv_bytes = await fetch_bytes(url)
++                with open("csv.csv", "wb") as fp:
++                    fp.write(csv_bytes)
++
++                # Auto-detect CSV delimiter (comma vs semicolon)
++                sample_lines = csv_bytes.decode('utf-8', errors='ignore').splitlines()[:5]
++
++                # Count semicolons vs commas in the sample
++                semicolon_count = sum(line.count(';') for line in sample_lines)
++                comma_count = sum(line.count(',') for line in sample_lines)
++
++                if semicolon_count > comma_count and semicolon_count > 0:
++                    # Use semicolon as delimiter
++                    import csv as csv_module
++                    from io import StringIO
++
++                    csv_content = csv_bytes.decode('utf-8', errors='ignore')
++                    csv_reader = csv_module.reader(StringIO(csv_content), delimiter=';')
++                    rows = list(csv_reader)
++
++                    if rows:
++                        headers = rows[0]
++                        data_rows = rows[1:]
++                        dict_rows = [dict(zip(headers, row)) for row in data_rows]
++
++                        db[bit].insert_all(
++                            tracker.wrap(dict_rows),
++                            alter=True
++                        )
++                else:
++                    # Use default comma delimiter
++                    db[bit].insert_all(
++                        tracker.wrap(rows_from_file(open("csv.csv", "rb"), Format.CSV)[0]),
++                        alter=True
++                    )
++
++                db[bit].transform(
++                    types=tracker.types
++                )
++            elif source_type == "json":
++                pk = None
++                json_bytes = await fetch_bytes(url)
++                try:
++                    json_data = json.loads(json_bytes)
++                except json.decoder.JSONDecodeError:
++                    # Maybe it's newline-delimited JSON?
++                    # This will raise an unhandled exception if not
++                    json_data = [json.loads(line) for line in json_bytes.splitlines() if line.strip()]
++                if isinstance(json_data, dict) and all(isinstance(v, dict) for v in json_data.values()):
++                    fixed = []
++                    pk = "_key"
++                    for key, value in json_data.items():
++                        value["_key"] = key
++                        fixed.append(value)
++                    json_data = fixed
++                elif isinstance(json_data, dict):
++                    object_lists = [
++                        value for value in json_data.values()
++                        if (
++                            isinstance(value, list)
++                            and value
++                            and all(isinstance(item, dict) for item in value)
++                        )
++                    ]
++                    if object_lists:
++                        json_data = max(object_lists, key=len)
++                assert isinstance(json_data, list), "JSON data must be a list of objects"
++                db[bit].insert_all(json_data, pk=pk, alter=True)
++            elif source_type == "parquet":
++                await micropip.install("fastparquet")
++                import fastparquet
++                with open("parquet.parquet", "wb") as fp:
++                    fp.write(await fetch_bytes(url))
++                df = fastparquet.ParquetFile("parquet.parquet").to_pandas()
++                # sqlite-utils can't store pandas Timestamps - use ISO strings
++                for column in df.select_dtypes(include=["datetime", "datetimetz"]).columns:
++                    df[column] = df[column].map(
++                        lambda value: None if value != value else value.isoformat()
++                    )
++                db[bit].insert_all(df.to_dict(orient="records"), alter=True)
++
++from datasette.app import Datasette
++import inspect
++
++datasette_kwargs = {}
++if config is not None:
++    if "config" not in inspect.signature(Datasette.__init__).parameters:
++        raise ValueError(
++            "?config= requires Datasette 1.0a8 or later - try adding &ref=pre"
++        )
++    if isinstance(config.get("settings"), dict):
++        # These are controlled by Datasette Lite itself
++        for key in ("base_url", "num_sql_threads"):
++            config["settings"].pop(key, None)
++    datasette_kwargs["config"] = config
++
++ds = Datasette(names, settings={
++    # Keep every URL Datasette generates inside the service worker's scope
++    "base_url": settings["base_url"],
++    # Pyodide has no threads: run SQLite queries inline on the event loop
++    "num_sql_threads": 0,
++}, metadata=metadata, memory=settings["memory"], **datasette_kwargs)
++await ds.invoke_startup()
++
++bridge = ASGIBridge(datasette_base_url_fixes(ds.app(), settings["base_url"]))
++await bridge.startup()
++
++if settings["root"]:
++    # The equivalent of "datasette --root": enable the root actor and sign in
++    # by visiting the one-time token URL, so the ds_actor cookie lands in the
++    # bridge's cookie jar - exactly as it would in a real browser.
++    import secrets
++    ds.root_enabled = True
++    ds._root_token = secrets.token_hex(32)
++    _response = await bridge.handle(
++        "GET", settings["base_url"] + "-/auth-token",
++        "token=" + ds._root_token, [], b"",
++        host="localhost",
++    )
++    if "ds_actor" not in bridge.cookies.as_dict():
++        raise ValueError("Could not sign in as root: HTTP {}".format(_response["status"]))
++`;
++// PYTHON-END startup
++
++const HANDLE_PY = String.raw`
++import json
++from urllib.parse import unquote
++from js import Object
++from pyodide.ffi import to_js
++
++
++async def handle_request(method, raw_path, query, headers_json, body_buf, scheme, host, port):
++    headers = json.loads(headers_json)
++    body = b"" if body_buf is None else body_buf.to_py().tobytes()
++    resp = await bridge.handle(
++        method, unquote(raw_path), query, headers, body,
++        scheme=scheme, host=host, port=int(port), raw_path=raw_path,
++    )
++    return to_js(
++        {"status": resp["status"], "headers": resp["headers"], "body": resp["body"]},
++        dict_converter=Object.fromEntries,
++    )
++`;
++
+ async function startDatasette(settings) {
+   let toLoad = [];
+   let sources = [];
+@@ -37,23 +635,23 @@ async function startDatasette(settings) {
+   let shouldLoadDefaults = true;
+   // Which version of Datasette to install?
+   let datasetteToInstall = 'datasette';
+-  let pre = 'False';
++  let pre = false;
+   if (settings.ref) {
+     if (settings.ref == 'pre') {
+-      pre = 'True';
++      pre = true;
+     } else {
+       datasetteToInstall = `datasette==${settings.ref}`;
+     }
+   }
+-  console.log({datasetteToInstall});
+   const sqliteUrls = (settings.sqliteUrls || []).filter(Boolean);
+   if (sqliteUrls.length) {
+     toLoad.push(...databaseFiles(sqliteUrls));
+     shouldLoadDefaults = false;
+   }
+   ['csv', 'sql', 'json', 'parquet'].forEach(sourceType => {
+-    if (settings[`${sourceType}Urls`] && settings[`${sourceType}Urls`].length) {
+-      sources.push([sourceType, settings[`${sourceType}Urls`]]);
++    const urls = (settings[`${sourceType}Urls`] || []).filter(Boolean);
++    if (urls.length) {
++      sources.push([sourceType, urls]);
+       needsDataDb = true;
+       shouldLoadDefaults = false;
+     }
+@@ -62,235 +660,86 @@ async function startDatasette(settings) {
+     shouldLoadDefaults = false;
+   }
+   if (needsDataDb) {
+-    toLoad.push(["data.db", 0]);
++    toLoad.push(["data.db", null]);
+   }
+   if (shouldLoadDefaults) {
+     toLoad.push(["fixtures.db", "https://latest.datasette.io/fixtures.db"]);
+     toLoad.push(["content.db", "https://datasette.io/content.db"]);
+   }
+   self.pyodide = await loadPyodide({
+-    indexURL: "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/",
++    indexURL: PYODIDE_URL,
+     fullStdLib: true
+   });
+   await pyodide.loadPackage('micropip', {messageCallback: log});
+   await pyodide.loadPackage('ssl', {messageCallback: log});
+   await pyodide.loadPackage('setuptools', {messageCallback: log}); // For pkg_resources
+-  try {
+-    await self.pyodide.runPythonAsync(`
+-    # https://github.com/pyodide/pyodide/issues/3880#issuecomment-1560130092
+-    import os, sys
+-    import csv
+-    os.link = os.symlink
+-
+-    # Increase CSV field size limit to maximim possible
+-    # https://stackoverflow.com/a/15063941
+-    field_size_limit = sys.maxsize
+-
+-    while True:
+-        try:
+-            csv.field_size_limit(field_size_limit)
+-            break
+-        except OverflowError:
+-            field_size_limit = int(field_size_limit / 10)
+-
+-    import sqlite3
+-    from pyodide.http import pyfetch
+-    names = []
+-    for name, url in ${JSON.stringify(toLoad)}:
+-        if url:
+-            response = await pyfetch(url)
+-            with open(name, "wb") as fp:
+-                fp.write(await response.bytes())
+-        else:
+-            sqlite3.connect(name).execute("vacuum")
+-        names.append(name)
+-
+-    import micropip
+-    # Workaround for Requested 'h11<0.13,>=0.11', but h11==0.13.0 is already installed
+-    await micropip.install("h11==0.12.0")
+-    await micropip.install("httpx==0.23")
+-    await micropip.install("python-multipart==0.0.15")
+-    # To avoid possible 'from typing_extensions import deprecated' error:
+-    await micropip.install('typing-extensions>=4.12.2')
+-    await micropip.install("${datasetteToInstall}", pre=${pre})
+-    # Install any extra ?install= dependencies
+-    install_urls = ${JSON.stringify(settings.installUrls)}
+-    if install_urls:
+-        for install_url in install_urls:
+-            await micropip.install(install_url)
+-    # Execute any ?sql=URL SQL
+-    sqls = ${JSON.stringify(sources.filter(source => source[0] === "sql")[0]?.[1] || [])}
+-    if sqls:
+-        for sql_url in sqls:
+-            # Fetch that SQL and execute it
+-            response = await pyfetch(sql_url)
+-            sql = await response.string()
+-            sqlite3.connect("data.db").executescript(sql)
+-    metadata = {
+-        "about": "Datasette Lite",
+-        "about_url": "https://github.com/simonw/datasette-lite"
+-    }
+-    metadata_url = ${JSON.stringify(settings.metadataUrl || '')}
+-    if metadata_url:
+-        response = await pyfetch(metadata_url)
+-        content = await response.string()
+-        from datasette.utils import parse_metadata
+-        metadata = parse_metadata(content)
+-
+-    # Import data from ?csv=URL CSV files/?json=URL JSON files
+-    sources = ${JSON.stringify(sources.filter(source => ['csv', 'json', 'parquet'].includes(source[0])))}
+-    if sources:
+-        await micropip.install("sqlite-utils==3.28")
+-        import sqlite_utils, json
+-        from sqlite_utils.utils import rows_from_file, TypeTracker, Format
+-        db = sqlite_utils.Database("data.db")
+-        table_names = set()
+-        for source_type, urls in sources:
+-            for url in urls:
+-                # Derive table name from URL
+-                bit = url.split("/")[-1].split(".")[0].split("?")[0]
+-                bit = bit.strip()
+-                if not bit:
+-                    bit = "table"
+-                prefix = 0
+-                base_bit = bit
+-                while bit in table_names:
+-                    prefix += 1
+-                    bit = "{}_{}".format(base_bit, prefix)
+-                table_names.add(bit)
+-
+-                if source_type == "csv":
+-                    tracker = TypeTracker()
+-                    response = await pyfetch(url)
+-                    csv_bytes = await response.bytes()
+-                    with open("csv.csv", "wb") as fp:
+-                        fp.write(csv_bytes)
+-
+-                    # Auto-detect CSV delimiter (comma vs semicolon)
+-                    # Read first few lines to detect the delimiter
+-                    sample_lines = []
+-                    lines_iter = iter(csv_bytes.decode('utf-8', errors='ignore').splitlines())
+-                    for _ in range(min(5, len(csv_bytes.decode('utf-8', errors='ignore').splitlines()))):
+-                        try:
+-                            sample_lines.append(next(lines_iter))
+-                        except StopIteration:
+-                            break
+-
+-                    # Count semicolons vs commas in the sample
+-                    semicolon_count = sum(line.count(';') for line in sample_lines)
+-                    comma_count = sum(line.count(',') for line in sample_lines)
+-
+-                    # Determine the most likely delimiter
+-                    if semicolon_count > comma_count and semicolon_count > 0:
+-                        # Use semicolon as delimiter
+-                        # We need to manually parse CSV with semicolon delimiter
+-                        import csv as csv_module
+-                        from io import StringIO
+-
+-                        csv_content = csv_bytes.decode('utf-8', errors='ignore')
+-                        csv_reader = csv_module.reader(StringIO(csv_content), delimiter=';')
+-                        rows = list(csv_reader)
+-
+-                        if rows:
+-                            # Convert to format expected by sqlite-utils
+-                            headers = rows[0]
+-                            data_rows = rows[1:]
+-                            dict_rows = [dict(zip(headers, row)) for row in data_rows]
+-
+-                            db[bit].insert_all(
+-                                tracker.wrap(dict_rows),
+-                                alter=True
+-                            )
+-                    else:
+-                        # Use default comma delimiter
+-                        db[bit].insert_all(
+-                            tracker.wrap(rows_from_file(open("csv.csv", "rb"), Format.CSV)[0]),
+-                            alter=True
+-                        )
++  // Values are passed as data, never interpolated into Python source
++  pyodide.globals.set("settings_json", JSON.stringify({
++    to_load: toLoad,
++    sources,
++    datasette_to_install: datasetteToInstall,
++    pre,
++    install_urls: (settings.installUrls || []).filter(Boolean),
++    metadata_url: settings.metadataUrl || null,
++    config_url: settings.configUrl || null,
++    memory: !!settings.memory,
++    root: !!settings.root,
++    base_url: settings.baseUrl,
++  }));
++  log("Installing Datasette...");
++  await pyodide.runPythonAsync(BRIDGE_PY);
++  await pyodide.runPythonAsync(STARTUP_PY);
++  await pyodide.runPythonAsync(HANDLE_PY);
++  self.pyHandleRequest = pyodide.globals.get("handle_request");
++}
+ 
+-                    db[bit].transform(
+-                        types=tracker.types
+-                    )
+-                elif source_type == "json":
+-                    pk = None
+-                    response = await pyfetch(url)
+-                    with open("json.json", "wb") as fp:
+-                        json_bytes = await response.bytes()
+-                        try:
+-                            json_data = json.loads(json_bytes)
+-                        except json.decoder.JSONDecodeError:
+-                            # Maybe it's newline-delimited JSON?
+-                            # This will raise an unhandled exception if not
+-                            json_data = [json.loads(line) for line in json_bytes.splitlines()]
+-                    if isinstance(json_data, dict) and all(isinstance(v, dict) for v in json_data.values()):
+-                        fixed = []
+-                        pk = "_key"
+-                        for key, value in json_data.items():
+-                            value["_key"] = key
+-                            fixed.append(value)
+-                        json_data = fixed
+-                    elif isinstance(json_data, dict):
+-                        object_lists = [
+-                            value for value in json_data.values()
+-                            if (
+-                                isinstance(value, list)
+-                                and value
+-                                and all(isinstance(item, dict) for item in value)
+-                            )
+-                        ]
+-                        if object_lists:
+-                            json_data = max(object_lists, key=len)
+-                    assert isinstance(json_data, list), "JSON data must be a list of objects"
+-                    db[bit].insert_all(json_data, pk=pk, alter=True)
+-                elif source_type == "parquet":
+-                    await micropip.install("fastparquet")
+-                    import fastparquet
+-                    response = await pyfetch(url)
+-                    with open("parquet.parquet", "wb") as fp:
+-                        fp.write(await response.bytes())
+-                    df = fastparquet.ParquetFile("parquet.parquet").to_pandas()
+-                    db[bit].insert_all(df.to_dict(orient="records"), alter=True)
+-    from datasette.app import Datasette
+-    ds = Datasette(names, settings={
+-        "num_sql_threads": 0,
+-    }, metadata=metadata, memory=${settings.memory ? 'True' : 'False'})
+-    await ds.invoke_startup()
+-    `);
+-    datasetteLiteReady();
+-  } catch (error) {
+-    self.postMessage({error: error.message});
+-  }
++async function handleRequest(msg) {
++  const url = new URL(msg.url);
++  const port = url.port
++    ? parseInt(url.port, 10)
++    : (url.protocol === "https:" ? 443 : 80);
++  const result = await self.pyHandleRequest(
++    msg.method,
++    url.pathname,
++    url.search.replace(/^\?/, ""),
++    JSON.stringify(msg.headers || []),
++    msg.body ? new Uint8Array(msg.body) : new Uint8Array(),
++    url.protocol.replace(":", ""),
++    url.hostname,
++    port,
++  );
++  // Copy the body out of the WASM heap so it can be transferred
++  const body = result.body ? result.body.slice() : new Uint8Array();
++  return {status: result.status, headers: result.headers, body: body.buffer};
+ }
+ 
+-// Outside promise pattern
+-// https://github.com/simonw/datasette-lite/issues/25#issuecomment-1116948381
+-let datasetteLiteReady;
+-let readyPromise = new Promise(function(resolve) {
+-  datasetteLiteReady = resolve;
+-});
++let readyPromise = null;
+ 
+ self.onmessage = async (event) => {
+-  console.log({event, data: event.data});
+-  if (event.data.type == 'startup') {
+-    await startDatasette(event.data);
++  const data = event.data || {};
++  if (data.type == 'startup') {
++    readyPromise = startDatasette(data);
++    try {
++      await readyPromise;
++      self.postMessage({type: 'ready'});
++    } catch (error) {
++      self.postMessage({type: 'error', error: error.message});
++    }
+     return;
+   }
+-  // make sure loading is done
+-  await readyPromise;
+-  console.log(event, event.data);
+-  try {
+-    let [status, contentType, text] = await self.pyodide.runPythonAsync(
+-      `
+-      import json
+-      response = await ds.client.get(
+-          ${JSON.stringify(event.data.path)},
+-          follow_redirects=True
+-      )
+-      [response.status_code, response.headers.get("content-type"), response.text]
+-      `
+-    );
+-    self.postMessage({status, contentType, text});
+-  } catch (error) {
+-    self.postMessage({error: error.message});
++  if (data.type == 'request') {
++    try {
++      await readyPromise;
++      const response = await handleRequest(data);
++      self.postMessage({type: 'response', id: data.id, ...response}, [response.body]);
++    } catch (error) {
++      const body = new TextEncoder().encode(
++        "Datasette Lite error: " + ((error && error.message) || error)
++      ).buffer;
++      self.postMessage({
++        type: 'response', id: data.id, status: 500,
++        headers: [["content-type", "text/plain; charset=utf-8"]], body
++      }, [body]);
++    }
+   }
+ };
