@@ -178,7 +178,11 @@ for dirname, _ in subdirs_with_dates:
             readme_path.write_text('\n'.join(new_lines))
 
 ]]]-->
-## 102 research projects
+## 103 research projects
+
+### [`parse_number()` as a SQLite extension: C vs Rust](https://github.com/simonw/research/tree/main/sqlite-parse-number-c-vs-rust#readme) (2026-11-08 22:26)
+
+Four SQLite extensions implement the same `parse_number()` behavior in C and Rust, with tests covering type preservation, parsing rules, and floating-point accuracy. The optimized [C implementation](c-fast/parse_number.c) was fastest at 16–19 ns per row, about twice as fast as the Rust versions and far faster than SQL `replace()`. Plain C was slower on decimals because it relied on `strtod()`, while a compact fast path closed that gap; all versions matched across 8 million fuzz checks. C’s shared library was about 14 KB versus 284–306 KB for Rust, though Rust required less handwritten code and offered safer parsing abstractions.
 
 ### [webframe: evaluated as a scraper and a sandbox](https://github.com/simonw/research/tree/main/webframe-evaluation#readme) (2026-10-26 16:15)
 
