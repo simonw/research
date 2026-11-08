@@ -1,0 +1,20 @@
+seed 1
+c          500000/500000 match reference
+c-fast     500000/500000 match reference
+rusqlite   500000/500000 match reference
+sqlite-loadable 500000/500000 match reference
+seed 2
+c          500000/500000 match reference
+c-fast     500000/500000 match reference
+rusqlite   500000/500000 match reference
+sqlite-loadable 500000/500000 match reference
+seed 3
+c          500000/500000 match reference
+c-fast     500000/500000 match reference
+rusqlite   500000/500000 match reference
+sqlite-loadable 500000/500000 match reference
+seed 4
+c          500000/500000 match reference
+c-fast     500000/500000 match reference
+rusqlite   500000/500000 match reference
+sqlite-loadable 500000/500000 match reference
