@@ -1,0 +1,29 @@
+=== Rhai safety harness: hostile pelican scripts ===
+
+>>> 1. Infinite loop vs set_max_operations
+  [spin forever, 1M-op budget] STOPPED  in 30.05ms (peak +616 KiB RSS) -> Too many operations (line 1, position 32)
+
+>>> 2. Infinite loop vs wall-clock timeout (on_progress)
+  [spin forever, 250ms deadline] STOPPED  in 249.97ms (peak +8 KiB RSS) -> Script terminated (line 1, position 23)
+
+>>> 3. Array bomb: first WITHOUT limits (bounded), then WITH set_max_array_size
+  [push 2M fish, no limits] COMPLETED in 748.65ms (peak +31276 KiB RSS) -> 2000000
+  [push 2M fish, max_array_size=10k] STOPPED  in 48.48ms (peak +164 KiB RSS) -> Size of array/BLOB too large (line 1, position 47)
+
+>>> 4. String-doubling bomb vs set_max_string_size
+  [double a squawk 40 times, max 100kB] STOPPED  in 203.10µs (peak +224 KiB RSS) -> Length of string too large (line 1, position 38)
+
+>>> 5. Object-map bomb vs set_max_map_size
+  [add 1M nests, max_map_size=5k] STOPPED  in 3.53s (peak +71844 KiB RSS) -> Size of object map too large (line 1, position 74)
+
+>>> 6. Infinite recursion vs set_max_call_levels
+  [recurse forever, max 64 levels] STOPPED  in 257.77µs (peak +256 KiB RSS) -> Stack overflow (line 1, position 28)
+
+>>> 7. Pathological nesting vs set_max_expr_depths (compile-time)
+  [500-deep nested expr, max depth 32] REJECTED at parse time in 16.39µs -> Expression exceeds maximum complexity (line 1, position 80)
+
+>>> 8. Everything at once: a fully sandboxed engine
+  [legit script under full limits] COMPLETED in 4.80ms (peak +0 KiB RSS) -> flock=1000, heavy=900
+  [hostile script under full limits] STOPPED  in 1.99s (peak +0 KiB RSS) -> Size of array/BLOB too large (line 1, position 22)
+
+=== All hostile scripts contained. The colony is safe. ===
